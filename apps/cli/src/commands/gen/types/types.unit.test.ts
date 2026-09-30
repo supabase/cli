@@ -13,33 +13,13 @@ import {
   parseQueryTimeoutMillis,
 } from "./types.shared.ts";
 
-const resolvePassword = () =>
-  Effect.runSync(
-    localDbPassword().pipe(
-      Effect.provideService(
-        ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnvRecord({ ...process.env }, { preserveEmptyStrings: true }),
-      ),
+const resolvePassword = (env: Record<string, string>) =>
+  localDbPassword().pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(env, { preserveEmptyStrings: true }),
     ),
   );
-
-function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
-  }
-  try {
-    return run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
-  }
-}
 
 describe("parseQueryTimeoutMillis", () => {
   it.effect("parses compound Go durations", () =>
@@ -123,8 +103,8 @@ describe("schema and id helpers", () => {
     Effect.gen(function* () {
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "" })).toBe("127.0.0.1");
       expect(yield* getHostname({ SUPABASE_SERVICES_HOSTNAME: "db.internal" })).toBe("db.internal");
-      expect(withEnv("SUPABASE_DB_PASSWORD", undefined, resolvePassword)).toBe("postgres");
-      expect(withEnv("SUPABASE_DB_PASSWORD", "secret", resolvePassword)).toBe("secret");
+      expect(yield* resolvePassword({})).toBe("postgres");
+      expect(yield* resolvePassword({ SUPABASE_DB_PASSWORD: "secret" })).toBe("secret");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

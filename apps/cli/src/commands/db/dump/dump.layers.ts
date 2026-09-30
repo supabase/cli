@@ -77,6 +77,6 @@ export const dbDumpRuntimeLayer = Layer.mergeAll(
   identityStitchLayer,
   telemetryStateLayer,
   stackApiLayer,
-  bundledPostgresClientLayer,
+  bundledPostgresClientLayer.pipe(Layer.provide(dockerRunLayer), Layer.provide(cliSettings)),
   commandRuntimeLayer(["db", "dump"]),
 );

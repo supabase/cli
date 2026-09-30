@@ -1,3 +1,4 @@
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -339,6 +340,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const baseLayer = Layer.mergeAll(
+    unusedStackServices,
     // Listed first so every fake service layer below overrides it; Layer.mergeAll is
     // last-wins on a shared service.
     BunServices.layer,

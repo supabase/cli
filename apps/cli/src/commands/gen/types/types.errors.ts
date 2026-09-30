@@ -17,6 +17,16 @@ export class GenTypesNetworkError extends Data.TaggedError("GenTypesNetworkError
   }
 }
 
+export class GenTypesBranchCredentialsUnavailableError extends Data.TaggedError(
+  "GenTypesBranchCredentialsUnavailableError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 export class GenTypesUnexpectedStatusError extends Data.TaggedError(
   "GenTypesUnexpectedStatusError",
 )<{
@@ -89,5 +99,35 @@ export class GenTypesNetworkIdUnsupportedError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+export class GenTypesFlagUsageError extends Data.TaggedError("GenTypesFlagUsageError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
+  "GenTypesLocalDbNotRunningError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
+
+export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
+  readonly message: string;
+  readonly daemonDown: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    return actionability.unknown;
   }
 }

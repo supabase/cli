@@ -1,9 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream, Redacted } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+  Redacted,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -20,6 +29,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -34,13 +44,21 @@ import { DbConnection, type DbSession } from "../../../command-internal/db-conne
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
+import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
 import { StackApi } from "../../../command-internal/stack-api.ts";
+import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
-  noopStackCatalogSetupLayer,
-  recordingStackCatalogSetup,
+  StackCatalogSetup,
+  StackCatalogSetupError,
 } from "../../../command-internal/stack-catalog-setup.ts";
-import { CAPABILITY_NAMES, StackIdSchema, type EffectStack } from "@supabase/stack/effect";
+import {
+  StackError,
+  type DatabaseInstance,
+  type ServiceCreation,
+  type ServiceCreationInput,
+  type Stack,
+} from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -74,14 +92,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -257,10 +273,16 @@ function fakeDbSession() {
 
 const tempRoot = useTempWorkdir("supabase-db-start-int-");
 
-function writeConfig(workdir: string, contents: string) {
-  mkdirSync(join(workdir, "supabase"), { recursive: true });
-  writeFileSync(join(workdir, "supabase", "config.toml"), contents);
-}
+const writeProjectFile = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  contents: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(workdir, "supabase", name), contents);
+});
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -284,23 +306,26 @@ interface SetupOpts {
   readonly connectFailuresRetryable?: boolean;
   /** Record catalog apply targets instead of the default noop. */
   readonly recordCatalog?: boolean;
+  /** Fail catalog setup after the database has been created. */
+  readonly catalogFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const catalog =
-    opts.recordCatalog === true
-      ? recordingStackCatalogSetup((input) => ({
-          kind: input.target.kind,
-          analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
-        }))
-      : undefined;
+  const catalogApplied: Array<{ readonly serviceCount: number }> = [];
   const workdir = opts.workdir ?? tempRoot.current;
-  if (opts.skipConfig !== true) {
-    writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
-    if (opts.projectEnvContents !== undefined) {
-      writeFileSync(join(workdir, "supabase", ".env"), opts.projectEnvContents);
-    }
-  }
+  const projectFiles = Layer.effectDiscard(
+    Effect.gen(function* () {
+      if (opts.skipConfig === true) return;
+      yield* writeProjectFile(
+        workdir,
+        "config.toml",
+        opts.configContents ?? 'project_id = "test"\n',
+      );
+      if (opts.projectEnvContents !== undefined) {
+        yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const cliSettings = mockCommandSettings({ workdir });
@@ -333,6 +358,13 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
+  const unusedStackApi = Layer.succeed(StackApi, {
+    create: () => Effect.die("unused"),
+    open: () => Effect.die("unused"),
+    discover: () => Effect.die("unused"),
+    find: () => Effect.die("unused"),
+  });
+
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
@@ -342,6 +374,7 @@ function setup(opts: SetupOpts = {}) {
     mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     dbConnection,
+    unusedStackApi,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: opts.platform ?? "linux", cwd: opts.cwd ?? workdir }),
@@ -352,30 +385,50 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
-    catalog?.layer ?? noopStackCatalogSetupLayer,
-  );
+    Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        opts.catalogFails === true
+          ? Effect.fail(new StackCatalogSetupError({ message: "catalog setup failed" }))
+          : Effect.sync(() => {
+              catalogApplied.push({ serviceCount: input.target.databaseServices.length });
+            }),
+    }),
+  ).pipe(Layer.provide(projectFiles));
   return {
     layer,
     out,
     telemetry,
     child,
     dbSession,
-    catalogApplied: catalog?.applied ?? [],
+    catalogApplied,
     get connectAttempts() {
       return connectAttempts;
     },
   };
 }
 
-const currentBranchPath = (workdir: string) =>
-  join(workdir, "supabase", ".branches", "_current_branch");
+const currentBranchPath = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", ".branches", "_current_branch");
+});
+
+const readCurrentBranch = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(yield* currentBranchPath(workdir));
+  }).pipe(Effect.provide(BunServices.layer));
+
+const currentBranchExists = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(yield* currentBranchPath(workdir));
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("db start", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
   });
   afterEach(() => {
-    delete process.env["SUPABASE_NETWORK_ID"];
     vi.unstubAllEnvs();
   });
 
@@ -386,7 +439,7 @@ describe("db start", () => {
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
 
@@ -397,11 +450,13 @@ describe("db start", () => {
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(
           Effect.provide(
-            Layer.succeed(LocalDockerEngine, {
-              containerExists: () => Effect.succeed(Option.some(true)),
-            }),
+            Layer.mergeAll(
+              layer,
+              Layer.succeed(LocalDockerEngine, {
+                containerExists: () => Effect.succeed(Option.some(true)),
+              }),
+            ),
           ),
-          Effect.provide(layer),
         );
         expect(out.stderrText).toContain("Postgres database is already running.");
         expect(child.spawned).toEqual([]);
@@ -421,7 +476,7 @@ describe("db start", () => {
         expect(out.stderrText).toContain("Initialising schema...");
         // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
         expect(out.stderrText).not.toContain("Finished");
       });
     },
@@ -434,7 +489,7 @@ describe("db start", () => {
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
         expect(s.connectAttempts).toBe(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
     15_000,
@@ -465,7 +520,7 @@ describe("db start", () => {
         expect(out.stderrText).toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -488,7 +543,7 @@ describe("db start", () => {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // Default config: storage and auth stay enabled — only the realtime job is skipped.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -515,7 +570,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         // The container is already created/healthy by the time JWKS resolution runs, so the
         // rollback still tears it down.
@@ -548,7 +603,7 @@ describe("db start", () => {
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
           true,
         );
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -584,7 +639,7 @@ describe("db start", () => {
           "/abs/host/backup.sql:/etc/backup.sql:ro",
         );
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -656,7 +711,7 @@ describe("db start", () => {
       // This run's fresh volume means the rollback prunes it too — the "backup volume already
       // exists" test above covers the non-pruning case.
       expect(volumePruneWasAttempted(child.spawned)).toBe(true);
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
 
@@ -665,13 +720,11 @@ describe("db start", () => {
     () => {
       // A shell SUPABASE_DEBUG (even "false") would suppress the project .env value, so clear
       // it first.
-      const previous = process.env["SUPABASE_DEBUG"];
-      delete process.env["SUPABASE_DEBUG"];
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
         route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        projectEnvContents: "SUPABASE_DEBUG=true\n",
       });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_DEBUG=true\n");
       // This log write goes straight to the real process stderr, never the mocked Output
       // service, so intercept it directly.
       const writes: Array<string> = [];
@@ -686,11 +739,10 @@ describe("db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
       }).pipe(
+        (body) => withEnvVar("SUPABASE_DEBUG", undefined, body),
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.process.stderr.write = originalWrite;
-            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
-            else process.env["SUPABASE_DEBUG"] = previous;
           }),
         ),
       );
@@ -709,7 +761,7 @@ describe("db start", () => {
         // test only asserts the outcome specific to `--from-backup`.
         yield* dbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -725,13 +777,12 @@ describe("db start", () => {
   it.live(
     "fails with a typed error on a malformed supabase/.env file, before any container is created",
     () => {
-      const { layer, child } = setup({});
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "not a valid env line at all\n");
+      const { layer, child } = setup({ projectEnvContents: "not a valid env line at all\n" });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -744,7 +795,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        expect(Cause.pretty(exit.cause)).toContain("failed to load config");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
@@ -760,7 +811,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+        expect(Cause.pretty(exit.cause)).toContain("failed to parse config: missing private key");
       }
       expect(out.stderrText).not.toContain("already running");
     });
@@ -786,7 +837,6 @@ describe("db start", () => {
   );
 
   it.live("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
-    process.env["SUPABASE_NETWORK_ID"] = "env-network";
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -796,7 +846,7 @@ describe("db start", () => {
       const args = createArgs(child.spawned);
       const networkIndex = args?.indexOf("--network") ?? -1;
       expect(args?.[networkIndex + 1]).toBe("env-network");
-    });
+    }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
   });
 
   it.live(
@@ -816,7 +866,7 @@ describe("db start", () => {
         const args = createArgs(child.spawned);
         const networkIndex = args?.indexOf("--network") ?? -1;
         expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
-      });
+      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
     },
   );
 
@@ -830,7 +880,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -858,7 +908,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -872,16 +922,14 @@ describe("db start", () => {
     () => {
       // auth.rate_limit has no enabled-gated validation — it's decoded unconditionally
       // regardless of auth.enabled or whether db start reads the field.
-      const { layer, child } = setup({});
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
-      );
+      const { layer, child } = setup({
+        projectEnvContents: "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.rate_limit");
         }
@@ -909,13 +957,12 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override, before any container is created",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({});
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({ projectEnvContents: `${envVar}=${envValue}\n` });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -930,13 +977,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -951,13 +1000,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -969,16 +1020,15 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error on a malformed SUPABASE_STORAGE_ENABLED override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.enabled");
         }
@@ -995,13 +1045,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1013,16 +1065,15 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error on a malformed SUPABASE_STUDIO_API_URL override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STUDIO_API_URL=http://[::1\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_STUDIO_API_URL=http://[::1\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Invalid config for studio.api_url");
         }
@@ -1042,7 +1093,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Missing required field in config: local_smtp.port");
         }
@@ -1054,16 +1105,15 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error on a malformed SUPABASE_AUTH_JWT_EXPIRY override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.jwt_expiry");
         }
@@ -1075,13 +1125,15 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error on a malformed SUPABASE_API_PORT override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_API_PORT=not-a-port\n");
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_API_PORT=not-a-port\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("api.port");
         }
@@ -1109,13 +1161,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1138,7 +1192,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.passkey");
         }
@@ -1161,7 +1215,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.external");
         }
@@ -1178,16 +1232,13 @@ describe("db start", () => {
       // the override needs.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
+        projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.hook");
         }
@@ -1204,16 +1255,13 @@ describe("db start", () => {
       const { layer, child } = setup({
         configContents:
           'project_id = "test"\n[auth]\nenabled = false\n[auth.email.smtp]\nhost = "smtp.example.com"\n',
+        projectEnvContents: "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.email.smtp");
         }
@@ -1228,11 +1276,8 @@ describe("db start", () => {
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[auth]\nenabled = false\n',
         route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
-      );
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1247,16 +1292,13 @@ describe("db start", () => {
       // reach the decode.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.image_transformation.enabled");
         }
@@ -1268,11 +1310,10 @@ describe("db start", () => {
   it.live(
     "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
     () => {
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      );
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1287,16 +1328,13 @@ describe("db start", () => {
       // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1311,16 +1349,13 @@ describe("db start", () => {
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
         running: true,
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1332,11 +1367,10 @@ describe("db start", () => {
   it.live(
     "ignores SUPABASE_DB_SSL_ENFORCEMENT_ENABLED when [db.ssl_enforcement] is absent from config.toml",
     () => {
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1357,7 +1391,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(
             "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
@@ -1389,12 +1423,13 @@ describe("db start", () => {
       return Effect.gen(function* () {
         for (const configContents of configContentsCases) {
           const { layer, out } = setup({ configContents, route: freshVolumeRoute(defaultRoute()) });
-          const onDiskConfig = readFileSync(
-            join(tempRoot.current, "supabase", "config.toml"),
-            "utf8",
-          );
-          expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          const onDiskConfig = yield* Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "config.toml"));
+          }).pipe(Effect.provide(BunServices.layer));
+          expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }
       });
@@ -1436,7 +1471,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const message = JSON.stringify(exit.cause);
+        const message = Cause.pretty(exit.cause);
         expect(message).toContain("DbConfigLoadError");
         expect(message).toContain("auth.email.max_frequency");
       }
@@ -1494,7 +1529,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to inspect service");
+        expect(Cause.pretty(exit.cause)).toContain("failed to inspect service");
       }
     });
   });
@@ -1538,212 +1573,356 @@ describe("db start", () => {
 });
 
 describe("db start stack backend", () => {
-  const STACK_ID = StackIdSchema.make("b".repeat(64));
-  const unused = Effect.die("unused");
-  const unusedFn = () => unused;
+  const stackId = "b".repeat(64);
+  const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
+    service: "database",
+    config: {
+      version: "17.6.1.173",
+      databasePassword: Redacted.make("secret"),
+      jwtSecret: Redacted.make("secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: {},
+  };
 
-  function mockStackApi(opts: {
-    readonly existing?: boolean;
-    readonly unconfigured?: boolean;
-    readonly databaseReady?: boolean;
-  }) {
-    const startConfigs: Array<unknown> = [];
-    const stack: EffectStack = {
-      id: STACK_ID,
-      status: Effect.succeed({
-        id: STACK_ID,
-        lifecycle: opts.databaseReady === true ? "running" : "stopped",
-        desiredLifecycle: opts.databaseReady === true ? "running" : "stopped",
-        runtime: { kind: "native" },
-        endpoints: {},
-        versions: {},
-        capabilities: CAPABILITY_NAMES.map((name) => ({
-          name,
-          activation: name === "database" ? "eager" : "lazy",
-          state: name === "database" && opts.databaseReady === true ? "ready" : "stopped",
-        })),
-        artifacts: [],
+  const databaseInstance = (
+    state: {
+      running: boolean;
+      destroyed: boolean;
+      credentialsCalled?: boolean;
+    },
+    onDestroy: () => void = () => {},
+    version = databaseCreation.config.version,
+  ): DatabaseInstance => ({
+    id: "database-primary",
+    service: "database",
+    start: Effect.sync(() => {
+      state.running = true;
+    }),
+    ready: Effect.void,
+    stop: Effect.sync(() => {
+      state.running = false;
+    }),
+    restart: () => Effect.void,
+    destroy: Effect.sync(() => {
+      state.destroyed = true;
+      onDestroy();
+    }),
+    prepare: Effect.void,
+    status: Effect.sync(() => ({
+      id: "database-primary",
+      endpoints: state.running
+        ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 54329 }]
+        : [],
+      config: {
+        ...databaseCreation,
+        config: { ...databaseCreation.config, version },
+      },
+      lifecycle: state.running ? ("running" as const) : ("stopped" as const),
+      health: state.running ? ("healthy" as const) : undefined,
+      error: undefined,
+      cleanupError: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      launchId: undefined,
+      intentRevision: 0,
+      wakeEnabled: state.running,
+      registered: true,
+    })),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () =>
+      Effect.sync(() => {
+        state.credentialsCalled = true;
+        return { databaseUrl: "postgresql://postgres:secret@127.0.0.1:54329/postgres" };
       }),
-      credentials: Effect.succeed({
-        database: {
-          url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-          password: Redacted.make("secret"),
-        },
-        api: {
-          publishableKey: "anon",
-          secretKey: Redacted.make("service"),
-          anonJwt: "anon",
-          serviceRoleJwt: Redacted.make("service"),
-        },
-      }),
-      prepare: unusedFn,
-      start: (startOpts) =>
-        Effect.sync(() => {
-          startConfigs.push(startOpts?.config);
-          return {
-            id: STACK_ID,
-            lifecycle: "running" as const,
-            desiredLifecycle: "running" as const,
-            runtime: { kind: "native" as const },
-            endpoints: {},
-            versions: {},
-            capabilities: CAPABILITY_NAMES.map((name) => ({
-              name,
-              activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-              state: name === "database" ? ("ready" as const) : ("dormant" as const),
-            })),
-            artifacts: [],
-          };
-        }),
-      stop: unused,
-      destroy: unused,
-      resetDatabase: unused,
-      logs: unusedFn,
-      followLogs: () => Stream.empty,
+    saveSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
+  });
+
+  const stackFixture = (
+    existing: boolean,
+    running = false,
+    standalone = false,
+    version = databaseCreation.config.version,
+  ) => {
+    const state: { running: boolean; destroyed: boolean; credentialsCalled?: boolean } = {
+      running,
+      destroyed: false,
     };
-    const api = Layer.succeed(StackApi, {
-      createStack: () => Effect.succeed(stack),
-      findStack: () =>
+    let members: ReadonlyArray<DatabaseInstance> = [];
+    let registered: ReadonlyArray<DatabaseInstance> = [];
+    const database = databaseInstance(
+      state,
+      () => {
+        members = [];
+        registered = [];
+      },
+      version,
+    );
+    members = existing && !standalone ? [database] : [];
+    registered = existing ? [database] : [];
+    const stack: Stack = {
+      id: stackId,
+      services: {
+        create: () => Effect.die("unused: composition factory creates database"),
+        get: (id: string) =>
+          id === database.id
+            ? Effect.succeed(database)
+            : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
+        list: Effect.sync(() => registered),
+      },
+      credentials: {
+        get: Effect.succeed({
+          jwtSecret: "secret",
+          postgresRootKey: "root-key",
+          databasePassword: "secret",
+          publishableKey: "sb_publishable_test",
+          secretKey: "sb_secret_test",
+          anonKey: "anon-token",
+          serviceRoleKey: "service-token",
+          jwks: '{"keys":[]}',
+          gotrueJwtKeys: "[]",
+          remoteJwks: "[]",
+          anonKeyIsOverride: false,
+          serviceRoleKeyIsOverride: false,
+        }),
+      },
+      composition: {
+        plan: (creations: ReadonlyArray<ServiceCreationInput>) =>
+          Effect.sync(() =>
+            creations.flatMap((creation) =>
+              creation.service === "database" && registered.includes(database)
+                ? [
+                    postgresVersion(creation.config.version) === postgresVersion(version)
+                      ? {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "unchanged" as const,
+                        }
+                      : {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "incompatible" as const,
+                          paths: ["config.version"],
+                        },
+                  ]
+                : [],
+            ),
+          ),
+        describe: Effect.sync(() => ({
+          members: members.map(({ id }) => ({ id, activation: "eager" as const })),
+          dependencies: [],
+        })),
+        supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
+          Effect.sync(() => {
+            members = creations.map(() => database);
+            registered = [database];
+            return members;
+          }),
+        configure: () => Effect.void,
+        start: Effect.succeed([]),
+        stop: Effect.succeed([]),
+        restart: Effect.succeed([]),
+      },
+      stop: Effect.void,
+      destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      commands: { run: () => Effect.die("unused") },
+    };
+    return { stack, state };
+  };
+
+  const stackLayer = (root: string, fixture: ReturnType<typeof stackFixture>, existing: boolean) =>
+    Layer.succeed(StackApi, {
+      create: () => Effect.succeed(fixture.stack),
+      open: () => Effect.succeed(fixture.stack),
+      discover: () => Effect.die("unused"),
+      find: () =>
         Effect.succeed(
-          opts.existing === true
+          existing
             ? Option.some({
-                id: STACK_ID,
-                projectRoot: tempRoot.current,
-                name: "default",
-                branchContext: "main",
-                runtime: { kind: "native" as const },
-                desiredLifecycle:
-                  opts.unconfigured === true ? ("unconfigured" as const) : ("stopped" as const),
+                definition: {
+                  id: stackId,
+                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  runtime: "native" as const,
+                  instances: [],
+                  lifetime: "detached" as const,
+                  composition: { members: [], dependencies: [] },
+                  ports: [],
+                },
+                host: undefined,
               })
             : Option.none(),
         ),
-      discoverStacks: unusedFn,
-      openStack: () => Effect.succeed(stack),
-      inspectStack: unusedFn,
     });
-    return { api, startConfigs };
-  }
 
-  it.live("starts a postgres-only stack when none exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({});
+  it.live("creates and starts only the primary database", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(false);
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
       );
-      expect(stack.startConfigs).toHaveLength(1);
-      expect(stack.startConfigs[0]).toMatchObject({
-        capabilities: {
-          rest: { enabled: false },
-        },
+      expect(fixture.state.running).toBe(true);
+      expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
+    });
+  });
+
+  it.live("destroys a newly created database when catalog setup fails", () => {
+    const { layer } = setup({ catalogFails: true });
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.destroyed).toBe(true);
+      expect((yield* fixture.stack.composition.describe).members).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "resumes the existing database when its pinned version matches the configured major",
+    () => {
+      const { layer, out, catalogApplied } = setup({ recordCatalog: true });
+      const fixture = stackFixture(true);
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              stackBackendLayer("stack"),
+              stackLayer(tempRoot.current, fixture, true),
+            ),
+          ),
+        );
+        expect(fixture.state.running).toBe(true);
+        expect(catalogApplied).toEqual([]);
+        expect(out.stderrText).not.toContain("already running");
       });
-      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
-      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    });
-  });
+    },
+  );
 
-  it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
-    const previous = process.env["SUPABASE_EXPERIMENTAL"];
-    delete process.env["SUPABASE_EXPERIMENTAL"];
-    const { layer, out } = setup({
-      recordCatalog: true,
-      projectEnvContents: "SUPABASE_EXPERIMENTAL=true\n",
-    });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({});
+  it.live("rejects a different database major when resuming the saved stack", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, false, "15.13.0.161");
     return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
       );
-      expect(out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-          else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-        }),
-      ),
-    );
-  });
-
-  it.live("does not persist exclusions when a stack already exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({ existing: true });
-    return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
-      );
-      expect(stack.startConfigs).toEqual([undefined]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.running).toBe(false);
       expect(catalogApplied).toEqual([]);
-      expect(out.stderrText).not.toContain("Applying migration");
     });
   });
 
-  it.live("applies the postgres-only overlay when an unconfigured identity already exists", () => {
-    const { layer, catalogApplied, out } = setup({ recordCatalog: true });
-    mkdirSync(join(tempRoot.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
-    const stack = mockStackApi({ existing: true, unconfigured: true });
+  it.live("rejects a standalone database outside the saved composition", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, true);
     return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
       );
-      expect(stack.startConfigs).toHaveLength(1);
-      expect(stack.startConfigs[0]).toMatchObject({
-        capabilities: {
-          rest: { enabled: false },
-        },
-      });
-      expect(catalogApplied).toEqual([{ kind: "live", analytics: false }]);
-      expect(out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    });
-  });
-
-  it.live("reports an already-running stack database without starting", () => {
-    const { layer, out, catalogApplied } = setup({ recordCatalog: true });
-    const stack = mockStackApi({ existing: true, databaseReady: true });
-    return Effect.gen(function* () {
-      yield* dbStart(DEFAULT_FLAGS).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
-      );
-      expect(out.stderrText).toContain("Postgres database is already running.");
-      expect(stack.startConfigs).toEqual([]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("standalone database");
+        expect(Cause.pretty(exit.cause)).toContain("Destroy");
+      }
+      expect(fixture.state.running).toBe(false);
+      expect(fixture.state.destroyed).toBe(false);
       expect(catalogApplied).toEqual([]);
+      expect(yield* fixture.stack.composition.describe).toMatchObject({ members: [] });
+      expect((yield* fixture.stack.services.list).map(({ id }) => id)).toEqual([
+        "database-primary",
+      ]);
+    });
+  });
+
+  it.live("does not launch a stopped stack while resolving local credentials", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(true, false);
+    return Effect.gen(function* () {
+      const exit = yield* stackLocalDatabaseConn.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+    });
+  });
+
+  it.live("uses the running primary's observed connection without launching its owner", () => {
+    const { layer, out } = setup();
+    const fixture = stackFixture(true, true);
+    const provided = Layer.mergeAll(
+      layer,
+      stackBackendLayer("stack"),
+      stackLayer(tempRoot.current, fixture, true),
+    );
+    return Effect.gen(function* () {
+      const conn = yield* stackLocalDatabaseConn.pipe(Effect.provide(provided));
+      expect(conn.host).toBe("127.0.0.1");
+      expect(conn.port).toBe(54329);
+      expect(conn.password).toBe("secret");
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(provided));
+      expect(out.stderrText).toContain("already running");
+      expect(fixture.state.destroyed).toBe(false);
     });
   });
 
   it.live("refuses --from-backup", () => {
     const { layer } = setup();
-    const stack = mockStackApi({});
+    const fixture = stackFixture(false);
     return Effect.gen(function* () {
       const exit = yield* dbStart(flags("backup.sql")).pipe(
-        Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"), stack.api)),
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
-          "db start --from-backup is not supported when the stack backend is enabled.",
-        );
-      }
-      expect(stack.startConfigs).toEqual([]);
+      expect(fixture.state.running).toBe(false);
     });
   });
 });

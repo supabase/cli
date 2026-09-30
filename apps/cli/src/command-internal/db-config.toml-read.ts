@@ -1,3 +1,4 @@
+import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
 import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
@@ -61,8 +62,9 @@ export interface DbTomlValues {
   /** `[db] major_version`, default 17. */
   readonly majorVersion: number;
   /**
-   * `[experimental] orioledb_version` (env-expanded). Set on a 15/17 project to
-   * rewrite the Postgres image to the OrioleDB tag; `None` for a vanilla project.
+   * `[db] orioledb_version` (env-expanded); the deprecated `[experimental] orioledb_version` is
+   * already promoted into this path by `normalizeDeprecatedOrioleDBVersion`. Set on a 15/17
+   * project to rewrite the Postgres image to the OrioleDB tag; `None` for a vanilla project.
    */
   readonly orioledbVersion: Option.Option<string>;
   /**
@@ -286,7 +288,7 @@ const ENV_OVERRIDABLE_KEYS = [
   "analytics.gcp_project_id",
   "analytics.gcp_project_number",
   "analytics.gcp_jwt_path",
-  "experimental.orioledb_version",
+  "db.orioledb_version",
   "experimental.s3_host",
   "experimental.s3_region",
   "experimental.s3_access_key",
@@ -611,6 +613,21 @@ function findInvalidRemoteProjectId(
 
 const ENV_PATTERN = /^env\((.*)\)$/;
 
+/** The variable name inside an `env(VAR)` reference, or `undefined` for any other string. */
+export function envRefName(value: string): string | undefined {
+  const matches = ENV_PATTERN.exec(value);
+  return matches === null ? undefined : (matches[1] ?? "");
+}
+
+/**
+ * The substitution rule for an `env(VAR)` reference: the resolved value wins only when it
+ * is set and non-empty; otherwise the `env(VAR)` literal is preserved unchanged. Shared
+ * with the inspect report reader, which resolves the name through Effect's `Config`.
+ */
+export function envRefValue(literal: string, resolved: string | undefined): string {
+  return resolved !== undefined && resolved.length > 0 ? resolved : literal;
+}
+
 /**
  * Expand `env(VAR)` config form: a string matching `^env\((.*)\)$` resolves to
  * the named environment variable, but only when that variable is set and
@@ -618,13 +635,10 @@ const ENV_PATTERN = /^env\((.*)\)$/;
  * resolves the name against the shell environment first and then the project
  * `.env` files.
  */
-export function expandEnv(value: string, lookup: (name: string) => string | undefined): string {
-  const matches = ENV_PATTERN.exec(value);
-  if (matches !== null) {
-    const env = lookup(matches[1] ?? "");
-    if (env !== undefined && env.length > 0) return env;
-  }
-  return value;
+function expandEnv(value: string, lookup: (name: string) => string | undefined): string {
+  const name = envRefName(value);
+  if (name === undefined) return value;
+  return envRefValue(value, lookup(name));
 }
 
 /** `[db]` ports decode into `uint16`. */
@@ -746,7 +760,7 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
-const configEnvOption = Effect.fnUntraced(function* (name: string) {
+export const configEnvOption = Effect.fnUntraced(function* (name: string) {
   return yield* Config.option(Config.string(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
@@ -1101,6 +1115,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         }),
       );
     }
+    // Same per-section promotion as the config loader, before the remote merge; the loader owns
+    // the deprecation warning.
+    doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
     // Config load aborts when two `[remotes.*]` blocks share a `project_id`,
     // regardless of which command runs — check before merging.
     const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
@@ -1262,7 +1279,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // checks the four S3 fields below; the image rewrite itself happens in `resolveDbImage`.
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(expandEnv(value, lookup)) : Option.none();
-  const orioledbVersion = expandString(experimentalRaw?.["orioledb_version"]);
+  const orioledbVersionRaw =
+    (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
+    db?.["orioledb_version"];
+  const orioledbVersion = expandString(orioledbVersionRaw);
   if (Option.isSome(orioledbVersion) && (majorVersion === 15 || majorVersion === 17)) {
     // Warns (does not fail) when an S3 field still holds an unexpanded `env(VAR)`;
     // matches the established stderr line, with the env var name from the capture.

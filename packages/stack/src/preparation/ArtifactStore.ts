@@ -1,7 +1,19 @@
-import { Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate, Schema } from "effect";
+import {
+  Clock,
+  Crypto,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  PlatformError,
+  Predicate,
+  Schema,
+} from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
+import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
+import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
 
 /** A concrete artifact identity. `key` may contain subdirectories but never an absolute or traversing path. */
 export interface ArtifactRequest {
@@ -15,12 +27,14 @@ export interface ArtifactRequest {
 
 /**
  * The source is the only download/archive boundary: it writes an unpacked artifact tree
- * below `destination` after verifying the downloaded archive digest. The store stays
- * independent of transport and archive formats.
+ * below `destination` after verifying the downloaded archive digest. HTTP transport remains
+ * supplied by the caller through the Effect HttpClient service.
  */
 export interface ArtifactSource {
   /** Resolves the published digest only when the store has no valid cached artifact. */
-  readonly checksum: (request: ArtifactRequest) => Effect.Effect<string, StackPreparationError>;
+  readonly checksum: (
+    request: ArtifactRequest,
+  ) => Effect.Effect<string, PreparationError, HttpClient.HttpClient>;
   readonly materialize: (
     request: ArtifactRequest,
     destination: string,
@@ -28,8 +42,12 @@ export interface ArtifactSource {
     onProgress?: (state: "downloading" | "preparing") => void,
   ) => Effect.Effect<
     void,
-    StackPreparationError | ArtifactIntegrityError,
-    FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
+    PreparationError | ArtifactIntegrityError,
+    | FileSystem.FileSystem
+    | Path.Path
+    | Crypto.Crypto
+    | ChildProcessSpawner.ChildProcessSpawner
+    | HttpClient.HttpClient
   >;
 }
 
@@ -38,7 +56,7 @@ export interface ArtifactStoreOptions {
   readonly source: ArtifactSource;
 }
 
-export interface PreparedArtifact {
+interface PreparedArtifact {
   readonly key: string;
   /** Installed artifact directory. Required runtime paths are relative to this directory. */
   readonly path: string;
@@ -48,18 +66,16 @@ export interface PreparedArtifact {
   readonly outcome: "cached" | "downloaded";
 }
 
-export type ArtifactStoreError = StackPreparationError | ArtifactIntegrityError;
-
-export interface ArtifactStore {
-  readonly prepare: (
-    request: ArtifactRequest,
-    onProgress?: (state: "downloading" | "preparing") => void,
-  ) => Effect.Effect<PreparedArtifact, ArtifactStoreError>;
-}
+type ArtifactStoreError = PreparationError | ArtifactIntegrityError;
 
 const ARTIFACT_FORMAT = "supabase-stack-artifact-v3";
 const METADATA_NAME = ".artifact.json";
 const EXECUTABLE_MODE = 0o755;
+/**
+ * Child of the staging directory that sources materialize into: GNU tar resets its extraction
+ * target's mtime from the archive, which must not make a staging directory look like a leftover.
+ */
+const STAGING_CONTENT_NAME = "content";
 
 type ArtifactPathKind = "file" | "directory" | "symlink";
 
@@ -70,7 +86,7 @@ type InspectedArtifactPath = {
 };
 
 const artifactError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
-  new StackPreparationError({ ...fields, message });
+  new PreparationError({ ...fields, message });
 
 const metadataError = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
   new ArtifactIntegrityError({ ...fields, message });
@@ -92,7 +108,7 @@ const mapFs = <A>(
   path: string,
   operation: string,
   effect: Effect.Effect<A, PlatformError.PlatformError>,
-): Effect.Effect<A, StackPreparationError> =>
+): Effect.Effect<A, PreparationError> =>
   effect.pipe(
     Effect.mapError((cause) =>
       artifactError(
@@ -119,7 +135,7 @@ const isNotFound = (cause: unknown): cause is PlatformError.PlatformError =>
 const isMissingArtifactRoot = (error: ArtifactIntegrityError): boolean =>
   Predicate.hasProperty(error, "cause") && isNotFound(error.cause);
 
-const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
+const validateKey = (key: string): Effect.Effect<void, PreparationError> =>
   validateRelativePath(key, "artifact key").pipe(
     Effect.flatMap(() =>
       /^[A-Za-z0-9][A-Za-z0-9._-]*(?:[\\/][A-Za-z0-9][A-Za-z0-9._-]*)*$/u.test(key)
@@ -128,7 +144,7 @@ const validateKey = (key: string): Effect.Effect<void, StackPreparationError> =>
     ),
   );
 
-const validateRequest = (request: ArtifactRequest): Effect.Effect<void, StackPreparationError> =>
+const validateRequest = (request: ArtifactRequest): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     yield* validateKey(request.key);
     const seen = new Set<string>();
@@ -160,7 +176,7 @@ const metadataFor = (
   ...(request.executablePath === undefined ? {} : { executablePath: request.executablePath }),
 });
 
-const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, StackPreparationError> =>
+const encodeMetadata = (metadata: ArtifactMetadata): Effect.Effect<string, PreparationError> =>
   Schema.encodeEffect(Schema.fromJsonString(ArtifactMetadataSchema))(metadata).pipe(
     Effect.mapError((cause) =>
       artifactError(`Unable to encode artifact metadata: ${String(cause)}`),
@@ -193,7 +209,7 @@ const ensureDirectory = (
   path: Path.Path,
   directory: string,
   canonicalRoot: string,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     const root = path.resolve(canonicalRoot);
     const resolved = path.resolve(directory);
@@ -235,7 +251,7 @@ const ensureDirectory = (
       return yield* artifactError("Artifact directory contains a symlink", { path: resolved });
     if (!pathAtOrBelow(root, real, path.sep))
       return yield* artifactError("Artifact directory escapes cache root", { path: resolved });
-    yield* mapFs(resolved, "secure artifact directory", fs.chmod(resolved, 0o700));
+    yield* mapFs(resolved, "secure artifact directory", restrictDirectoryToOwner(fs, resolved));
   });
 
 const ensureSafeRoot = (
@@ -495,31 +511,22 @@ const ensureExecutableFile = (
   );
 };
 
-const metadataMatchesRequest = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean => {
-  const samePaths =
-    metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
-    metadata.requiredRuntimePaths.every(
-      (entry, index) => entry === request.requiredRuntimePaths[index],
-    );
-  const kindEntries = Object.keys(metadata.requiredRuntimeKinds);
-  const sameKinds =
-    kindEntries.length === request.requiredRuntimePaths.length &&
-    request.requiredRuntimePaths.every(
-      (entry) => metadata.requiredRuntimeKinds[entry] !== undefined,
-    );
-  return (
-    metadata.key === request.key &&
-    samePaths &&
-    sameKinds &&
-    metadata.executablePath === request.executablePath
-  );
-};
+const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
+  metadata.key !== request.key || metadata.executablePath !== request.executablePath;
 
-const verifyMetadata = (
+const unrecordedRequiredPaths = (
   request: ArtifactRequest,
   metadata: ArtifactMetadata,
-): Effect.Effect<string, ArtifactIntegrityError> => {
-  const sha256 = validateSha256(metadata.sha256).pipe(
+): ReadonlyArray<string> =>
+  request.requiredRuntimePaths.filter(
+    (relative) => metadata.requiredRuntimeKinds[relative] === undefined,
+  );
+
+const sha256Of = (
+  request: ArtifactRequest,
+  metadata: ArtifactMetadata,
+): Effect.Effect<string, ArtifactIntegrityError> =>
+  validateSha256(metadata.sha256).pipe(
     Effect.mapError((cause) =>
       metadataError("Cached artifact metadata contains an invalid SHA-256", {
         key: request.key,
@@ -527,18 +534,12 @@ const verifyMetadata = (
       }),
     ),
   );
-  if (!metadataMatchesRequest(request, metadata))
-    return Effect.fail(
-      metadataError("Cached artifact metadata does not match the request", { key: request.key }),
-    );
-  return sha256;
-};
 
 const writeBytesSync = (
   fs: FileSystem.FileSystem,
   path: string,
   bytes: Uint8Array,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const file = yield* fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
@@ -569,16 +570,13 @@ const writeMetadataSync = (
   fs: FileSystem.FileSystem,
   path: string,
   metadata: ArtifactMetadata,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     const encoded = yield* encodeMetadata(metadata);
     yield* writeBytesSync(fs, path, new TextEncoder().encode(encoded));
   });
 
-const cleanup = (
-  fs: FileSystem.FileSystem,
-  path: string,
-): Effect.Effect<void, StackPreparationError> =>
+const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, PreparationError> =>
   fs
     .remove(path, { recursive: true, force: true })
     .pipe(
@@ -587,7 +585,85 @@ const cleanup = (
       ),
     );
 
-const makeArtifactOperation = (
+const updateMetadataAtomic = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  metadataPath: string,
+  metadata: ArtifactMetadata,
+): Effect.Effect<void, PreparationError> =>
+  Effect.gen(function* () {
+    const token = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) =>
+        artifactError(`Unable to allocate artifact metadata temporary name: ${cause.message}`, {
+          path: metadataPath,
+          cause,
+        }),
+      ),
+    );
+    const temporary = path.join(path.dirname(metadataPath), `${METADATA_NAME}.${token}.tmp`);
+    yield* Effect.gen(function* () {
+      yield* writeMetadataSync(fs, temporary, metadata);
+      yield* mapFs(
+        metadataPath,
+        "update cached artifact metadata",
+        fs.rename(temporary, metadataPath),
+      );
+    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
+  });
+
+const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
+
+const leftoverToken = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+/** Matches the temporary and quarantine names the store creates beside `targetName`. */
+const isLeftoverOf = (targetName: string, name: string): boolean => {
+  const prefix = `.${targetName}.`;
+  const suffix = [".tmp", ".invalid"].find((candidate) => name.endsWith(candidate));
+  return (
+    suffix !== undefined &&
+    name.startsWith(prefix) &&
+    leftoverToken.test(name.slice(prefix.length, name.length - suffix.length))
+  );
+};
+
+/**
+ * Best-effort removal of one target's temp/quarantine siblings that a hard kill left behind.
+ * Only entries older than `orphanMaxAgeMillis` are removed, so a concurrent in-progress download
+ * by another process is never touched.
+ */
+const reapLeftoversOf = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  target: string,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const parent = path.dirname(target);
+    const targetName = path.basename(target);
+    const names = yield* fs.readDirectory(parent);
+    yield* Effect.forEach(
+      names.filter((name) => isLeftoverOf(targetName, name)),
+      (name) => {
+        const candidate = path.join(parent, name);
+        return fs.stat(candidate).pipe(
+          Effect.flatMap((info) =>
+            Option.match(info.mtime, {
+              onNone: () => Effect.void,
+              onSome: (mtime) =>
+                now - mtime.getTime() > orphanMaxAgeMillis
+                  ? fs.remove(candidate, { recursive: true, force: true })
+                  : Effect.void,
+            }),
+          ),
+          Effect.ignore,
+        );
+      },
+      { discard: true },
+    );
+  }).pipe(Effect.ignore);
+
+const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
@@ -596,15 +672,16 @@ const makeArtifactOperation = (
   source: ArtifactSource,
   request: ArtifactRequest,
   onProgress?: (state: "downloading" | "preparing") => void,
-): Effect.Effect<PreparedArtifact, ArtifactStoreError> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const target = path.resolve(cacheRoot, request.key);
     const targetParent = path.dirname(target);
     yield* ensureDirectory(fs, path, targetParent, cacheRoot);
+    yield* reapLeftoversOf(fs, path, target);
     const metadataPath = path.join(target, METADATA_NAME);
     const checkCached: Effect.Effect<
       Option.Option<PreparedArtifact>,
-      ArtifactIntegrityError
+      ArtifactStoreError
     > = Effect.gen(function* () {
       const realRoot = yield* ensureSafeRoot(fs, path, target, cacheRoot).pipe(
         Effect.map(Option.some),
@@ -616,20 +693,59 @@ const makeArtifactOperation = (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
-      // Same version/target key with an expanded required-path list is a miss, not corruption.
-      if (!metadataMatchesRequest(request, metadata)) return Option.none();
-      const sha256 = yield* verifyMetadata(request, metadata);
+      // A key names immutable content and sources unpack whole archives, so only a different key
+      // or executable is a miss; paths beyond the recorded ones are checked in the published tree.
+      if (identityMismatch(request, metadata)) return Option.none();
+      const sha256 = yield* sha256Of(request, metadata);
+      const newPaths = unrecordedRequiredPaths(request, metadata);
+      const newPathSet = new Set(newPaths);
+      const recordedPaths = request.requiredRuntimePaths.filter(
+        (relative) => !newPathSet.has(relative),
+      );
       // Published content is not rehashed on cache hits: metadata and cheap structural checks
       // protect the cache boundary; content tampering may execute or fail later when the
       // workload starts.
-      const safePaths = yield* ensureSafePaths(
+      const recordedSafePaths = yield* ensureSafePaths(
         fs,
         path,
         target,
         realRoot.value,
         metadata,
-        request.requiredRuntimePaths,
+        recordedPaths,
       );
+      // A path the recorded metadata has not seen yet gets the same containment and safety
+      // validation a fresh publish applies, before its kind is trusted and recorded.
+      const newSafePaths =
+        newPaths.length > 0
+          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths).pipe(
+              Effect.mapError((cause) =>
+                metadataError(
+                  `Cached artifact ${request.key} cannot serve newly required runtime paths (${cause.message}); remove ${target} to download it again`,
+                  { key: request.key, path: target, cause },
+                ),
+              ),
+            )
+          : {};
+      const safePaths = { ...recordedSafePaths, ...newSafePaths };
+      if (newPaths.length > 0) {
+        const newKinds = Object.fromEntries(
+          Object.entries(newSafePaths).map(([relative, inspected]) => [relative, inspected.kind]),
+        );
+        const appendedPaths = newPaths.filter(
+          (relative) => !metadata.requiredRuntimePaths.includes(relative),
+        );
+        // The paths above are already validated; a failed write only loses the recording, so
+        // it must not fail preparation. A later request re-validates and retries the write.
+        yield* updateMetadataAtomic(fs, path, crypto, metadataPath, {
+          ...metadata,
+          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...appendedPaths],
+          requiredRuntimeKinds: { ...metadata.requiredRuntimeKinds, ...newKinds },
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Unable to record newly validated artifact runtime paths", cause),
+          ),
+        );
+      }
       if (request.executablePath !== undefined) {
         const executable = safePaths[request.executablePath];
         if (executable === undefined)
@@ -718,11 +834,12 @@ const makeArtifactOperation = (
         }),
       ),
     );
-    const temporary = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
+    const staging = path.join(targetParent, `.${path.basename(target)}.${token}.tmp`);
+    const content = path.join(staging, STAGING_CONTENT_NAME);
     const published = yield* Effect.gen(function* () {
-      yield* ensureDirectory(fs, path, temporary, cacheRoot);
-      const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
-      yield* source.materialize(request, temporary, expectedSha256, onProgress).pipe(
+      yield* ensureDirectory(fs, path, content, cacheRoot);
+      const contentRoot = yield* ensureSafeRoot(fs, path, content, cacheRoot);
+      yield* source.materialize(request, content, expectedSha256, onProgress).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -733,8 +850,8 @@ const makeArtifactOperation = (
       const runtimePaths = yield* validateFreshRuntimePaths(
         fs,
         path,
-        temporary,
-        temporaryRoot,
+        content,
+        contentRoot,
         request.requiredRuntimePaths,
       );
       const runtimeKinds = Object.fromEntries(
@@ -742,7 +859,7 @@ const makeArtifactOperation = (
       );
       yield* writeMetadataSync(
         fs,
-        path.join(temporary, METADATA_NAME),
+        path.join(content, METADATA_NAME),
         metadataFor(request, expectedSha256, runtimeKinds),
       );
       if (request.executablePath !== undefined) {
@@ -760,7 +877,7 @@ const makeArtifactOperation = (
       }
       const beforePublish = yield* inspectCache();
       if (Option.isSome(beforePublish)) return beforePublish.value;
-      const rename = mapFs(temporary, "publish artifact", fs.rename(temporary, target)).pipe(
+      const rename = mapFs(content, "publish artifact", fs.rename(content, target)).pipe(
         Effect.as(undefined),
       );
       const recoverPublish = (): Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =>
@@ -772,7 +889,7 @@ const makeArtifactOperation = (
       const recovered: Effect.Effect<PreparedArtifact | undefined, ArtifactStoreError> =
         rename.pipe(Effect.catch(recoverPublish));
       return yield* recovered;
-    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
+    }).pipe(Effect.onExit(() => cleanup(fs, staging)));
     if (published !== undefined) return published;
     return {
       key: request.key,
@@ -783,65 +900,60 @@ const makeArtifactOperation = (
       outcome: "downloaded" as const,
     };
   });
+});
 
-export const makeArtifactStore = (
+export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* (
   options: ArtifactStoreOptions,
-): Effect.Effect<
-  ArtifactStore,
-  StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
-> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    if (options.cacheRoot.trim().length === 0)
-      return yield* artifactError("Artifact cache root must not be blank");
-    const requestedRoot = path.resolve(options.cacheRoot);
-    yield* mapFs(
-      requestedRoot,
-      "create artifact cache root",
-      fs.makeDirectory(requestedRoot, { recursive: true, mode: 0o700 }),
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (options.cacheRoot.trim().length === 0)
+    return yield* artifactError("Artifact cache root must not be blank");
+  const requestedRoot = path.resolve(options.cacheRoot);
+  yield* mapFs(
+    requestedRoot,
+    "create artifact cache root",
+    fs.makeDirectory(requestedRoot, { recursive: true, mode: 0o700 }),
+  );
+  const cacheRoot = yield* fs.realPath(requestedRoot).pipe(
+    Effect.mapError((cause) =>
+      artifactError(`Unable to resolve artifact cache root: ${cause.message}`, {
+        path: requestedRoot,
+        cause,
+      }),
+    ),
+  );
+  const rootInfo = yield* fs.stat(cacheRoot).pipe(
+    Effect.mapError((cause) =>
+      artifactError(`Unable to inspect artifact cache root: ${cause.message}`, {
+        path: cacheRoot,
+        cause,
+      }),
+    ),
+  );
+  if (rootInfo.type !== "Directory")
+    return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
+  yield* mapFs(cacheRoot, "secure artifact cache root", restrictDirectoryToOwner(fs, cacheRoot));
+  const prepare = Effect.fn("ArtifactStore.prepare")(function* (
+    request: ArtifactRequest,
+    onProgress?: (state: "downloading" | "preparing") => void,
+  ) {
+    yield* validateRequest(request);
+    const target = path.resolve(cacheRoot, request.key);
+    if (!pathWithin(cacheRoot, target, path.sep))
+      return yield* artifactError("Artifact key escapes cache root", { key: request.key });
+    return yield* makeArtifactOperation(
+      fs,
+      path,
+      crypto,
+      childProcessSpawner,
+      cacheRoot,
+      options.source,
+      request,
+      onProgress,
     );
-    const cacheRoot = yield* fs.realPath(requestedRoot).pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to resolve artifact cache root: ${cause.message}`, {
-          path: requestedRoot,
-          cause,
-        }),
-      ),
-    );
-    const rootInfo = yield* fs.stat(cacheRoot).pipe(
-      Effect.mapError((cause) =>
-        artifactError(`Unable to inspect artifact cache root: ${cause.message}`, {
-          path: cacheRoot,
-          cause,
-        }),
-      ),
-    );
-    if (rootInfo.type !== "Directory")
-      return yield* artifactError("Artifact cache root must be a directory", { path: cacheRoot });
-    yield* mapFs(cacheRoot, "secure artifact cache root", fs.chmod(cacheRoot, 0o700));
-    const prepare = (
-      request: ArtifactRequest,
-      onProgress?: (state: "downloading" | "preparing") => void,
-    ) =>
-      Effect.gen(function* () {
-        yield* validateRequest(request);
-        const target = path.resolve(cacheRoot, request.key);
-        if (!pathWithin(cacheRoot, target, path.sep))
-          return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-        return yield* makeArtifactOperation(
-          fs,
-          path,
-          crypto,
-          childProcessSpawner,
-          cacheRoot,
-          options.source,
-          request,
-          onProgress,
-        );
-      });
-    return { prepare };
   });
+  return { prepare };
+});

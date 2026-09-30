@@ -4,7 +4,7 @@ const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 /**
  * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
  * no slim build (kong, the `differ`/`migra`/`pgprove` job images) are absent and
- * keep their docker.io reference.
+ * keep their docker.io reference. OrioleDB tags are excluded in `slimCatalogPin`.
  */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
@@ -60,8 +60,37 @@ function slimTagForService(service: SlimServiceName, rawTag: string): string {
   return tag;
 }
 
-function slimImageRef(service: SlimServiceName, rawTag: string): string {
-  return `${SLIM_IMAGE_PREFIX}${service}:${slimTagForService(service, rawTag)}`;
+export interface SlimCatalogPin {
+  readonly service: SlimServiceName;
+  readonly version: string;
+}
+
+/** OrioleDB tags are docker.io-only; slim-services does not publish them. */
+export function isOrioleImage(image: string): boolean {
+  const tag = imageTag(image);
+  return tag !== undefined && tag.toLowerCase().includes("orioledb");
+}
+
+/**
+ * Slim service and tag for a Dockerfile alias. Absent when that alias has no
+ * slim build (kong, the one-shot job images, and OrioleDB tags).
+ */
+export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | undefined {
+  if (isOrioleImage(image)) {
+    return undefined;
+  }
+  const service = SLIM_SERVICE_LOOKUP[alias];
+  if (service === undefined) {
+    return undefined;
+  }
+
+  const rawTag = imageTag(image);
+  if (rawTag === undefined) {
+    return undefined;
+  }
+
+  const tag = alias === "vector" ? rawTag.replace(/-alpine$/, "") : rawTag;
+  return { service, version: slimTagForService(service, tag) };
 }
 
 /**
@@ -74,19 +103,11 @@ function slimImageRef(service: SlimServiceName, rawTag: string): string {
  * pin on any other service is a real tag, not a variant marker.
  */
 export function toSlimImage(alias: string, image: string): string {
-  const service = SLIM_SERVICE_LOOKUP[alias];
-  if (service === undefined) {
+  const pin = slimCatalogPin(alias, image);
+  if (pin === undefined) {
     return image;
   }
-
-  const tagSeparator = image.lastIndexOf(":");
-  if (tagSeparator === -1) {
-    return image;
-  }
-
-  const rawTag = image.slice(tagSeparator + 1);
-  const tag = alias === "vector" ? rawTag.replace(/-alpine$/, "") : rawTag;
-  return slimImageRef(service, tag);
+  return `${SLIM_IMAGE_PREFIX}${pin.service}:${pin.version}`;
 }
 
 /** `toSlimImage` behind the feature flag; a no-op while the flag is off. */

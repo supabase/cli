@@ -102,7 +102,7 @@ export interface StatusOutputNames {
  * Resolves each field's output key, applying `--override-name <fieldKey>=<name>` remaps over
  * the default names. `overrides` maps `fieldKey` (e.g. `"api.url"`) to the replacement name.
  */
-function resolveOutputNames(overrides: ReadonlyMap<string, string>): StatusOutputNames {
+export function resolveOutputNames(overrides: ReadonlyMap<string, string>): StatusOutputNames {
   const nameFor = (field: StatusField) => overrides.get(field.fieldKey) ?? field.defaultName;
   return {
     apiUrl: nameFor(API_URL),

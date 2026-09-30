@@ -4,8 +4,10 @@ import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { StorageRmConfirmationRequiredError } from "../storage.errors.ts";
+import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir, withEnvVar } from "../../../../tests/helpers/command-mocks.ts";
 import { storageRm } from "./rm.handler.ts";
 
@@ -226,23 +228,98 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("uses the default (no) when non-interactive and skips deletion", () => {
+  it.live(
+    "refuses to delete in json mode without --yes instead of reporting an empty success",
+    () => {
+      const { layer, requests, out } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        format: "json",
+        routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+      });
+      // Force the colour gate on so a styled suggestion would carry ANSI.
+      return withEnvVar(
+        "NO_COLOR",
+        undefined,
+        withEnvVar(
+          "CLICOLOR_FORCE",
+          "1",
+          Effect.gen(function* () {
+            const exit = yield* storageRm({
+              files: ["ss:///private/a.pdf"],
+              recursive: false,
+              linked: true,
+              local: true,
+              projectRef: Option.none(),
+            }).pipe(Effect.provide(layer), Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+              const refusal = exit.cause.reasons
+                .filter(Cause.isFailReason)
+                .map((reason) => reason.error)
+                .find((error) => error instanceof StorageRmConfirmationRequiredError);
+              expect(refusal).toBeDefined();
+              expect(refusal?.suggestion).toContain("--yes");
+              expect(refusal?.suggestion).toContain("SUPABASE_YES");
+              expect(refusal?.suggestion).not.toContain("\u001b[");
+            }
+            expect(requests).toHaveLength(0);
+            expect(out.messages.some((m) => m.type === "success")).toBe(false);
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("still refuses -r with no paths in json mode without --yes", () => {
+    const { layer, requests, out } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageRm({
+        files: [],
+        recursive: true,
+        linked: true,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const refusal = exit.cause.reasons
+          .filter(Cause.isFailReason)
+          .map((reason) => reason.error)
+          .find((error) => error instanceof StorageRmConfirmationRequiredError);
+        expect(refusal).toBeDefined();
+      }
+      expect(requests).toHaveLength(0);
+      expect(out.messages.some((m) => m.type === "success")).toBe(false);
+    });
+  });
+
+  it.live("still reports the missing -r error, not the refusal, with no paths in json mode", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "json",
-      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
     });
     return Effect.gen(function* () {
       const exit = yield* storageRm({
-        files: ["ss:///private/a.pdf"],
+        files: [],
         recursive: false,
         linked: true,
         local: true,
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "You must specify -r flag to delete directories.",
+        );
+      }
+      expect(requests).toHaveLength(0);
     });
   });
 
@@ -530,7 +607,7 @@ describe("storage rm", () => {
   });
 
   it.live("emits a { deleted, buckets_deleted } result in json mode", () => {
-    const { layer, out } = setupStorage(tmp.current, {
+    const { layer, out, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       yes: true,
@@ -546,6 +623,7 @@ describe("storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["deleted"]).toEqual(["a.pdf"]);
       expect(success?.data?.["buckets_deleted"]).toEqual([]);
@@ -793,7 +871,6 @@ describe("stack backend", () => {
       toml: 'project_id = "test"\n',
       local: true,
       stackBackend: true,
-      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
       confirm: [true],
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
@@ -810,7 +887,7 @@ describe("stack backend", () => {
         (r) => r.method === "DELETE" && r.url.includes(DELETE_OBJECT("private")),
       );
       expect(del?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(del?.headers["apikey"]).toBe("stack-jwt");
+      expect(del?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
     });
   });
 
@@ -860,7 +937,7 @@ describe("stack backend", () => {
             .map((reason) => reason.error)
             .find((error) => error instanceof StackStorageCapabilityError);
           expect(capability).toBeDefined();
-          expect(capability?.suggestion).toContain("-x storage");
+          expect(capability?.suggestion).toContain("--exclude storage");
         }
         expect(requests).toHaveLength(0);
         // The confirm prompt is a `--yes`-only bucket-deletion notice; disabled storage

@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
-import { StackIdSchema } from "../public/StackId.ts";
+import { StackIdSchema } from "../identity/StackId.ts";
 import { makeFunctionsBootstrapOwner } from "./FunctionsBootstrap.ts";
 
 const setupBootstrapOwner = (prefix: string) =>
@@ -9,7 +9,11 @@ const setupBootstrapOwner = (prefix: string) =>
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix });
     const stackId = StackIdSchema.make("a".repeat(64));
-    const owner = yield* makeFunctionsBootstrapOwner({ stateRoot: root, stackId });
+    const owner = yield* makeFunctionsBootstrapOwner({
+      root,
+      stackId,
+      instanceId: "functions-one",
+    });
     return { fs, root, stackId, owner };
   });
 
@@ -17,29 +21,42 @@ describe("functions bootstrap owner", () => {
   it.live("publishes a private Functions bootstrap file with restrictive modes", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const { fs, root, stackId, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-");
+      const { fs, root, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-");
       const target = yield* owner.write({ content: "export default 1" });
-      expect(target).toContain(path.join(root, stackId, "runtime", "functions", "index.ts"));
-      expect((yield* fs.stat(path.dirname(target))).mode! & 0o777).toBe(0o700);
-      expect((yield* fs.stat(target)).mode! & 0o777).toBe(0o600);
+      expect(target).toContain(
+        path.join(root, "functions-one", "runtime", "functions", "index.ts"),
+      );
+      expect(((yield* fs.stat(path.dirname(target))).mode ?? 0) & 0o777).toBe(0o700);
+      expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
       expect(yield* fs.readFileString(target)).toBe("export default 1");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("cleans the Functions bootstrap file and directory", () =>
+  it.live("cleans one Functions bootstrap while preserving another instance", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const { fs, root, stackId, owner } = yield* setupBootstrapOwner(
         "stack-functions-bootstrap-cleanup-",
       );
       const target = yield* owner.write({ content: "export default 1" });
+      const other = yield* makeFunctionsBootstrapOwner({
+        root,
+        stackId,
+        instanceId: "functions-two",
+      });
+      const otherTarget = yield* other.write({ content: "export default 2" });
 
       expect(yield* fs.exists(target)).toBe(true);
 
       yield* owner.cleanupAll;
 
       expect(yield* fs.exists(target)).toBe(false);
-      expect(yield* fs.exists(path.join(root, stackId, "runtime", "functions"))).toBe(false);
+      expect(yield* fs.readFileString(otherTarget)).toBe("export default 2");
+      expect(yield* fs.exists(path.join(root, "functions-one", "runtime", "functions"))).toBe(
+        false,
+      );
+      expect(yield* fs.exists(path.join(root, "functions-one"))).toBe(false);
+      expect(yield* fs.exists(path.join(root, "functions-two"))).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -72,26 +89,27 @@ describe("functions bootstrap owner", () => {
       yield* fs.symlink(canonicalRoot, configuredRoot);
       const stackIdValue = StackIdSchema.make("b".repeat(64));
       const owner = yield* makeFunctionsBootstrapOwner({
-        stateRoot: configuredRoot,
+        root: configuredRoot,
         stackId: stackIdValue,
+        instanceId: "functions-one",
       });
 
       const target = yield* owner.write({ content: "export default 2" });
       const expected = path.join(
         yield* fs.realPath(canonicalRoot),
-        stackIdValue,
+        "functions-one",
         "runtime",
         "functions",
         "index.ts",
       );
       expect(target).toBe(expected);
       expect(yield* fs.readFileString(target)).toBe("export default 2");
-      expect((yield* fs.stat(target)).mode! & 0o777).toBe(0o600);
+      expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
 
       yield* owner.cleanupAll;
-      expect(yield* fs.exists(path.join(canonicalRoot, stackIdValue, "runtime", "functions"))).toBe(
-        false,
-      );
+      expect(
+        yield* fs.exists(path.join(canonicalRoot, "functions-one", "runtime", "functions")),
+      ).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

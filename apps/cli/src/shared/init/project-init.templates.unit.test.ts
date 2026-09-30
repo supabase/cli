@@ -38,7 +38,7 @@ function renderExpectedGoEject(): string {
   return (
     resolveGoTemplateEscapes(readVendoredTemplate("config.toml"))
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
+      .replace("{{ .Db.OrioleDBVersion }}", "17.11.0.002")
       // supabase init always opts new projects into pg-delta; the Go template
       // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true")
@@ -93,6 +93,23 @@ describe("project init templates", () => {
   it("enables pg-delta by default in the generated config", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
+  });
+
+  it("opts the experimental stack template into stack=true without default listener ports", () => {
+    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    expect(rendered).toMatch(
+      /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
+    );
+    expect(rendered).toContain("# smtp_port = 54325");
+    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
+    expect(rendered).not.toMatch(/^port = 54321$/m);
+    expect(rendered).not.toMatch(/^port = 54322$/m);
+    expect(rendered).not.toMatch(/^shadow_port = 54320$/m);
+    expect(rendered).not.toMatch(/^port = 54329$/m);
+    expect(rendered).not.toMatch(/^port = 54323$/m);
+    expect(rendered).not.toMatch(/^port = 54324$/m);
+    expect(rendered).not.toMatch(/^inspector_port = 8083$/m);
+    expect(rendered).not.toMatch(/^port = 54327$/m);
   });
 
   it("matches the Go .gitignore scaffold", () => {

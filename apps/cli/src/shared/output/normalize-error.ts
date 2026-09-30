@@ -1,5 +1,6 @@
 import { Cause, Option } from "effect";
 import { CliError } from "effect/unstable/cli";
+import { unwrapNativeFailure } from "../telemetry/error-actionability.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
@@ -125,6 +126,7 @@ export function normalizeCliError(
   error: unknown,
   context?: CliErrorSuggestionContext,
 ): NormalizedCliError {
+  error = unwrapNativeFailure(error);
   if (isErrorRecord(error)) {
     const mapped = mappedError(error, context);
     if (mapped) {

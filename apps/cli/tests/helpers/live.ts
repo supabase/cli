@@ -6,6 +6,7 @@ import { Effect, Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
+import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
 import {
   type CliRunError,
   makeTempHome,
@@ -13,7 +14,7 @@ import {
   runSupabase,
   runSupabaseEffect,
 } from "./cli.ts";
-import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
+import { LIVE_EXIT_TIMEOUT_MS, LIVE_SHADOW_PORT } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
 export type LiveProject = LiveCliProjectEnvironment["project"];
@@ -87,6 +88,7 @@ const base = vitestTest.extend<LiveFixtures>({
         exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
         env: {
           SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
           ...options?.env,
         },
       }),
@@ -102,6 +104,7 @@ const base = vitestTest.extend<LiveFixtures>({
         exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
         env: {
           SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
           ...options?.env,
         },
       }),
@@ -276,7 +279,8 @@ export async function queryLiveDb<T extends Record<string, unknown>>(
   query: string,
   values?: ReadonlyArray<unknown>,
 ): Promise<T[]> {
-  const client = new pg.Client({ connectionString: dbUrl });
+  // Verified TLS against the Supabase CA, so the query works whatever the project's SSL enforcement.
+  const client = new pg.Client({ connectionString: dbUrl, ssl: { ca: rootCaBundle() } });
   await client.connect();
   try {
     const result = await client.query(query, values === undefined ? undefined : [...values]);

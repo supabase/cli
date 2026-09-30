@@ -45,7 +45,7 @@ Gitignored checkout metadata lives beside the project:
 checkout-local service-version overrides. Neither file records whether a local stack is running.
 Stack identity does not write repository or Git markers.
 
-### Global managed runtime
+### Global local stack runtime
 
 Managed stack documents and runtime artifacts are shared through the global CLI home:
 
@@ -55,27 +55,22 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
   telemetry.json
   traces/
   bin/
-  managed/
-    stacks/
-      <stack-id>/
-        state.json
-        data/
-        logs/
-        runtime/
-        control.json
+  stacks/
+    <stack-id>/
+      state.json
+      data/
+        <instance-id>/
+  artifacts/
 ```
 
-`state.json` is the single durable managed record. It contains the canonical project root, branch
+`state.json` is the single durable stack record. It contains the canonical project root, branch
 context, and stack name that make up stack identity, together with sticky port intents and
-assignments, the desired lifecycle, the runtime selection, and the materialized stack definition
-(enabled capabilities with their pinned versions, listeners, and security settings). Runtime-only
-service ports are allocated for the
-supervisor run and are not persisted as sticky intents. `control.json` contains runtime owner
-metadata for the deterministic loopback control endpoint; the ownership protocol is the liveness
-authority, and a stale document is reclaimed by a subsequent managed lifecycle operation.
+assignments, the runtime selection, the service definitions, and the composition needed to resume
+the stack. Runtime-only observations and active owner state are kept in memory. Service data lives
+under the stack's `data/<instance-id>/` directories, while downloaded native artifacts are shared
+under `artifacts/`.
 
-There is no project-local `stacks/<name>` directory, `state.json`, daemon socket file, or second
-StateManager metadata format.
+There is no project-local `stacks/<name>` directory or second state format.
 
 ## Service-version inputs
 
@@ -94,9 +89,11 @@ no separate command that rewrites it, and no second project-level pinned-version
 
 Raw `supabase/config.toml` values and their origins are loaded before defaults are applied. Explicit
 sticky values are persisted as `exact` intents in each managed document. Omitted values remain
-`automatic`; sibling worktrees have independent stack identities and allocations, while live exact
-port conflicts are rejected by the manager. Runtime-only service ports are selected by the managed
-supervisor and are not written to the document.
+`automatic`; sibling worktrees and branches have independent stack identities and allocations.
+Automatic allocation avoids ports saved by any stack, so stopped stacks keep their URLs. An exact
+port is rejected only when a listener already answers on it or the port cannot be bound; another
+stack's saved claim alone never blocks it, and a conflict names the stack that saved the port. Runtime-only service ports are
+selected by the managed supervisor and are not written to the document.
 
 ## Command behavior
 

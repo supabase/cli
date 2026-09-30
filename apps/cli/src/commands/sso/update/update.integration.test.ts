@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Effect,
   Exit,
   FileSystem,
@@ -197,6 +198,9 @@ function setup(opts: SetupOpts = {}) {
     }),
     stitchLayer,
     opts.profileFlag === undefined ? Layer.empty : Layer.succeed(ProfileFlag, opts.profileFlag),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord({ SUPABASE_NO_KEYRING: "1" }, { preserveEmptyStrings: true }),
+    ),
   );
 
   return {
@@ -1416,7 +1420,7 @@ describe("sso update integration", () => {
   });
 
   const withProfileEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-    withEnvVar("SUPABASE_PROFILE", value, withEnvVar("SUPABASE_NO_KEYRING", "1", body));
+    withEnvVar("SUPABASE_PROFILE", value, body);
 
   it.live(
     "profile emulation: repeated --profile resolves last-wins — GET and PUT both target the last file's host",

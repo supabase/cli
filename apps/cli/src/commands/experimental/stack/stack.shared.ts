@@ -1,26 +1,33 @@
-import { Context, Data, Effect, Layer, Option } from "effect";
 import {
-  isStackId,
-  StackNotFoundError,
-  type StackRuntimePreference,
-  type StackStatus,
+  StackId,
+  type SavedStack,
+  type ServiceCreation,
+  type StackError,
 } from "@supabase/stack/effect";
-import type { StackId } from "@supabase/stack";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import {
+  skippedRuntimeCleanupWarning,
+  StackApi,
+  stackApiLayer,
+} from "../../../command-internal/stack-api.ts";
+import type { StackRuntime } from "../../../command-internal/stack-runtime.ts";
 
-export { StackApi, stackApiLayer };
+export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
 
 /** The target selected by the CLI adapter for one stack command. */
-interface StackTarget {
+export interface StackTarget {
   readonly projectRoot: string;
-  readonly id?: StackId;
+  readonly id?: string;
   readonly name?: string;
-  readonly runtime?: StackRuntimePreference;
+  readonly runtime?: StackRuntime;
+  readonly definition?: SavedStack;
+  readonly hostRunning: boolean;
 }
 
 export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
@@ -34,17 +41,13 @@ export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetE
   }
 }
 
-/**
- * Configuration and targeting are supplied by the CLI adapter so later stack
- * commands can reuse the same project, name, id, and environment rules.
- */
 interface StackTargetResolverShape {
   readonly resolve: (input: {
     readonly projectRoot: string;
     readonly name?: string;
     readonly id?: string;
-    readonly runtime: "auto" | "docker" | "native";
-  }) => Effect.Effect<StackTarget, StackTargetError, StackApi>;
+    readonly runtime: "auto" | StackRuntime;
+  }) => Effect.Effect<StackTarget, StackTargetError>;
 }
 
 export class StackTargetResolver extends Context.Service<
@@ -56,17 +59,17 @@ export const validateStackTarget = (input: {
   readonly stack?: string;
   readonly stackId?: string;
 }): Effect.Effect<void, StackTargetError> =>
-  Effect.gen(function* () {
-    if (input.stack !== undefined && input.stackId !== undefined) {
-      return yield* new StackTargetError({
-        message: "--stack and --stack-id cannot be used together",
-        reason: "flags",
-      });
-    }
-  });
+  input.stack !== undefined && input.stackId !== undefined
+    ? Effect.fail(
+        new StackTargetError({
+          message: "--stack and --stack-id cannot be used together",
+          reason: "flags",
+        }),
+      )
+    : Effect.void;
 
-export const validateStackId = (id: string): Effect.Effect<StackId, StackTargetError> =>
-  isStackId(id)
+const validateStackId = (id: string): Effect.Effect<string, StackTargetError> =>
+  Schema.is(StackId)(id)
     ? Effect.succeed(id)
     : Effect.fail(
         new StackTargetError({
@@ -89,107 +92,109 @@ export const rejectStackOutput = (
       )
     : Effect.void;
 
-export const stackStatusPayload = (status: StackStatus) => ({
-  id: status.id,
-  lifecycle: status.lifecycle,
-  desired_lifecycle: status.desiredLifecycle,
-  runtime: status.runtime,
-  endpoints: status.endpoints,
-  versions: status.versions,
-  capabilities: status.capabilities,
-  artifacts: status.artifacts,
-  ...(status.recovery === undefined ? {} : { recovery: status.recovery }),
-});
+const runtimeForFlag = (runtime: "auto" | StackRuntime): StackTarget["runtime"] =>
+  runtime === "auto" ? undefined : runtime;
 
-export const stackStatusIssueLines = (status: StackStatus): ReadonlyArray<string> => {
-  const lines: Array<string> = [];
-  const diagnostics = status.capabilities.filter(({ error }) => error !== undefined);
-  if (diagnostics.length > 0) {
-    lines.push("Capability diagnostics:");
-    for (const capability of diagnostics) {
-      const detail = capability.error?.split(/\r?\n/u)[0] ?? "No diagnostic was recorded.";
-      lines.push(`  ${capability.name}: ${capability.state} — ${detail}`);
-    }
-  }
-  if (status.recovery !== undefined) {
-    lines.push(`Recovery: ${status.recovery.message}`);
-    if (status.recovery.operation === "stop") {
-      lines.push(
-        `Recovery command: supabase stack stop --stack-id ${status.id} && supabase stack start --stack-id ${status.id}`,
-      );
-    } else {
-      lines.push(`Recovery command: supabase stack destroy --stack-id ${status.id}`);
-      lines.push("Warning: destroy is destructive and removes the stack data.");
-    }
-  }
-  return lines;
-};
+const runtimeMatches = (
+  saved: StackTarget["runtime"],
+  requested: StackTarget["runtime"],
+): boolean => requested === undefined || saved === requested;
 
-export const renderStackStatus = (status: StackStatus): string => {
-  const lines = [
-    `Stack ${status.id}`,
-    `Runtime: ${status.runtime.kind}`,
-    `Lifecycle: ${status.lifecycle}`,
-  ];
-  const endpoints = Object.entries(status.endpoints);
-  if (endpoints.length > 0) {
-    lines.push("Endpoints:");
-    for (const [name, endpoint] of endpoints)
-      if (endpoint !== undefined) lines.push(`  ${name}: ${endpoint.url}`);
-  }
-  const dormant = status.capabilities.filter(({ state }) => state === "dormant");
-  if (dormant.length > 0)
-    lines.push(`Dormant capabilities: ${dormant.map(({ name }) => name).join(", ")}`);
-  lines.push(...stackStatusIssueLines(status));
-  return `${lines.join("\n")}\n`;
-};
-
-/** Runtime configuration for the first stack command. Later commands reuse this layer. */
-export const stackTargetResolverLayer = Layer.succeed(StackTargetResolver, {
-  resolve: (input) =>
-    Effect.gen(function* () {
+/** Resolves an existing stack by id or by the package identity of the project and stack name. */
+export const stackTargetResolverLayer = Layer.effect(
+  StackTargetResolver,
+  Effect.gen(function* () {
+    const settings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {
+      readonly projectRoot: string;
+      readonly name?: string;
+      readonly id?: string;
+      readonly runtime: "auto" | StackRuntime;
+    }) {
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
-      const stackApi = yield* StackApi;
-      const inspection =
-        id === undefined
-          ? undefined
-          : yield* stackApi.inspectStack(id).pipe(
-              Effect.mapError(
-                (error) =>
-                  new StackTargetError({
-                    message: `Unable to inspect stack ${id}: ${error.message}`,
-                    reason: error instanceof StackNotFoundError ? "flags" : "invalid-config",
-                    cause: error,
-                  }),
-              ),
-            );
-      const projectRoot = inspection?.descriptor.projectRoot ?? input.projectRoot;
-      const requestedRuntime =
-        input.runtime === "auto"
-          ? undefined
-          : input.runtime === "native"
-            ? { kind: "native" as const }
-            : { kind: "container" as const, engine: "docker" as const };
-      if (
-        inspection !== undefined &&
-        requestedRuntime !== undefined &&
-        (inspection.descriptor.runtime.kind !== requestedRuntime.kind ||
-          (requestedRuntime.kind === "container" &&
-            inspection.descriptor.runtime.kind === "container" &&
-            inspection.descriptor.runtime.engine !== requestedRuntime.engine))
-      ) {
+      const requestedRuntime = runtimeForFlag(input.runtime);
+      const stateRoot = path.join(settings.supabaseHome, "stacks");
+      const found = yield* stackApi
+        .find(
+          id === undefined
+            ? {
+                stateRoot,
+                projectRoot: input.projectRoot,
+                ...(input.name === undefined ? {} : { name: input.name }),
+              }
+            : { stateRoot, id },
+        )
+        .pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.mapError(
+            (cause) =>
+              new StackTargetError({
+                message: cause.message,
+                reason: "invalid-config",
+                cause,
+              }),
+          ),
+        );
+      if (id !== undefined && found === undefined)
         return yield* new StackTargetError({
-          message: "The requested runtime does not match the existing stack",
+          message: `Stack ${id} was not found`,
           reason: "flags",
         });
-      }
+      if (found !== undefined && !runtimeMatches(found.definition.runtime, requestedRuntime))
+        return yield* new StackTargetError({
+          message: `Requested runtime ${requestedRuntime} does not match existing stack runtime ${found.definition.runtime}`,
+          suggestion:
+            "Use --runtime auto to reuse the saved runtime, or omit --stack-id and choose a different --stack name.",
+          reason: "flags",
+        });
+      const runtime = found?.definition.runtime ?? requestedRuntime;
+      // A new stack saves paths under the canonical root its identity derives from.
+      const projectRoot =
+        found?.definition.identity.projectRoot ??
+        (yield* fs
+          .realPath(input.projectRoot)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackTargetError({ message: cause.message, reason: "invalid-config", cause }),
+            ),
+          ));
       return {
         projectRoot,
-        ...(id === undefined ? {} : { id }),
+        ...(found === undefined ? {} : { id: found.definition.id, definition: found.definition }),
         ...(input.name === undefined ? {} : { name: input.name }),
-        ...(id === undefined && requestedRuntime !== undefined
-          ? { runtime: requestedRuntime }
-          : {}),
+        ...(runtime === undefined ? {} : { runtime }),
+        hostRunning: found?.host !== undefined,
       };
-    }),
-});
+    });
+    return StackTargetResolver.of({ resolve });
+  }),
+);
+
+/** Groups companion services under their user-facing stack capability. */
+export const stackCapabilityForService = (service: ServiceCreation["service"]) => {
+  switch (service) {
+    case "imgproxy":
+      return "storage";
+    case "vector":
+      return "analytics";
+    case "pgmeta":
+      return "studio";
+    default:
+      return service;
+  }
+};
+
+/** Formats the failed per-service outcomes of a composition error, one `label: error` per line. */
+export const failedOutcomesDetail = (
+  cause: Partial<Pick<StackError, "outcomes">>,
+  label: (id: string) => string = (id) => id,
+): string | undefined => {
+  const failed = cause.outcomes?.filter((outcome) => !outcome.succeeded) ?? [];
+  return failed.length === 0
+    ? undefined
+    : failed.map((outcome) => `${label(outcome.id)}: ${outcome.error ?? "failed"}`).join("\n");
+};

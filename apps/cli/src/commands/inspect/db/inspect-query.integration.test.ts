@@ -389,7 +389,8 @@ describe("inspect db query runner", () => {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("syntax error");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("syntax error");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -400,7 +401,8 @@ describe("inspect db query runner", () => {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -411,7 +413,8 @@ describe("inspect db query runner", () => {
       const exit = yield* Effect.exit(inspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("cannot load config");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("cannot load config");
       }
     }).pipe(Effect.provide(layer));
   });

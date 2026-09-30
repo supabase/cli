@@ -1,16 +1,25 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
-import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  Cause,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+} from "effect";
 
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConfigLoadError } from "../../../command-internal/db-config.errors.ts";
@@ -36,8 +45,17 @@ for (const { fileName, sql } of REPORT_QUERIES) {
   WRAPPED_TO_FILE.set(wrapReportQuery(sql, reportIgnoreSchemas(), "'postgres'"), fileName);
 }
 
-function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+const tempDir = Effect.fnUntraced(function* (prefix: string) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.makeTempDirectory({ prefix });
+});
+
+/** A layer whose backing directory is a fresh temp dir, created when the layer is built. */
+function tempDirLayer<S>(
+  prefix: string,
+  make: (dir: string) => Layer.Layer<S>,
+): Layer.Layer<S, PlatformError.PlatformError> {
+  return Layer.unwrap(Effect.map(tempDir(prefix), make)).pipe(Layer.provide(BunServices.layer));
 }
 
 function mockResolver(opts: { conn?: PgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
@@ -130,7 +148,6 @@ function setupReport(opts: SetupOpts = {}) {
     copyFails: opts.copyFails,
   });
   const telemetry = mockTelemetryStateTracked();
-  const workdir = opts.workdir ?? tempDir("supabase-report-workdir-");
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
@@ -138,12 +155,17 @@ function setupReport(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    mockCommandSettings({ workdir }),
-    mockRuntimeInfo({ cwd: opts.cwd ?? tempDir("supabase-report-cwd-") }),
+    opts.workdir === undefined
+      ? tempDirLayer("supabase-report-workdir-", (workdir) => mockCommandSettings({ workdir }))
+      : mockCommandSettings({ workdir: opts.workdir }),
+    opts.cwd === undefined
+      ? tempDirLayer("supabase-report-cwd-", (cwd) => mockRuntimeInfo({ cwd }))
+      : mockRuntimeInfo({ cwd: opts.cwd }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
+    cliConfigProviderLayer,
   );
-  return { layer, out, resolver, connection, telemetry, workdir };
+  return { layer, out, resolver, connection, telemetry };
 }
 
 const flags = (over: Partial<InspectReportFlags> = {}): InspectReportFlags => ({
@@ -169,26 +191,32 @@ const DEFAULT_RULE_CSVS: Record<string, string> = {
   "bloat.csv": "name,bloat\n",
 };
 
-function localDateFolder(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+const localDateFolder = Effect.map(DateTime.now, (now) => {
+  const local = DateTime.toParts(DateTime.setZone(now, DateTime.zoneMakeLocal()));
+  return `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`;
+});
 
-function dateFolderContents(base: string): { dir: string; files: Array<string> } {
-  const entries = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory());
+const dateFolderContents = Effect.fnUntraced(function* (base: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* Effect.filter(yield* fs.readDirectory(base), (name) =>
+    Effect.map(fs.stat(path.join(base, name)), (info) => info.type === "Directory"),
+  );
   expect(entries.length).toBe(1);
-  const dir = join(base, entries[0]!.name);
-  return { dir, files: readdirSync(dir) };
-}
+  const dir = path.join(base, entries[0]!);
+  return { dir, files: yield* fs.readDirectory(dir) };
+});
 
 describe("inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, connection } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     const prevUmask = process.umask(0);
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
-      const { dir, files } = dateFolderContents(base);
+      const { dir, files } = yield* dateFolderContents(base);
       expect(files.length).toBe(14);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
@@ -199,31 +227,31 @@ describe("inspect report", () => {
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-      expect(statSync(dir).mode & 0o777).toBe(0o755);
-      expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
+      expect((yield* fs.stat(dir)).mode & 0o777).toBe(0o755);
+      expect((yield* fs.stat(path.join(dir, "db_stats.csv"))).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
   it.live("inspects the local database with --local", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--local"],
     });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base, local: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects a custom database with --db-url and labels the diagnostic 'remote'", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver, out } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       isLocal: false,
       cliArgs: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
         true,
@@ -233,9 +261,9 @@ describe("inspect report", () => {
   });
 
   it.live("inspects the linked project by default when no connection flag is set", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
@@ -247,18 +275,19 @@ describe("inspect report", () => {
       const exit = yield* Effect.exit(inspectReport(flags({ linked: true, local: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("are set none of the others can be");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--local=false is Changed and routes to local (not linked)", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--local=false"],
     });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base, local: false }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
@@ -272,19 +301,20 @@ describe("inspect report", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
-        expect(JSON.stringify(exit.cause)).toContain("[linked local]");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("are set none of the others can be");
+        expect(causeText).toContain("[linked local]");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("--linked routes to linked", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver } = setupReport({
       csvs: DEFAULT_RULE_CSVS,
       cliArgs: ["--linked"],
     });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base, linked: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
@@ -292,9 +322,9 @@ describe("inspect report", () => {
 
   it.live("reports on the project given via --project-ref on the default linked path", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    const base = tempDir("supabase-report-out-");
     const { layer, resolver } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
       const resolveInput = resolver.resolveInput as {
         connType: string;
@@ -317,7 +347,8 @@ describe("inspect report", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -328,9 +359,9 @@ describe("inspect report", () => {
   it.live(
     "prints connect + running + saved progress to stderr and the rules table to stdout",
     () => {
-      const base = tempDir("supabase-report-out-");
       const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, isLocal: true });
       return Effect.gen(function* () {
+        const base = yield* tempDir("supabase-report-out-");
         yield* inspectReport(flags({ outputDir: base }));
         expect(out.stderrText).toContain("Connecting to local database...");
         expect(out.stderrText).toContain("Running queries...");
@@ -345,9 +376,9 @@ describe("inspect report", () => {
   );
 
   it.live("shows a passing rule as ✔/- and a failing rule with its message and matches", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect(out.stdoutText).toContain("There is at least one lock older than 2 minutes");
       expect(out.stdoutText).toContain("LOCK_A");
@@ -358,91 +389,140 @@ describe("inspect report", () => {
 
   it.live(
     "custom config.toml rules replace the defaults and suppress 'Loading default rules...'",
-    () => {
-      const base = tempDir("supabase-report-out-");
-      const workdir = tempDir("supabase-report-workdir-");
-      mkdirSync(join(workdir, "supabase"), { recursive: true });
-      writeFileSync(
-        join(workdir, "supabase", "config.toml"),
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* tempDir("supabase-report-out-");
+        const workdir = yield* tempDir("supabase-report-workdir-");
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          [
+            "[[experimental.inspect.rules]]",
+            "query = \"SELECT COUNT(*) FROM `locks.csv` WHERE granted = 'f'\"",
+            'name = "Custom rule"',
+            'pass = "good"',
+            'fail = "bad"',
+            "",
+          ].join("\n"),
+        );
+        const { layer, out } = setupReport({
+          workdir,
+          csvs: { "locks.csv": "stmt,granted\nA,t\n" },
+        });
+        yield* inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("Loading default rules...");
+        expect(out.stdoutText).toContain("Custom rule");
+        expect(out.stdoutText).toContain("bad");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "keeps a rule's literal env(VAR) when the shell sets VAR empty, even if supabase/.env defines it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* tempDir("supabase-report-out-");
+        const workdir = yield* tempDir("supabase-report-workdir-");
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          [
+            "[[experimental.inspect.rules]]",
+            "query = \"SELECT COUNT(*) FROM `locks.csv` WHERE granted = 'f'\"",
+            'name = "Env rule"',
+            'pass = "good"',
+            'fail = "env(REPORT_INTEG_X)"',
+            "",
+          ].join("\n"),
+        );
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", ".env"),
+          "REPORT_INTEG_X=fromfile\n",
+        );
+        const { layer, out } = setupReport({
+          workdir,
+          csvs: { "locks.csv": "stmt,granted\nA,t\n" },
+        });
+        yield* withEnvVar(
+          "REPORT_INTEG_X",
+          "",
+          inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer)),
+        );
+        expect(out.stdoutText).toContain("Env rule");
+        expect(out.stdoutText).toContain("env(REPORT_INTEG_X)");
+        expect(out.stdoutText).not.toContain("fromfile");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("surfaces a malformed rule query as the STATUS cell without failing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* tempDir("supabase-report-out-");
+      const workdir = yield* tempDir("supabase-report-workdir-");
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
         [
           "[[experimental.inspect.rules]]",
-          "query = \"SELECT COUNT(*) FROM `locks.csv` WHERE granted = 'f'\"",
-          'name = "Custom rule"',
-          'pass = "good"',
+          // `nope.csv` doesn't exist, so this surfaces as the rule's STATUS cell.
+          'query = "SELECT COUNT(*) FROM `nope.csv`"',
+          'name = "Broken rule"',
+          'pass = "ok"',
           'fail = "bad"',
           "",
         ].join("\n"),
       );
-      const { layer, out } = setupReport({
-        workdir,
-        csvs: { "locks.csv": "stmt,granted\nA,t\n" },
-      });
-      return Effect.gen(function* () {
-        yield* inspectReport(flags({ outputDir: base }));
-        expect(out.stderrText).not.toContain("Loading default rules...");
-        expect(out.stdoutText).toContain("Custom rule");
-        expect(out.stdoutText).toContain("bad");
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.live("surfaces a malformed rule query as the STATUS cell without failing", () => {
-    const base = tempDir("supabase-report-out-");
-    const workdir = tempDir("supabase-report-workdir-");
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
-      [
-        "[[experimental.inspect.rules]]",
-        // `nope.csv` doesn't exist, so this surfaces as the rule's STATUS cell.
-        'query = "SELECT COUNT(*) FROM `nope.csv`"',
-        'name = "Broken rule"',
-        'pass = "ok"',
-        'fail = "bad"',
-        "",
-      ].join("\n"),
-    );
-    const { layer, out } = setupReport({ workdir, csvs: DEFAULT_RULE_CSVS });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
+      const { layer, out } = setupReport({ workdir, csvs: DEFAULT_RULE_CSVS });
+      const exit = yield* Effect.exit(
+        inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer)),
+      );
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toContain("Broken rule");
-    }).pipe(Effect.provide(layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("aborts on a malformed config.toml before connecting or writing any CSV", () => {
-    const base = tempDir("supabase-report-out-");
-    const workdir = tempDir("supabase-report-workdir-");
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
-      [
-        "[[experimental.inspect.rules]]",
-        'query = "SELECT 1"',
-        'name = "r"',
-        'pass = "ok"',
-        'fail = "bad"',
-        'typo = "x"',
-        "",
-      ].join("\n"),
-    );
-    const { layer, connection } = setupReport({ workdir });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
+  it.live("aborts on a malformed config.toml before connecting or writing any CSV", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* tempDir("supabase-report-out-");
+      const workdir = yield* tempDir("supabase-report-workdir-");
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        [
+          "[[experimental.inspect.rules]]",
+          'query = "SELECT 1"',
+          'name = "r"',
+          'pass = "ok"',
+          'fail = "bad"',
+          'typo = "x"',
+          "",
+        ].join("\n"),
+      );
+      const { layer, connection } = setupReport({ workdir });
+      const exit = yield* Effect.exit(
+        inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer)),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("invalid keys: typo");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid keys: typo");
       }
       // `base` is the pre-created temp dir itself; no dated subfolder is created.
       expect(connection.copiedSql.length).toBe(0);
-      expect(readdirSync(base).length).toBe(0);
-    }).pipe(Effect.provide(layer));
-  });
+      expect((yield* fs.readDirectory(base)).length).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("emits a structured result and writes CSVs but no table in json mode", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, out } = setupReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
@@ -455,15 +535,15 @@ describe("inspect report", () => {
       expect(data?.files?.length).toBe(14);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules?.length).toBe(13);
-      expect(dateFolderContents(base).files.length).toBe(14);
+      expect((yield* dateFolderContents(base)).files.length).toBe(14);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("streams the structured result in stream-json mode", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, out } = setupReport({ format: "stream-json", csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "inspect report" }),
@@ -472,104 +552,117 @@ describe("inspect report", () => {
   });
 
   it.live("aborts with a failed-to-mkdir error when the output directory cannot be created", () => {
-    // Point --output-dir at a regular file so mkdir of `<file>/<date>` fails.
-    const fileAsDir = join(tempDir("supabase-report-out-"), "afile");
-    writeFileSync(fileAsDir, "x");
     const { layer } = setupReport();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Point --output-dir at a regular file so mkdir of `<file>/<date>` fails.
+      const fileAsDir = path.join(yield* tempDir("supabase-report-out-"), "afile");
+      yield* fs.writeFileString(fileAsDir, "x");
       const exit = yield* Effect.exit(inspectReport(flags({ outputDir: fileAsDir })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to mkdir");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to mkdir");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("aborts with a copy error when COPY fails", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer } = setupReport({ copyFails: true });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to copy output");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to copy output");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("aborts with a failed-to-create-output-file error when a CSV cannot be written", () => {
-    const base = tempDir("supabase-report-out-");
-    // Pre-creates `bloat.csv` as a directory so the file write fails (EISDIR) while the
-    // recursive mkdir still succeeds.
-    mkdirSync(join(base, localDateFolder(), "bloat.csv"), { recursive: true });
     const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* tempDir("supabase-report-out-");
+      // Pre-creates `bloat.csv` as a directory so the file write fails (EISDIR) while the
+      // recursive mkdir still succeeds.
+      yield* fs.makeDirectory(path.join(base, yield* localDateFolder, "bloat.csv"), {
+        recursive: true,
+      });
       const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to create output file");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to create output file");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("aborts when the connection fails", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer } = setupReport({ connectFails: true });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("aborts when resolution fails", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer } = setupReport({ resolveFails: true });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       const exit = yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("cannot load config");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("cannot load config");
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves a relative --output-dir under the process CWD", () => {
-    const cwd = tempDir("supabase-report-cwd-");
-    const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
-    return Effect.gen(function* () {
-      yield* inspectReport(flags({ outputDir: "reports" }));
-      const { files } = dateFolderContents(join(cwd, "reports"));
+  it.live("resolves a relative --output-dir under the process CWD", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const cwd = yield* tempDir("supabase-report-cwd-");
+      const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
+      yield* inspectReport(flags({ outputDir: "reports" })).pipe(Effect.provide(layer));
+      const { files } = yield* dateFolderContents(path.join(cwd, "reports"));
       expect(files.length).toBe(14);
-    }).pipe(Effect.provide(layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("uses an absolute --output-dir as-is", () => {
-    const base = tempDir("supabase-report-out-");
-    const cwd = tempDir("supabase-report-cwd-");
-    const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
-    return Effect.gen(function* () {
-      yield* inspectReport(flags({ outputDir: base }));
-      expect(dateFolderContents(base).files.length).toBe(14);
-      expect(readdirSync(cwd).length).toBe(0);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live("uses an absolute --output-dir as-is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const base = yield* tempDir("supabase-report-out-");
+      const cwd = yield* tempDir("supabase-report-cwd-");
+      const { layer } = setupReport({ csvs: DEFAULT_RULE_CSVS, cwd });
+      yield* inspectReport(flags({ outputDir: base })).pipe(Effect.provide(layer));
+      expect((yield* dateFolderContents(base)).files.length).toBe(14);
+      expect((yield* fs.readDirectory(cwd)).length).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("renders the path in bold when stdout is a TTY", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, out } = setupReport({ csvs: DEFAULT_RULE_CSVS, stdoutIsTty: true });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect(out.stderrText).toContain("\x1b[1m");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("flushes telemetry on success", () => {
-    const base = tempDir("supabase-report-out-");
     const { layer, telemetry } = setupReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const base = yield* tempDir("supabase-report-out-");
       yield* inspectReport(flags({ outputDir: base }));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -578,7 +671,8 @@ describe("inspect report", () => {
   it.live("flushes telemetry even when the command fails", () => {
     const { layer, telemetry } = setupReport({ resolveFails: true });
     return Effect.gen(function* () {
-      yield* Effect.exit(inspectReport(flags({ outputDir: tempDir("supabase-report-out-") })));
+      const base = yield* tempDir("supabase-report-out-");
+      yield* Effect.exit(inspectReport(flags({ outputDir: base })));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

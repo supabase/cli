@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
@@ -402,7 +403,6 @@ describe("stack backend", () => {
       toml: 'project_id = "test"\n',
       local: true,
       stackBackend: true,
-      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
     });
     return Effect.gen(function* () {
@@ -413,7 +413,7 @@ describe("stack backend", () => {
       expect(out.stderrText).toContain("Successfully moved");
       const move = requests.find((r) => r.url.includes(MOVE));
       expect(move?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(move?.headers["apikey"]).toBe("stack-jwt");
+      expect(move?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
     });
   });
 
@@ -438,7 +438,7 @@ describe("stack backend", () => {
             .map((reason) => reason.error)
             .find((error) => error instanceof StackStorageCapabilityError);
           expect(capability).toBeDefined();
-          expect(capability?.suggestion).toContain("-x storage");
+          expect(capability?.suggestion).toContain("--exclude storage");
         }
         expect(requests).toHaveLength(0);
       });

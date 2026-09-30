@@ -135,6 +135,8 @@ export interface ProjectInitOptions {
   readonly yes: boolean;
   readonly withVscodeSettings: boolean;
   readonly withIntellijSettings: boolean;
+  /** Persist `experimental.stack` and omit default stack listener ports. */
+  readonly experimentalStack?: boolean;
 }
 
 // Files/directories are pinned to 0644/0755 explicitly rather than relying
@@ -302,7 +304,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
     configTomlPath,
-    renderCliConfigTemplate(projectId, options.useOrioledb),
+    renderCliConfigTemplate(projectId, options.useOrioledb, options.experimentalStack === true),
     { mode: INIT_FILE_MODE },
   );
   yield* ensureSupabaseGitignore(options.cwd);

@@ -39,6 +39,7 @@ import {
   useShadowCacheDisabled,
   useTempWorkdir,
 } from "../../../tests/helpers/command-mocks.ts";
+import { unusedStackServices } from "../../../tests/helpers/unused-stack.ts";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { machineErrorContextLayer } from "../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../shared/output/output.layer.ts";
@@ -663,7 +664,7 @@ function setup(opts: SetupOpts = {}) {
       goOutput: opts.goOutput ?? Option.none(),
     }),
     machineErrorContextLayer,
-    commandRuntimeLayer(["pull"]),
+    commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
     capturingStdio?.layer ?? Stdio.layerTest({ args: Effect.succeed(["pull"]) }),
     dbConfig.layer,
     pgDelta.layer,
@@ -691,6 +692,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     Layer.succeed(NetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
+    unusedStackServices,
     // Listed after `buildTestRuntime` so it overrides the real spawner `BunServices.layer`
     // provides (last-wins).
     spawner.layer,

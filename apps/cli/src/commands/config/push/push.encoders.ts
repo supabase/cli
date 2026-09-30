@@ -15,6 +15,7 @@
 
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES } from "@supabase/config/internal";
+import { DateTime } from "effect";
 
 import { ramInBytes } from "../../../command-internal/size-units.ts";
 import { passwordRequirementsToChar } from "../../../command-internal/password-requirements.ts";
@@ -127,7 +128,7 @@ export interface AuthEncoderInput extends PushEncoderInput {
   /** Raw `data.attributes.auth` — for comparing the 13 unmapped mailer `*_content` keys. */
   readonly remoteAuthAttributes: Readonly<Record<string, unknown>>;
   /** Clock value for `sms_test_otp_valid_until` (+10 calendar years). */
-  readonly now: Date;
+  readonly now: DateTime.Utc;
 }
 
 // Everything else is a defensive fallback that the mapping registry's own schema validation
@@ -792,10 +793,10 @@ function mapRecordToEnvString(record: Readonly<Record<string, string>>): string 
  * flat 3650-day offset would land 2-3 days short). `setUTCFullYear` keeps UTC
  * semantics.
  */
-function tenYearsFromNow(now: Date): Date {
-  const validUntil = new Date(now);
-  validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
-  return validUntil;
+function tenYearsFromNow(now: DateTime.Utc): DateTime.Utc {
+  return DateTime.mutateUtc(now, (validUntil) => {
+    validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
+  });
 }
 
 function encodeSmtpContainer(
@@ -1503,7 +1504,7 @@ function encodeAuthBodyImpl(
     const otpString = record === undefined ? "" : mapRecordToEnvString(record);
     if (otpString.length > 0) {
       body["sms_test_otp"] = otpString;
-      body["sms_test_otp_valid_until"] = tenYearsFromNow(now).toISOString();
+      body["sms_test_otp_valid_until"] = DateTime.formatIso(tenYearsFromNow(now));
       encoded.push(...testOtpChanges.map((change) => change.path));
     } else {
       for (const change of testOtpChanges) {

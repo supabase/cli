@@ -1,97 +1,42 @@
 # `supabase stack logs`
 
-This command is available only when the `experimental.stack` feature flag is enabled. It reads
-retained logs from the managed stack identified by the current project, an optional `--stack`
-name, or `--stack-id`. It calls the public `@supabase/stack` logs and followLogs APIs without
-starting the stack, stopping it, or changing its owner lifecycle.
+Streams live stdout/stderr from the selected saved stack. The experimental
+feature flag controls command registration. It connects to an existing owner;
+it never launches an owner or starts/stops a service.
 
-## Files read and written
+## Selection and files
 
-The stack package reads its normal durable state under `<SUPABASE_HOME or ~/.supabase>` and
-the selected stack's persisted log state. The CLI reads the current workdir and experimental
-stack feature setting through its normal settings resolution. This command writes no project
-files, stack state, credentials, or runtime resources.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+The selectors are mutually exclusive. By default, only composition members are
+included. `--service <kind-or-instance-id>` can also select standalone instances.
+An unavailable owner, missing stack, or unmatched service fails with status 1.
 
-## Output
+Reads saved definitions under `<SUPABASE_HOME or ~/.supabase>/stacks/<id>/`.
+Discovery ensures the registry directory exists with mode 0700 and probes local
+owners. Shared routing/settings may read project config and profiles. No project
+files, service configuration, artifacts, or data are changed.
 
-Text mode writes `<timestamp> <service>/<stream>: <message>` followed by a newline for each
-retained or followed entry. Terminal escape sequences and C0/C1 controls are removed from text
-messages while tabs and newlines are preserved. JSON and bounded stream-json modes each write
-one success/result payload containing `message`, `found`, and `entries`; when a stack is found,
-it also contains `id`, `cursor`, and `running`. Log entry `message` values are preserved. `--follow` is
-rejected with `--output-format json`; follow stream-json emits one `log-entry` event per entry.
-Each event has `type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and `source`;
-`line` preserves the original message, `stream` is `stdout`, `stderr`, or `internal`, and
-`source` is `history` or `live`.
+## Output and cancellation
 
-A found stack's bounded JSON result is shaped as follows (the entry message is raw):
+This is a live-only stream with no retained history, cursor, or `--tail` option.
+It continues until interrupted or the selected streams close. `--follow` is
+unnecessary and is not accepted. Legacy `-o/--output` and finite JSON output are
+rejected; use text or `--output-format stream-json`.
 
-```json
-{
-  "found": true,
-  "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "entries": [
-    {
-      "cursor": { "opaque": "1" },
-      "timestamp": "2026-09-08T00:00:00.000Z",
-      "source": "database",
-      "stream": "stdout",
-      "message": "database ready"
-    }
-  ],
-  "cursor": { "opaque": "1" },
-  "running": false,
-  "message": ""
-}
-```
+Text writes `<timestamp> <service>/<instance-id>/<stream>: <line>`. Terminal
+control sequences are stripped from text. Stream JSON emits `log-entry` events
+with `timestamp`, `service`, `instance_id`, `stream`, `line`, and `source: "live"`.
+Lines preserve their content in machine output. UTF-8 and line fragments are
+assembled separately for each instance and stdout/stderr channel. Timestamps
+reflect receipt by the CLI. Delivery is best effort: slow subscribers can lose entries. Ordering across
+stdout/stderr channels and different services is not guaranteed.
 
-With no default stack, JSON output is:
-
-```json
-{
-  "found": false,
-  "entries": [],
-  "message": "No managed stack found for this context."
-}
-```
-
-Follow prints the retained history first and then resumes from its returned cursor. If the stack
-is already stopped, it prints the retained history and exits successfully. With no `--stack` or
-`--stack-id`, an absent default stack prints a successful empty result. In stream-json mode this
-is the standard result envelope:
-
-```json
-{
-  "type": "result",
-  "data": {
-    "found": false,
-    "entries": [],
-    "message": "No managed stack found for this context."
-  },
-  "timestamp": "..."
-}
-```
-
-A finite stream-json read emits one result event for a found stack, including when its entries
-are empty. Follow mode emits only `log-entry` events; a found stack with no retained entries
-emits no follow events, and a stopped stack exits successfully. A missing named stack fails with
-status `1`. The legacy `-o`/`--output` flag is rejected; use
-`--output-format`.
-
-`--service` accepts one capability name and excludes supervisor and gateway entries, including
-their startup diagnostics. Omit it to include all sources. Retained logs are bounded to the
-newest 1000 entries or 1 MiB, whichever is reached first; `--tail` further limits the returned
-entries.
-
-Successful reads, including an absent default stack and a stopped stack, exit with status `0`.
-Invalid flags, missing named stacks, and stack read failures exit with status `1`. Interrupting
-follow cancels the log reader, exits with status `130`, and leaves the managed stack owner
-untouched.
+Interrupting the command cancels its subscriptions, exits with status 130, and
+leaves the owner and services running. Successful stream completion exits 0;
+selection, connection, or stream failures exit 1.
 
 ## Telemetry
 
-On normal command completion, the command wrapper fires the standard `cli_command_executed` event
-with the command name, exit code, duration, and safe flag metadata. An interrupted follow may
-terminate before that event is captured. Stack log contents and messages are not sent as custom
-telemetry properties. Telemetry state is flushed to
-`<SUPABASE_HOME or ~/.supabase>/telemetry.json` after both successful and failed command runs.
+Standard command telemetry is retained; log contents are not custom telemetry
+properties. Telemetry flushes on every exit to
+`<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

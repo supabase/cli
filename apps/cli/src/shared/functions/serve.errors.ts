@@ -1,5 +1,6 @@
 import { Data } from "effect";
 import {
+  SUGGEST_CONTAINER_MEMORY_LIMIT,
   SUGGEST_DOCKER_INSTALL,
   SUGGEST_DOCKER_START,
 } from "../../command-internal/docker-suggest.ts";
@@ -12,8 +13,9 @@ import {
 /**
  * The edge runtime container exited with a real crash signal or other non-zero code while
  * streaming logs. Supervisor-initiated shutdowns (SIGHUP/SIGINT/SIGQUIT/SIGTERM) end the
- * `functions serve` session successfully instead of reaching this error; 137 (SIGKILL) is
- * retried by `streamContainerLogs` rather than failing.
+ * `functions serve` session successfully instead of reaching this error. `oomKilled` means the
+ * container hit its memory limit; a `137` without it was killed from outside the CLI, which we
+ * cannot attribute to either side.
  */
 export class EdgeRuntimeContainerCrashedError extends Data.TaggedError(
   "EdgeRuntimeContainerCrashedError",
@@ -21,9 +23,21 @@ export class EdgeRuntimeContainerCrashedError extends Data.TaggedError(
   readonly message: string;
   readonly containerId: string;
   readonly exitCode: number;
+  readonly oomKilled: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.oomKilled) {
+      return { ...actionability.resourceLimit, fingerprint_suffix: "out_of_memory" };
+    }
+    if (this.exitCode === 137) {
+      return { ...actionability.unknown, fingerprint_suffix: "container_killed" };
+    }
     return actionability.runtimeCrash;
+  }
+
+  /** Only an out-of-memory kill has a known remediation; other kills don't. */
+  get suggestion(): string | undefined {
+    return this.oomKilled ? SUGGEST_CONTAINER_MEMORY_LIMIT : undefined;
   }
 }
 
@@ -41,16 +55,25 @@ export class DockerLogsStreamError extends Data.TaggedError("DockerLogsStreamErr
    * follow-up inspect's own failure so consumers never inspect `stderr`/`message` text.
    */
   readonly daemonDown: boolean;
+  /**
+   * Whether the follow-up inspect found the container killed for exceeding its memory limit.
+   * False when that inspect failed and there is no container state to read.
+   */
+  readonly oomKilled: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.oomKilled) {
+      return { ...actionability.resourceLimit, fingerprint_suffix: "out_of_memory" };
+    }
     if (this.daemonDown) {
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
     }
     return actionability.unknown;
   }
 
-  /** Keeps the user-visible remediation in sync with the `dockerNotRunning` actionability above. */
+  /** Keeps the user-visible remediation in sync with the actionability above. */
   get suggestion(): string | undefined {
+    if (this.oomKilled) return SUGGEST_CONTAINER_MEMORY_LIMIT;
     return this.daemonDown ? SUGGEST_DOCKER_START : undefined;
   }
 }

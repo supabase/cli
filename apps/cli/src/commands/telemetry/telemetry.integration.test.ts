@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import {
   mockAnalytics,
@@ -74,12 +75,14 @@ function setupWithRealAnalytics(dir: string) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(cliProjectContextLayer),
     Layer.provide(envLayer),
+    Layer.provide(BunServices.layer),
   );
   const analytics = analyticsLayer.pipe(
     Layer.provide(configLayer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(ttyLayer),
     Layer.provide(BunServices.layer),
+    Layer.provide(FetchHttpClient.layer),
     Layer.provide(envLayer),
   );
   const layer = Layer.mergeAll(

@@ -20,6 +20,7 @@ describe("readComputeSection", () => {
           exposure: "private",
           instances: 4,
           source: "packages/api",
+          exclude: ["node_modules", ".env"],
         },
         box: { runtime: "sandbox" },
       }),
@@ -31,6 +32,7 @@ describe("readComputeSection", () => {
           exposure: "private",
           instances: 4,
           source: "packages/api",
+          exclude: ["node_modules", ".env"],
         },
         box: {
           runtime: "sandbox",
@@ -38,9 +40,25 @@ describe("readComputeSection", () => {
           exposure: undefined,
           instances: undefined,
           source: undefined,
+          exclude: undefined,
         },
       },
     });
+  });
+
+  // Blanks survive so `push` can refuse the pattern by name; dropping one here would upload
+  // the file it was written to withhold.
+  test("keeps every recorded exclude pattern, blanks included", () => {
+    expect(readComputeSection({ api: { exclude: ["", "dist/"] } }).compute["api"]?.exclude).toEqual(
+      ["", "dist/"],
+    );
+  });
+
+  test.each([
+    ["a bare string", "node_modules"],
+    ["a list holding a non-string", ["dist/", 7]],
+  ])("reads %s as no exclude list at all", (_label, exclude) => {
+    expect(readComputeSection({ api: { exclude } }).compute["api"]?.exclude).toBeUndefined();
   });
 
   test("drops non-object values so a stray scalar is not read as a compute", () => {

@@ -39,6 +39,8 @@ health_timeout = "2m"
 # The database major version to use. This has to be the same as your remote database's. Run \`SHOW
 # server_version;\` on the remote database to check.
 major_version = 17
+# OrioleDB version to use as the Postgres storage engine. Leave empty to use the default engine.
+orioledb_version = "__ORIOLEDB_VERSION__"
 
 [db.pooler]
 enabled = false
@@ -392,8 +394,6 @@ backend = "postgres"
 
 # Experimental features may be deprecated any time
 [experimental]
-# Configures Postgres storage engine to use OrioleDB (S3)
-orioledb_version = "__ORIOLEDB_VERSION__"
 # Configures S3 bucket URL, eg. <bucket_name>.s3-<region>.amazonaws.com
 s3_host = "env(S3_HOST)"
 # Configures S3 bucket region, eg. us-east-1
@@ -464,11 +464,58 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
-const ORIOLE_DB_VERSION = "15.1.0.150";
+const ORIOLE_DB_VERSION = "17.11.0.002";
 
-export function renderCliConfigTemplate(projectId: string, useOrioledb: boolean): string {
-  return CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
+const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
+stack = true
+`;
+
+// Default ports omitted so the stack is not pinned to Docker-era values.
+const STACK_INIT_OMITTED_PORT_BLOCKS = [
+  `# Port to use for the API URL.
+port = 54321
+`,
+  `# Port to use for the local database URL.
+port = 54322
+`,
+  `# Port used by db diff command to initialize the shadow database.
+shadow_port = 54320
+`,
+  `# Port to use for the local connection pooler.
+port = 54329
+`,
+  `# Port to use for Supabase Studio.
+port = 54323
+`,
+  `# Port to use for the email testing server web interface.
+port = 54324
+`,
+  `# Port to attach the Chrome inspector for debugging edge functions.
+inspector_port = 8083
+`,
+  `port = 54327
+`,
+] as const;
+
+function applyExperimentalStackInitTemplate(source: string): string {
+  let next = source.replace("[experimental]\n", `[experimental]\n${EXPERIMENTAL_STACK_INIT_FLAG}`);
+  for (const block of STACK_INIT_OMITTED_PORT_BLOCKS) {
+    next = next.replace(block, "");
+  }
+  return next.replace(
+    /^(openai_api_key|s3_host|s3_region|s3_access_key|s3_secret_key) = /gm,
+    "# $&",
+  );
+}
+
+export function renderCliConfigTemplate(
+  projectId: string,
+  useOrioledb: boolean,
+  experimentalStack = false,
+): string {
+  const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
     useOrioledb ? ORIOLE_DB_VERSION : "",
   );
+  return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }

@@ -38,8 +38,10 @@ import {
 } from "../../../command-internal/stack-storage.ts";
 import {
   buildStorageStackApi,
+  STORAGE_TEST_JWT_SECRET,
   type SetupStorageStackApiOptions,
 } from "../../../../tests/helpers/storage.ts";
+import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -227,6 +229,7 @@ const setupSeedBuckets = Effect.fnUntraced(function* (
       make: CommandPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
     linkedCache.layer,
+    unusedStackServices,
     ...(opts.stackBackend === true ? [stackBackendLayer("stack"), stackApi.layer] : []),
   );
 
@@ -2844,7 +2847,6 @@ describe("stack backend", () => {
         toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
         files: { "supabase/assets/a.txt": "hello" },
         stackBackend: true,
-        stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -2855,7 +2857,11 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
       expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:59999"))).toBe(true);
-      expect(requests.every((r) => r.headers["apikey"] === "stack-jwt")).toBe(true);
+      expect(
+        requests.every(
+          (r) => r.headers["apikey"] === generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+        ),
+      ).toBe(true);
       expect(
         requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
       ).toBe(true);
@@ -2913,7 +2919,7 @@ describe("stack backend", () => {
           (error) => error instanceof StackStorageCapabilityError,
         );
         expect(capability).toBeInstanceOf(StackStorageCapabilityError);
-        expect(capability?.suggestion).toContain("-x storage");
+        expect(capability?.suggestion).toContain("--exclude storage");
         expect(requests).toHaveLength(0);
       }).pipe(Effect.provide(BunServices.layer)),
   );

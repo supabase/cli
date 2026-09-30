@@ -21,7 +21,9 @@ export type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * `ProjectConfig`'s shape, `ProjectConfigSchema`/`toProjectConfigJsonSchema`, and
  * `fromConfigDocument`'s output alike: local bind ports/TLS overrides, `db.pooler`'s
  * `enabled`/`port`, the `db.migrations`/`db.seed` subtrees, every config-side `realtime.*` field,
- * and local-only `experimental.*` engine/backend selection.
+ * `db.orioledb_version` (plus its deprecated `experimental.orioledb_version` alias — a document
+ * that hasn't gone through the loader's deprecation normalization can still carry it), and
+ * local-only `experimental.*` engine/backend selection.
  *
  * `db.major_version` and `db.pooler`'s other three fields (`pool_mode`, `default_pool_size`,
  * `max_client_conn`) are real hosted facts and excluded from this list, so `config
@@ -38,6 +40,7 @@ export const DOCUMENT_ONLY_LOCAL_PATHS = [
   ["db", "port"],
   ["db", "shadow_port"],
   ["db", "health_timeout"],
+  ["db", "orioledb_version"],
   ["db", "pooler", "enabled"],
   ["db", "pooler", "port"],
   ["db", "migrations"],

@@ -1,7 +1,7 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Predicate, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -12,15 +12,18 @@ import {
   pflagArgvScan,
 } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
 import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/project-ref.service.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { isIPv6ConnectivityErrorCause } from "../../../command-internal/connect-errors.ts";
+import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
-import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
+import {
+  type DbConfigError,
+  DbConfigResolver,
+} from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags } from "../../../command-internal/db-config.types.ts";
 import { poolerConfigFromConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
@@ -42,6 +45,15 @@ import {
 } from "../../../command-internal/pooler-fallback.ts";
 import type { GenTypesFlags } from "./types.command.ts";
 import {
+  GEN_TYPES_LANGUAGE_FLAG_NAMES,
+  GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
+  languageOptionValues,
+} from "./types.languages.ts";
+import {
+  GenTypesBranchCredentialsUnavailableError,
+  GenTypesFlagUsageError,
+  GenTypesLocalDbInspectError,
+  GenTypesLocalDbNotRunningError,
   GenTypesMissingProjectConfigError,
   GenTypesNetworkError,
   GenTypesNetworkIdUnsupportedError,
@@ -49,7 +61,7 @@ import {
   GenTypesUnexpectedStatusError,
   GenTypesWorkdirError,
 } from "./types.errors.ts";
-import { type GenTypesGenerationError, GenTypesGenerator } from "./types.generator.service.ts";
+import { type GenTypesGenerateError, GenTypesGenerator } from "./types.generator.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import {
@@ -102,24 +114,18 @@ function isPoolerHost(host: string, poolerHost: string): boolean {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
-type GenTypesMutexFlag =
-  | "local"
-  | "linked"
-  | "project-id"
-  | "db-url"
-  | "postgrest-v9-compat"
-  | "swift-access-control"
-  | "query-timeout";
-
 // Validation reports only the first violated group, in this listed order — e.g. `--db-url X
 // --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
 // local/linked/project-id/db-url group.
-const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<GenTypesMutexFlag>> = [
+const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
   ["linked", "project-id", "postgrest-v9-compat"],
   ["linked", "project-id", "query-timeout"],
-  ["linked", "project-id", "swift-access-control"],
+  ...GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => ["linked", "project-id", name]),
   ["local", "linked", "project-id", "db-url"],
 ];
+
+const POSTGREST_V9_COMPAT_DEPRECATION_LINE =
+  "Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.";
 
 /**
  * Every value-taking flag `gen types` parses, telling `pflagArgvScan` which bare tokens
@@ -132,14 +138,14 @@ const GEN_TYPES_SCAN_SPEC = {
     "project-id",
     "lang",
     "schema",
-    "swift-access-control",
+    ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
     "query-timeout",
     ...PERSISTENT_VALUE_FLAG_NAMES,
   ]),
   valueFlagShorthands: new Map([["s", "schema"], ...PERSISTENT_VALUE_FLAG_SHORTHANDS]),
 } as const;
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectByteStream<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -156,7 +162,7 @@ const LONG_FLAGS_WITH_VALUES = new Set([
   "project-id",
   "lang",
   "schema",
-  "swift-access-control",
+  ...GEN_TYPES_LANGUAGE_VALUE_FLAG_NAMES,
   "query-timeout",
   "profile",
   "workdir",
@@ -241,7 +247,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   const schemas = flags.schema;
   const lang = flags.lang;
-  const swiftAccessControl = flags.swiftAccessControl;
+  const languageOptions = languageOptionValues(flags);
 
   const toRelativeConfigPath = (path: string) => relativeConfigPath(cliSettings.workdir, path);
 
@@ -257,17 +263,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       // before falling back to `config.toml`, so hardcoding `.toml` here would mislabel it.
       // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
       // from the "no project here" case that guard handles.
-      Effect.catchTag(
-        "CliConfigParseError",
-        (cause) =>
+      Effect.catchTags({
+        CliConfigParseError: (cause) =>
           new GenTypesParseConfigError({
             message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
           }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new GenTypesParseConfigError({ message: cause.message }),
-      ),
+        DuplicateRemoteProjectIdError: (cause) =>
+          new GenTypesParseConfigError({ message: cause.message }),
+      }),
       Effect.flatMap(requireProjectConfigWhenExplicit),
     );
 
@@ -307,11 +310,21 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
    * `toConnectError` classifies the IPv6-unreachable dial failure at the connection boundary and
    * exposes it via `DbConnectError.ipv6Unreachable`, so a `DbConnectError` no longer carries the
    * raw driver cause `isIPv6ConnectivityErrorCause` needs; fall back to it for any other error.
+   * An out-of-process tool runs after the connection succeeded, and its errors carry the tool's
+   * stderr in the message, which could name a host the tool itself failed to reach; they are
+   * never a database connectivity failure, so they never earn the pooler retry.
    */
-  const classifyGenerateError = (error: DbConnectError | GenTypesGenerationError): boolean =>
-    Predicate.isTagged(error, "DbConnectError")
-      ? (error.ipv6Unreachable ?? false)
-      : isIPv6ConnectivityErrorCause(error);
+  const classifyGenerateError = (error: DbConnectError | GenTypesGenerateError): boolean => {
+    switch (error._tag) {
+      case "DbConnectError":
+        return error.ipv6Unreachable ?? false;
+      case "GenTypesToolNotInstalledError":
+      case "GenTypesToolFailedError":
+        return false;
+      case "GenTypesGenerationError":
+        return isIPv6ConnectivityErrorCause(error);
+    }
+  };
 
   const runGenerate = (input: {
     readonly conn: PgConnInput;
@@ -321,7 +334,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
-      readonly resolve: Effect.Effect<Option.Option<PgConnInput>, unknown>;
+      readonly resolve: Effect.Effect<Option.Option<PgConnInput>, DbConfigError>;
     };
   }) =>
     Effect.gen(function* () {
@@ -336,8 +349,10 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               dnsResolver,
               lang,
               includedSchemas: input.includedSchemas,
-              detectOneToOneRelationships: input.detectOneToOneRelationships,
-              swiftAccessControl,
+              options: {
+                ...languageOptions,
+                "detect-one-to-one-relationships": input.detectOneToOneRelationships,
+              },
             });
           }),
         );
@@ -354,6 +369,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
               classifyError: classifyGenerateError,
             });
 
+      if (lang === "typescript") {
+        yield* output.raw(
+          "Generated TypeScript is unformatted. Format it with:\n  npx oxfmt <generated-file.ts>\n",
+          "stderr",
+        );
+      }
       yield* output.raw(types);
     });
 
@@ -424,7 +445,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
-        return yield* Effect.fail(new Error("Preview branch database credentials are unavailable"));
+        return yield* new GenTypesBranchCredentialsUnavailableError({
+          message: "Preview branch database credentials are unavailable",
+        });
       }
       const branchUser = branch.db_user;
       const branchPassword = branch.db_pass;
@@ -490,15 +513,17 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         if (exitCode !== 0) {
           const message = stderr.trim();
           if (message.toLowerCase().includes("no such container")) {
-            return yield* Effect.fail(new Error("supabase start is not running."));
+            return yield* new GenTypesLocalDbNotRunningError({
+              message: "supabase start is not running.",
+            });
           }
-          return yield* Effect.fail(
-            new Error(
+          return yield* new GenTypesLocalDbInspectError({
+            message:
               message.length > 0
                 ? `failed to inspect service: ${message}`
                 : "failed to inspect service",
-            ),
-          );
+            daemonDown: isDockerDaemonUnreachable(message),
+          });
         }
       }),
     );
@@ -514,13 +539,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     // container. It is a persistent flag, so a pre-command occurrence (`supabase --network-id
     // net gen types ...`) lands in `prePathOccurrences`, not `occurrences` — check both.
     if (occurrences.has("network-id") || scan.prePathOccurrences.has("network-id")) {
-      return yield* Effect.fail(
-        new GenTypesNetworkIdUnsupportedError({
-          message:
-            "gen types now generates types in-process and cannot join a Docker network via " +
-            "--network-id; use a host-reachable --db-url instead.",
-        }),
-      );
+      return yield* new GenTypesNetworkIdUnsupportedError({
+        message:
+          "gen types now generates types in-process and cannot join a Docker network via " +
+          "--network-id; use a host-reachable --db-url instead.",
+      });
+    }
+
+    if (occurrences.has("postgrest-v9-compat")) {
+      yield* output.raw(`${POSTGREST_V9_COMPAT_DEPRECATION_LINE}\n`, "stderr");
     }
 
     // This guard runs before flag-group validation, so its error wins when both apply. Both
@@ -529,9 +556,9 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
       // Established error text, including the "must used" typo — do not
       // "fix" the grammar.
-      return yield* Effect.fail(
-        new Error("--postgrest-v9-compat must used together with --db-url"),
-      );
+      return yield* new GenTypesFlagUsageError({
+        message: "--postgrest-v9-compat must used together with --db-url",
+      });
     }
     const positionalLang = findPositionalLanguage(rawArgs);
     if (
@@ -539,25 +566,31 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       positionalLang.value !== "typescript" &&
       !occurrences.has("lang")
     ) {
-      return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
+      return yield* new GenTypesFlagUsageError({
+        message: "use --lang flag to specify the typegen language",
+      });
     }
 
     // A flag counts as set once passed explicitly, regardless of value (`--linked=false`
     // still trips its group). `project-id`/`db-url` are read straight off parsed flags since
     // they have no boolean-vs-default ambiguity.
-    const changedMutexFlags: Record<GenTypesMutexFlag, boolean> = {
+    const changedMutexFlags: Record<string, boolean> = {
       local: occurrences.has("local"),
       linked: occurrences.has("linked"),
       "project-id": Option.isSome(flags.projectId),
       "db-url": Option.isSome(flags.dbUrl),
       "postgrest-v9-compat": occurrences.has("postgrest-v9-compat"),
-      "swift-access-control": occurrences.has("swift-access-control"),
       "query-timeout": occurrences.has("query-timeout"),
+      ...Object.fromEntries(
+        GEN_TYPES_LANGUAGE_FLAG_NAMES.map((name) => [name, occurrences.has(name)]),
+      ),
     };
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
       if (set.length > 1) {
-        return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
+        return yield* new GenTypesFlagUsageError({
+          message: cobraMutuallyExclusiveErrorMessage(group, set),
+        });
       }
     }
 
@@ -669,17 +702,15 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     }
 
     const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
-      Effect.catch((cause) => {
-        if (
-          cause instanceof ProjectRefNotLinkedError &&
+      Effect.catchTag("ProjectRefNotLinkedError", (cause) =>
+        Effect.fail(
           cause.message === PROJECT_NOT_LINKED_MESSAGE
-        ) {
-          return Effect.fail(
-            new Error("Must specify one of --local, --linked, --project-id, or --db-url"),
-          );
-        }
-        return Effect.fail(cause);
-      }),
+            ? new GenTypesFlagUsageError({
+                message: "Must specify one of --local, --linked, --project-id, or --db-url",
+              })
+            : cause,
+        ),
+      ),
     );
     const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
     yield* runProjectTypes(

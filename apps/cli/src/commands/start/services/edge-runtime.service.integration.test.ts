@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { FileSystem, Path } from "effect";
 
-import { describe, expect, it } from "@effect/vitest";
+import { expect, layer } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "../../../shared/stack-constants.ts";
 import { ConfigProvider, Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -100,25 +100,32 @@ function baseInput(workdir: string): EdgeRuntimeBringUpInput {
   };
 }
 
-function envEntries(runCall: {
+const envEntries = Effect.fnUntraced(function* (runCall: {
   args: ReadonlyArray<string>;
   env?: Readonly<Record<string, string>>;
 }) {
+  const fs = yield* FileSystem.FileSystem;
   const envFileArgIndex = runCall.args.indexOf("--env-file");
   const envFilePath = runCall.args[envFileArgIndex + 1];
   expect(envFilePath).toBeDefined();
-  return readFileSync(envFilePath!, "utf8")
-    .split("\n")
-    .filter((line) => line.length > 0);
-}
+  return (yield* fs.readFileString(envFilePath!)).split("\n").filter((line) => line.length > 0);
+});
 
-describe("startStackEdgeRuntimeContainer", () => {
+layer(BunServices.layer)("startStackEdgeRuntimeContainer", (it) => {
   const tempWorkdir = useTempWorkdir("supabase-edge-runtime-service-int-");
 
   // Only needs to exist — every scenario here has zero declared functions,
   // so nothing under it is read.
   beforeEach(() => {
-    mkdirSync(join(tempWorkdir.current, "supabase", "functions"), { recursive: true });
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions"), {
+          recursive: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
   afterEach(() => {
@@ -156,7 +163,7 @@ describe("startStackEdgeRuntimeContainer", () => {
           Effect.provide(out.layer),
         );
 
-        const entries = envEntries(mock.runCall!);
+        const entries = yield* envEntries(mock.runCall!);
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
@@ -173,7 +180,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         Effect.provide(out.layer),
       );
 
-      const entries = envEntries(mock.runCall!);
+      const entries = yield* envEntries(mock.runCall!);
       expect(entries).toContain("SUPABASE_ANON_KEY=anon.jwt.value");
       expect(entries).toContain("SUPABASE_SERVICE_ROLE_KEY=service-role.jwt.value");
       expect(entries).toContain(
@@ -225,10 +232,14 @@ describe("startStackEdgeRuntimeContainer", () => {
 
   it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
       const slug = "hello";
-      const entrypoint = join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
-      mkdirSync(join(tempWorkdir.current, "supabase", "functions", slug), { recursive: true });
-      writeFileSync(entrypoint, "Deno.serve(() => new Response('ok'));");
+      const entrypoint = path.join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
+      yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions", slug), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(entrypoint, "Deno.serve(() => new Response('ok'));");
 
       const fnConfig = {
         enabled: true,
@@ -477,9 +488,11 @@ describe("startStackEdgeRuntimeContainer", () => {
     "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker create",
     () =>
       Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
         const mock = mockDockerSpawner();
         const out = mockOutput();
-        const stagingDir = join(
+        const stagingDir = path.join(
           tempWorkdir.current,
           "supabase",
           ".temp",
@@ -488,8 +501,8 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
         // Simulates a stale leftover from an earlier invocation; `writeDockerEnvFile` reuses
         // this path deterministically rather than a fresh mkdtemp each call.
-        mkdirSync(join(stagingDir, "env"), { recursive: true });
-        writeFileSync(join(stagingDir, "env", "docker.env"), "STALE=1");
+        yield* fs.makeDirectory(path.join(stagingDir, "env"), { recursive: true });
+        yield* fs.writeFileString(path.join(stagingDir, "env", "docker.env"), "STALE=1");
 
         const input = {
           ...baseInput(tempWorkdir.current),
@@ -507,7 +520,7 @@ describe("startStackEdgeRuntimeContainer", () => {
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(existsSync(stagingDir)).toBe(false);
+        expect(yield* fs.exists(stagingDir)).toBe(false);
       }),
   );
 

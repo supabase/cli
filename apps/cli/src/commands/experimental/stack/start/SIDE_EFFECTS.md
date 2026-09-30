@@ -1,116 +1,135 @@
 # `supabase stack start`
 
-The command is available only when the `experimental.stack` feature flag is enabled. The
-top-level `supabase start` command uses this handler when the same flag is enabled.
+The experimental stack family and the enabled top-level `supabase start` alias use this handler.
+It creates or resumes the stack for the project and optional `--stack` name, or opens the selected
+`--stack-id`. Those selectors are mutually exclusive. Starting does not create a project config file.
 
-This command creates or resumes the managed stack identified by the current
-project and optional `--stack`, or opens an existing stack with `--stack-id`.
-It loads `supabase/config.toml` for the target project when present and uses
-default settings when it is absent; starting the stack does not create a config
-file. It resolves explicit
-`env(NAME)` references plus supported automatic `SUPABASE_*` overrides. Shell
-values take precedence over values from `supabase/` dotenv files, which take
-precedence over project-root dotenv files. Empty automatic overrides are
-ignored. Explicit `env(NAME)` references remain available for values that are
-not directly overridden.
-The `@supabase/stack` Effect API owns persistent state, the detached
-Supervisor, runtime resources, readiness, and cleanup. The CLI only resolves
-the project configuration and renders the resulting status.
+## Configuration and state
 
-Durable stack state lives under `$SUPABASE_HOME/managed/stacks/<stackId>/`
-(`~/.supabase/managed/stacks/<stackId>/` by default). Ephemeral shadows use
-`$SUPABASE_HOME/managed/ephemeral-postgres/<identity>/`.
+For a new stack or a stopped existing stack, the CLI loads the target project's
+`supabase/config.toml`, supported environment overrides, and project dotenv files. It validates the
+supported configuration before creating service definitions. When every member of the existing
+composition is running and healthy, or armed to wake and not already starting, start reports its
+current endpoints and returns without reading or applying project configuration. When the database
+is running and every other member is running with any health, starting, or armed to wake, start
+notes that configuration changes apply after stop and start, starts the saved composition, and waits
+until every member that was running or starting is ready, again without reading project
+configuration.
 
-`SUPABASE_HOME` controls the package's durable stack state through its normal
-runtime composition boundary. The stack owner is deliberately detached from
-the command waiter, so returning from a successful start leaves the stack
-running for later commands. An interrupted start is handled by the package's
-owner cleanup contract.
+If the stack is otherwise in a partial lifecycle state, start fails with guidance to stop the stack
+and start it again before applying configuration.
+Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
+forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
+S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
+Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
+controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
+the effective root key is supplied through a stack-owned key file.
+Studio receives the database connection, the Functions management directory/URL, and Analytics
+credentials when present. Starting with Studio creates `supabase/snippets/`, where Studio saves SQL
+snippets.
+Email template `content_path` values and third-party identity providers remain unsupported: they
+require template serving and shared external JWKS verification respectively.
 
-The config loader reads the project environment files used for config
-resolution, including the shared `supabase/.env` and `supabase/.env.local`
-files when applicable. Function environment settings additionally read the
-shared `supabase/functions/.env` and each enabled function's
-`supabase/functions/<name>/.env`; per-function values override shared values.
-Encrypted values use dotenvx decryption with keys from `DOTENV_PRIVATE_KEY`
-and `DOTENV_PRIVATE_KEY_*`; each variable may contain comma-separated keys.
-Failed decryption returns a typed configuration error without logging the
-plaintext, ciphertext, or private key. Listener port numbers remain dynamically
-allocated unless explicitly configured or supplied through a supported
-`SUPABASE_*_PORT` override.
-The CLI resolves supported environment overrides into a complete plain config
-document and validates that effective document with `@supabase/config` before
-projecting it into the stack runtime shape. Package validation errors are
-reported with field paths and generic values so secrets are not exposed. The
-stack projection then wraps consumed secrets, decrypts values at capability
-boundaries, and preserves `env(NAME)` function references until runtime settings
-are assembled. Provider secrets are resolved when the Auth capability is enabled;
-disabled capabilities skip their unconsumed secrets. JWT issuer and signing
-overrides are always applied because stack security consumes them even when Auth
-itself is disabled. The CLI preserves optional-section presence metadata while
-projecting the validated document.
+Secrets needed by enabled services are passed to the runtime. State and service data live under
+`$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
+use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
+`supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
 
-Text output includes the stack id, lifecycle, endpoints, and dormant
-capabilities. Structured output includes the same status fields. The command reads configured
-credentials and function/provider secrets to pass them to the stack runtime, but
-never emits those values.
+For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
+Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
+probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
+asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
+saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
+runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
+Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+`--runtime native` on a platform with no native artifacts fails before creating a stack.
 
-`--stack` and `--stack-id` are mutually exclusive. For a new stack, `--runtime auto`
-selects Docker when the daemon is reachable and native otherwise; a present Docker
-client with a dead daemon persists native and prints a notice that destroy-and-recreate
-(or a new `--stack` name) is required to use Docker later. Existing stacks reuse their
-persisted runtime. `docker` and `native` select the requested runtime without fallback.
-Native start is refused as uid 0 because `initdb` refuses root.
-`--preparation` controls background versus
-on-demand artifact preparation, and `--eager` requests enabled capabilities be
-activated before the command returns. Eager capabilities do not receive automatic
-idle stops. Per-capability `idleTimeoutSeconds` values are available through the
-package's Effect API only; the CLI does not expose them as command or project
-configuration settings.
-`--exclude` accepts repeated or comma-separated capability names (`rest`, `auth`, `realtime`,
-`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`) and disables those services
-in the effective start configuration. The database cannot be excluded. Exclusions are applied in
-memory and persisted with the stack state; the project configuration file is unchanged. A capability
-and its dependents are disabled together, so excluding `rest` also disables `studio`. Excluding
-`analytics` does not. Analytics and pooler catalog downloads follow the excluded start config;
-the platform trio still fail-closes against the full enabled config.
-Listeners are derived by the runtime from enabled capability routes; route-less listeners are therefore omitted.
-Eager activation never re-enables an excluded capability.
+Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
+or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
+as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
+root's home directory. Later commands that restrict the artifact cache and stack state roots to
+their owner keep that grant.
 
-The command owns only the start request. Once the package reports readiness,
-the detached stack owner remains alive after the CLI process exits. If the CLI
-caller is interrupted while waiting, the package's owner lifecycle decides
-whether the start can complete or must clean up; the CLI does not call stop or
-destroy as a cancellation handler.
+Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
+Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A
+service that a running service depends on, such as pg-meta for Studio, stays up until that
+dependent stops. Functions has no automatic idle stop. `--eager` makes all selected services eager.
+Changes to activation policy take effect after stopping and starting the stack, including when a
+later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
+artifact preparation.
 
-Database `network_restrictions`, `ssl_enforcement`, and `vault` settings are
-accepted by the project config model but are not implemented by the local
-runtime and are not forwarded. They do not enforce database security for this
-command.
+When Functions is selected, the CLI reads and validates `supabase/functions/.env`, ignoring reserved
+`SUPABASE_*` entries. `edge_runtime.secrets` overrides that file, while `functions.<name>.env`
+provides per-function values from project environment references. Per-function enabled/JWT policies,
+entrypoints, import maps and static files are forwarded to the worker bootstrap. Configured paths
+are relative to `supabase/` and must remain within the project; Docker mounts that project read-only.
+The inspector port is retained as an endpoint intent and does not enable debugging by itself.
+Running start calls do not refresh Functions from changed project files; stop the stack and start
+it again to apply those changes.
 
-## Bucket seeding on stack creation
+## Service selection
 
-When this invocation runs the stack's first configured start (`desiredLifecycle` was
-`unconfigured`, including after `stack prepare`) and Storage is not `disabled`, the
-command seeds `[storage.buckets]` — creating or updating buckets and uploading their
-`objects_path` files, non-interactively with auto-confirm — against the stack's gateway
-using its service-role JWT, before printing the resulting status. Auto-confirm is safe
-here because a first-start stack has no pre-existing buckets to overwrite or prune. This
-reuses the same seeding core as `supabase seed buckets` and `db reset --local`. Files
-read: `supabase/config.toml` `[storage.buckets]`, the configured `objects_path` files,
-and the project dotenv files used for config resolution. Network calls:
-`POST`/`GET /storage/v1/bucket` and `POST /storage/v1/object/...` against the stack's
-API URL.
+`--exclude` accepts repeated or comma-separated capability names: `rest`, `auth`, `realtime`,
+`storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
+Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
+Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
+Vector runs a stack-owned default configuration that enables its health API and forwards no service
+logs; log collection into Analytics is not implemented yet.
 
-A project with no `[storage.buckets]` or `[storage.vector.buckets]` configured resolves
-no credentials and prints nothing — there is nothing to seed.
+After an explicit stop, start compares the project configuration with the saved composition through
+the stack package's composition plan, ignoring values the composition and stack credentials supply.
+Changed service settings, including Functions env values, per-function settings, files root, and JWT
+verification, replace the saved configuration of the existing instances; their identities, data,
+and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
+Removed services remain saved and stopped so including them again can reuse them; a saved stopped
+instance of a newly included service is reused when its endpoints and versions still match. The
+project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
+version fails before modifying the stopped composition, naming the changed setting and suggesting
+`supabase stack destroy` to recreate the stack.
 
-A resumed stack is never re-seeded by `start`. Storage `disabled` skips seeding
-silently; any other unusable capability state, a missing capability/credentials, or a
-stack-gateway activation failure prints a stderr warning and skips seeding without
-failing the command. Any other seeding failure (e.g. an invalid bucket entry) fails the
-command with exit code `1`, but the stack itself is left running — a seeding failure
-never stops or destroys it.
+## First startup and retries
 
-Telemetry state is flushed to `<SUPABASE_HOME or ~/.supabase>/telemetry.json`
-after both successful and failed command runs.
+The first configured startup prepares the database catalog, temporarily runs configured schema-owning
+services, applies the database overlay, and runs project migrations and seeds. Membership changes
+apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
+composition reapplies the webhook setting before activation.
+
+When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
+files using the service-role JWT, silently overwriting or pruning existing buckets without a
+confirmation prompt. Storage is started and made ready before those requests. A resumed
+stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
+
+A new stack is registered by its owner once that owner starts; if the owner fails to start (for
+example, Docker is unavailable) or the launch is interrupted, it removes that registration, and the
+CLI reports the single launch failure with no separate stop diagnostic. Any other failure or interruption during the first startup stops and
+unconfigures that initial composition, then destroys only the service instances created by this
+invocation. When startup began without a running owner, failure cleanup stops any owner launched
+during startup and waits for its exit. A target with a running owner keeps it. Existing instances and
+their data are retained, and failed resumes do not destroy existing data. Cleanup diagnostics name any
+instance that could not be removed or owner that could not be stopped. After successful cleanup,
+fixing the cause and retrying starts from an empty composition.
+Successful startup leaves the owner available after the CLI exits. Abrupt process termination that
+bypasses finalizers requires manual inspection and, for an incomplete first bootstrap, destruction
+before retrying; there is no recovery journal.
+
+## Processes, network, and output
+
+The package's detached owner manages service processes, listeners, readiness, and runtime resources.
+It remains available after the CLI exits. Preparation downloads native artifacts or pulls container
+images. Catalog setup and project SQL connect to the primary database. Bucket seeding uses the local
+Storage HTTP endpoint. The CLI does not remove caller-owned Storage files during cleanup.
+
+Text output reports progress and `Stack is ready.`, then prints the connection summary shared with
+`stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
+members that expose them, the publishable and secret keys, a services table, the runtime, and a
+pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
+and warnings written while the spinner is shown appear on their own rows.
+
+JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
+name (protocol, address, port, and URL, matching `stack status`, plus `studio.mcp` when Studio has
+an HTTP endpoint), `lazy_services` listing members that start on their first request (empty with
+`--eager`), and an empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md)
+for an example. Credentials are not part of the JSON result. Failures retain typed command errors
+and package diagnostics. Telemetry state is flushed after success or failure.

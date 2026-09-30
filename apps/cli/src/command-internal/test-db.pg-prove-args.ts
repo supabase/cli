@@ -1,8 +1,12 @@
 import * as nodePath from "node:path";
 import { Option } from "effect";
-import type { PostgresClientMount } from "@supabase/stack/effect";
-
 import { toDockerMountPath } from "./docker-path.ts";
+
+interface PostgresClientMount {
+  readonly source: string;
+  readonly target: string;
+  readonly readOnly: boolean;
+}
 
 export interface PgProveArgs {
   /** Full `pg_prove` argv (without the leading binary, which the image provides). */

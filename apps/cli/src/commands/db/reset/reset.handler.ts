@@ -78,50 +78,40 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     const target = resolveDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new DbResetTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbResetTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      });
     }
     // `--last` is an unsigned flag, so a negative value should be rejected; `Flag.integer` here
     // accepts it, so reject it explicitly rather than silently resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
-      return yield* Effect.fail(
-        new DbResetLastFlagError({
-          message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
-        }),
-      );
+      return yield* new DbResetLastFlagError({
+        message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
+      });
     }
     // Mutually-exclusive version/last group.
     if (Option.isSome(flags.version) && Option.isSome(flags.last)) {
-      return yield* Effect.fail(
-        new DbResetVersionFlagsError({
-          message:
-            "if any flags in the group [last version] are set none of the others can be; [last version] were all set",
-        }),
-      );
+      return yield* new DbResetVersionFlagsError({
+        message:
+          "if any flags in the group [last version] are set none of the others can be; [last version] were all set",
+      });
     }
 
     // `--no-seed` conflicts with `--sql-paths`, and each `--sql-paths` value
     // must be non-empty.
     if (flags.noSeed && flags.sqlPaths.length > 0) {
-      return yield* Effect.fail(
-        new DbResetSeedFlagsError({
-          message: "--no-seed cannot be used with --sql-paths",
-          suggestion: `Use either ${aqua("--no-seed")} to skip seeding or ${aqua(
-            "--sql-paths",
-          )} to override seed files, not both.`,
-        }),
-      );
+      return yield* new DbResetSeedFlagsError({
+        message: "--no-seed cannot be used with --sql-paths",
+        suggestion: `Use either ${aqua("--no-seed")} to skip seeding or ${aqua(
+          "--sql-paths",
+        )} to override seed files, not both.`,
+      });
     }
     if (flags.sqlPaths.some((p) => p.length === 0)) {
-      return yield* Effect.fail(
-        new DbResetSeedFlagsError({
-          message: "--sql-paths requires a non-empty path or glob pattern",
-          suggestion: `Pass a non-empty file path or glob pattern to ${aqua("--sql-paths")}.`,
-        }),
-      );
+      return yield* new DbResetSeedFlagsError({
+        message: "--sql-paths requires a non-empty path or glob pattern",
+        suggestion: `Pass a non-empty file path or glob pattern to ${aqua("--sql-paths")}.`,
+      });
     }
     // A remote target flag + --sql-paths warns about the seed override.
     if (
@@ -145,11 +135,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       if (parseMigrationVersion(v) === undefined) {
         // The bare "invalid version number" is returned unwrapped; the
         // `failed to parse <v>:` wrapper belongs to `migration repair` only.
-        return yield* Effect.fail(
-          new DbResetInvalidVersionError({
-            message: "invalid version number",
-          }),
-        );
+        return yield* new DbResetInvalidVersionError({
+          message: "invalid version number",
+        });
       }
       // Validated by globbing `supabase/migrations/<version>_*.sql` directly, with no filtering,
       // so a deprecated first migration that `listLocalMigrations` excludes is still accepted.
@@ -158,11 +146,9 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
       const found = entries.some((name) => pathMatch(`${v}_*.sql`, path.basename(name)).matched);
       if (!found) {
-        return yield* Effect.fail(
-          new DbResetMigrationFileError({
-            message: `glob supabase/migrations/${v}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new DbResetMigrationFileError({
+          message: `glob supabase/migrations/${v}_*.sql: file does not exist`,
+        });
       }
       resolvedVersion = v;
     } else if (Option.isSome(flags.last) && flags.last.value > 0) {
@@ -181,12 +167,10 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // `--project-ref` only applies to the linked target; it must not be silently ignored when
     // targeting `--local`/`--db-url`.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbResetTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbResetTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // Loaded before the fallible linked resolution, so the post-run cache finalizer still fires
@@ -243,7 +227,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
       false,
     );
     if (!shouldReset) {
-      return yield* Effect.fail(new DbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }));
+      return yield* new DbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 

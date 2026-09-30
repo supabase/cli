@@ -1,8 +1,10 @@
-import { Effect, FileSystem, Path, Schema, Crypto } from "effect";
+import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { InvalidProjectRootError, InvalidStackIdentityError } from "../public/Errors.ts";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import { InvalidProjectRootError, InvalidStackIdentityError } from "./Errors.ts";
+import { StackIdSchema } from "./StackId.ts";
 import { resolveGitBranchContext } from "./GitBranchContext.ts";
+
+const DEFAULT_STACK_NAME = "default";
 
 export interface StackIdentity {
   readonly projectRoot: string;
@@ -36,10 +38,10 @@ const encodeTuple = (identity: StackIdentity): Uint8Array => {
 };
 
 /** Hashes the complete identity tuple using length-delimited UTF-8 fields. */
-export const deriveStackId = (
+export const deriveStackId = Effect.fn("Identity.deriveStackId")(function* (
   identity: StackIdentity,
-): Effect.Effect<StackId, InvalidStackIdentityError, Crypto.Crypto> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const digest = yield* crypto.digest("SHA-256", encodeTuple(identity));
     let hexadecimal = "";
@@ -63,16 +65,13 @@ export const deriveStackId = (
       ),
     ),
   );
+});
 
 /** Resolves a canonical Git or ordinary-folder identity without writing state. */
-export const resolveStackIdentity = (
+export const resolveStackIdentity = Effect.fn("Identity.resolveStackIdentity")(function* (
   options: ResolveStackIdentityOptions,
-): Effect.Effect<
-  StackIdentity,
-  InvalidProjectRootError | InvalidStackIdentityError,
-  FileSystem.FileSystem | Path.Path
-> =>
-  Effect.gen(function* () {
+) {
+  return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const projectRoot = options.projectRoot;
     if (projectRoot.trim().length === 0) {
@@ -91,7 +90,7 @@ export const resolveStackIdentity = (
       });
     }
 
-    const stackName = options.name ?? "default";
+    const stackName = options.name ?? DEFAULT_STACK_NAME;
     if (stackName.trim().length === 0) {
       return yield* identityFailure("The stack name must not be blank", { name: options.name });
     }
@@ -112,3 +111,14 @@ export const resolveStackIdentity = (
       ),
     ),
   );
+});
+
+/**
+ * Names a stack for container names and grouping labels: the project root's folder name plus any
+ * non-default stack name, or the stack name alone when the root has no folder name.
+ */
+export const projectSegmentFor = (identity: StackIdentity, path: Path.Path): string => {
+  const base = path.basename(identity.projectRoot);
+  if (base.trim().length === 0) return identity.stackName;
+  return identity.stackName === DEFAULT_STACK_NAME ? base : `${base}-${identity.stackName}`;
+};

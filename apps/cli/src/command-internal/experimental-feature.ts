@@ -1,5 +1,5 @@
 import { CliConfigSchema, findCliProjectPaths } from "@supabase/config/effect";
-import { Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Config, ConfigProvider, Data, Effect, FileSystem, Option, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { resolveWorkdir } from "../config/command-settings.layer.ts";
 import { rootFlagTokens } from "../shared/cli/run.ts";
@@ -70,6 +70,21 @@ export const readExperimentalFeatureConfig = (input: {
     const decoded = yield* Schema.decodeUnknownEffect(schema)(document);
     return decoded.experimental?.[input.feature];
   }).pipe(Effect.orElseSucceed(() => undefined));
+
+/**
+ * Env record for one experimental feature, read from ConfigProvider.
+ */
+export const experimentalFeatureEnv = (
+  feature: string,
+): Effect.Effect<Readonly<Record<string, string | undefined>>> =>
+  Effect.gen(function* () {
+    const envName = `SUPABASE_EXPERIMENTAL_${feature.toUpperCase()}`;
+    const provider = yield* ConfigProvider.ConfigProvider;
+    const override = yield* Config.option(Config.string(envName))
+      .parse(provider)
+      .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+    return { [envName]: Option.getOrUndefined(override) };
+  });
 
 /** Resolves one experimental boolean from its environment override and config fallback. */
 export const resolveExperimentalFeature = <E, R>(input: {

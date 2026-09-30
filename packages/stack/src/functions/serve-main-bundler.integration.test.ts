@@ -3,7 +3,7 @@ import { Data, Deferred, Effect, Exit, FileSystem, Path, Schema, Stream } from "
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
+import { defaultFunctionsBootstrap } from "./generated/serve-main-bundle.ts";
 
 type ServeOptions = {
   readonly handler: (request: Request) => Promise<Response>;
@@ -11,6 +11,101 @@ type ServeOptions = {
 };
 
 class MissingFixture extends Data.TaggedError("MissingFixture") {}
+// oxlint-disable-next-line effecttsgo/extends-native-error -- stands in for Deno.errors.WorkerAlreadyRetired, matched by instanceof at the sandbox boundary.
+class WorkerAlreadyRetired extends Error {}
+// oxlint-disable-next-line effecttsgo/extends-native-error -- stands in for Deno.errors.InvalidWorkerResponse, matched by instanceof at the sandbox boundary.
+class InvalidWorkerResponse extends Error {}
+
+type TestWorker = { fetch(request: Request): Promise<Response> };
+
+const serveSandboxed = (functionsConfig: string, createWorker: () => TestWorker) =>
+  Effect.gen(function* () {
+    const envRecord: Record<string, string> = {
+      SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
+      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfig,
+    };
+    const bundled = defaultFunctionsBootstrap;
+    let serveOptions: ServeOptions | undefined;
+    const sandbox = {
+      Deno: {
+        env: {
+          get: (name: string) => envRecord[name],
+          toObject: () => envRecord,
+        },
+        errors: { WorkerAlreadyRetired, InvalidWorkerResponse },
+        lstat: (path: string) => {
+          const isDirectory = path === "/functions" || path === "/functions/hello";
+          const isFile = path === "/functions/hello/index.ts";
+          return isDirectory || isFile
+            ? Promise.resolve({ isDirectory, isFile, isSymlink: false })
+            : Promise.reject(new MissingFixture());
+        },
+        realPath: (path: string) => Promise.resolve(path),
+        readDir: () => Stream.toAsyncIterable(Stream.empty),
+        makeTempDirSync: () => "/tmp/worker",
+        version: { deno: "test" },
+        serve: (options: ServeOptions) => {
+          serveOptions = options;
+        },
+      },
+      EdgeRuntime: {
+        applySupabaseTag: () => undefined,
+        userWorkers: { create: () => Promise.resolve(createWorker()) },
+      },
+      AbortController,
+      AbortSignal,
+      Headers,
+      ReadableStream,
+      Request,
+      Response,
+      URL,
+      console,
+      crypto,
+      CryptoKey,
+      Uint8Array,
+      ArrayBuffer,
+      atob,
+      btoa,
+      setTimeout,
+      clearTimeout,
+      TextEncoder,
+      TextDecoder,
+      structuredClone,
+    };
+    const module = new SourceTextModule(bundled, {
+      context: createContext(sandbox),
+      identifier: "serve.main.sandboxed.bundle.js",
+    });
+    yield* Effect.tryPromise(() =>
+      module.link(() => {
+        throw new Error("Bundled service unexpectedly imported another module");
+      }),
+    );
+    yield* Effect.tryPromise(() => module.evaluate());
+    if (serveOptions === undefined)
+      return yield* Effect.die("Bundled service did not register a server");
+    return serveOptions.handler;
+  });
+
+const upload = (chunks = 4) => {
+  const progress = { readToEnd: false, cancelled: false };
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull: (controller) => {
+      if (sent === chunks) {
+        progress.readToEnd = true;
+        controller.close();
+        return;
+      }
+      sent += 1;
+      controller.enqueue(new Uint8Array(1024));
+    },
+    cancel: () => {
+      progress.cancelled = true;
+    },
+  });
+  return { body, progress };
+};
 
 describe("stack-owned functions bootstrap", () => {
   it.live("produces an executable offline service with the expected runtime contract", () => {
@@ -23,7 +118,7 @@ describe("stack-owned functions bootstrap", () => {
       yield* fs.makeDirectory(path.join(root, "hello"));
       yield* fs.writeFileString(path.join(root, "hello", "index.ts"), "export default 1");
       const secret = "bootstrap-test-secret";
-      const envRecord = {
+      const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
         SUPABASE_INTERNAL_JWT_SECRET: secret,
         KEEP: "yes",
@@ -43,11 +138,11 @@ describe("stack-owned functions bootstrap", () => {
       let pendingCreation: Promise<TestWorker> | undefined;
       const workerReady = yield* Deferred.make<TestWorker>();
       const createStarted = yield* Deferred.make<void>();
-      const bundled = yield* bundleServeMainTemplate;
+      const bundled = defaultFunctionsBootstrap;
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           lstat: (filename: string) =>
@@ -79,6 +174,7 @@ describe("stack-owned functions bootstrap", () => {
           },
         },
         AbortController,
+        ReadableStream,
         Request,
         Response,
         URL,
@@ -201,13 +297,13 @@ describe("stack-owned functions bootstrap", () => {
 
   it.live("starts with malformed optional functions config", () =>
     Effect.gen(function* () {
-      const bundled = yield* bundleServeMainTemplate;
-      const envRecord = { SUPABASE_INTERNAL_FUNCTIONS_CONFIG: "{" };
+      const bundled = defaultFunctionsBootstrap;
+      const envRecord: Record<string, string> = { SUPABASE_INTERNAL_FUNCTIONS_CONFIG: "{" };
       let serveOptions: ServeOptions | undefined;
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           errors: {},
@@ -277,8 +373,8 @@ describe("stack-owned functions bootstrap", () => {
           .setProtectedHeader({ alg: "ES256", kid: "test-key" })
           .sign(privateKey),
       );
-      const bundled = yield* bundleServeMainTemplate;
-      const envRecord = {
+      const bundled = defaultFunctionsBootstrap;
+      const envRecord: Record<string, string> = {
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: "/functions",
         SUPABASE_INTERNAL_JWT_SECRET: "secret",
         SUPABASE_INTERNAL_FUNCTIONS_CONFIG: '{"hello":{"verifyJWT":true}}',
@@ -289,7 +385,7 @@ describe("stack-owned functions bootstrap", () => {
       const sandbox = {
         Deno: {
           env: {
-            get: (name: string) => envRecord[name as keyof typeof envRecord],
+            get: (name: string) => envRecord[name],
             toObject: () => envRecord,
           },
           errors: {},
@@ -368,4 +464,170 @@ describe("stack-owned functions bootstrap", () => {
       expect(fetchCalls).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  describe("retired worker dispatch", () => {
+    // Every create() hands out a distinct worker: worker n always rejects with failures[n - 1] when
+    // one is given, otherwise it answers with its own number so the response names the worker.
+    const serve = (failures: ReadonlyArray<Error>) =>
+      Effect.gen(function* () {
+        let creates = 0;
+        const handler = yield* serveSandboxed('{"hello":{"verifyJWT":false}}', () => {
+          const worker = ++creates;
+          const failure = failures[worker - 1];
+          return {
+            fetch: (request: Request) => {
+              if (failure !== undefined) return Promise.reject(failure);
+              return request
+                .text()
+                .then((body) => new Response(`fn-ok worker-${worker} ${request.method} ${body}`));
+            },
+          };
+        });
+        return { handler, creates: () => creates };
+      });
+
+    it.live("serves a bodyless request with a fresh worker after WorkerAlreadyRetired", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new WorkerAlreadyRetired()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(200);
+        expect(yield* Effect.tryPromise(() => response.text())).toBe("fn-ok worker-2 GET ");
+        expect(creates()).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not retry a second consecutive WorkerAlreadyRetired", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([
+          new WorkerAlreadyRetired(),
+          new WorkerAlreadyRetired(),
+        ]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(500);
+        expect(creates()).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not retry other worker failures", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new InvalidWorkerResponse()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello")),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.tryPromise(() => response.json())).toMatchObject({
+          code: "WORKER_ERROR",
+        });
+        expect(creates()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("does not replay a request whose body was already forwarded", () =>
+      Effect.gen(function* () {
+        const { handler, creates } = yield* serve([new WorkerAlreadyRetired()]);
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello", { method: "POST", body: "payload" })),
+        );
+        expect(response.status).toBe(500);
+        expect(yield* Effect.tryPromise(() => response.json())).toMatchObject({
+          code: "Internal Server Error",
+        });
+        expect(creates()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
+
+  describe("request body ownership", () => {
+    it.live("reads the rest of a request body the worker abandons", () =>
+      Effect.gen(function* () {
+        const handler = yield* serveSandboxed('{"hello":{"verifyJWT":false}}', () => ({
+          fetch: (request: Request) => {
+            const reader = request.body?.getReader();
+            return Promise.resolve(reader?.read()).then(() => {
+              // Not awaited: if the body were shared with the incoming request again, Bun
+              // would never settle this cancel and the test would hang instead of failing.
+              void reader?.cancel();
+              return new Response("rejected", { status: 400 });
+            });
+          },
+        }));
+        const { body, progress } = upload();
+
+        const response = yield* Effect.tryPromise(() =>
+          handler(new Request("http://127.0.0.1/hello", { method: "POST", body, duplex: "half" })),
+        );
+
+        expect(progress).toEqual({ readToEnd: true, cancelled: false });
+        expect(response.status).toBe(400);
+        expect(yield* Effect.tryPromise(() => response.text())).toBe("rejected");
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("settles an aborted request while the abandoned body read is pending", () => {
+      const { promise: readPending, resolve: markReadPending } = Promise.withResolvers<void>();
+      const pendingRead = Promise.withResolvers<void>().promise;
+      const controller = new AbortController();
+      return Effect.gen(function* () {
+        let pulls = 0;
+        const body = new ReadableStream<Uint8Array>({
+          pull: (streamController) => {
+            pulls += 1;
+            if (pulls === 1) {
+              streamController.enqueue(new Uint8Array([1]));
+              return;
+            }
+            markReadPending();
+            return pendingRead;
+          },
+        });
+        const handler = yield* serveSandboxed('{"hello":{"verifyJWT":false}}', () => ({
+          fetch: () => Promise.resolve(new Response("rejected", { status: 400 })),
+        }));
+        const pending = handler(
+          new Request("http://127.0.0.1/missing", {
+            method: "POST",
+            body,
+            duplex: "half",
+            signal: controller.signal,
+          }),
+        );
+
+        yield* Effect.tryPromise(() => readPending);
+        controller.abort();
+
+        const response = yield* Effect.tryPromise(() => pending);
+        expect(response.status).toBe(499);
+      }).pipe(Effect.provide(NodeServices.layer));
+    });
+
+    it.live.each([
+      ["an invalid token", "/hello", 401],
+      ["an unknown function", "/missing", 404],
+    ] as const)("reads the whole upload before rejecting %s", ([, path, status]) =>
+      Effect.gen(function* () {
+        const handler = yield* serveSandboxed('{"hello":{"verifyJWT":true}}', () => ({
+          fetch: () => Promise.resolve(new Response("should not run")),
+        }));
+        const { body, progress } = upload();
+
+        const response = yield* Effect.tryPromise(() =>
+          handler(
+            new Request(`http://127.0.0.1${path}`, {
+              method: "POST",
+              body,
+              duplex: "half",
+              headers: { Authorization: "Bearer invalid" },
+            }),
+          ),
+        );
+
+        expect(progress).toEqual({ readToEnd: true, cancelled: false });
+        expect(response.status).toBe(status);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+  });
 });

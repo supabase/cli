@@ -174,12 +174,10 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
 
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
     if (invalidSlugMessage !== undefined) {
-      return yield* Effect.fail(
-        new FunctionsNewInvalidSlugError({
-          message: invalidSlugMessage,
-          detail: invalidFunctionSlugDetail,
-        }),
-      );
+      return yield* new FunctionsNewInvalidSlugError({
+        message: invalidSlugMessage,
+        detail: invalidFunctionSlugDetail,
+      });
     }
 
     const existingSlugs = yield* listExistingFunctionSlugs(cliSettings.workdir);
@@ -205,13 +203,11 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
       .exists(entrypointPath)
       .pipe(Effect.orElseSucceed(() => false));
     if (entrypointExists) {
-      return yield* Effect.fail(
-        new FunctionsNewFileExistsError({
-          path: relEntrypoint,
-          message: "failed to create entrypoint: file already exists",
-          suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
-        }),
-      );
+      return yield* new FunctionsNewFileExistsError({
+        path: relEntrypoint,
+        message: "failed to create entrypoint: file already exists",
+        suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
+      });
     }
 
     const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);

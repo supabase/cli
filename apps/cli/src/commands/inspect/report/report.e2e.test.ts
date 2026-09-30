@@ -1,9 +1,8 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { runSupabaseEffect, withTempHome } from "../../../../tests/helpers/cli.ts";
 
 const E2E_TIMEOUT_MS = 30_000;
 
@@ -16,22 +15,28 @@ const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 const TEXT_MODE = ["--agent", "no"];
 
 describe("supabase inspect report", () => {
-  test(
+  it.live(
     "creates the dated output directory and prints the connect diagnostic before failing on an unreachable database",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      using home = makeTempHome();
-      const outputDir = mkdtempSync(join(tmpdir(), "supabase-report-e2e-"));
-      const { exitCode, stderr } = await runSupabase(
-        ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
-        { home: home.dir, env: { HOME: home.dir } },
-      );
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain("Connecting to remote database...");
-      expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
-      const dated = readdirSync(outputDir).filter((name) => /^\d{4}-\d{2}-\d{2}$/.test(name));
-      expect(dated.length).toBe(1);
-      expect(existsSync(join(outputDir, dated[0]!))).toBe(true);
-    },
+    () =>
+      withTempHome((home) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const outputDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-report-e2e-" });
+          const { exitCode, stderr } = yield* runSupabaseEffect(
+            ["inspect", "report", ...TEXT_MODE, "--db-url", DEAD_DB_URL, "--output-dir", outputDir],
+            { home: home.dir, env: { HOME: home.dir } },
+          );
+          expect(exitCode).toBe(1);
+          expect(stderr).toContain("Connecting to remote database...");
+          expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
+          const dated = (yield* fs.readDirectory(outputDir)).filter((name) =>
+            /^\d{4}-\d{2}-\d{2}$/.test(name),
+          );
+          expect(dated.length).toBe(1);
+          expect(yield* fs.exists(path.join(outputDir, dated[0]!))).toBe(true);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    E2E_TIMEOUT_MS,
   );
 });

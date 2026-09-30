@@ -286,7 +286,7 @@ async function cleanupProject(
 function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnapshot {
   const normalized = normalizeDir(projectDir);
   const managedStacksRoot =
-    homeDir === undefined ? undefined : path.join(normalizeDir(homeDir), "managed", "stacks");
+    homeDir === undefined ? undefined : path.join(normalizeDir(homeDir), "stacks");
   if (managedStacksRoot === undefined || !existsSync(managedStacksRoot)) {
     return {
       managedStacksRootExists: false,

@@ -5,9 +5,12 @@ import { SupabaseApiInputError, markSupabaseApiInputErrorAsUserInput } from "@su
 import { BootstrapHealthError } from "../../commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
+  CliErrorCategory,
   type CliErrorActionabilityDeclaration,
+  CliErrorKind,
   classifyCliCauseActionability,
   classifyCliErrorActionability,
+  CliSuggestionType,
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   statusCodeActionability,
@@ -29,7 +32,7 @@ class DeclaredStatusError extends Data.TaggedError("DeclaredStatusError")<{
   }
 }
 
-class PlainDeclaredError extends Error {
+class PlainDeclaredError extends Data.Error<{ readonly message: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "PlainDeclaredError";
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -44,6 +47,29 @@ class RuntimeCrashError extends Data.TaggedError("RuntimeCrashError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.runtimeCrash;
+  }
+}
+
+class ResourceLimitError extends Data.TaggedError("ResourceLimitError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.resourceLimit;
+  }
+}
+
+// `resource_limit` is only valid paired with `user_actionable`; this pairing
+// must be rejected so it does not silently count against `internal_bug`.
+class MisclassifiedResourceLimitError extends Data.TaggedError("MisclassifiedResourceLimitError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      error_kind: CliErrorKind.InternalBug,
+      error_category: CliErrorCategory.ResourceLimit,
+      has_suggestion: false,
+      suggestion_type: CliSuggestionType.None,
+    } as unknown as CliErrorActionabilityDeclaration;
   }
 }
 
@@ -64,9 +90,10 @@ describe("classifyCliErrorActionability", () => {
       suggestion_type: "login",
       suggested_command: "supabase login",
     });
-    expect(classifyCliErrorActionability(new PlainDeclaredError("private")).error_fingerprint).toBe(
-      "error:PlainDeclaredError",
-    );
+    expect(
+      classifyCliErrorActionability(new PlainDeclaredError({ message: "private" }))
+        .error_fingerprint,
+    ).toBe("error:PlainDeclaredError");
   });
 
   it("preserves native Error subclass identifiers after minification", () => {
@@ -115,7 +142,7 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("rejects malformed declarations and arbitrary remediation text", () => {
-    class InvalidDeclaration extends Error {
+    class InvalidDeclaration extends Data.Error {
       get [ErrorActionabilityId]() {
         return {
           error_kind: "user_actionable",
@@ -133,7 +160,7 @@ describe("classifyCliErrorActionability", () => {
 
   it("handles hostile declarations and unknown failures safely", () => {
     const secret = "customer-project-ref";
-    class HostileError extends Error {
+    class HostileError extends Data.Error {
       get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
         throw new Error(secret);
       }
@@ -220,6 +247,24 @@ describe("classifyCliErrorActionability", () => {
       has_suggestion: true,
       suggestion_type: "rerun_debug",
     });
+  });
+
+  it("accepts user_actionable paired with resource_limit", () => {
+    expect(classifyCliErrorActionability(new ResourceLimitError({ message: "private" }))).toEqual({
+      error_kind: "user_actionable",
+      error_category: "resource_limit",
+      error_fingerprint: "tag:ResourceLimitError",
+      has_suggestion: true,
+      suggestion_type: "update_config",
+    });
+  });
+
+  it("rejects resource_limit paired with internal_bug rather than counting it as our bug", () => {
+    const result = classifyCliErrorActionability(
+      new MisclassifiedResourceLimitError({ message: "private" }),
+    );
+    expect(result.error_kind).toBe("unknown");
+    expect(result.error_category).toBe("unknown");
   });
 });
 

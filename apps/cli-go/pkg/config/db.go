@@ -85,6 +85,7 @@ type (
 		ShadowPort          uint16              `toml:"shadow_port" json:"shadow_port"`
 		HealthTimeout       time.Duration       `toml:"health_timeout" json:"health_timeout"`
 		MajorVersion        uint                `toml:"major_version" json:"major_version"`
+		OrioleDBVersion     string              `toml:"orioledb_version" json:"orioledb_version"`
 		Password            string              `toml:"-" json:"-"`
 		RootKey             Secret              `toml:"root_key" json:"root_key"`
 		Pooler              pooler              `toml:"pooler" json:"pooler"`

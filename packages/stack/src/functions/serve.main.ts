@@ -15,6 +15,7 @@ interface DenoErrorConstructors {
   readonly InvalidWorkerCreation?: abstract new (...args: never[]) => Error;
   readonly InvalidWorkerResponse?: abstract new (...args: never[]) => Error;
   readonly WorkerRequestCancelled?: abstract new (...args: never[]) => Error;
+  readonly WorkerAlreadyRetired?: abstract new (...args: never[]) => Error;
 }
 interface DenoApi {
   readonly env: { get(name: string): string | undefined; toObject(): Record<string, string> };
@@ -43,7 +44,6 @@ interface WorkerCreateOptions {
   readonly workerTimeoutMs: number;
   readonly noModuleCache: boolean;
   readonly noNpm: boolean;
-  readonly importMapPath?: string;
   readonly envVars: ReadonlyArray<readonly [string, string]>;
   readonly forceCreate: boolean;
   readonly customModuleRoot: string;
@@ -51,7 +51,7 @@ interface WorkerCreateOptions {
   readonly cpuTimeHardLimitMs: number;
   readonly decoratorType: string;
   readonly maybeEntrypoint: string;
-  readonly context: { readonly useReadSyncFileAPI: boolean };
+  readonly context: { readonly useReadSyncFileAPI: boolean; readonly importMapPath?: string };
   readonly staticPatterns: ReadonlyArray<string>;
 }
 declare const Deno: DenoApi;
@@ -60,6 +60,7 @@ declare const EdgeRuntime: EdgeRuntimeApi;
 import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
   createWorkerServicePathResolver,
+  isDenoConfigPath,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
@@ -76,6 +77,7 @@ const bootstrapConfig = Effect.runSync(
     return {
       hostPort: yield* read(Config.string("SUPABASE_INTERNAL_HOST_PORT")),
       functionsRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_ROOT")),
+      filesRoot: yield* read(Config.string("SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT")),
       jwtSecret: yield* read(Config.string("SUPABASE_INTERNAL_JWT_SECRET")),
       supabaseUrl: yield* read(Config.string("SUPABASE_URL")),
       wallclock: yield* read(Config.string("SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC")),
@@ -125,6 +127,10 @@ const DENO_SB_ERROR_MAP = new Map([
   [Deno.errors.InvalidWorkerResponse, SB_SPECIFIC_ERROR_CODE.InvalidWorkerResponse],
   [Deno.errors.WorkerRequestCancelled, SB_SPECIFIC_ERROR_CODE.WorkerLimit],
 ]);
+const isWorkerAlreadyRetired = (error: unknown) => {
+  const WorkerAlreadyRetired = Deno.errors.WorkerAlreadyRetired;
+  return WorkerAlreadyRetired !== undefined && error instanceof WorkerAlreadyRetired;
+};
 
 export enum RequestErrors {
   MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
@@ -326,18 +332,39 @@ const denoFileSystem: FunctionFileSystem = {
       Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
     ),
   readDirectory: (path) =>
-    Stream.fromAsyncIterable(
-      Deno.readDir(path),
-      (cause) => new BootstrapOperationError({ cause }),
+    Stream.suspend(() =>
+      Stream.fromAsyncIterable(
+        Deno.readDir(path),
+        (cause) => new BootstrapOperationError({ cause }),
+      ).pipe(Stream.map((entry) => entry.name)),
     ).pipe(
-      Stream.map((entry) => entry.name),
       Stream.runCollect,
       Effect.mapError((cause) => new FunctionFileSystemError({ cause })),
     ),
 };
 
 const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined> =>
-  resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
+  resolveFunctionConfig({
+    root: FUNCTIONS_ROOT,
+    filesRoot: Option.getOrUndefined(bootstrapConfig.filesRoot),
+    slug,
+    overrides: configured,
+    fs: denoFileSystem,
+  });
+const warnedPlainDenoConfigs = new Set<string>();
+// Edge Runtime has no user-worker option to load a Deno config from an arbitrary path.
+const warnPlainDenoConfig = (slug: string, config: FunctionConfig): Effect.Effect<void> =>
+  config.importMapDiscoveredByRuntime ||
+  !isDenoConfigPath(config.importMapPath) ||
+  warnedPlainDenoConfigs.has(slug)
+    ? Effect.void
+    : Effect.sync(() => warnedPlainDenoConfigs.add(slug)).pipe(
+        Effect.andThen(
+          Console.warn(
+            `[functions] ${slug}: ${config.importMapPath} is not the nearest Deno config of ${config.entrypointPath}, so Edge Runtime loads it as a plain import map without comments or jsr:/npm: subpath imports. Move it next to the entrypoint or into a parent directory without a closer deno.json(c).`,
+          ),
+        ),
+      );
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -345,14 +372,37 @@ const workerServicePath = createWorkerServicePathResolver(() =>
 const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<boolean> =>
   config.importMapPath
     ? Effect.succeed(false)
-    : packageJsonContainedFor({ root: FUNCTIONS_ROOT, config, fs: denoFileSystem });
+    : packageJsonContainedFor({
+        root: valueOr(bootstrapConfig.filesRoot, FUNCTIONS_ROOT),
+        config,
+        fs: denoFileSystem,
+      });
 
-export function prepareUserRequest(request: Request): Request {
+interface RequestBodyReader {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>;
+}
+const requestBodyChunks = (body: RequestBodyReader) =>
+  Stream.fromEffectRepeat(
+    foreign(() => body.read()).pipe(
+      Effect.flatMap((chunk) => (chunk.done ? Cause.done() : Effect.succeed(chunk.value))),
+    ),
+  );
+const drainRequestBody = (body: RequestBodyReader | undefined) =>
+  body === undefined ? Effect.void : Stream.runDrain(requestBodyChunks(body)).pipe(Effect.ignore);
+
+export function prepareUserRequest(request: Request, body: RequestBodyReader | undefined): Request {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) url.hostname = forwardedHost;
-  // Cloning tees the body, so an unread branch can stall early worker responses.
-  const forwarded = new Request(url.href, request);
+  // The runtime closes a connection whose request body is unread, which gateways report as 502, so
+  // the worker gets its own stream and cancelling it leaves the body for `drainRequestBody`.
+  const forwarded = new Request(url.href, {
+    method: request.method,
+    headers: request.headers,
+    body: body === undefined ? null : Stream.toReadableStream(requestBodyChunks(body)),
+    signal: request.signal,
+    duplex: "half",
+  });
   forwarded.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(request, forwarded);
   return forwarded;
@@ -362,6 +412,12 @@ Deno.serve({
   handler: (request: Request) =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
+        // `worker.fetch` settles its body pipe before resolving, so the drain only reads what the
+        // worker abandoned.
+        const body = yield* Effect.acquireRelease(
+          Effect.sync(() => request.body?.getReader()),
+          (body) => Effect.interruptible(drainRequestBody(body)),
+        );
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
         if (pathname === "/_internal/metric")
@@ -370,6 +426,7 @@ Deno.serve({
         if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
         const config = yield* functionConfig(functionName);
         if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
           if (typeof token !== "string") return getAuthErrorResponse(token);
@@ -405,7 +462,6 @@ Deno.serve({
                 : 400_000,
               noModuleCache: true,
               noNpm,
-              importMapPath: config.importMapPath,
               envVars,
               forceCreate: true,
               customModuleRoot: "",
@@ -413,20 +469,31 @@ Deno.serve({
               cpuTimeHardLimitMs: 2000,
               decoratorType: "tc39",
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
-              context: { useReadSyncFileAPI: true },
+              context: {
+                useReadSyncFileAPI: true,
+                ...(config.importMapPath === "" || config.importMapDiscoveredByRuntime
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
+              },
               staticPatterns: config.staticFiles,
             }),
           );
-          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+          return yield* foreign(() => worker.fetch(prepareUserRequest(request, body)));
         });
         return yield* workerRequest.pipe(
+          Effect.retry({
+            times: 1,
+            // A retired worker rejects the request before running it, so a bodyless request is safe
+            // to replay; a forwarded body cannot be replayed.
+            while: ({ cause }) => request.body === null && isWorkerAlreadyRetired(cause),
+          }),
           Effect.catchTag("BootstrapOperationError", ({ cause }) =>
             Console.error("[functions] worker error", cause).pipe(
               Effect.andThen(Effect.succeed(getWorkerErrorResponse(cause))),
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped),
       { signal: request.signal },
     ).then((exit) => {
       if (Exit.isSuccess(exit)) return exit.value;

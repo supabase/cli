@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { describe, expect } from "vitest";
 
 import { test } from "../../../../tests/helpers/live.ts";
@@ -10,15 +11,19 @@ describe("supabase functions list (live)", () => {
   test(
     "lists edge functions for the project",
     { timeout: LIVE_TIMEOUT_MS },
-    async ({ cli, project }) => {
-      const { exitCode, stdout, stderr } = await cli([
-        "functions",
-        "list",
-        "--project-ref",
-        project.ref,
-      ]);
-      expect(exitCode, stderr).toBe(0);
-      expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME\s+\|\s+SLUG\s+\|\s+STATUS/);
-    },
+    ({ cliEffect, project, signal }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const { exitCode, stdout, stderr } = yield* cliEffect([
+            "functions",
+            "list",
+            "--project-ref",
+            project.ref,
+          ]);
+          expect(exitCode, stderr).toBe(0);
+          expect(stdout, stderr).toMatch(/ID\s+\|\s+NAME\s+\|\s+SLUG\s+\|\s+STATUS/);
+        }),
+        { signal },
+      ),
   );
 });

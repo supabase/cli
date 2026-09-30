@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { DateTime, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { buildRlsAdvisory } from "./query.advisory.ts";
@@ -95,10 +95,12 @@ describe("makeLocalCellFormatter", () => {
 
   it("renders Date (timestamp) cells like Go's time.Time %v instead of map[]", () => {
     const fmt = makeLocalCellFormatter([1114]);
-    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5)), 0)).toBe("2024-01-02 15:04:05 +0000 UTC");
-    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5, 123)), 0)).toBe(
-      "2024-01-02 15:04:05.123 +0000 UTC",
+    expect(fmt(DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2024, 0, 2, 15, 4, 5))), 0)).toBe(
+      "2024-01-02 15:04:05 +0000 UTC",
     );
+    expect(
+      fmt(DateTime.toDateUtc(DateTime.makeUnsafe(Date.UTC(2024, 0, 2, 15, 4, 5, 123))), 0),
+    ).toBe("2024-01-02 15:04:05.123 +0000 UTC");
   });
 
   it("preserves microseconds for raw timestamp text (OID 1114), trimming zeros", () => {

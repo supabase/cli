@@ -1,6 +1,7 @@
 import type { CliConfig, ConfigChange, ProjectConfig } from "@supabase/config";
 import { comparableProjectConfigPaths, getDefaultCliConfig } from "@supabase/config";
 import { AUTH_HOOK_NAMES, projectConfigMappingRows } from "@supabase/config/internal";
+import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { AuthEmailContent } from "./push.auth-email-content.ts";
@@ -59,7 +60,7 @@ function authInput(overrides: Partial<AuthEncoderInput> = {}): AuthEncoderInput 
     secrets: [],
     emailContent: EMPTY_EMAIL_CONTENT,
     remoteAuthAttributes: {},
-    now: new Date("2030-01-01T00:00:00.000Z"),
+    now: DateTime.makeUnsafe("2030-01-01T00:00:00.000Z"),
     ...overrides,
   };
 }
@@ -1188,12 +1189,26 @@ describe("encodeAuthBody", () => {
         authInput({
           changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
           local,
-          now: new Date("2030-06-15T12:00:00.000Z"),
+          now: DateTime.makeUnsafe("2030-06-15T12:00:00.000Z"),
         }),
       );
       expect(result.body).toEqual({
         sms_test_otp: "15555550100=123456,15555550101=654321",
         sms_test_otp_valid_until: "2040-06-15T12:00:00.000Z",
+      });
+    });
+
+    it("rolls a leap-day clock over to March 1st ten years later", () => {
+      const result = encodeAuthBody(
+        authInput({
+          changes: [change(["auth", "sms", "test_otp", "15555550100"], "123456")],
+          local: { auth: { sms: { test_otp: { "15555550100": "123456" } } } },
+          now: DateTime.makeUnsafe("2028-02-29T12:00:00.000Z"),
+        }),
+      );
+      expect(result.body).toEqual({
+        sms_test_otp: "15555550100=123456",
+        sms_test_otp_valid_until: "2038-03-01T12:00:00.000Z",
       });
     });
   });

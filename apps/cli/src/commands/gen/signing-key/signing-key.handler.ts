@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -65,6 +65,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+const StoredSigningKeyJwkJson = Schema.Record(Schema.String, Schema.Unknown);
+const signingKeyJson = Schema.fromJsonString(StoredSigningKeyJwkJson);
+const signingKeysFileJson = Schema.fromJsonString(Schema.Array(StoredSigningKeyJwkJson), {
+  space: 2,
+});
+
 function readStringField(
   value: Record<string, unknown>,
   field: string,
@@ -97,11 +103,9 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
     });
     const exported = privateKey.export({ format: "jwk" });
     if (!isRecord(exported)) {
-      return yield* Effect.fail(
-        new GenSigningKeyGenerateError({
-          message: "failed to generate signing key: rsa jwk export failed",
-        }),
-      );
+      return yield* new GenSigningKeyGenerateError({
+        message: "failed to generate signing key: rsa jwk export failed",
+      });
     }
     return {
       kty: "RSA",
@@ -124,11 +128,9 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const exported = privateKey.export({ format: "jwk" });
   if (!isRecord(exported)) {
-    return yield* Effect.fail(
-      new GenSigningKeyGenerateError({
-        message: "failed to generate signing key: ec jwk export failed",
-      }),
-    );
+    return yield* new GenSigningKeyGenerateError({
+      message: "failed to generate signing key: ec jwk export failed",
+    });
   }
   return {
     kty: "EC",
@@ -175,10 +177,11 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
 
 const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: string) {
   const path = yield* Path.Path;
-  const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(searchFrom)).pipe(Effect.orDie);
-  if (gitRoot === undefined) {
+  const gitRootOption = yield* findGitRootPath(searchFrom);
+  if (Option.isNone(gitRootOption)) {
     return Option.none<boolean>();
   }
+  const gitRoot = gitRootOption.value;
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relative = path.relative(gitRoot, filePath).replaceAll("\\", "/");
@@ -222,7 +225,8 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
     const configured = signingKeysConfig.configured;
 
     if (Option.isNone(configured)) {
-      yield* output.raw(`${JSON.stringify(key)}\n`, "stdout");
+      const keyJson = yield* Schema.encodeEffect(signingKeyJson)(key).pipe(Effect.orDie);
+      yield* output.raw(`${keyJson}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
       yield* emitSuccessTrailer(
         `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
@@ -249,17 +253,16 @@ export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenS
                   true,
                 );
           if (!confirmed) {
-            return yield* Effect.fail(
-              new GenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new GenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           return [key];
         });
 
+    const nextKeysJson = yield* Schema.encodeEffect(signingKeysFileJson)(nextKeys).pipe(
+      Effect.orDie,
+    );
     yield* fs
-      .writeFileString(configured.value.actualPath, `${JSON.stringify(nextKeys, null, 2)}\n`, {
-        mode: 0o600,
-      })
+      .writeFileString(configured.value.actualPath, `${nextKeysJson}\n`, { mode: 0o600 })
       .pipe(
         Effect.mapError(
           (cause) =>

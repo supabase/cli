@@ -1,9 +1,17 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -49,6 +57,8 @@ const LOCAL_CONN: PgConnInput = {
 };
 const REF = "abcdefghijklmnopqrst";
 const BOUNDARY = "00112233445566778899aabbccddeeff";
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
@@ -341,29 +351,30 @@ describe("db query integration", () => {
 
   it.live("reads SQL from --file", () => {
     const { layer, out } = setup({ result: SELECT_RESULT });
-    const filePath = join(mkdtempSync(join(tmpdir(), "supabase-query-")), "q.sql");
-    writeFileSync(filePath, "select * from users");
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-" });
+      const filePath = path.join(dir, "q.sql");
+      yield* fs.writeFileString(filePath, "select * from users");
       yield* dbQuery(flags({ local: Option.some(true), file: Option.some(filePath) }));
       expect(out.stdoutText).toContain("alice");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(filePath, { force: true }))),
-    );
+    }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
-  it.live("resolves a relative --file against the workdir", () => {
-    const dir = mkdtempSync(join(tmpdir(), "supabase-query-wd-"));
-    writeFileSync(join(dir, "q.sql"), "select * from users");
-    const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
-    return Effect.gen(function* () {
-      yield* dbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") }));
+  it.live("resolves a relative --file against the workdir", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-wd-" });
+      yield* fs.writeFileString(path.join(dir, "q.sql"), "select * from users");
+      const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
+      yield* dbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") })).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toContain("alice");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.live("errors when --file cannot be read", () => {
     const { layer } = setup();
@@ -395,9 +406,9 @@ describe("db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
-      expect(parsed.boundary).toBe(BOUNDARY);
-      expect(parsed.rows).toEqual([
+      const parsed = yield* decodeJson(out.stdoutText);
+      expect(parsed).toHaveProperty("boundary", BOUNDARY);
+      expect(parsed).toHaveProperty("rows", [
         { id: 1, name: "alice" },
         { id: 2, name: "bob" },
       ]);
@@ -409,7 +420,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).boundary).toBe(BOUNDARY);
+      expect(yield* decodeJson(out.stdoutText)).toHaveProperty("boundary", BOUNDARY);
     }).pipe(Effect.provide(layer));
   });
 
@@ -417,7 +428,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
+      const parsed = yield* decodeJson(out.stdoutText);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual([
         { id: 1, name: "alice" },
@@ -430,7 +441,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText)).toEqual([
+      expect(yield* decodeJson(out.stdoutText)).toEqual([
         { id: 1, name: "alice" },
         { id: 2, name: "bob" },
       ]);
@@ -442,7 +453,7 @@ describe("db query integration", () => {
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
-      expect(JSON.parse(out.stdoutText)).toEqual(
+      expect(yield* decodeJson(out.stdoutText)).toEqual(
         expect.objectContaining({
           type: "result",
           data: [
@@ -450,6 +461,9 @@ describe("db query integration", () => {
             { id: 2, name: "bob" },
           ],
         }),
+      );
+      expect(out.stdoutText).toMatch(
+        /^\{"type":"result","data":\[ {2}\{ {4}"id": 1, {4}"name": "alice" {2}\}, {2}\{ {4}"id": 2, {4}"name": "bob" {2}\}\],"timestamp":"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"\}\n$/u,
       );
     }).pipe(Effect.provide(layer));
   });
@@ -555,7 +569,7 @@ describe("db query integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).advisory.id).toBe("rls_disabled");
+      expect(yield* decodeJson(out.stdoutText)).toHaveProperty(["advisory", "id"], "rls_disabled");
     }).pipe(Effect.provide(layer));
   });
 
@@ -563,7 +577,7 @@ describe("db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", rlsFails: true });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).advisory).toBeUndefined();
+      expect(yield* decodeJson(out.stdoutText)).not.toHaveProperty("advisory");
     }).pipe(Effect.provide(layer));
   });
 
@@ -812,10 +826,10 @@ describe("db query integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
-      expect(parsed.boundary).toBe(BOUNDARY);
-      expect(parsed.rows).toEqual([{ id: 1 }]);
-      expect(parsed.advisory).toBeUndefined();
+      const parsed = yield* decodeJson(out.stdoutText);
+      expect(parsed).toHaveProperty("boundary", BOUNDARY);
+      expect(parsed).toHaveProperty("rows", [{ id: 1 }]);
+      expect(parsed).not.toHaveProperty("advisory");
     }).pipe(Effect.provide(layer));
   });
 

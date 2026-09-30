@@ -1,5 +1,6 @@
-import type { EffectStackCredentials, StackStatus } from "@supabase/stack/effect";
-import { Effect, Redacted } from "effect";
+import { Effect } from "effect";
+import type { StackCredentials } from "@supabase/stack/effect";
+import type { StackConnections } from "../stack-summary.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
@@ -11,6 +12,7 @@ const variableNames = [
   "SECRET_KEY",
   "STUDIO_URL",
   "INBUCKET_URL",
+  "MCP_URL",
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
@@ -52,32 +54,28 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   });
 
 export const stackEnvValues = (
-  status: StackStatus,
-  credentials: EffectStackCredentials,
+  status: {
+    readonly urls: Pick<StackConnections, "api" | "studio" | "mailpit" | "mcp">;
+    readonly credentials?: Pick<
+      StackCredentials,
+      "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey"
+    >;
+  },
+  credentials: Readonly<Record<string, string>>,
   names: ReadonlyMap<string, string>,
 ): Readonly<Record<string, string>> => {
-  const values: Record<string, string> = {
-    DB_URL: Redacted.value(credentials.database.url),
-    ...(credentials.api === undefined
-      ? {}
-      : {
-          ANON_KEY: credentials.api.anonJwt,
-          SERVICE_ROLE_KEY: Redacted.value(credentials.api.serviceRoleJwt),
-          PUBLISHABLE_KEY: credentials.api.publishableKey,
-          SECRET_KEY: Redacted.value(credentials.api.secretKey),
-        }),
-    ...(status.endpoints.api === undefined ? {} : { API_URL: status.endpoints.api.url }),
-    ...(status.endpoints.studio === undefined ? {} : { STUDIO_URL: status.endpoints.studio.url }),
-    ...(status.endpoints.mailUi === undefined ? {} : { INBUCKET_URL: status.endpoints.mailUi.url }),
-    ...(credentials.storage === undefined
-      ? {}
-      : {
-          S3_PROTOCOL_ACCESS_KEY_ID: credentials.storage.accessKeyId,
-          S3_PROTOCOL_ACCESS_KEY_SECRET: Redacted.value(credentials.storage.secretAccessKey),
-          S3_PROTOCOL_REGION: credentials.storage.region,
-          S3_PROTOCOL_URL: credentials.storage.endpoint,
-        }),
-  };
+  const values: Record<string, string> = {};
+  if (credentials.databaseUrl !== undefined) values.DB_URL = credentials.databaseUrl;
+  if (status.credentials !== undefined) {
+    values.ANON_KEY = status.credentials.anonKey;
+    values.SERVICE_ROLE_KEY = status.credentials.serviceRoleKey;
+    values.PUBLISHABLE_KEY = status.credentials.publishableKey;
+    values.SECRET_KEY = status.credentials.secretKey;
+  }
+  if (status.urls.api !== undefined) values.API_URL = status.urls.api;
+  if (status.urls.studio !== undefined) values.STUDIO_URL = status.urls.studio;
+  if (status.urls.mcp !== undefined) values.MCP_URL = status.urls.mcp;
+  if (status.urls.mailpit !== undefined) values.INBUCKET_URL = status.urls.mailpit;
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
   );

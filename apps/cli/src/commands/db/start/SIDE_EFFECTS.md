@@ -84,12 +84,13 @@ volume was confirmed fresh this run).
 
 ## Files Written
 
-| Path                                                                  | Format | When                                                                                    |
-| --------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                        | text   | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when) |
-| local Docker volume `supabase_db_<project>`                           | —      | the Postgres data volume, created on first start (or first `--from-backup` restore)     |
-| local Docker network `supabase_network_<project>` (or `--network-id`) | —      | created if it doesn't already exist                                                     |
-| `~/.supabase/telemetry.json`                                          | JSON   | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure |
+| Path                                                                  | Format | When                                                                                               |
+| --------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                        | text   | only if absent — writes `"main"` (see the step-by-step sequence above for exactly when)            |
+| local Docker volume `supabase_db_<project>`                           | —      | the Postgres data volume, created on first start (or first `--from-backup` restore)                |
+| local Docker network `supabase_network_<project>` (or `--network-id`) | —      | created if it doesn't already exist                                                                |
+| `$SUPABASE_HOME/stacks/<stackId>/`                                    | JSON   | the stack definition, service identities, selected runtime, and service state on the stack backend |
+| `~/.supabase/telemetry.json`                                          | JSON   | always — telemetry flush (`Effect.ensuring(telemetryState.flush)`), success and failure            |
 
 ## Subprocesses
 
@@ -129,7 +130,7 @@ API request over the active context's local unix socket / named pipe:
 | `SUPABASE_DB_MAJOR_VERSION`                                                                                          | overrides `db.major_version` (image selection, schema branch)                                                                                                                                                                                                                                                           | no        |
 | `SUPABASE_DB_HEALTH_TIMEOUT`                                                                                         | overrides `db.health_timeout`                                                                                                                                                                                                                                                                                           | no        |
 | `SUPABASE_DB_SETTINGS_*`                                                                                             | overrides individual `[db.settings]` fields                                                                                                                                                                                                                                                                             | no        |
-| `SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION`                                                                             | overrides `experimental.orioledb_version` (image + env)                                                                                                                                                                                                                                                                 | no        |
+| `SUPABASE_DB_ORIOLEDB_VERSION`                                                                                       | overrides `db.orioledb_version` (image + env)                                                                                                                                                                                                                                                                           | no        |
 | `SUPABASE_EXPERIMENTAL_S3_{HOST,REGION,ACCESS_KEY,SECRET_KEY}`                                                       | OrioleDB S3 env overrides                                                                                                                                                                                                                                                                                               | no        |
 | `SUPABASE_REALTIME_ENABLED`                                                                                          | gates the fresh-volume realtime migrate job                                                                                                                                                                                                                                                                             | no        |
 | `SUPABASE_REALTIME_IP_VERSION` / `_MAX_HEADER_LENGTH`                                                                | realtime migrate job env overrides                                                                                                                                                                                                                                                                                      | no        |
@@ -184,9 +185,15 @@ Same result object as the terminal `result` event; progress on stderr.
 
 When `[experimental].stack` is on, this command creates or resumes a postgres-only project
 stack instead of a Compose container. First create runs schema init, overlay, and
-migrate-and-seed. An existing cluster applies webhooks only. Durable state lives under
-`$SUPABASE_HOME/managed/stacks/<stackId>/`. Postgres-only first create skips analytics and
-pooler artifact downloads.
+migrate-and-seed. It briefly starts configured Auth, Storage, and Realtime instances while
+applying the database catalog, then destroys those temporary instances. An existing cluster
+applies webhooks only. Durable state lives under `$SUPABASE_HOME/stacks/<stackId>/`, including
+the selected runtime and service identities. Postgres-only first create skips analytics and
+pooler artifact downloads. If first initialization fails after the database is created, the
+new database is destroyed so the command can be retried after fixing the cause. If cleanup itself
+fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.
+The resident owner process manages the database beyond the CLI invocation. Stack mode rejects
+`--from-backup` with exit code 1.
 
 ## Notes
 

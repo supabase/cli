@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -88,9 +88,13 @@ const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const buildDefines = {
+  ...(await stackReleaseDefine()),
   SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
-  "process.env.SUPABASE_CLI_POSTHOG_KEY": JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
-  "process.env.SUPABASE_CLI_POSTHOG_HOST": JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
+  SUPABASE_CLI_POSTHOG_KEY: JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
+  SUPABASE_CLI_POSTHOG_HOST: JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
+  // Skips msgpackr's startup probe for its native addon at the build host's store path, which
+  // on macOS goes through the automounter and can hang every command (supabase/cli#6771).
+  "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
 };
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];
@@ -106,17 +110,11 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
 
 type SignMode = "adhoc" | "off";
 
-function libcForBunTarget(target: string): "glibc" | "musl" | "" {
-  if (!target.startsWith("bun-linux-")) {
-    return "";
-  }
-  return target.includes("-musl") ? "musl" : "glibc";
-}
-
 async function runBunBuild(config: Bun.BuildConfig) {
   const result = await Bun.build({
     ...config,
-    external: [...(config.external ?? []), ...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+    ...compileOptions,
+    plugins: config.plugins ?? [],
   });
   for (const log of result.logs) {
     console.warn(log);
@@ -128,17 +126,14 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
-  const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
   await runBunBuild({
     entrypoints: [entrypoint],
     compile: { target: target.bunTarget, outfile },
-    minify: true,
     define: {
       ...buildDefines,
       SUPABASE_CLI_VERSION: JSON.stringify(version),
-      SUPABASE_LIBC: JSON.stringify(libc),
     },
   });
   console.log(`[${target.pkg}] Done.`);
@@ -268,16 +263,13 @@ async function buildMuslBinaries() {
       await mkdir(binDir, { recursive: true });
 
       const outfile = path.join(binDir, "supabase");
-      const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
       await runBunBuild({
         entrypoints: [entrypoint],
         compile: { target: target.bunTarget, outfile },
-        minify: true,
         define: {
           ...buildDefines,
           SUPABASE_CLI_VERSION: JSON.stringify(version),
-          SUPABASE_LIBC: JSON.stringify(libc),
         },
       });
 

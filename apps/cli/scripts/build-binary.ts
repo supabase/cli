@@ -1,5 +1,5 @@
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { OXFMT_OPTIONAL_PLUGIN_EXTERNALS } from "./bundle-externals.ts";
+import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
 /**
  * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
@@ -19,10 +19,13 @@ if (packageJson.version === undefined || packageJson.version.length === 0) {
 const result = await Bun.build({
   entrypoints: [entrypoint],
   compile: { outfile },
-  external: [...OXFMT_OPTIONAL_PLUGIN_EXTERNALS],
+  ...compileOptions,
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
+    ...(await stackReleaseDefine()),
     SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+    // Skips msgpackr's native addon probe at the build host's path, which can hang macOS startup.
+    "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
   },
 });
 for (const log of result.logs) {

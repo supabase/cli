@@ -38,11 +38,12 @@ export class MissingComputeNameError extends Data.TaggedError("MissingComputeNam
 /**
  * A symlink in the compute source points outside the build context.
  *
- * The archive is everything the server gets, with no install step and no view of the surrounding
- * repository, so a link whose target isn't also packaged arrives dangling — the catalog runtimes
- * boot without the dependency, or a Dockerfile build fails on `COPY`, both minutes later with
+ * The archive is everything the server gets, with no view of the surrounding repository, so a
+ * link whose target isn't also packaged arrives dangling — the catalog runtimes boot without
+ * whatever it pointed at, or a Dockerfile build fails on `COPY`, both minutes later with
  * nothing naming the cause. Refused here instead. The common source is a package manager that
- * hoists dependencies to the repository root, outside the compute's own `node_modules`.
+ * hoists dependencies to the repository root, outside the compute's own `node_modules`; adding
+ * the link to `[compute.<name>] exclude` is the other way out.
  */
 export class ComputeSourceEscapingLinkError extends Data.TaggedError(
   "ComputeSourceEscapingLinkError",
@@ -52,6 +53,22 @@ export class ComputeSourceEscapingLinkError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidInput;
+  }
+}
+
+/**
+ * `[compute.<name>] exclude` records a pattern the CLI cannot act on.
+ *
+ * Refused rather than skipped, because the setting exists to keep a specific file out of an
+ * archive that is uploaded and built: a pattern read as something other than what it says, or
+ * dropped, ships the secret or the stale dependency tree it was written to withhold.
+ */
+export class InvalidComputeExcludeError extends Data.TaggedError("InvalidComputeExcludeError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

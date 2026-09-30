@@ -40,10 +40,11 @@ values are resolved with their `SUPABASE_API_*` shell/dotenv overrides applied
 first, so the gateway targets the same port/scheme the stack was actually
 brought up on (#6452).
 
-**Local (stack backend):** the selected stack's API gateway URL
-(`status.endpoints.api.url`) + `/storage/v1/...`; the credential is the stack's
-service-role JWT read from the stack's credentials. `[api]`/`[api.tls]` fields and their
-`SUPABASE_API_*` overrides are not consulted. See Notes for the capability-state gate.
+**Local (stack backend):** the Storage endpoint comes from the selected composition's
+Storage member observation, and the service-role JWT is generated from the primary database's
+observed JWT secret. `[api]`/`[api.tls]` fields and their `SUPABASE_API_*` overrides are not
+consulted. The stack is opened without launching the owner or any service member. See Notes
+for the capability-state gate.
 
 **Remote (`--linked`):** `https://<ref>.<projectHost>` (default host: `supabase.co`).
 
@@ -113,7 +114,7 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                                                                                                                                                                                                                                               |
 | `1`  | `--project-ref` set without `--linked` (see Notes)                                                                                                                                                                                                                                                                            |
 | `1`  | stack backend: Storage disabled or its stack `failed`/`stopped` (`StackStorageCapabilityError`)                                                                                                                                                                                                                               |
-| `1`  | stack backend: stack not registered/running, missing API endpoint or credentials, or the stack API is unavailable (`StackStorageUnavailableError`)                                                                                                                                                                            |
+| `1`  | stack backend: stack is not registered/ready, has no primary database, or the stack API is unavailable (`StackStorageUnavailableError`); a missing Storage endpoint is a capability failure (`StackStorageCapabilityError`)                                                                                                   |
 
 ## Telemetry Events Fired
 
@@ -207,33 +208,20 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   (`command-internal/detect-content-type.ts`), and only a generic `text/plain`
   result is refined by extension via a built-in MIME table (the host OS MIME
   database is not consulted; the deterministic built-in table is used instead).
-- **Stack backend (local).** The Storage endpoint is the selected stack's API
-  gateway URL (`status.endpoints.api.url`) + `/storage/v1/...`; the credential is the
-  stack's service-role JWT read from the stack's credentials. The stack is located by
-  the project root (workdir realpath) via the `@supabase/stack` API, which reads stack
-  state under `SUPABASE_HOME`. `seed buckets` never creates a stack. All legacy `[api]`/
-  `[api.tls]`/`SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}` config
-  validation above (including the `<16`-char secret and TLS cert/key-pairing checks)
-  is skipped on this path, even when there is nothing configured to seed.
-- **Stack backend — capability policy.** Storage `disabled` (e.g.
-  `stack start -x storage`) errors with `StackStorageCapabilityError` ("Storage is
-  disabled for this stack.") with guidance to enable `[storage]`, then run
-  `supabase stack stop` followed by `supabase stack start` without `-x storage`;
-  `failed`/`stopped` raises the same error class ("Storage failed to start for this
-  stack"/"Storage is stopped for this stack."), with the capability error appended
-  when present, and guidance to run `supabase stack restart`.
-  `dormant`/`starting`/`ready`/`stopping` all proceed — the
-  gateway activates a lazily-configured Storage on the first request and holds that
-  request, and wakes a stopping Storage once its cleanup completes; there is no
-  client-side polling. A stack that is not registered, not running, missing
-  its API endpoint or credentials, or whose stack API is unavailable errors with
-  `StackStorageUnavailableError` and guidance to run `supabase stack status` or
-  `supabase stack restart` (or `supabase start` when the stack was never configured). A
-  stack-gateway 502/503 during Storage activation is reported as
-  `StackStorageCapabilityError` with guidance to run `supabase stack logs` then
-  `supabase stack restart`, instead of a raw status body — for a `--local` target only;
-  a `--linked` failure passes through unchanged. No HTTP request is sent when Storage is
-  disabled or the stack is not running.
+- **Stack backend (local).** The Storage endpoint comes from the selected composition's
+  Storage member observation, and the service-role JWT is generated from the primary database's
+  observed JWT secret. `seed buckets` opens saved state without launching the owner or any
+  service member. All legacy `[api]`/`[api.tls]`/`SUPABASE_API_*`/`SUPABASE_AUTH_{JWT_SECRET,SERVICE_ROLE_KEY}`
+  config validation above (including the `<16`-char secret and TLS cert/key-pairing checks) is
+  skipped on this path, even when there is nothing configured to seed.
+- **Stack backend — capability policy.** Storage excluded from the composition errors with
+  `StackStorageCapabilityError` and guidance to enable `[storage]`, then run `supabase start`
+  without `--exclude storage`. Failed or stopped Storage is unusable; dormant, starting, ready,
+  and stopping Storage may proceed because the first request can wake a lazy member. The primary
+  database must be running and healthy before Storage requests are attempted. A stack that is
+  not registered, has no primary database composition member, is not ready, or has no Storage
+  HTTP endpoint errors with `StackStorageUnavailableError` or `StackStorageCapabilityError`.
+  No HTTP request is sent when Storage is disabled or the primary database is not ready.
 - **Secrets.** The stack's service-role JWT is never printed or logged; error messages
   contain only lifecycle/capability state text.
 - **Local Kong TLS (legacy backend only).** When `[api.tls] enabled = true` for a local stack, the

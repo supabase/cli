@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";
@@ -26,11 +26,15 @@ import {
 
 /** Local-time `YYYY-MM-DD`, the report's dated output folder format. */
 function reportDateFolder(epochMillis: number): string {
-  const date = new Date(epochMillis);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return DateTime.make(epochMillis).pipe(
+    Option.map((dateTime) => {
+      const local = DateTime.toParts(DateTime.setZone(dateTime, DateTime.zoneMakeLocal()));
+      const month = String(local.month).padStart(2, "0");
+      const day = String(local.day).padStart(2, "0");
+      return `${local.year}-${month}-${day}`;
+    }),
+    Option.getOrElse(() => "NaN-NaN-NaN"),
+  );
 }
 
 /**
@@ -67,11 +71,9 @@ const runInspectReport = Effect.fnUntraced(function* (
   // was explicitly passed, so value-based detection would miss it and default to linked.
   const target = resolveDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new InspectMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   // Validated before any DB work so a malformed config aborts before connecting or writing
@@ -82,12 +84,10 @@ const runInspectReport = Effect.fnUntraced(function* (
   const connType = target.connType ?? "linked";
 
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new InspectMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const cfg = yield* resolver.resolve({

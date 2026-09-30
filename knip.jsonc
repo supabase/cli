@@ -36,8 +36,6 @@
         "brew",
         // apps/cli/tests/smoke-test-windows.ts
         "cygpath",
-        // apps/cli/src/commands/seed/buckets/buckets.integration.test.ts
-        "mkfifo",
         // apps/cli/scripts/build.ts
         "nfpm",
         // apps/cli/scripts/build.ts
@@ -59,7 +57,13 @@
       "entry": ["scripts/*.ts"],
     },
     "packages/stack": {
-      // TODO(CLI-2423): knip does not credit the ws import in src/public/whole-stack.e2e.test.ts.
+      "entry": [
+        // Source-mode NativeProcess resolves this standalone launcher by URL.
+        "src/runtime/native-launcher.ts",
+        // scripts/generate-functions-bootstrap.ts bundles the Functions main service by path.
+        "src/functions/serve.main.ts",
+      ],
+      // Used by the raw WebSocket integration fixture; Knip excludes that test-only import.
       "ignoreDependencies": ["@types/ws", "ws"],
     },
   },

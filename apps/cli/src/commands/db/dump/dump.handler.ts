@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Option, Path, Predicate } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Predicate } from "effect";
+import type { Stack } from "@supabase/stack/effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -7,6 +8,7 @@ import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { loadProjectEnv, readDbToml } from "../../../command-internal/db-config.toml-read.ts";
+import { parseConnectionString } from "../../../command-internal/db-config.parse.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import {
   ipv6Suggestion,
@@ -43,6 +45,7 @@ import {
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import {
   stackProjectDatabaseVersion,
+  stackOpenReadyProject,
   stackRequireProjectRuntime,
 } from "../../../command-internal/stack-local-database.ts";
 import { resolveBundledPostgresRuntime } from "../../../command-internal/bundled-postgres-client.ts";
@@ -103,11 +106,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     // 1. `data-only` is required when `--use-copy`/`--exclude` are set, keyed on
     //    presence not value — `--use-copy --data-only=false` still passes.
     if ((flags.useCopy || flags.exclude.length > 0) && Option.isNone(flags.dataOnly)) {
-      return yield* Effect.fail(
-        new DbDumpRequiresDataOnlyError({
-          message: `required flag(s) "data-only" not set`,
-        }),
-      );
+      return yield* new DbDumpRequiresDataOnlyError({
+        message: `required flag(s) "data-only" not set`,
+      });
     }
 
     // 2. Mutually-exclusive flag groups. "Set" means explicitly set: an
@@ -136,11 +137,9 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     for (const group of DUMP_EXCLUSIVE_GROUPS) {
       const set = group.filter(isSet);
       if (set.length > 1) {
-        return yield* Effect.fail(
-          new DbDumpMutuallyExclusiveFlagsError({
-            message: cobraMutuallyExclusiveErrorMessage(group, set),
-          }),
-        );
+        return yield* new DbDumpMutuallyExclusiveFlagsError({
+          message: cobraMutuallyExclusiveErrorMessage(group, set),
+        });
       }
     }
 
@@ -154,12 +153,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : "linked";
     // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbDumpMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbDumpMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward, even on a
@@ -194,12 +191,20 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     const tomlValues = yield* readDbToml(fs, path, cliSettings.workdir, linkedRef);
 
     const backend = yield* currentStackBackend;
+    const managedProject =
+      backend.kind === "stack" && connType === "local"
+        ? yield* stackOpenReadyProject.pipe(
+            Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+            Effect.map(Option.getOrUndefined),
+          )
+        : undefined;
+    const managedStack: Stack | undefined = managedProject?.stack;
     const stackRuntime =
       backend.kind === "stack" && connType === "local"
         ? yield* stackRequireProjectRuntime
         : undefined;
     const bundledRuntime =
-      backend.kind === "stack"
+      backend.kind === "stack" && managedStack === undefined
         ? yield* resolveBundledPostgresRuntime(stackRuntime, runtimeInfo.platform, runtimeInfo.arch)
         : undefined;
     const useNativeClient = bundledRuntime?.kind === "native";
@@ -215,12 +220,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 ? undefined
                 : envNetworkId,
           );
-    const stackPublishedTarget = backend.kind === "stack" && isLocal;
+    // Loopback inside a bridge-networked tool container is the container itself; stack
+    // targets are published by a host-side proxy that the Docker VM loopback never sees.
+    // A managed stack runs pg_dump through its own command runtime against its own endpoint.
+    const rewriteLoopbackTarget =
+      backend.kind === "stack" ? managedStack === undefined : !dumpUsesHostNetwork;
     const dumpConn = useNativeClient
       ? connType === "local"
         ? dumpConnForHostClient(conn)
         : conn
-      : stackPublishedTarget
+      : rewriteLoopbackTarget
         ? {
             ...conn,
             host: rewriteDumpHostForToolContainer(conn.host, {
@@ -235,14 +244,21 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         : String(tomlValues.majorVersion);
     const dumpMajor = tomlValues.majorVersion;
     const dumpClient =
-      backend.kind === "stack"
+      managedStack !== undefined
         ? {
-            kind: "bundled" as const,
+            kind: "stack" as const,
+            stack: managedStack,
             command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
-            version: catalogVersion,
-            runtime: bundledRuntime,
+            major: Number(catalogVersion.split(".")[0]) === 15 ? (15 as const) : (17 as const),
           }
-        : { kind: "container" as const };
+        : backend.kind === "stack"
+          ? {
+              kind: "bundled" as const,
+              command: roleOnly ? ("pg_dumpall" as const) : ("pg_dump" as const),
+              version: catalogVersion,
+              runtime: bundledRuntime,
+            }
+          : { kind: "container" as const };
 
     // 4. Pick the mode-specific script + env. --schema/-s and --exclude/-x arrive here
     //    already CSV-parsed by `parseSchemaFlags`.
@@ -267,7 +283,20 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
             script: dumpSchemaScript,
             buildEnv: buildSchemaDumpEnv,
           } as const);
-    const modeEnv = mode.buildEnv(dumpConn, opt);
+    const managedDumpConn =
+      managedProject === undefined
+        ? undefined
+        : parseConnectionString(
+            yield* managedProject.database.credentials({ from: "runtime" }).pipe(
+              Effect.mapError((cause) => new DbDumpRunError({ message: cause.message })),
+              Effect.map((credentials) => credentials.databaseUrl ?? ""),
+            ),
+          );
+    if (managedProject !== undefined && managedDumpConn === undefined)
+      return yield* new DbDumpRunError({
+        message: "The local stack runtime database URL is unavailable.",
+      });
+    const modeEnv = mode.buildEnv(managedDumpConn ?? dumpConn, opt);
 
     // Keys off `path.length > 0`, not flag presence: `--file ""` means stdout, no
     // file opened.
@@ -310,8 +339,8 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       runtimeInfo.platform === "win32" &&
       tty.stdoutIsPipe &&
       Option.isNone(resolvedFile) &&
-      (process.env["MSYSTEM"] ?? "") === "" &&
-      process.env["TERM_PROGRAM"] !== "mintty";
+      Option.getOrElse(yield* Config.option(Config.string("MSYSTEM")), () => "") === "" &&
+      Option.getOrUndefined(yield* Config.option(Config.string("TERM_PROGRAM"))) !== "mintty";
     let sawNonAscii = false;
 
     // Open (create + truncate) the output file up front so an unwritable
@@ -332,30 +361,28 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         ? // `--file`: (re)truncate then append-stream. Truncating per attempt
           // ensures the file ends up holding only the successful attempt's
           // output when a pooler retry runs.
-          fs
-            .writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE })
-            .pipe(Effect.mapError(toOpenFileError))
-            .pipe(
-              Effect.andThen(
-                Effect.scoped(
-                  Effect.gen(function* () {
-                    const file = yield* fs
-                      .open(resolvedFile.value, { flag: "a" })
-                      .pipe(Effect.mapError(toOpenFileError));
-                    return yield* streamPgDumpWithClient({
-                      image,
-                      script: mode.script,
-                      env,
-                      onStdout: (chunk) =>
-                        file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
-                      projectEnvValues: projectEnv,
-                      client: dumpClient,
-                      forceHostNetwork: stackPublishedTarget,
-                    });
-                  }),
-                ),
+          fs.writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE }).pipe(
+            Effect.mapError(toOpenFileError),
+            Effect.andThen(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const file = yield* fs
+                    .open(resolvedFile.value, { flag: "a" })
+                    .pipe(Effect.mapError(toOpenFileError));
+                  return yield* streamPgDumpWithClient({
+                    image,
+                    script: mode.script,
+                    env,
+                    onStdout: (chunk) =>
+                      file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
+                    projectEnvValues: projectEnv,
+                    client: dumpClient,
+                    forceHostNetwork: backend.kind === "stack",
+                  });
+                }),
               ),
-            )
+            ),
+          )
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry the partial first-attempt bytes are left on
           // stdout (a pipe can't be rewound); streaming matches that.
@@ -374,7 +401,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
             client: dumpClient,
-            forceHostNetwork: stackPublishedTarget,
+            forceHostNetwork: backend.kind === "stack",
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the
@@ -406,7 +433,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
       Effect.catchIf(
         (error): error is DockerRunError =>
           Predicate.isTagged(error, "DockerRunError") &&
-          stackRuntime?.kind === "native" &&
+          stackRuntime === "native" &&
           runtimeInfo.platform === "win32",
         (error) =>
           Effect.fail(
@@ -425,12 +452,10 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
     //    ran, otherwise the original) into an actionable suggestion, e.g. IPv6
     //    connectivity.
     if (result.exitCode !== 0) {
-      return yield* Effect.fail(
-        new DbDumpRunError({
-          message: pgDumpClientExitMessage(dumpClient, result.exitCode),
-          ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
-        }),
-      );
+      return yield* new DbDumpRunError({
+        message: pgDumpClientExitMessage(dumpClient, result.exitCode),
+        ...(isIPv6ConnectivityError(result.stderr) ? { suggestion: ipv6Suggestion() } : {}),
+      });
     }
 
     // Report the absolute output path on stderr.

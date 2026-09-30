@@ -1,7 +1,13 @@
 # `supabase gen types`
 
-Generates PostgREST client types in-process via `@supabase/postgrest-typegen`
-against a direct PostgreSQL connection. `--linked`/`--project-id` TypeScript
+Generates PostgREST client types against a direct PostgreSQL connection.
+Introspection runs in-process via `@supabase/postgrest-typegen`; the language
+comes from the `@supabase/typegen` registry, which lists every `--lang` value and
+either calls that language's generator in-process (TypeScript, Go, Python,
+Swift today) or runs the language's own tool in the directory the command was run from, with the
+introspected document on stdin (`--lang dart` runs `dart run supabase_typegen
+--output -`). A bump of that dependency can add a `--lang` value or a language
+flag; the CLI names no language itself. `--linked`/`--project-id` TypeScript
 output still comes from the Management API; every other language and target
 (including `--local` and `--db-url`) connects to the database and introspects
 it directly — no pg-meta container is involved. When `[experimental].stack`
@@ -54,14 +60,19 @@ workdir). `--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
 
-| Command                                                      | When                                                                                                      | Purpose                            |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `docker`/`podman container inspect supabase_db_<project_id>` | `--local`, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off) | assert `supabase start` is running |
+| Command                                                      | When                                                                                                      | Purpose                                                       |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `docker`/`podman container inspect supabase_db_<project_id>` | `--local`, only when the selected backend is the legacy Docker Compose stack (`[experimental].stack` off) | assert `supabase start` is running                            |
+| `dart run supabase_typegen --output -`                       | `--lang dart` on every target, in the directory the command was run from                                  | generate the types from the `GeneratorMetadata` JSON on stdin |
 
-Generation itself runs in-process and never shells out. On a native or
-Docker-based managed stack (`[experimental].stack` on), `--local` never
-inspects a container; it resolves the stack's database connection through
-`DbConfigResolver` the same way `--db-url` does.
+Any other `--lang` whose registry entry is out-of-process runs its own tool
+the same way: stdout is the output, stderr is folded into the error on
+failure. The tool inherits the CLI's entire environment, so a `PUB_CACHE` or
+proxy setting reaches it unchanged. Introspection and the in-process
+languages never shell out. On a native or Docker-based managed stack
+(`[experimental].stack` on), `--local` never inspects a container; it
+resolves the stack's database connection through `DbConfigResolver` the same
+way `--db-url` does.
 
 ## Environment Variables
 
@@ -78,28 +89,35 @@ inspects a container; it resolves the stack's database connection through
 | `SUPABASE_DB_PASSWORD`                                                                                                                                                                           | database password for `--local` and the `--linked` workdir project                               | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role)                                                                |
 | `SUPABASE_SERVICES_HOSTNAME`                                                                                                                                                                     | host used to reach the local database on the legacy Docker Compose stack                         | no (defaults to `127.0.0.1`)                                                                                                                                                 |
 | `SUPABASE_WORKDIR`                                                                                                                                                                               | working directory `supabase/config.toml`/`config.json` is read from (`--workdir` takes priority) | no — when unset, the CLI walks up from cwd looking for `supabase/config.toml`; when SET (flag or env) the directory is used exactly as given and **no ancestor is searched** |
+| `PATH`, `PATHEXT`, `ComSpec`                                                                                                                                                                     | find the tool of an out-of-process `--lang`; `PATHEXT` and `ComSpec` matter on Windows only      | no (`PATHEXT` defaults to `.COM;.EXE;.BAT;.CMD`, `ComSpec` to `cmd.exe`; without `PATH` the tool is reported as not installed)                                               |
 
 ## Exit Codes
 
 | Code | Condition                                                                                                                                                                                             |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — types printed to stdout                                                                                                                                                                     |
-| `1`  | no target specified (must use one flag)                                                                                                                                                               |
-| `1`  | mutually exclusive flags combined (all four Go flag groups)                                                                                                                                           |
-| `1`  | `--postgrest-v9-compat` used without `--db-url`                                                                                                                                                       |
+| `1`  | no target specified (must use one flag) (`GenTypesFlagUsageError`)                                                                                                                                    |
+| `1`  | mutually exclusive flags combined (all four Go flag groups) (`GenTypesFlagUsageError`)                                                                                                                |
+| `1`  | `--postgrest-v9-compat` used without `--db-url` (`GenTypesFlagUsageError`)                                                                                                                            |
+| `1`  | a positional language other than `typescript` passed without `--lang` (`GenTypesFlagUsageError`)                                                                                                      |
 | `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                                                                                                                              |
 | `1`  | `--network-id` set (`GenTypesNetworkIdUnsupportedError`) — generation runs in-process and cannot join a Docker network                                                                                |
-| `1`  | `supabase start` not running (`--local` on the legacy Docker Compose stack) or db inspection failed                                                                                                   |
+| `1`  | `supabase start` not running (`--local` on the legacy Docker Compose stack) (`GenTypesLocalDbNotRunningError`)                                                                                        |
+| `1`  | `--local` on the legacy Docker Compose stack and `container inspect` exits non-zero for any other reason (`GenTypesLocalDbInspectError`)                                                              |
 | `1`  | resolved `--workdir`/`SUPABASE_WORKDIR` doesn't exist or isn't a directory (`GenTypesWorkdirError`) — beats every other guard                                                                         |
 | `1`  | an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a schema-selecting path (`GenTypesMissingProjectConfigError`) — a DEFAULTED workdir keeps the embedded-default fallback instead |
+| `1`  | a resolved preview branch config has no `db_user`/`db_pass` (`GenTypesBranchCredentialsUnavailableError`)                                                                                             |
 | `1`  | API error or database connection/introspection/generation failure (`GenTypesGenerationError`)                                                                                                         |
+| `1`  | an out-of-process language's toolchain or package is missing from the current directory; the message carries the registry's install hint (`GenTypesToolNotInstalledError`)                            |
+| `1`  | an out-of-process language's tool exited unsuccessfully or rejected the metadata document; the message carries its stderr (`GenTypesToolFailedError`)                                                 |
 
 ## Output
 
 ### `--output-format text`
 
 Prints generated TypeScript (or other language) type definitions to stdout.
-Diagnostics (`Connecting to …`) go to stderr.
+Diagnostics (`Connecting to …`) go to stderr. In-process TypeScript also prints a stderr
+note that the output is unformatted.
 
 ### `--output-format json`
 
@@ -111,6 +129,8 @@ Not applicable.
 
 ## Notes
 
+- TypeScript generated in-process is unformatted. stderr suggests `npx oxfmt <generated-file.ts>`.
+  `--linked` and `--project-id` TypeScript for a project still come from the Management API.
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
   All four mutually exclusive flag groups are enforced with the exact error text and
   sorted group order: `local/linked/project-id/db-url`, plus `linked/project-id` against
@@ -164,15 +184,24 @@ go`/`--lang swift`/`--lang python` — the defaults-only claim above holds only 
     Management API and is unaffected by this change, so it can differ from local output
     on these jsonb cases until the hosted service adopts the same generator.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
-- `--swift-access-control` accepts `internal` (default) or `public`. It is
-  mutually exclusive with an _explicit_ `--linked`/`--project-id`; on the `--local`,
-  `--db-url`, and implicit-linked-fallback paths it is always applied
-  regardless of `--lang`.
-- `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below.
-  It must be used together with `--db-url` (error:
+- Language flags are rendered from the registry's user-facing option specs; today that is
+  `--swift-access-control`, which accepts `internal` (default), `public`, `private` or
+  `package`. Every such flag is mutually exclusive with an _explicit_
+  `--linked`/`--project-id`; on the `--local`, `--db-url`, and implicit-linked-fallback
+  paths the flags are parsed regardless of `--lang`, and only the values the chosen
+  language declares reach its generator.
+- `--postgrest-v9-compat` is deprecated and hidden from help and docs. It still turns
+  one-to-one relationship detection off (the registry's `detect-one-to-one-relationships`
+  consumer option), must be used together with `--db-url` (error:
   `--postgrest-v9-compat must used together with --db-url` — note the typo, preserved
-  intentionally). `--local` still forces v9 compat when the local PostgREST image tag
-  contains `v9`.
+  intentionally), and prints this line on stderr when passed:
+
+  ```
+  Flag --postgrest-v9-compat has been deprecated, PostgREST 9 reached end of life; the flag still disables one-to-one relationship detection.
+  ```
+
+  `--local` still forces detection off when the local PostgREST image tag contains `v9`.
+
 - `--query-timeout` sets the maximum time allowed for introspection (default 15s),
   applied both as the connection's server-side `statement_timeout` and as a connect
   timeout. It is mutually exclusive with an _explicit_ `--linked`/`--project-id`; on

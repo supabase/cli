@@ -44,11 +44,11 @@ yield* output.fail({ code: "InvalidTokenError", message: "Bad token format" })
 
 ## How It Works
 
-`stream-json` commands emit newline-delimited JSON events. Bounded stack logs and compute logs
-reads emit one `result` event containing their structured output. Commands that follow
-line-oriented output emit `log-entry` events as entries arrive. A log-entry event has
-`type: "log-entry"`, `timestamp`, `service`, `stream`, `line`, and `source`; stack logs use
-`stream: "stdout" | "stderr" | "internal"` and `source: "history" | "live"`.
+`stream-json` commands emit newline-delimited JSON events. Bounded compute log
+reads emit one `result` event. Stack logs stream live `log-entry` events with
+`timestamp`, `service`, `instance_id`, `stream`, `line`, and `source: "live"`.
+Stack log streams are `stdout` or `stderr`; other emitters may include history
+or internal messages and may omit `instance_id`.
 
 Each format has its own layer implementation. The root command provides the appropriate layer based on the `--output-format` flag:
 

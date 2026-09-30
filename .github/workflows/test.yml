@@ -95,9 +95,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run unit tests
-        run: pnpm run test:unit --coverage.enabled
+        run: pnpm run test:unit
 
   test-integration:
     if: |
@@ -117,9 +118,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run integration tests
-        run: pnpm run test:integration --coverage.enabled
+        run: pnpm run test:integration
 
   test-stack-ports:
     if: |
@@ -132,7 +134,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-8vcpu-ubuntu-2404, macos-latest, windows-latest]
+        # Linux coverage for these files comes from the integration job, which
+        # runs the whole stack integration project.
+        os: [macos-latest, windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,17 +147,32 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run stack integration tests
         working-directory: packages/stack
         run: >-
           pnpm test:integration
-          src/state/ports.integration.test.ts
-          src/state/registry-lease.integration.test.ts
-          src/state/state-store.integration.test.ts
-          src/supervisor/host-listener.integration.test.ts
-          src/supervisor/ingress.integration.test.ts
-          src/gateway/startup-transports.integration.test.ts
+          src/Ports.integration.test.ts
+          src/storage/DirectoryCopy.integration.test.ts
+          src/State.integration.test.ts
+          src/State.windows.integration.test.ts
+          src/State.process.integration.test.ts
+          src/HostProcess.integration.test.ts
+          src/Network.integration.test.ts
+          src/Proxy.integration.test.ts
+          src/HttpProxy.integration.test.ts
+          --passWithNoTests=false
+
+      # Windows-only CLI subset: paths, PATH lookup, and permission semantics diverge there.
+      - name: Run CLI integration tests
+        if: runner.os == 'Windows'
+        working-directory: apps/cli
+        run: >-
+          pnpm test:integration
+          src/commands/db/reset/reset.integration.test.ts
+          src/commands/experimental/stack/start/start.integration.test.ts
+          --passWithNoTests=false
 
   test-summary:
     if: |
@@ -185,12 +204,17 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run CLI end-to-end tests (shard ${{ matrix.shard }}/3)
+    name: Run CLI end-to-end tests (${{ matrix.name }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        include:
+          - { suite: cli, shard: 1, shards: 4, name: cli 1/4 }
+          - { suite: cli, shard: 2, shards: 4, name: cli 2/4 }
+          - { suite: cli, shard: 3, shards: 4, name: cli 3/4 }
+          - { suite: cli, shard: 4, shards: 4, name: cli 4/4 }
+          - { suite: cli-e2e, name: cli-e2e }
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -223,9 +247,27 @@ jobs:
         run: pnpm exec turbo run supabase#build
 
       - name: Run end-to-end tests
-        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 --filter=supabase --filter=@supabase/cli-e2e -- --shard=${{ matrix.shard }}/3
+        if: matrix.suite == 'cli'
+        run: pnpm exec turbo run test:e2e:run --only --filter=supabase -- --shard=${{ matrix.shard }}/${{ matrix.shards }}
         env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+      - name: Run cli-e2e end-to-end tests
+        if: matrix.suite == 'cli-e2e'
+        run: pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e
+        env:
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+
+      # Vitest writes its results cache under a sha1-named directory. The refresh script
+      # (apps/cli/scripts/refresh-e2e-timings.ts) merges these into tests/e2e-timings.json.
+      - name: Upload e2e timings
+        if: always() && matrix.suite == 'cli'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-timings-${{ matrix.shard }}
+          path: apps/cli/node_modules/.vite/vitest/**/results.json
+          retention-days: 7
+          if-no-files-found: warn
 
   test-stack-e2e:
     if: |
@@ -233,12 +275,13 @@ jobs:
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run stack end-to-end tests (${{ matrix.runtime }})
+    name: Run stack end-to-end tests (${{ matrix.runtime }}, ${{ matrix.suite }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
-        runtime: [native, container]
+        runtime: [native, docker]
+        suite: [lifecycle, idle-parallel]
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -247,11 +290,20 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
 
       - name: Run stack end-to-end tests
-        run: pnpm --filter @supabase/stack test:e2e:run
-        env:
-          SUPABASE_STACK_E2E_RUNTIME: ${{ matrix.runtime }}
+        run: >-
+          pnpm --filter @supabase/stack test:e2e:run
+          src/whole-stack.${{ matrix.runtime }}.${{ matrix.suite }}.e2e.test.ts
+          --passWithNoTests=false
+
+      - name: Run public stack end-to-end tests
+        if: matrix.runtime == 'native' && matrix.suite == 'lifecycle'
+        run: >-
+          pnpm --filter @supabase/stack test:e2e:run
+          src/public.e2e.test.ts
+          --passWithNoTests=false
 
   # Summary job that gates branch protection. It preserves the original check
   # name and succeeds iff every CLI shard and stack runtime succeeded.

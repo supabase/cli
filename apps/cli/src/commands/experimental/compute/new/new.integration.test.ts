@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, FileSystem, Path, Predicate, Schema } from "effect";
+import { Effect, Option, FileSystem, Path, PlatformError, Predicate, Schema } from "effect";
+import * as SmolToml from "smol-toml";
 import { makeComputeProject, setupCompute } from "../../../../../tests/helpers/compute.ts";
 import {
   ComputeAlreadyConfiguredError,
@@ -13,6 +14,11 @@ import {
   ComputeDirectoryExistsError,
   ComputeJsonConfigUnsupportedError,
 } from "../../../../shared/compute/compute.errors.ts";
+import {
+  COMPUTE_RUNTIME_EXCLUSIONS,
+  type ComputeRuntime,
+} from "../../../../shared/compute/compute-runtimes.ts";
+import { COMPUTE_STACKS } from "../../../../shared/compute/compute-stacks.ts";
 import { computeNew } from "./new.handler.ts";
 import { ComputeNewWorkdirError } from "./new.errors.ts";
 import type { ComputeNewFlags } from "./new.command.ts";
@@ -24,6 +30,18 @@ project_id = "demo"
 verify_jwt = false
 `;
 
+/**
+ * The `exclude = [...]` line `new` writes for a runtime, derived from the runtime's own list
+ * rather than restated: which patterns a runtime chooses is asserted where the patterns are
+ * matched, and the claim here is only that the list reaches `config.toml` as a TOML array.
+ */
+function excludeLine(runtime: ComputeRuntime): string {
+  const patterns = COMPUTE_RUNTIME_EXCLUSIONS[runtime];
+  return patterns.length === 0
+    ? ""
+    : `exclude = [${patterns.map((pattern) => `"${pattern}"`).join(", ")}]\n`;
+}
+
 function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
   return {
     name: Option.some("api"),
@@ -34,6 +52,17 @@ function flags(overrides: Partial<ComputeNewFlags> = {}): ComputeNewFlags {
     source: Option.none(),
     ...overrides,
   };
+}
+
+function writeDenied(target: string) {
+  return Effect.fail(
+    PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "writeFileString",
+      pathOrDescriptor: target,
+    }),
+  );
 }
 
 const project = Effect.fnUntraced(function* (files: Readonly<Record<string, string>> = {}) {
@@ -63,7 +92,9 @@ describe("compute new", () => {
         const computeDir = path.join(repo.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* repo.config).toBe(
-          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `${CONFIG_WITH_COMMENTS}\n[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine(
+            "node",
+          )}`,
         );
 
         // Declarative line first, then the detail rows, then the next step —
@@ -308,6 +339,58 @@ describe("compute new", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  // Written into config.toml rather than applied invisibly at push time, so the list is
+  // visible and editable and `push` needs no built-in defaults of its own.
+  describe("the chosen runtime's default exclude patterns", () => {
+    it.live.each(["node", "deno", "dockerfile"] as const)(
+      "records the %s runtime's own list",
+      (runtime) =>
+        Effect.gen(function* () {
+          const repo = yield* project();
+          const { layer } = setupCompute({ workdir: repo.dir });
+
+          return yield* Effect.gen(function* () {
+            yield* computeNew(flags({ runtime: Option.some(runtime) }));
+
+            expect(yield* repo.config).toContain(excludeLine(runtime).trimEnd());
+          }).pipe(Effect.provide(layer));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    // The written entry has to be loadable, or the scaffold leaves behind a project whose
+    // config nothing can read — the patterns are quoted strings in a TOML array, which is
+    // exactly the shape a hand-rolled renderer gets wrong.
+    it.live("writes them as a list the config loader reads back", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          const parsed = SmolToml.parse(yield* repo.config) as {
+            compute?: { api?: { exclude?: unknown } };
+          };
+          expect(parsed.compute?.api?.exclude).toEqual([...COMPUTE_RUNTIME_EXCLUSIONS.node]);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+
+    it.live("reports them alongside the compute's other dials", () =>
+      Effect.gen(function* () {
+        const repo = yield* project();
+        const { layer, out } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          yield* computeNew(flags({ runtime: Option.some("node") }));
+
+          expect(out.stdoutText).toContain("Excluded");
+          expect(out.stdoutText).toContain(".env");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  });
+
   // The runtime and size prompts do have defaults to fall back on, so a piped
   // stdin must leave them unasked rather than consuming the pipe.
   it.live("takes the defaults without prompting when stdin is piped", () =>
@@ -517,7 +600,7 @@ describe("compute new", () => {
         const computeDir = path.join(created.dir, "supabase", "compute", "api");
         expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
         expect(yield* fs.readFileString(path.join(created.dir, "supabase", "config.toml"))).toBe(
-          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n`,
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
         );
         // An EXPLICIT --workdir has no cwd-relative reading, so the success
         // message names the absolute path rather than a project-root-relative one.
@@ -709,6 +792,126 @@ describe("compute new", () => {
   );
 
   it.live.each([false, true])(
+    "takes the scaffold back when config.toml cannot be written (destination already there: %s)",
+    (destinationExisted) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* project();
+        const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+        if (destinationExisted) yield* fs.makeDirectory(computeDir, { recursive: true });
+        const { layer } = setupCompute({ workdir: repo.dir });
+
+        return yield* Effect.gen(function* () {
+          const error = yield* computeNew(
+            flags({ name: Option.some("api"), runtime: Option.some("node") }),
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (target, data, options) =>
+                path.basename(target) === "config.toml"
+                  ? writeDenied(target)
+                  : fs.writeFileString(target, data, options),
+            }),
+            Effect.flip,
+          );
+
+          expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+          expect(yield* fs.exists(computeDir)).toBe(destinationExisted);
+          if (destinationExisted) expect(yield* fs.readDirectory(computeDir)).toEqual([]);
+          expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+          yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
+          expect(yield* fs.exists(path.join(computeDir, "index.mjs"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("takes back the starters it wrote when a later one cannot be written", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const starters = Object.keys(COMPUTE_STACKS.dockerfile);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }),
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === starters.at(-1)
+                ? writeDenied(target)
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
+        );
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.exists(computeDir)).toBe(false);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("dockerfile") }));
+        expect((yield* fs.readDirectory(computeDir)).toSorted()).toEqual(starters.toSorted());
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("keeps a file that lands in the destination before the config write fails", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        yield* computeNew(flags({ name: Option.some("api"), runtime: Option.some("node") })).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (target, data, options) =>
+              path.basename(target) === "config.toml"
+                ? fs
+                    .writeFileString(path.join(computeDir, "notes.txt"), "mine\n")
+                    .pipe(Effect.andThen(writeDenied(target)))
+                : fs.writeFileString(target, data, options),
+          }),
+          Effect.flip,
+        );
+
+        expect(yield* fs.readDirectory(computeDir)).toEqual(["notes.txt"]);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves a dangling symlink at the destination in place", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* project();
+      const computeDir = path.join(repo.dir, "supabase", "compute", "api");
+      const target = path.join(repo.dir, "supabase", "compute", "missing");
+      yield* fs.makeDirectory(path.dirname(computeDir), { recursive: true });
+      yield* fs.symlink(target, computeDir);
+      const { layer } = setupCompute({ workdir: repo.dir });
+
+      return yield* Effect.gen(function* () {
+        const error = yield* computeNew(
+          flags({ name: Option.some("api"), runtime: Option.some("node") }),
+        ).pipe(Effect.flip);
+
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(yield* fs.readLink(computeDir)).toBe(target);
+        expect(yield* repo.config).toBe(CONFIG_WITH_COMMENTS);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.each([false, true])(
     "refuses JSON before prompts or writes (TOML present: %s)",
     (withToml) =>
       Effect.gen(function* () {
@@ -783,7 +986,7 @@ describe("compute new", () => {
 
         // The workdir got both the entry and the scaffold it points at.
         expect(yield* fs.readFileString(path.join(workdir, "supabase", "config.toml"))).toBe(
-          '[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n',
+          `[compute.api]\nruntime = "node"\nsize = "2gb"\nexposure = "public"\n${excludeLine("node")}`,
         );
         expect(
           yield* fs.exists(path.join(workdir, "supabase", "compute", "api", "index.mjs")),

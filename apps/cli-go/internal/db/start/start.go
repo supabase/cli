@@ -66,7 +66,7 @@ func NewContainerConfig(args ...string) container.Config {
 		"JWT_SECRET=" + utils.Config.Auth.JwtSecret.Value,
 		fmt.Sprintf("JWT_EXP=%d", utils.Config.Auth.JwtExpiry),
 	}
-	if len(utils.Config.Experimental.OrioleDBVersion) > 0 {
+	if len(utils.Config.Db.OrioleDBVersion) > 0 {
 		env = append(env,
 			"POSTGRES_INITDB_ARGS=--lc-collate=C --lc-ctype=C",
 			fmt.Sprintf("S3_ENABLED=%t", true),

@@ -60,8 +60,8 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override: on a 15/17 project with `experimental.orioledb_version` set, the Postgres
-  // image is replaced with the OrioleDB tag, taking precedence over the default/pinned image.
+  // OrioleDB override: on a 15/17 project with `db.orioledb_version` set, the Postgres image is
+  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
   if (
     orioledbVersion !== undefined &&
     orioledbVersion.length > 0 &&

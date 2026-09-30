@@ -150,11 +150,9 @@ export const runInspectQuery = Effect.fnUntraced(function* (
   // parsed boolean value — `--local=false` counts as explicitly set.
   const target = resolveDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new InspectMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--linked` is the default; exclusivity above is already keyed off the raw flags, so
@@ -165,12 +163,10 @@ export const runInspectQuery = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new InspectMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new InspectMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const cfg = yield* resolver.resolve({

@@ -44,8 +44,16 @@ export const ALL_COMPUTE_LOG_STREAMS: ReadonlyArray<string> = Object.values(COMP
  */
 const COMPUTE_LOG_NAME_ATTRIBUTE = "worker";
 
-/** Which key carries the stream name. See {@link computeLogsQuery} for why. */
-const COMPUTE_LOG_STREAM_ATTRIBUTE = "source";
+/**
+ * Which `log_attributes` key carries the stream name.
+ *
+ * The writer publishes `subservice` at the top level, beside `project`, but that does not
+ * make it a column here: the Compute Logflare source is not enrolled as a category in the
+ * generic logs path, so nothing it sends is promoted, and every key — top-level ones
+ * included — arrives flattened into `log_attributes`. Filtering on a bare `subservice`
+ * fails the whole query with `Field "subservice" does not exist`.
+ */
+const COMPUTE_LOG_STREAM_ATTRIBUTE = "subservice";
 
 /**
  * The server clamps a span of more than 24 hours, so the default window sits just under the
@@ -127,13 +135,11 @@ function quote(value: string): string {
 }
 
 /**
- * The logs query for one compute. Two things about the projection are load-bearing: the filter
- * is `log_attributes`, not the `source` column, since compute rows carry an empty top-level
- * `source` (the stream survives only in `log_attributes['source']`); and the `in (...)` list
- * is a tenancy guard, not a convenience — with `source` empty, it's the only thing keeping a
- * non-compute row with a `worker` attribute out of the result. `toUnixTimestamp64Milli` rather
- * than a formatter, since ClickHouse's `%M` is the month name and bare `toString(timestamp)`
- * has no zone.
+ * The logs query for one compute. Two things about the projection are load-bearing: the
+ * `in (...)` list is a tenancy guard, not a convenience — compute rows carry an empty
+ * top-level `source`, so the stream list is the only thing keeping a non-compute row with a
+ * `worker` attribute out of the result; and `toUnixTimestamp64Milli` rather than a formatter,
+ * since ClickHouse's `%M` is the month name and bare `toString(timestamp)` has no zone.
  */
 export function computeLogsQuery(options: {
   readonly name: string;

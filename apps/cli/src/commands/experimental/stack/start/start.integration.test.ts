@@ -1,149 +1,555 @@
+import { generateKeyPairSync } from "node:crypto";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Deferred,
   Effect,
-  FileSystem,
+  Equal,
   Fiber,
+  FileSystem,
   Layer,
   Option,
-  Path,
   Redacted,
-  Schema,
   Stream,
 } from "effect";
-import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
-import { CliOutput, Command } from "effect/unstable/cli";
 import {
-  ContainerEngineError,
-  ContainerPullError,
-  StackConfigSchema,
-  StackIdSchema,
-  StackRuntimeError,
-  StackStateInvalidError,
+  DEFAULT_LOCAL_DATABASE_PASSWORD,
+  DEFAULT_LOCAL_JWT_SECRET,
+  DEFAULT_POSTGRES_ROOT_KEY,
+} from "@supabase/stack/defaults";
+import { postgresVersion } from "@supabase/stack/internal/artifacts";
+import {
+  StackError,
+  type ServiceCreation,
+  type ServiceCreationInput,
+  type PlannedInstance,
+  type ServiceInstance,
+  type ServiceInstances,
+  type StackCredentials,
+  type Stack,
 } from "@supabase/stack/effect";
-import type {
-  CapabilityState,
-  EffectStack,
-  StackStartError as ApiStackStartError,
-  StackStatus,
-} from "@supabase/stack/effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { mockContextualAnalytics, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
-  stackApiLayer,
-  StackTargetError,
-  StackTargetResolver,
-  stackTargetResolverLayer,
-  StackApi,
-} from "../stack.shared.ts";
-import { stackStart } from "./start.handler.ts";
-import { compileStack } from "../../../../../../../packages/stack/src/model/Compiler.ts";
-import { StackCommandStartError } from "./start.errors.ts";
-import { stackStartCommand } from "./start.command.ts";
-import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import {
-  ExperimentalFlag,
-  OutputFlag,
-  YesFlag,
-} from "../../../../command-internal/global-flags.ts";
-import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
-import { stackBackendLayer } from "../../../../command-internal/stack-backend.ts";
-import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+  DbConnection,
+  type DbSession,
+} from "../../../../command-internal/db-connection.service.ts";
+import { StackCatalogSetup } from "../../../../command-internal/stack-catalog-setup.ts";
+import { ExperimentalFlag, YesFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
-import {
-  actionability,
-  ErrorActionabilityId,
-} from "../../../../shared/telemetry/error-actionability.ts";
-import {
-  noopStackCatalogSetupLayer,
-  recordingStackCatalogSetup,
-} from "../../../../command-internal/stack-catalog-setup.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
+import { stackStart } from "./start.handler.ts";
+import { StackCommandStartError } from "./start.errors.ts";
 
-const project = () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({
-      prefix: "supabase-experimental-stack-start-",
-    });
-    yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
-    yield* fs.writeFileString(
-      path.join(root, "supabase", "config.toml"),
-      'project_id = "start-test"\n',
-    );
-    return root;
-  }).pipe(Effect.provide(BunServices.layer));
+const flags = (exclude: ReadonlyArray<string> = []) => ({
+  exclude,
+  stack: Option.none<string>(),
+  stackId: Option.none<string>(),
+  runtime: "native" as const,
+  preparation: "background" as const,
+  eager: false,
+});
 
-const emptyProject = () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* fs.makeTempDirectoryScoped({
-      prefix: "supabase-experimental-stack-start-empty-",
-    });
-  }).pipe(Effect.provide(BunServices.layer));
+const signingKey = () => ({
+  ...generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "jwk" }),
+  alg: "RS256",
+  kid: "stack-start-rotation-test",
+});
 
-const writeStartMigration = (root: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
-    yield* fs.writeFileString(
-      path.join(root, "supabase", "migrations", "20240101000000_dogfood.sql"),
-      "create table public.dogfood ();\n",
-    );
+const session: DbSession = {
+  exec: () => Effect.void,
+  execBatch: () => Effect.void,
+  query: () => Effect.succeed([]),
+  extensionExists: () => Effect.succeed(false),
+  copyToCsv: () => Effect.succeed(new Uint8Array()),
+  queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+};
+
+const instance = (
+  creation: ServiceCreation,
+  id: string,
+  lifecycle: () => "stopped" | "starting" | "running",
+  wakeEnabled: () => boolean,
+  health: () => "starting" | "healthy" | "unhealthy" | undefined = () =>
+    lifecycle() === "running" ? "healthy" : undefined,
+  ready: () => Effect.Effect<void, StackError> = () => Effect.void,
+): ServiceInstances[ServiceCreation["service"]] => {
+  const status = (config: ServiceCreation) => ({
+    id,
+    endpoints:
+      config.service === "database"
+        ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
+        : config.service === "rest" || config.service === "studio"
+          ? [
+              {
+                name: "http",
+                protocol: "http" as const,
+                host: "127.0.0.1",
+                port: config.service === "rest" ? 23457 : 23458,
+              },
+            ]
+          : [],
+    config,
+    lifecycle: lifecycle(),
+    health: health(),
+    error: undefined,
+    cleanupError: undefined,
+    exit: undefined,
+    currentOperation: undefined,
+    launchId: undefined,
+    intentRevision: 0,
+    wakeEnabled: wakeEnabled(),
+    registered: true,
   });
+  const base = {
+    id,
+    start: Effect.void,
+    ready: Effect.suspend(ready),
+    stop: Effect.void,
+    restart: () => Effect.void,
+    destroy: Effect.void,
+    prepare: Effect.void,
+    status: Effect.sync(() => status(creation)),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () => Effect.succeed({}),
+  } satisfies Omit<ServiceInstance, "service">;
+  switch (creation.service) {
+    case "database": {
+      let current: Extract<ServiceCreation, { service: "database" }> = creation;
+      return {
+        ...base,
+        service: "database",
+        restart: (input?: Parameters<ServiceInstances["database"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input?.config.version !== undefined)
+              current = {
+                ...current,
+                config: { ...current.config, version: input.config.version },
+              };
+          }),
+        status: Effect.sync(() => status(current)),
+        credentials: () =>
+          Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
+        saveSnapshot: () => Effect.die("unused"),
+        restoreSnapshot: () => Effect.die("unused"),
+        resetData: Effect.die("unused"),
+      };
+    }
+    case "rest":
+      return { ...base, service: "rest" };
+    case "auth":
+      return { ...base, service: "auth" };
+    case "realtime":
+      return { ...base, service: "realtime" };
+    case "storage":
+      return { ...base, service: "storage" };
+    case "imgproxy":
+      return { ...base, service: "imgproxy" };
+    case "functions": {
+      let current = creation;
+      return {
+        ...base,
+        service: "functions",
+        restart: (input?: Parameters<ServiceInstances["functions"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input !== undefined) current = { ...current, config: input.config };
+          }),
+        status: Effect.sync(() => status(current)),
+      };
+    }
+    case "studio":
+      return { ...base, service: "studio" };
+    case "pgmeta":
+      return { ...base, service: "pgmeta" };
+    case "mail":
+      return { ...base, service: "mail" };
+    case "analytics":
+      return { ...base, service: "analytics" };
+    case "vector":
+      return { ...base, service: "vector" };
+    case "pooler":
+      return { ...base, service: "pooler" };
+  }
+};
 
-/** Overwrites the project's `config.toml` with a single configured bucket and one seed file. */
-const writeBucketsConfig = (root: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fs.writeFileString(
-      path.join(root, "supabase", "config.toml"),
-      'project_id = "start-test"\n[storage.buckets.assets]\nobjects_path = "buckets/assets"\n',
-    );
-    yield* fs.makeDirectory(path.join(root, "supabase", "buckets", "assets"), {
-      recursive: true,
-    });
-    yield* fs.writeFileString(
-      path.join(root, "supabase", "buckets", "assets", "logo.png"),
-      "fake-bytes",
-    );
-  });
+const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreation => {
+  if (creation.service !== "database") return creation;
+  return {
+    ...creation,
+    config: {
+      ...creation.config,
+      databasePassword:
+        creation.config.databasePassword ?? Redacted.make(DEFAULT_LOCAL_DATABASE_PASSWORD),
+      jwtSecret: creation.config.jwtSecret ?? Redacted.make(DEFAULT_LOCAL_JWT_SECRET),
+      rootKey: creation.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
+    },
+  };
+};
 
-const resolverLayer = stackTargetResolverLayer.pipe(
-  Layer.provideMerge(stackApiLayer),
-  Layer.provide(BunServices.layer),
-);
+interface MemberStatus {
+  readonly lifecycle?: "stopped" | "starting" | "running";
+  readonly wakeEnabled?: boolean;
+  readonly health?: "starting" | "healthy" | "unhealthy";
+}
 
-const status = (id: string, runtime: "native" | "container" = "native") =>
-  ({
-    id: StackIdSchema.make(id),
-    lifecycle: "running",
-    desiredLifecycle: "running",
-    runtime: runtime === "native" ? { kind: "native" } : { kind: "container", engine: "docker" },
-    endpoints: {
-      api: {
-        protocol: "http" as const,
-        address: "127.0.0.1",
-        port: 55420,
-        url: "http://127.0.0.1:55420",
+const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
+  let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
+  let stopped = 0;
+  let hostStopped = 0;
+  let hostDestroyed = 0;
+  let composed = 0;
+  let catalogApplied = 0;
+  let compositionStarts = 0;
+  let lifecycle: "stopped" | "running" = "stopped";
+  let activations = new Map<string, "eager" | "lazy">();
+  const memberStatuses = new Map<string, MemberStatus>();
+  const memberReadiness = new Map<string, Effect.Effect<void, StackError>>();
+  let savedCredentials: StackCredentials = {
+    jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
+    postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
+    databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
+    publishableKey: "sb_publishable_test",
+    secretKey: "sb_secret_test",
+    anonKey: "anon-token",
+    serviceRoleKey: "service-token",
+    jwks: '{"keys":[]}',
+    gotrueJwtKeys: "[]",
+    remoteJwks: "[]",
+    anonKeyIsOverride: false,
+    serviceRoleKeyIsOverride: false,
+  };
+  const stack: Stack = {
+    id: "a".repeat(64),
+    services: {
+      create: <Input extends ServiceCreationInput>(_creation: Input) => Effect.die("unused"),
+      get: (id: string) => {
+        const found = members.find((entry) => entry.id === id);
+        return found === undefined ? Effect.die(`missing instance ${id}`) : Effect.succeed(found);
+      },
+      get list() {
+        return Effect.succeed(members);
       },
     },
-    versions: {},
-    capabilities: (
-      [
-        "database",
+    credentials: {
+      get: Effect.sync(() => savedCredentials),
+    },
+    composition: {
+      describe: Effect.sync(() => ({
+        members: members.map(({ id }) => ({ id, activation: activations.get(id) ?? "eager" })),
+        dependencies: [],
+      })),
+      supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
+        Effect.sync(() => {
+          composed += 1;
+          const database = creations.find((creation) => creation.service === "database");
+          const jwtSecret =
+            database?.service === "database" && database.config.jwtSecret !== undefined
+              ? Redacted.value(database.config.jwtSecret)
+              : DEFAULT_LOCAL_JWT_SECRET;
+          savedCredentials = {
+            jwtSecret,
+            postgresRootKey:
+              database?.service === "database" && database.config.rootKey !== undefined
+                ? Redacted.value(database.config.rootKey)
+                : DEFAULT_POSTGRES_ROOT_KEY,
+            databasePassword:
+              database?.service === "database" && database.config.databasePassword !== undefined
+                ? Redacted.value(database.config.databasePassword)
+                : DEFAULT_LOCAL_DATABASE_PASSWORD,
+            publishableKey: options?.keys?.publishableKey ?? "sb_publishable_test",
+            secretKey: options?.keys?.secretKey ?? "sb_secret_test",
+            anonKey: options?.keys?.anonKey ?? "anon-token",
+            serviceRoleKey: options?.keys?.serviceRoleKey ?? "service-token",
+            jwks: '{"keys":[]}',
+            gotrueJwtKeys: options?.keys?.gotrueJwtKeys ?? "[]",
+            remoteJwks: options?.keys?.remoteJwks ?? "[]",
+            anonKeyIsOverride: options?.keys?.anonKeyIsOverride ?? false,
+            serviceRoleKeyIsOverride: options?.keys?.serviceRoleKeyIsOverride ?? false,
+          };
+          const previousMembers = members;
+          members = creations.map((creation) => {
+            const previous = previousMembers.find(({ service }) => service === creation.service);
+            const id =
+              previous !== undefined && options?.reuseIds?.includes(previous.id)
+                ? previous.id
+                : `${creation.service}-member-${composed}`;
+            return instance(
+              requireConcreteCreation(creation),
+              id,
+              () => memberStatuses.get(id)?.lifecycle ?? lifecycle,
+              () =>
+                memberStatuses.get(id)?.wakeEnabled ??
+                (lifecycle === "running" && activations.get(id) === "lazy"),
+              () => {
+                const status = memberStatuses.get(id);
+                if (status?.health !== undefined) return status.health;
+                return (status?.lifecycle ?? lifecycle) === "running" ? "healthy" : undefined;
+              },
+              () => memberReadiness.get(id) ?? Effect.void,
+            );
+          });
+          activations = new Map(
+            members.map(({ id, service }) => [
+              id,
+              options?.eager === true || service === "database" ? "eager" : "lazy",
+            ]),
+          );
+          return members;
+        }),
+      plan: (creations) =>
+        Effect.forEach(members, (member) =>
+          member.status.pipe(
+            Effect.map(({ config }): ReadonlyArray<PlannedInstance> => {
+              const request = creations.find(({ service }) => service === member.service);
+              if (request === undefined) return [];
+              const base = { id: member.id, service: member.service, member: true };
+              if (config.service === "database" && request.service === "database")
+                return [
+                  postgresVersion(config.config.version) === postgresVersion(request.config.version)
+                    ? { ...base, change: "unchanged" }
+                    : { ...base, change: "incompatible", paths: ["config.version"] },
+                ];
+              if (!Equal.equals(config.endpoints, request.endpoints))
+                return [{ ...base, change: "incompatible", paths: ["endpoints"] }];
+              return [
+                Equal.equals(config.config, request.config)
+                  ? { ...base, change: "unchanged" }
+                  : { ...base, change: "changed", paths: ["config"] },
+              ];
+            }),
+          ),
+        ).pipe(Effect.map((planned) => planned.flat())),
+      configure: ({ members: configured }) =>
+        Effect.sync(() => {
+          activations = new Map(configured.map(({ id, activation }) => [id, activation]));
+        }),
+      start:
+        compositionStart ??
+        Effect.sync(() => {
+          compositionStarts += 1;
+          lifecycle = "running";
+          memberStatuses.clear();
+          return [];
+        }),
+      stop: Effect.sync(() => {
+        lifecycle = "stopped";
+        stopped += 1;
+        return [];
+      }),
+      restart: Effect.succeed([]),
+    },
+    stop: Effect.sync(() => {
+      hostStopped += 1;
+    }),
+    destroy: Effect.sync(() => {
+      hostDestroyed += 1;
+      return { runtimeCleanup: "complete" as const };
+    }),
+    commands: { run: () => Effect.die("command not used") },
+  };
+  return {
+    stack,
+    get members() {
+      return members;
+    },
+    get stopped() {
+      return stopped;
+    },
+    get hostStopped() {
+      return hostStopped;
+    },
+    get hostDestroyed() {
+      return hostDestroyed;
+    },
+    get composed() {
+      return composed;
+    },
+    get catalogApplied() {
+      return catalogApplied;
+    },
+    get compositionStarts() {
+      return compositionStarts;
+    },
+    applyCatalog() {
+      catalogApplied += 1;
+    },
+    get savedCredentials() {
+      return savedCredentials;
+    },
+    setMemberStatus(id: string, status: MemberStatus) {
+      memberStatuses.set(id, status);
+    },
+    /** Readiness survives composition start, which awaits only eager members. */
+    setMemberReadiness(id: string, ready: Effect.Effect<void, StackError>) {
+      memberReadiness.set(id, ready);
+    },
+  };
+};
+
+const layers = (
+  root: string,
+  fixture: ReturnType<typeof fakeStack>,
+  output = mockOutput(),
+  existing = true,
+  explicitWorkdir = false,
+  // Fixtures request the native runtime, so pin a host that ships native artifacts.
+  runtimeInfo = mockRuntimeInfo({ platform: "linux", arch: "x64" }),
+) => {
+  const telemetry = mockTelemetryStateTracked();
+  const target = Layer.succeed(StackTargetResolver, {
+    resolve: () =>
+      Effect.succeed({
+        projectRoot: root,
+        ...(existing ? { id: fixture.stack.id } : {}),
+        runtime: "native" as const,
+        hostRunning: false,
+      }),
+  });
+  const api = Layer.succeed(StackApi, {
+    create: () => Effect.succeed(fixture.stack),
+    open: () => Effect.succeed(fixture.stack),
+    discover: () => Effect.succeed([]),
+    find: () => Effect.die("identity not used"),
+  });
+  return Layer.mergeAll(
+    BunServices.layer,
+    runtimeInfo,
+    output.layer,
+    telemetry.layer,
+    mockCommandSettings({ workdir: root, explicitWorkdir }),
+    target,
+    api,
+    Layer.succeed(ExperimentalFlag, false),
+    Layer.succeed(CliArgs, { args: ["stack", "start"] }),
+    Layer.succeed(StackCatalogSetup, {
+      apply: () => Effect.sync(() => fixture.applyCatalog()),
+    }),
+    Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(session)) }),
+    Layer.succeed(YesFlag, false),
+    Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("unused")),
+    ),
+    stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
+    mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+  );
+};
+
+describe("experimental stack start", () => {
+  it.live("rejects incompatible Functions env before changing composition", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "functions-env"\n');
+      const fixture = fakeStack();
+      for (const [contents, message] of [
+        ["INVALID.KEY=value\n", "Environment names"],
+        ['VALUE="first\nsecond"\n', "Multiline"],
+      ] as const) {
+        yield* fs.writeFileString(`${root}/supabase/functions/.env`, contents);
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(error.message).toContain(message);
+        expect(fixture.composed).toBe(0);
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects malformed configuration before creating a stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-invalid-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, "[db]\nmajor_version = 14\n");
+      let created = false;
+      const fixture = fakeStack();
+      const base = layers(root, fixture, mockOutput(), false);
+      const api = Layer.succeed(StackApi, {
+        create: () =>
+          Effect.sync(() => {
+            created = true;
+            return fixture.stack;
+          }),
+        open: () => Effect.succeed(fixture.stack),
+        discover: () => Effect.succeed([]),
+        find: () => Effect.die("identity not used"),
+      });
+      const result = yield* stackStart(flags()).pipe(
+        Effect.flip,
+        Effect.provide(Layer.merge(base, api)),
+      );
+      expect(result).toMatchObject({ reason: "invalid-config" });
+      expect(created).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "rejects --runtime native on a platform with no native artifacts before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-start-native-unsupported-",
+        });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "unsupported"\n');
+        let created = false;
+        const fixture = fakeStack();
+        const base = layers(
+          root,
+          fixture,
+          mockOutput(),
+          false,
+          false,
+          mockRuntimeInfo({ platform: "win32", arch: "x64" }),
+        );
+        const api = Layer.succeed(StackApi, {
+          create: () =>
+            Effect.sync(() => {
+              created = true;
+              return fixture.stack;
+            }),
+          open: () => Effect.succeed(fixture.stack),
+          discover: () => Effect.succeed([]),
+          find: () => Effect.die("identity not used"),
+        });
+        const result = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.merge(base, api)),
+        );
+        expect(result).toMatchObject({
+          reason: "flags",
+          message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
+        });
+        expect(created).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies capability selection across repeated starts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-test"\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack();
+      const excluded = [
         "rest",
         "auth",
         "realtime",
@@ -153,1456 +559,756 @@ const status = (id: string, runtime: "native" | "container" = "native") =>
         "mail",
         "analytics",
         "pooler",
-      ] as const
-    ).map((name) => ({
-      name,
-      activation: name === "database" ? ("eager" as const) : ("lazy" as const),
-      state: "ready" as const,
-    })),
-    artifacts: [],
-  }) satisfies StackStatus;
-
-/** `status()` with the `storage` capability's state overridden. */
-const statusWithStorageState = (id: string, storageState: CapabilityState): StackStatus => ({
-  ...status(id),
-  capabilities: status(id).capabilities.map((capability) =>
-    capability.name === "storage" ? { ...capability, state: storageState } : capability,
-  ),
-});
-
-/** `status()` with the `storage` capability entry removed entirely. */
-const statusWithoutStorageCapability = (id: string): StackStatus => ({
-  ...status(id),
-  capabilities: status(id).capabilities.filter((capability) => capability.name !== "storage"),
-});
-
-/** `status()` with no API gateway endpoint exposed. */
-const statusWithoutApiEndpoint = (id: string): StackStatus => ({
-  ...status(id),
-  endpoints: {},
-});
-
-/** Records every request the seed-buckets gateway client issues, responding 200 to all. */
-function recordingStackStorageHttpClient(opts: { readonly bucketCreateStatus?: number } = {}) {
-  const requests: Array<{
-    readonly method: string;
-    readonly url: string;
-    readonly authorization: string;
-  }> = [];
-  const layer = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => {
-      requests.push({
-        method: request.method,
-        url: request.url,
-        authorization: request.headers["authorization"] ?? "",
-      });
-      if (request.method !== "GET" && opts.bucketCreateStatus !== undefined) {
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            new Response("server error", { status: opts.bucketCreateStatus }),
-          ),
-        );
-      }
-      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
-        ),
-      );
-    }),
-  );
-  return { layer, requests };
-}
-
-/** Records every request the seed-buckets gateway client issues, responding 503 to every GET. */
-function recordingStackStorageHttpClientGet503() {
-  const requests: Array<{ readonly method: string; readonly url: string }> = [];
-  const layer = Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make((request) => {
-      requests.push({ method: request.method, url: request.url });
-      if (request.method === "GET") {
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
-        );
-      }
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(JSON.stringify({ name: "bucket" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        ),
-      );
-    }),
-  );
-  return { layer, requests };
-}
-
-function fakeStack(
-  id: string,
-  start: (config?: { readonly config?: unknown }) => Effect.Effect<StackStatus, ApiStackStartError>,
-  desiredLifecycle: "unconfigured" | "stopped" | "running" = "unconfigured",
-) {
-  // Mirrors a real stack: `.status` reflects the pre-start lifecycle (read by `firstCreate`)
-  // until `start` succeeds, then reflects `start`'s own return value (read by the bucket-seeding
-  // gate that follows it).
-  let currentStatus: StackStatus = {
-    ...status(id),
-    lifecycle: desiredLifecycle === "unconfigured" ? "unconfigured" : desiredLifecycle,
-    desiredLifecycle,
-  };
-  return {
-    id: StackIdSchema.make(id),
-    status: Effect.suspend(() => Effect.succeed(currentStatus)),
-    credentials: Effect.succeed({
-      database: {
-        url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-        password: Redacted.make("secret"),
-      },
-      api: {
-        publishableKey: "anon",
-        secretKey: Redacted.make("service"),
-        anonJwt: "anon",
-        serviceRoleJwt: Redacted.make("service"),
-      },
-    }),
-    prepare: () => Effect.die("prepare not used in start test"),
-    start: (config?: { readonly config?: unknown }) =>
-      start(config).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            currentStatus = result;
-          }),
-        ),
-      ),
-    stop: Effect.void,
-    destroy: Effect.die("destroy not used in start test"),
-    resetDatabase: Effect.die("resetDatabase not used in start test"),
-    logs: () => Effect.die("logs not used in start test"),
-    followLogs: () => Stream.empty,
-  } satisfies EffectStack;
-}
-
-const flags = (
-  overrides: Partial<Parameters<typeof stackStart>[0]> = {},
-): Parameters<typeof stackStart>[0] => ({
-  exclude: [],
-  stack: Option.none<string>(),
-  stackId: Option.none<string>(),
-  runtime: "auto" as const,
-  preparation: "background" as const,
-  eager: false,
-  ...overrides,
-});
-
-function handlerLayer(opts: {
-  root: string;
-  target: {
-    projectRoot: string;
-    name?: string;
-    id?: string;
-    runtime?: { kind: "native" } | { kind: "container"; engine: "docker" };
-  };
-  stack: EffectStack;
-  onCreate?: (options: unknown) => void;
-  onOpen?: () => void;
-  /** Overrides the default dying `HttpClient` stub, for tests exercising bucket seeding. */
-  httpClient?: Layer.Layer<HttpClient.HttpClient>;
-}) {
-  const out = mockOutput();
-  const telemetry = mockTelemetryStateTracked();
-  const { id, ...targetWithoutId } = opts.target;
-  const targetLayer = Layer.succeed(StackTargetResolver, {
-    resolve: () =>
-      Effect.succeed(
-        id === undefined ? targetWithoutId : { ...targetWithoutId, id: StackIdSchema.make(id) },
-      ),
-  });
-  const apiLayer = Layer.succeed(StackApi, {
-    findStack: () => Effect.succeed(Option.none()),
-    createStack: (options) => {
-      opts.onCreate?.(options);
-      return Effect.succeed(opts.stack);
-    },
-    openStack: () => {
-      opts.onOpen?.();
-      return Effect.succeed(opts.stack);
-    },
-    inspectStack: () => Effect.die("inspect not used in handler test"),
-    discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-  });
-  return {
-    out,
-    telemetry,
-    layer: Layer.mergeAll(
-      out.layer,
-      telemetry.layer,
-      mockCommandSettings({ workdir: opts.root }),
-      targetLayer,
-      apiLayer,
-      // Root provides the stack backend for every `stack` command; seeding guidance reads it.
-      stackBackendLayer("stack"),
-      BunServices.layer,
-      runtimeInfoLayer,
-      noopStackCatalogSetupLayer,
-      Layer.succeed(ExperimentalFlag, false),
-      Layer.succeed(CliArgs, { args: ["stack", "start"] }),
-      // The bucket-seeding path statically requires these even on the default fixture's
-      // no-buckets `config.toml`, where the short-circuit never reaches them at runtime.
-      opts.httpClient ??
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("unused")),
-        ),
-      Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
-      stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      Layer.succeed(YesFlag, false),
-      Layer.succeed(DbConnection, {
-        connect: () =>
-          Effect.succeed({
-            exec: () => Effect.void,
-            query: () => Effect.succeed([]),
-            execBatch: () => Effect.void,
-            extensionExists: () => Effect.succeed(false),
-            copyToCsv: () => Effect.succeed(new Uint8Array()),
-            queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-          }),
-      }),
-    ),
-  };
-}
-
-describe("stack start targeting", () => {
-  for (const { exclusion, studioEnabled } of [
-    { exclusion: "rest" as const, studioEnabled: false },
-    { exclusion: "analytics" as const, studioEnabled: true },
-  ]) {
-    it.live(`compiles ${exclusion} exclusion with Studio ${studioEnabled ? "on" : "off"}`, () => {
-      return project().pipe(
-        Effect.flatMap((root) =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            const configBefore = yield* fs.readFileString(
-              path.join(root, "supabase", "config.toml"),
-            );
-            const stack = fakeStack("c".repeat(64), (input) =>
-              Effect.gen(function* () {
-                const stackConfig = yield* Schema.decodeUnknownEffect(StackConfigSchema)(
-                  input?.config,
-                ).pipe(
-                  Effect.mapError(
-                    (error) => new StackStateInvalidError({ message: error.message }),
-                  ),
-                );
-                const compiled = yield* compileStack({
-                  projectRoot: root,
-                  runtime: { kind: "native" },
-                  config: stackConfig,
-                }).pipe(
-                  Effect.mapError(
-                    (error) => new StackStateInvalidError({ message: error.message }),
-                  ),
-                  Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer)),
-                );
-                expect(compiled.definition.capabilities[exclusion].enabled).toBe(false);
-                expect(compiled.definition.capabilities.studio.enabled).toBe(studioEnabled);
-                expect(compiled.definition.capabilities.auth.enabled).toBe(true);
-                return status("c".repeat(64));
-              }),
-            );
-            const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-            for (const eager of [false, true])
-              yield* stackStart(flags({ exclude: [exclusion], eager })).pipe(
-                Effect.provide(setup.layer),
-              );
-            expect(yield* fs.readFileString(path.join(root, "supabase", "config.toml"))).toBe(
-              configBefore,
-            );
-          }),
-        ),
-        Effect.provide(BunServices.layer),
-      );
-    });
-  }
-
-  it.live("applies exclusions to the effective config without changing the project file", () => {
-    return project().pipe(
-      Effect.flatMap((root) => {
-        return Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const configBefore = yield* fs.readFileString(path.join(root, "supabase", "config.toml"));
-          let startedConfig: unknown;
-          const stack = fakeStack("e".repeat(64), (config) =>
-            Effect.gen(function* () {
-              startedConfig = config;
-              yield* Schema.decodeUnknownEffect(StackConfigSchema)(config?.config, {
-                onExcessProperty: "error",
-              }).pipe(
-                Effect.mapError((error) => new StackStateInvalidError({ message: error.message })),
-              );
-              return status("e".repeat(64));
-            }),
-          );
-          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-          yield* stackStart(flags({ exclude: ["studio", "analytics"] })).pipe(
-            Effect.provide(setup.layer),
-          );
-          expect(startedConfig).toEqual(
-            expect.objectContaining({
-              config: expect.objectContaining({
-                capabilities: expect.objectContaining({
-                  studio: expect.objectContaining({ enabled: false }),
-                  analytics: expect.objectContaining({ enabled: false }),
-                }),
-              }),
-            }),
-          );
-          expect(yield* fs.readFileString(path.join(root, "supabase", "config.toml"))).toBe(
-            configBefore,
-          );
-        });
-      }),
-      Effect.provide(BunServices.layer),
-    );
-  });
-
-  it.live("applies catalog setup from pre-exclude config after start returns", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeStartMigration(root);
-      const catalog = recordingStackCatalogSetup((input) => ({
-        kind: input.target.kind,
-        authEnabled: input.target.config.capabilities?.auth?.enabled,
-      }));
-      const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags({ exclude: ["auth"] })).pipe(
-        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      );
-      expect(catalog.applied).toEqual([{ kind: "live", authEnabled: undefined }]);
-      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("threads excluded analytics into optional catalog downloads", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeStartMigration(root);
-      const catalog = recordingStackCatalogSetup((input) => ({
-        analytics: input.optionalConfig?.capabilities?.analytics?.enabled,
-      }));
-      const stack = fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64))));
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags({ exclude: ["analytics"] })).pipe(
-        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      );
-      expect(catalog.applied).toEqual([{ analytics: false }]);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("honors SUPABASE_EXPERIMENTAL from project .env on first-create migrate", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* writeStartMigration(root);
-      yield* fs.writeFileString(
-        path.join(root, "supabase", ".env"),
-        "SUPABASE_EXPERIMENTAL=true\n",
-      );
-      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-      const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* withEnvVar(
-        "SUPABASE_EXPERIMENTAL",
-        undefined,
-        stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer))),
-      );
-      expect(setup.out.stderrText).not.toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("skips catalog setup when an existing cluster is already present", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeStartMigration(root);
-      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-      const stack = fakeStack(
-        "d".repeat(64),
-        () => Effect.succeed(status("d".repeat(64))),
-        "stopped",
-      );
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-      });
-      yield* stackStart(flags()).pipe(Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)));
-      expect(catalog.applied).toEqual([]);
-      expect(setup.out.stderrText).not.toContain("Applying migration");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("applies catalog and migrations when starting an unconfigured stack by id", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeStartMigration(root);
-      const catalog = recordingStackCatalogSetup((input) => input.target.kind);
-      const stack = fakeStack("c".repeat(64), () => Effect.succeed(status("c".repeat(64))));
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root, id: "c".repeat(64) },
-        stack,
-      });
-      yield* stackStart(flags({ stackId: Option.some("c".repeat(64)) })).pipe(
-        Effect.provide(Layer.mergeAll(setup.layer, catalog.layer)),
-      );
-      expect(catalog.applied).toEqual(["live"]);
-      expect(setup.out.stderrText).toContain("Applying migration 20240101000000_dogfood.sql");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live(
-    "leaves listener configuration to the compiled runtime when capabilities are excluded",
-    () => {
-      return project().pipe(
-        Effect.flatMap((root) =>
-          Effect.gen(function* () {
-            const fs = yield* FileSystem.FileSystem;
-            const path = yield* Path.Path;
-            yield* fs.writeFileString(
-              path.join(root, "supabase", "config.toml"),
-              'project_id = "start-test"\n[api]\nport = 55421\n',
-            );
-            let startedConfig: unknown;
-            const stack = fakeStack("7".repeat(64), (config) =>
-              Effect.sync(() => {
-                startedConfig = config;
-                return status("7".repeat(64));
-              }),
-            );
-            const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-            yield* stackStart(
-              flags({ exclude: ["rest", "auth", "realtime", "storage", "functions", "analytics"] }),
-            ).pipe(Effect.provide(setup.layer));
-            expect(startedConfig).toEqual(
-              expect.objectContaining({
-                config: expect.objectContaining({
-                  listeners: expect.objectContaining({ api: { port: 55421 } }),
-                }),
-              }),
-            );
-          }),
-        ),
-        Effect.provide(BunServices.layer),
-      );
-    },
-  );
-
-  it.live("preserves the configured API listener on partial gateway exclusion", () => {
-    return project().pipe(
-      Effect.flatMap((root) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* fs.writeFileString(
-            path.join(root, "supabase", "config.toml"),
-            'project_id = "start-test"\n[api]\nport = 55421\n',
-          );
-          let startedConfig: unknown;
-          const stack = fakeStack("8".repeat(64), (config) =>
-            Effect.sync(() => {
-              startedConfig = config;
-              return status("8".repeat(64));
-            }),
-          );
-          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-          yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
-          expect(startedConfig).toEqual(
-            expect.objectContaining({
-              config: expect.objectContaining({
-                listeners: expect.objectContaining({ api: { port: 55421 } }),
-              }),
-            }),
-          );
-        }),
-      ),
-      Effect.provide(BunServices.layer),
-    );
-  });
-
-  it.live("does not rewrite listeners for configured-disabled capabilities", () => {
-    return project().pipe(
-      Effect.flatMap((root) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* fs.writeFileString(
-            path.join(root, "supabase", "config.toml"),
-            `project_id = "start-test"
-[api]
-port = 55421
-[auth]
-enabled = false
-[realtime]
-enabled = false
-[storage]
-enabled = false
-[edge_runtime]
-enabled = false
-[analytics]
-enabled = false
-`,
-          );
-          let startedConfig: unknown;
-          const stack = fakeStack("9".repeat(64), (config) =>
-            Effect.sync(() => {
-              startedConfig = config;
-              return status("9".repeat(64));
-            }),
-          );
-          const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-          yield* stackStart(flags({ exclude: ["rest"] })).pipe(Effect.provide(setup.layer));
-          expect(startedConfig).toEqual(
-            expect.objectContaining({
-              config: expect.objectContaining({
-                listeners: expect.objectContaining({ api: { port: 55421 } }),
-              }),
-            }),
-          );
-        }),
-      ),
-      Effect.provide(BunServices.layer),
-    );
-  });
-
-  it.live("leaves auto runtime selection to the package for a new stack", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let createOptions: unknown;
-      const stack = fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64))));
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-        onCreate: (options) => {
-          createOptions = options;
-        },
-      });
-      yield* stackStart(flags({ runtime: "auto" })).pipe(Effect.provide(setup.layer));
-      expect(createOptions).toEqual({ projectRoot: root });
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("forwards an explicit Docker runtime to the package", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let createOptions: unknown;
-      const stack = fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64))));
-      const setup = handlerLayer({
-        root,
-        target: {
-          projectRoot: root,
-          name: "feature-docker",
-          runtime: { kind: "container", engine: "docker" },
-        },
-        stack,
-        onCreate: (options) => {
-          createOptions = options;
-        },
-      });
-      yield* stackStart(flags({ stack: Option.some("feature-docker"), runtime: "docker" })).pipe(
-        Effect.provide(setup.layer),
-      );
-      expect(createOptions).toEqual({
-        projectRoot: root,
-        name: "feature-docker",
-        runtime: { kind: "container", engine: "docker" },
-      });
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("resolves the current project target", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const resolver = yield* StackTargetResolver;
-      const target = yield* resolver.resolve({
-        projectRoot: root,
-        runtime: "auto",
-      });
-      expect(target.projectRoot).toBe(root);
-      expect(target.id).toBeUndefined();
-      expect(target.name).toBeUndefined();
-      expect(target.runtime).toBeUndefined();
-    }).pipe(Effect.provide(resolverLayer));
-  });
-
-  it.effect("keeps a named native stack target distinct", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const resolver = yield* StackTargetResolver;
-      const target = yield* resolver.resolve({
-        projectRoot: root,
-        name: "feature-a",
-        runtime: "native",
-      });
-      expect(target.name).toBe("feature-a");
-      expect(target.runtime).toEqual({ kind: "native" });
-    }).pipe(Effect.provide(resolverLayer));
-  });
-
-  it.effect("rejects a malformed stack id before loading project configuration", () =>
-    Effect.gen(function* () {
-      const resolver = yield* StackTargetResolver;
-      const failure = yield* resolver
-        .resolve({ projectRoot: "/does/not/exist", id: "invalid", runtime: "auto" })
-        .pipe(Effect.flip);
-      expect(failure).toBeInstanceOf(StackTargetError);
-      expect(failure.message).toContain("lowercase SHA-256");
-      expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-    }).pipe(Effect.provide(resolverLayer)),
-  );
-
-  it.effect("classifies an existing stack runtime mismatch as provided flags", () => {
-    const api = Layer.succeed(StackApi, {
-      findStack: () => Effect.succeed(Option.none()),
-      createStack: () => Effect.die("unused"),
-      openStack: () => Effect.die("unused"),
-      inspectStack: () =>
-        Effect.succeed({
-          descriptor: {
-            id: StackIdSchema.make("b".repeat(64)),
-            projectRoot: "/tmp/existing-stack",
-            name: "existing",
-            branchContext: "ordinary-workspace",
-            runtime: { kind: "native" },
-            desiredLifecycle: "running",
-          },
-          owner: "running",
-        }),
-      discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-    });
-    return Effect.gen(function* () {
-      const resolver = yield* StackTargetResolver;
-      const failure = yield* resolver
-        .resolve({ projectRoot: "/tmp/project", id: "b".repeat(64), runtime: "docker" })
-        .pipe(Effect.flip);
-      expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-    }).pipe(
-      Effect.provide(
-        stackTargetResolverLayer.pipe(Layer.provideMerge(api), Layer.provide(BunServices.layer)),
-      ),
-    );
-  });
-
-  it.live("creates a named native stack with eager on-demand configuration", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let createOptions: unknown;
-      let startConfig: unknown;
-      const stack = fakeStack("a".repeat(64), (config) => {
-        startConfig = config;
-        return Effect.succeed(status("a".repeat(64)));
-      });
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root, name: "feature-a", runtime: { kind: "native" } },
-        stack,
-        onCreate: (options) => {
-          createOptions = options;
-        },
-      });
-      yield* stackStart(
-        flags({
-          stack: Option.some("feature-a"),
-          runtime: "native",
-          preparation: "on-demand",
-          eager: true,
-          exclude: ["studio"],
-        }),
-      ).pipe(Effect.provide(setup.layer));
-      expect(createOptions).toEqual({
-        projectRoot: root,
-        name: "feature-a",
-        runtime: { kind: "native" },
-      });
-      expect(startConfig).toMatchObject({ config: { preparation: "on-demand" } });
-      expect(startConfig).toEqual(
+      ];
+      const output = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, output)));
+      expect(output.messages).toContainEqual(
         expect.objectContaining({
-          config: expect.objectContaining({
-            capabilities: expect.objectContaining({
-              rest: expect.objectContaining({ activation: "eager" }),
-              studio: expect.objectContaining({ enabled: false }),
-            }),
-          }),
-        }),
-      );
-      expect(setup.out.stdoutText).toContain("Stack");
-      expect(setup.telemetry.flushed).toBe(true);
-    });
-  });
-
-  it.live("renders stack recovery guidance returned by the Effect API", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const stackId = "d".repeat(64);
-      const stack = fakeStack(stackId, () =>
-        Effect.succeed({
-          ...status(stackId),
-          recovery: {
-            operation: "destroy" as const,
-            message: "Destroy is required before this stack can be started again.",
-          },
-        }),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(setup.out.stdoutText).toContain(
-        "Recovery: Destroy is required before this stack can be started again.",
-      );
-      expect(setup.out.stdoutText).toContain(`supabase stack destroy --stack-id ${stackId}`);
-      expect(setup.out.stdoutText).toContain("Warning: destroy is destructive");
-    });
-  });
-
-  it.live("opens an addressed existing stack using its own project root", () => {
-    return Effect.gen(function* () {
-      const settingsRoot = yield* project();
-      const targetRoot = yield* project();
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFileString(
-        path.join(targetRoot, "supabase", "config.toml"),
-        'project_id = "target"\n[api]\nport = 55421\n',
-      );
-      let opened = false;
-      let startConfig: unknown;
-      const stack = fakeStack(
-        "b".repeat(64),
-        (config) => {
-          startConfig = config;
-          return Effect.succeed(status("b".repeat(64)));
-        },
-        "running",
-      );
-      const setup = handlerLayer({
-        root: settingsRoot,
-        target: { projectRoot: targetRoot, id: "b".repeat(64) },
-        stack,
-        onOpen: () => {
-          opened = true;
-        },
-      });
-      yield* stackStart(flags({ stackId: Option.some("b".repeat(64)) })).pipe(
-        Effect.provide(setup.layer),
-      );
-      expect(opened).toBe(true);
-      expect(startConfig).toMatchObject({ config: { listeners: { api: { port: 55421 } } } });
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("reports a typed runtime failure without success output or cleanup calls", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let stopped = false;
-      let destroyed = false;
-      const stack = {
-        ...fakeStack("c".repeat(64), () =>
-          Effect.fail(new ContainerEngineError({ message: "Docker is unavailable" })),
-        ),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("runtime");
-        expect(failure.suggestion).toContain("container engine is installed");
-        expect(failure.suggestion).toContain("daemon is running");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.dockerNotRunning);
-      }
-      expect(stopped).toBe(false);
-      expect(destroyed).toBe(false);
-      expect(setup.out.messages.filter((message) => message.type === "success")).toHaveLength(0);
-      expect(setup.telemetry.flushed).toBe(true);
-    });
-  });
-
-  it.live("does not clean up a stack after a successful start", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let stopped = false;
-      let destroyed = false;
-      const stack = {
-        ...fakeStack("f".repeat(64), () => Effect.succeed(status("f".repeat(64)))),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(stopped).toBe(false);
-      expect(destroyed).toBe(false);
-    });
-  });
-
-  it.live("stops a running postgres-only stack before starting the full config", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const events: Array<string> = [];
-      const id = "a".repeat(64);
-      const stack = {
-        ...fakeStack(
-          id,
-          () => {
-            events.push("start");
-            return Effect.succeed(status(id));
-          },
-          "running",
-        ),
-        status: Effect.succeed({
-          ...status(id),
-          lifecycle: "running" as const,
-          desiredLifecycle: "running" as const,
-          capabilities: status(id).capabilities.map((capability) => ({
-            ...capability,
-            state: capability.name === "database" ? ("ready" as const) : ("disabled" as const),
-          })),
-        }),
-        stop: Effect.sync(() => {
-          events.push("stop");
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(events).toEqual(["stop", "start"]);
-    });
-  });
-
-  it.live("classifies registry pull failures separately from engine failures", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const stack = fakeStack("8".repeat(64), () =>
-        Effect.fail(
-          new ContainerPullError({
-            message: "registry refused the workload image",
-            image: "example.test/workload:dev",
-          }),
-        ),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("registry");
-        expect(failure.suggestion).toContain("registry connectivity");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.externalNetwork);
-      }
-    });
-  });
-
-  it.live("reports runtime start failures with operational guidance", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const stack = fakeStack("b".repeat(64), () =>
-        Effect.fail(new StackRuntimeError({ message: "runtime crashed" })),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("unknown");
-        expect(failure.suggestion).toContain("runtime diagnostics");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.unknown);
-      }
-    });
-  });
-
-  it.live("classifies persisted state failures with recovery guidance", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const stack = fakeStack("c".repeat(64), () =>
-        Effect.fail(new StackStateInvalidError({ message: "persisted state is invalid" })),
-      );
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("invalid-config");
-        expect(failure.suggestion).toContain("restore a valid state record");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
-      }
-    });
-  });
-
-  it.live("starts with default configuration when no project config exists", () => {
-    return Effect.gen(function* () {
-      const root = yield* emptyProject();
-      let started = false;
-      const stack = fakeStack("9".repeat(64), (config) => {
-        started = true;
-        expect(config).toMatchObject({
-          config: { capabilities: { database: { settings: { health_timeout: "2m" } } } },
-        });
-        return Effect.succeed(status("9".repeat(64)));
-      });
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(started).toBe(true);
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      expect(yield* fs.exists(path.join(root, "supabase", "config.toml"))).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("keeps ownership with the package when the CLI caller is interrupted", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const started = yield* Deferred.make<void>();
-      let stopped = false;
-      let destroyed = false;
-      const stack = {
-        ...fakeStack("7".repeat(64), () =>
-          Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
-            return yield* Effect.never.pipe(Effect.as(status("7".repeat(64))));
-          }),
-        ),
-        stop: Effect.sync(() => {
-          stopped = true;
-        }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const fiber = yield* Effect.forkChild(Effect.provide(stackStart(flags()), setup.layer));
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(fiber);
-      expect(stopped).toBe(false);
-      expect(destroyed).toBe(false);
-    });
-  });
-
-  it.live("rejects invalid target flags before resolving or mutating a stack", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let resolved = false;
-      let created = false;
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack: fakeStack("d".repeat(64), () => Effect.succeed(status("d".repeat(64)))),
-      });
-      const layer = Layer.mergeAll(
-        setup.out.layer,
-        setup.telemetry.layer,
-        mockCommandSettings({ workdir: root }),
-        Layer.succeed(StackTargetResolver, {
-          resolve: () => {
-            resolved = true;
-            return Effect.die("resolver should not run");
-          },
-        }),
-        Layer.succeed(StackApi, {
-          findStack: () => Effect.succeed(Option.none()),
-          createStack: () => {
-            created = true;
-            return Effect.die("create should not run");
-          },
-          openStack: () => Effect.die("open should not run"),
-          inspectStack: () => Effect.die("inspect should not run"),
-          discoverStacks: () => Effect.succeed({ stacks: [], errors: [] }),
-        }),
-        BunServices.layer,
-        runtimeInfoLayer,
-        Layer.succeed(ExperimentalFlag, false),
-        Layer.succeed(CliArgs, { args: ["stack", "start"] }),
-        Layer.succeed(DbConnection, {
-          connect: () =>
-            Effect.succeed({
-              exec: () => Effect.void,
-              query: () => Effect.succeed([]),
-              execBatch: () => Effect.void,
-              extensionExists: () => Effect.succeed(false),
-              copyToCsv: () => Effect.succeed(new Uint8Array()),
-              queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-            }),
-        }),
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("unused")),
-        ),
-        Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
-        stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
-        mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-        Layer.succeed(YesFlag, false),
-      );
-      const failure = yield* stackStart(
-        flags({ stack: Option.some("feature"), stackId: Option.some("e".repeat(64)) }),
-      ).pipe(Effect.flip, Effect.provide(layer));
-      expect(failure.message).toContain("cannot be used together");
-      expect(resolved).toBe(false);
-      expect(created).toBe(false);
-      expect(setup.telemetry.flushed).toBe(true);
-    });
-  });
-});
-
-describe("stack start bucket seeding", () => {
-  it.live("seeds configured buckets through the stack gateway when storage is dormant", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeBucketsConfig(root);
-      const client = recordingStackStorageHttpClient();
-      const stack = {
-        ...fakeStack("1".repeat(64), () =>
-          Effect.succeed(statusWithStorageState("1".repeat(64), "dormant")),
-        ),
-        credentials: Effect.succeed({
-          database: {
-            url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-            password: Redacted.make("secret"),
-          },
-          api: {
-            publishableKey: "anon",
-            secretKey: Redacted.make("service"),
-            anonJwt: "anon",
-            serviceRoleJwt: Redacted.make("created-stack-jwt"),
-          },
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-        httpClient: client.layer,
-      });
-      const result = yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(result.capabilities.find((c) => c.name === "storage")?.state).toBe("dormant");
-      expect(
-        client.requests.some(
-          (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
-        ),
-      ).toBe(true);
-      expect(
-        client.requests.some(
-          (r) => r.url === "http://127.0.0.1:55420/storage/v1/object/assets/logo.png",
-        ),
-      ).toBe(true);
-      expect(client.requests.every((r) => r.authorization.includes("created-stack-jwt"))).toBe(
-        true,
-      );
-      expect(setup.out.stdoutText).toContain("Stack");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("skips seeding without a warning when storage is disabled", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeBucketsConfig(root);
-      const client = recordingStackStorageHttpClient();
-      const stack = fakeStack("2".repeat(64), () =>
-        Effect.succeed(statusWithStorageState("2".repeat(64), "disabled")),
-      );
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-        httpClient: client.layer,
-      });
-      yield* stackStart(flags({ exclude: ["storage"] })).pipe(Effect.provide(setup.layer));
-      expect(client.requests).toHaveLength(0);
-      expect(setup.out.stderrText).not.toContain("skipped seeding storage buckets");
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live("warns and issues no requests when storage failed to start", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeBucketsConfig(root);
-      const client = recordingStackStorageHttpClient();
-      const stack = fakeStack("3".repeat(64), () =>
-        Effect.succeed(statusWithStorageState("3".repeat(64), "failed")),
-      );
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-        httpClient: client.layer,
-      });
-      yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-      expect(setup.out.stderrText).toContain(
-        "WARNING: skipped seeding storage buckets: Storage failed to start for this stack.",
-      );
-      expect(client.requests).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live(
-    "warns without failing when first-start seeding cannot resolve the stack's API credentials (Auth disabled)",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        yield* writeBucketsConfig(root);
-        const client = recordingStackStorageHttpClient();
-        const stack = {
-          ...fakeStack("a".repeat(64), () =>
-            Effect.succeed(statusWithStorageState("a".repeat(64), "dormant")),
-          ),
-          credentials: Effect.succeed({
-            database: {
-              url: Redacted.make("postgresql://postgres:secret@127.0.0.1:54329/postgres"),
-              password: Redacted.make("secret"),
+          data: {
+            id: fixture.stack.id,
+            runtime: "native",
+            endpoints: {
+              "database.sql": {
+                protocol: "tcp",
+                address: "127.0.0.1",
+                port: 23456,
+                url: "tcp://127.0.0.1:23456",
+              },
             },
-          }),
-        } satisfies EffectStack;
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
-        expect(setup.out.stderrText).toContain("API credentials");
-        expect(setup.out.stderrText).toContain("Auth");
-        expect(client.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live(
-    "does not warn or resolve credentials when no buckets are configured and the stack exposes no API endpoint",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        const client = recordingStackStorageHttpClient();
-        const stack = fakeStack("0".repeat(64), () =>
-          Effect.succeed(statusWithoutApiEndpoint("0".repeat(64))),
-        );
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-        expect(setup.out.stderrText).not.toContain("skipped seeding storage buckets");
-        expect(client.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live("never seeds buckets when opening an existing stack", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeBucketsConfig(root);
-      const client = recordingStackStorageHttpClient();
-      const stack = fakeStack(
-        "4".repeat(64),
-        () => Effect.succeed(statusWithStorageState("4".repeat(64), "dormant")),
-        "running",
-      );
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root, id: "4".repeat(64) },
-        stack,
-        httpClient: client.layer,
-      });
-      yield* stackStart(flags({ stackId: Option.some("4".repeat(64)) })).pipe(
-        Effect.provide(setup.layer),
-      );
-      expect(client.requests).toHaveLength(0);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.live(
-    "never seeds a plain start of an already-configured stack (no --stack-id, dormant storage)",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        yield* writeBucketsConfig(root);
-        const client = recordingStackStorageHttpClient();
-        const stack = fakeStack(
-          "6".repeat(64),
-          () => Effect.succeed(statusWithStorageState("6".repeat(64), "dormant")),
-          "running",
-        );
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-        expect(client.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live(
-    "seeds an addressed stack prepared but never started, even though --stack-id names an existing id",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        yield* writeBucketsConfig(root);
-        const client = recordingStackStorageHttpClient();
-        const id = "d".repeat(64);
-        const stack = fakeStack(id, () => Effect.succeed(statusWithStorageState(id, "dormant")));
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root, id },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags({ stackId: Option.some(id) })).pipe(Effect.provide(setup.layer));
-        expect(
-          client.requests.some(
-            (r) => r.method === "POST" && r.url === "http://127.0.0.1:55420/storage/v1/bucket",
-          ),
-        ).toBe(true);
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live(
-    "warns and issues no requests when the started status reports no storage capability at all",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        yield* writeBucketsConfig(root);
-        const client = recordingStackStorageHttpClient();
-        const stack = fakeStack("2".repeat(64), () =>
-          Effect.succeed(statusWithoutStorageCapability("2".repeat(64))),
-        );
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-        expect(setup.out.stderrText).toContain("WARNING: skipped seeding storage buckets");
-        expect(client.requests).toHaveLength(0);
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live(
-    "warns and succeeds when the storage gateway returns 503 while activating during seeding",
-    () => {
-      return Effect.gen(function* () {
-        const root = yield* project();
-        yield* writeBucketsConfig(root);
-        const client = recordingStackStorageHttpClientGet503();
-        const stack = fakeStack("3".repeat(64), () =>
-          Effect.succeed(statusWithStorageState("3".repeat(64), "dormant")),
-        );
-        const setup = handlerLayer({
-          root,
-          target: { projectRoot: root },
-          stack,
-          httpClient: client.layer,
-        });
-        yield* stackStart(flags()).pipe(Effect.provide(setup.layer));
-        expect(setup.out.stderrText).toContain("WARNING:");
-        expect(setup.out.stderrText).toContain("HTTP 503 for Storage");
-        expect(setup.out.stderrText).not.toContain("activate");
-      }).pipe(Effect.provide(BunServices.layer));
-    },
-  );
-
-  it.live("fails with reason 'seed' and never stops/destroys the stack on a gateway error", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      yield* writeBucketsConfig(root);
-      const client = recordingStackStorageHttpClient({ bucketCreateStatus: 500 });
-      let stopped = false;
-      let destroyed = false;
-      const stack = {
-        ...fakeStack("5".repeat(64), () =>
-          Effect.succeed(statusWithStorageState("5".repeat(64), "dormant")),
-        ),
-        stop: Effect.sync(() => {
-          stopped = true;
+            lazy_services: [],
+          },
         }),
-        destroy: Effect.sync(() => {
-          destroyed = true;
-        }),
-      } satisfies EffectStack;
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack,
-        httpClient: client.layer,
-      });
-      const failure = yield* stackStart(flags()).pipe(Effect.flip, Effect.provide(setup.layer));
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("seed");
-      }
-      expect(stopped).toBe(false);
-      expect(destroyed).toBe(false);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-});
-
-describe("stack start parser", () => {
-  it.live("records the wired command identity with a fresh run id per invocation", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      const analytics = mockContextualAnalytics();
-      const processControl = mockProcessControl();
-      const output = mockOutput();
-      const stack = fakeStack("e".repeat(64), () => Effect.succeed(status("e".repeat(64))));
-      const setup = handlerLayer({ root, target: { projectRoot: root }, stack });
-      const command = stackStartCommand.pipe(
-        Command.provide(commandRuntimeLayer(["stack", "start"])),
-        Command.provide(
-          Layer.mergeAll(setup.layer, output.layer, analytics.layer, processControl.layer),
-        ),
       );
-      const run = Command.runWith(command, { version: "0.0.0-test" })([]);
-      const runtime = Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()));
-
-      yield* run.pipe(Effect.provide(runtime));
-      yield* run.pipe(Effect.provide(runtime));
-      const events = analytics.captured.filter((event) => event.event === "cli_command_executed");
-      expect(events).toHaveLength(2);
-      expect(events[0]?.properties.command).toBe("stack start");
-      expect(events[1]?.properties.command).toBe("stack start");
-      expect(events[0]?.properties.command_run_id).toBeDefined();
-      expect(events[1]?.properties.command_run_id).toBeDefined();
-      expect(events[0]?.properties.command_run_id).not.toBe(events[1]?.properties.command_run_id);
-    });
-  });
-
-  it.live("parses --stack and --runtime through the command", () => {
-    let parsed: { stack: Option.Option<string>; runtime: string } | undefined;
-    const command = stackStartCommand.pipe(
-      Command.withHandler((flags) =>
-        Effect.sync(() => {
-          parsed = { stack: flags.stack, runtime: flags.runtime };
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--stack",
-        "feature-a",
-        "--runtime",
-        "native",
-      ]);
-      expect(parsed?.stack).toEqual(Option.some("feature-a"));
-      expect(parsed?.runtime).toBe("native");
-    }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
-    );
-  });
-
-  it.live("parses repeated, comma-separated, and short exclusion flags", () => {
-    let parsed: ReadonlyArray<string> | undefined;
-    const command = stackStartCommand.pipe(
-      Command.withHandler((flags) => Effect.sync(() => void (parsed = flags.exclude))),
-    );
-    return Effect.gen(function* () {
-      yield* Command.runWith(command, { version: "0.0.0-test" })([
-        "--exclude",
-        "studio,analytics",
-        "-x",
-        "mail",
-      ]);
-      expect(parsed).toEqual(["studio", "analytics", "mail"]);
-    }).pipe(
-      Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
-    );
-  });
-
-  it.live("rejects a root legacy output value before resolving the stack target", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let resolved = false;
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack: fakeStack("a".repeat(64), () => Effect.succeed(status("a".repeat(64)))),
-      });
-      const target = Layer.succeed(StackTargetResolver, {
-        resolve: () =>
-          Effect.sync(() => {
-            resolved = true;
-            return { projectRoot: root };
-          }),
-      });
-      const failure = yield* stackStart(flags({ exclude: ["bogus"] })).pipe(
-        Effect.flip,
-        Effect.provide(
-          Layer.mergeAll(setup.layer, target, Layer.succeed(OutputFlag, Option.some("json"))),
-        ),
+      expect(fixture.members.map(({ service }) => service)).toEqual(["database"]);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(false);
+      expect(fixture.composed).toBe(1);
+      const repeatedOutput = mockOutput();
+      yield* stackStart(flags(excluded)).pipe(
+        Effect.provide(layers(root, fixture, repeatedOutput)),
       );
-      expect(failure.message).toContain("--output");
-      expect(failure.message).not.toContain("Unknown stack capabilities");
-      expect(failure).toBeInstanceOf(StackCommandStartError);
-      if (failure instanceof StackCommandStartError) {
-        expect(failure.reason).toBe("flags");
-        expect(failure[ErrorActionabilityId]).toEqual(actionability.provideFlags);
-      }
-      expect(resolved).toBe(false);
-      expect(setup.telemetry.flushed).toBe(true);
-    });
-  });
+      expect(repeatedOutput.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message:
+            "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        }),
+      );
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.some(({ service }) => service === "rest")).toBe(true);
+      expect(yield* fs.exists(`${root}/supabase/snippets`)).toBe(true);
+      expect(fixture.composed).toBe(2);
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags(["studio"])).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.some(({ service }) => service === "studio")).toBe(false);
+      expect(fixture.composed).toBe(3);
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.some(({ service }) => service === "studio")).toBe(true);
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(5);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("rejects unknown and database exclusions before resolving the target", () => {
-    return Effect.gen(function* () {
-      const root = yield* project();
-      let resolved = false;
-      const setup = handlerLayer({
-        root,
-        target: { projectRoot: root },
-        stack: fakeStack("b".repeat(64), () => Effect.succeed(status("b".repeat(64)))),
-      });
-      const target = Layer.succeed(StackTargetResolver, {
-        resolve: () =>
-          Effect.sync(() => {
-            resolved = true;
-            return { projectRoot: root };
-          }),
-      });
-      for (const { exclusion, message } of [
-        { exclusion: "", message: 'Unknown stack capabilities in --exclude: ""' },
-        {
-          exclusion: " analytics",
-          message: 'Unknown stack capabilities in --exclude: " analytics"',
+  it.live("reports connection details and lazy services once the stack is ready", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-summary-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-summary"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(json.messages.find(({ data }) => data !== undefined)?.data).toMatchObject({
+        runtime: "native",
+        endpoints: {
+          "rest.http": { url: "http://127.0.0.1:23457" },
+          "studio.mcp": { port: 23458, url: "http://127.0.0.1:23458/api/mcp" },
         },
-        { exclusion: "unknown", message: 'Unknown stack capabilities in --exclude: "unknown"' },
-        { exclusion: "database", message: "database capability cannot be excluded" },
-      ]) {
-        const failure = yield* stackStart(flags({ exclude: [exclusion] })).pipe(
-          Effect.flip,
-          Effect.provide(Layer.mergeAll(setup.layer, target)),
+        lazy_services: ["pgmeta", "rest", "studio"],
+      });
+
+      yield* fixture.stack.composition.stop;
+      const text = mockOutput();
+      yield* stackStart({ ...flags(excluded), stack: Option.some("feature demo") }).pipe(
+        Effect.provide(layers(root, fixture, text, true, true)),
+      );
+      expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
+      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
+      expect(text.stdoutText).not.toContain("GraphQL");
+      expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
+      expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
+      // Windows temp paths contain `\` and `~`, so the PowerShell pointer quotes the workdir.
+      const workdir = process.platform === "win32" ? `'${root}'` : root;
+      expect(text.stdoutText).toContain(
+        `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the services that failed when the composition start fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-outcomes-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-test"\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack(
+        Effect.fail(
+          new StackError({
+            operation: "composition.start",
+            message: "Composition start had failures",
+            outcomes: [
+              { id: "database-member-1", succeeded: true },
+              { id: "vector-member-1", succeeded: false, error: "Service health timed out" },
+            ],
+          }),
+        ),
+      );
+      const error = yield* stackStart(
+        flags(["rest", "auth", "realtime", "storage", "functions", "studio", "mail", "pooler"]),
+      ).pipe(Effect.provide(layers(root, fixture)), Effect.flip);
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({
+        message: "Composition start had failures",
+        detail: "vector (vector-member-1): Service health timed out",
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("loads Functions env only when Functions are selected", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-functions-env-" });
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-functions-env"\n[edge_runtime]\nenabled = true\n',
+      );
+      yield* fs.writeFileString(`${root}/supabase/functions/.env`, 'BROKEN="unterminated\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags(["functions"])).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.some(({ service }) => service === "functions")).toBe(false);
+      yield* fixture.stack.composition.stop;
+
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        "CUSTOM_VALUE=hello\nSUPABASE_SERVICE_ROLE_KEY=ignored\n",
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const functions = fixture.members.find(({ service }) => service === "functions");
+      if (functions?.service !== "functions") return yield* Effect.die("Functions missing");
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database === undefined) return yield* Effect.die("Database missing");
+      const databaseId = database.id;
+      const functionsId = functions.id;
+      const status = yield* functions.status;
+      expect(status.config.service).toBe("functions");
+      if (status.config.service !== "functions")
+        return yield* Effect.die("Functions configuration missing");
+      expect(status.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+      yield* functions.restart({
+        config: { ...status.config.config, bootstrap: "new-generated-bootstrap-template" },
+      });
+      const composedBeforeRepeat = fixture.composed;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat);
+
+      const afterGeneratedBootstrap = yield* functions.status;
+      if (afterGeneratedBootstrap.config.service !== "functions")
+        return yield* Effect.die("Functions configuration missing");
+      expect(afterGeneratedBootstrap.config.config.bootstrap).toBe(
+        "new-generated-bootstrap-template",
+      );
+
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        "CUSTOM_VALUE=changed\nSUPABASE_SERVICE_ROLE_KEY=ignored-again\n",
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat);
+      const stillRunning = yield* functions.status;
+      if (stillRunning.config.service === "functions")
+        expect(stillRunning.config.config.env).toEqual({ CUSTOM_VALUE: "hello" });
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(composedBeforeRepeat + 1);
+      expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(databaseId);
+      const refreshed = fixture.members.find(({ service }) => service === "functions");
+      if (refreshed?.service !== "functions") return yield* Effect.die("Functions missing");
+      expect(refreshed.id).toBe(functionsId);
+      const refreshedStatus = yield* refreshed.status;
+      if (refreshedStatus.config.service === "functions")
+        expect(refreshedStatus.config.config.env).toEqual({ CUSTOM_VALUE: "changed" });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects Studio without REST before changing the composition", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-studio-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "studio-test"\n');
+      const fixture = fakeStack();
+      const result = yield* stackStart(flags(["rest"])).pipe(
+        Effect.flip,
+        Effect.provide(layers(root, fixture)),
+      );
+      expect(result).toBeInstanceOf(StackCommandStartError);
+      expect(result).toMatchObject({ reason: "flags" });
+      expect(fixture.stopped).toBe(0);
+      expect(fixture.composed).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies signing-key file changes only after the stack is stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-key-rotation-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const firstKey = signingKey();
+      const secondKey = signingKey();
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "key-rotation"\n[auth]\nsigning_keys_path = "keys.json"\n',
+      );
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([firstKey]));
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
+      const savedKeys = fixture.savedCredentials.gotrueJwtKeys;
+      const savedAnonKey = fixture.savedCredentials.anonKey;
+
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The stack parser consumes JWK files as JSON.
+      yield* fs.writeFileString(`${root}/supabase/keys.json`, JSON.stringify([secondKey]));
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.stopped).toBe(0);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.savedCredentials.gotrueJwtKeys).toBe(savedKeys);
+      expect(fixture.savedCredentials.anonKey).toBe(savedAnonKey);
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(2);
+      expect(fixture.savedCredentials.gotrueJwtKeys).not.toBe(savedKeys);
+      expect(fixture.savedCredentials.anonKey).not.toBe(savedAnonKey);
+      expect(fixture.members.find(({ service }) => service === "auth")?.service).toBe("auth");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("recomposes a stopped stack with its existing IDs without rerunning catalog setup", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stopped-restart-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stopped-restart"\n');
+      const fixture = fakeStack();
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const firstIds = fixture.members.map(({ id }) => id);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.catalogApplied).toBe(1);
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      expect(fixture.composed).toBe(2);
+      expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
+      expect(fixture.catalogApplied).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("skips invalid config while running and reports it after stop", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-start-invalid-key-rotation-",
+      });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "invalid-key-rotation"\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "invalid-key-rotation"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ reason: "invalid-config" });
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a partially active stack before reading changed config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-partial-state-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "partial-state"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      const auth = fixture.members.find(({ service }) => service === "auth");
+      if (database === undefined || auth === undefined)
+        return yield* Effect.die("Expected database and Auth members");
+      fixture.setMemberStatus(database.id, { lifecycle: "stopped", wakeEnabled: false });
+      fixture.setMemberStatus(auth.id, { lifecycle: "stopped", wakeEnabled: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "partial-state"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        reason: "lifecycle",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
+      expect(fixture.stopped).toBe(0);
+      expect(fixture.composed).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a stack whose database alone was started before reading changed config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-db-only-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "db-only"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      for (const member of fixture.members)
+        if (member.service !== "database")
+          fixture.setMemberStatus(member.id, { lifecycle: "stopped", wakeEnabled: false });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "db-only"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+      );
+
+      const error = yield* stackStart(flags(["studio"])).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "lifecycle",
+        message: "The stack is in a partial lifecycle state",
+        suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
+      });
+      expect(fixture.compositionStarts).toBe(1);
+      expect(fixture.composed).toBe(1);
+      expect(fixture.stopped).toBe(0);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "reports a resumed stack ready only after its unhealthy and booting members are ready",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resume-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "resume"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        const auth = fixture.members.find(({ service }) => service === "auth");
+        if (rest === undefined || auth === undefined)
+          return yield* Effect.die("Expected REST and Auth members");
+        fixture.setMemberStatus(rest.id, { lifecycle: "running", health: "unhealthy" });
+        fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+        const gate = yield* Deferred.make<void>();
+        const awaited = yield* Effect.forEach([rest.id, auth.id], (id) =>
+          Deferred.make<void>().pipe(
+            Effect.tap((waiting) =>
+              Effect.sync(() =>
+                fixture.setMemberReadiness(
+                  id,
+                  Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(gate))),
+                ),
+              ),
+            ),
+          ),
         );
-        expect(failure).toBeInstanceOf(StackCommandStartError);
-        expect(failure.reason).toBe("flags");
-        expect(failure.message).toContain(message);
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "resume"\n[auth]\nsigning_keys_path = "missing-keys.json"\n',
+        );
+        const output = mockOutput();
+
+        const resuming = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture, output)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const firstSettled = yield* Effect.raceFirst(
+          Fiber.join(resuming).pipe(Effect.as("reported" as const)),
+          Effect.forEach(awaited, Deferred.await, { discard: true }).pipe(
+            Effect.as("awaiting readiness" as const),
+          ),
+        );
+        expect(firstSettled).toBe("awaiting readiness");
+        expect(fixture.compositionStarts).toBe(2);
+        expect(output.messages).not.toContainEqual({ type: "success", message: "Stack is ready." });
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(resuming);
+
+        expect(fixture.composed).toBe(1);
+        expect(fixture.stopped).toBe(0);
+        expect(output.messages).toContainEqual({
+          type: "info",
+          message:
+            "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+        });
+        expect(output.messages).toContainEqual({ type: "success", message: "Stack is ready." });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("fails a start while a woken lazy member is still booting and never becomes ready", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-booting-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "booting"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const auth = fixture.members.find(({ service }) => service === "auth");
+      if (auth === undefined) return yield* Effect.die("Expected an Auth member");
+      fixture.setMemberStatus(auth.id, { lifecycle: "starting", health: "starting" });
+      fixture.setMemberReadiness(
+        auth.id,
+        Effect.fail(
+          new StackError({ operation: "service.ready", message: "auth HTTP readiness timed out" }),
+        ),
+      );
+      const output = mockOutput();
+
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture, output)),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      expect(error).toMatchObject({ message: "auth HTTP readiness timed out" });
+      expect(output.messages.map(({ message }) => message)).not.toContain("Stack is ready.");
+      expect(output.messages.map(({ message }) => message)).not.toContain(
+        "Stack is already running with its current services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects changed Postgres root keys and database versions after stopping the stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const [name, changed] of [
+        ["root-key", '[db]\nroot_key = "a-different-postgres-root-key"\n'],
+        ["version", "[db]\nmajor_version = 15\n"],
+      ] as const) {
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-start-${name}-` });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, `project_id = "${name}"\n`);
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        expect(fixture.composed).toBe(1);
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          `project_id = "${name}"\n${changed}`,
+        );
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags(["studio"])).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ reason: "invalid-config" });
+        expect(fixture.stopped).toBe(1);
+        expect(fixture.composed).toBe(1);
       }
-      expect(resolved).toBe(false);
-    });
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("applies changed service configuration after the stack is stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changed-config-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      const config = (maxRows: number) =>
+        `project_id = "changed-config"\n[api]\nmax_rows = ${maxRows}\n[edge_runtime]\nenabled = false\n`;
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, config(100));
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const restId = fixture.members.find(({ service }) => service === "rest")?.id;
+
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, config(500));
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      const rest = fixture.members.find(({ service }) => service === "rest");
+      if (rest === undefined) return yield* Effect.die("REST missing");
+      expect(rest.id).toBe(restId);
+      const status = yield* rest.status;
+      expect(status.config.service === "rest" ? status.config.config.maxRows : undefined).toBe(500);
+      expect(fixture.composed).toBe(2);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a changed endpoint after the stack is stopped", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-changed-port-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "changed-port"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "changed-port"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("cannot change on the saved stack"),
+        suggestion: expect.stringContaining("supabase stack destroy"),
+      });
+      expect(fixture.composed).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("matches a Postgres major alias to the saved pinned database version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-postgres-alias-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-postgres-alias"\n[db]\nmajor_version = 17\n[edge_runtime]\nenabled = false\n',
+      );
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database?.service !== "database") return yield* Effect.die("Database missing");
+      const observed = yield* database.status;
+      if (observed.config.service !== "database")
+        return yield* Effect.die("Database config missing");
+      const pinnedVersion = postgresVersion("17");
+      expect(pinnedVersion).not.toBe("17");
+      yield* database.restart({ config: { ...observed.config.config, version: pinnedVersion } });
+      yield* fixture.stack.composition.stop;
+
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      expect(fixture.members.find(({ service }) => service === "database")?.id).toBe(database.id);
+      expect(fixture.composed).toBe(2);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the saved runtime when automatic selection creates a Podman stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-auto-podman-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "auto-podman"\n[edge_runtime]\nenabled = false\n',
+      );
+      const output = mockOutput();
+      const engines = containerEngineSpawner({ docker: "stopped", podman: "running" });
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () => Effect.succeed({ projectRoot: root, hostRunning: false }),
+      });
+      yield* stackStart({
+        ...flags([
+          "rest",
+          "auth",
+          "realtime",
+          "storage",
+          "functions",
+          "studio",
+          "mail",
+          "analytics",
+          "pooler",
+        ]),
+        runtime: "auto",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(layers(root, fakeStack(), output, false), target, engines.layer),
+        ),
+      );
+      expect(engines.spawned.map(({ command }) => command)).toEqual(["docker", "podman"]);
+      expect(output.messages).toContainEqual({
+        type: "info",
+        message: expect.stringContaining(
+          "Docker didn't answer, so this new stack uses the Podman runtime",
+        ),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  // The `#!/bin/sh` shim is never picked up on Windows, which only resolves `docker.exe` on PATH.
+  it.live.skipIf(process.platform === "win32")(
+    "leaves no stack registered when a new stack's owner cannot reach the Docker daemon",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "create-failure"\n',
+        );
+        yield* fs.makeDirectory(`${root}/bin`);
+        yield* fs.writeFileString(
+          `${root}/bin/docker`,
+          "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+        );
+        yield* fs.chmod(`${root}/bin/docker`, 0o755);
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+        const originalPath = process.env.PATH;
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+        process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+            process.env.PATH = originalPath;
+          }),
+        );
+        const output = mockOutput();
+        const target = Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+        });
+        const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+        const error = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+        );
+        expect(error.message).toContain("Cannot connect to the Docker daemon");
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.reason).toBe("runtime");
+          expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+        }
+        expect(output.stderrText).not.toContain("Failed to stop");
+
+        const stacks = yield* StackApi.pipe(
+          Effect.flatMap((stackApi) =>
+            stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+          ),
+          Effect.provide(api),
+        );
+        expect(stacks).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves no stack registered when a new stack's owner finds no Docker CLI", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
+      // An empty PATH hides any installed Docker CLI on every platform.
+      yield* fs.makeDirectory(`${root}/empty-bin`);
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
+      const envKeys = Object.keys(process.env);
+      const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+      yield* withEnvVar(
+        pathKey,
+        `${root}/empty-bin`,
+        Effect.gen(function* () {
+          const output = mockOutput();
+          const target = Layer.succeed(StackTargetResolver, {
+            resolve: () =>
+              Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+          });
+          const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+          const error = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+          );
+          expect(error.message).toContain("docker ps");
+          expect(error).toBeInstanceOf(StackCommandStartError);
+          if (error instanceof StackCommandStartError) {
+            expect(error.reason).toBe("runtime");
+            expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+          }
+          expect(output.stderrText).not.toContain("Failed to stop");
+
+          const stacks = yield* StackApi.pipe(
+            Effect.flatMap((stackApi) =>
+              stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+            ),
+            Effect.provide(api),
+          );
+          expect(stacks).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "stops, without destroying, the owner when startup fails after the stack is acquired",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        for (const isExisting of [false, true]) {
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-start-startup-failure-",
+          });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            'project_id = "startup-failure"\n',
+          );
+          const fixture = fakeStack(
+            Effect.fail(
+              new StackError({
+                operation: "composition.start",
+                message: "Composition start had failures",
+              }),
+            ),
+          );
+          const error = yield* Effect.scoped(
+            stackStart(flags()).pipe(
+              Effect.flip,
+              Effect.provide(layers(root, fixture, mockOutput(), isExisting)),
+            ),
+          );
+          expect(error).toBeInstanceOf(StackCommandStartError);
+          expect(fixture.hostStopped).toBe(1);
+          expect(fixture.hostDestroyed).toBe(0);
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

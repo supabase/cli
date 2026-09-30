@@ -71,7 +71,11 @@ export const genTypesRuntimeLayer = (() => {
     commandRuntimeLayer(["gen", "types"]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<GenTypesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    GenTypesServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

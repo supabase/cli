@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Config, Effect, Option } from "effect";
 
 import { NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -11,6 +11,11 @@ import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { EdgeRuntimeScript } from "../../../command-internal/edge-runtime-script.service.ts";
 import { PG_DELTA_CA_BUNDLE } from "../../../command-internal/pgdelta-ssl.ts";
 import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
 import { migraDiffScript, migraDiffShellScript } from "./migra.deno-templates.ts";
 import { MigraDiffError, MigraSchemaLoadError } from "./migra.errors.ts";
 import { edgeRuntimeId, type PgDeltaContext } from "../../../command-internal/pgdelta.ts";
@@ -89,9 +94,11 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-function isSslDebugEnabled(): boolean {
-  return (process.env["SUPABASE_SSL_DEBUG"] ?? "").toLowerCase() === "true";
-}
+const isSslDebugEnabled = Config.string("SUPABASE_SSL_DEBUG").pipe(
+  Config.withDefault(""),
+  Effect.map((value) => value.toLowerCase() === "true"),
+  Effect.orElseSucceed(() => false),
+);
 
 function shouldFallbackToBashMigra(message: string): boolean {
   return (
@@ -99,6 +106,26 @@ function shouldFallbackToBashMigra(message: string): boolean {
     message.includes("Ineffective mark-compacts near heap limit")
   );
 }
+
+/**
+ * Rewrites a loopback database URL for the migra container, which runs on the host network
+ * unless `--network-id` is set. Stack databases are published by a host-side proxy that
+ * Docker Desktop's host network does not share.
+ */
+const containerDatabaseUrl = Effect.fnUntraced(function* (url: string) {
+  const runtimeInfo = yield* RuntimeInfo;
+  const usesHostNetwork = toolContainerUsesHostNetwork(Option.getOrUndefined(yield* NetworkIdFlag));
+  if (usesHostNetwork && (yield* currentStackBackend).kind !== "stack") return url;
+  const parsed = URL.parse(url);
+  if (parsed === null) return url;
+  const host = rewriteDumpHostForToolContainer(parsed.hostname, {
+    platform: runtimeInfo.platform,
+    usesHostNetwork,
+  });
+  if (host === parsed.hostname) return url;
+  parsed.hostname = host;
+  return parsed.href;
+});
 
 /** Builds the shared SOURCE/TARGET/SSL/schema env for both migra paths. */
 const buildMigraEnv = Effect.fnUntraced(function* (params: {
@@ -108,10 +135,10 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
 }) {
   const probe = yield* PgDeltaSslProbe;
   const env: Record<string, string> = {
-    SOURCE: params.source,
-    TARGET: params.target,
+    SOURCE: yield* containerDatabaseUrl(params.source),
+    TARGET: yield* containerDatabaseUrl(params.target),
   };
-  if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  if (yield* isSslDebugEnabled) env["SUPABASE_SSL_DEBUG"] = "true";
   // Probe the target for TLS; if it speaks TLS, inject the embedded CA bundle as SSL_CA.
   const requireSsl = yield* probe.requireSsl(params.target);
   if (requireSsl) env["SSL_CA"] = PG_DELTA_CA_BUNDLE;
@@ -134,32 +161,23 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
   const connection = yield* DbConnection;
   const input = parseConnectionString(target);
   if (input === undefined) {
-    return yield* Effect.fail(
-      new MigraSchemaLoadError({
-        message: "failed to list schemas: invalid target connection string",
-      }),
-    );
+    return yield* new MigraSchemaLoadError({
+      message: "failed to list schemas: invalid target connection string",
+    });
   }
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      const session = yield* connection.connect(input, connectOptions).pipe(
-        Effect.mapError(
-          (cause) =>
-            new MigraSchemaLoadError({
-              message: `failed to list schemas: ${cause.message}`,
-            }),
-        ),
-      );
-      const rows = yield* session.query(listSchemasSql, [LIST_SCHEMAS_EXCLUDE]).pipe(
-        Effect.mapError(
-          (cause) =>
-            new MigraSchemaLoadError({
-              message: `failed to list schemas: ${cause.message}`,
-            }),
-        ),
-      );
+      const session = yield* connection.connect(input, connectOptions);
+      const rows = yield* session.query(listSchemasSql, [LIST_SCHEMAS_EXCLUDE]);
       return rows.map((row) => String(row["nspname"]));
-    }),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new MigraSchemaLoadError({
+            message: `failed to list schemas: ${cause.message}`,
+          }),
+      ),
+    ),
   );
 });
 
@@ -182,8 +200,11 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
     params.schema.length > 0
       ? params.schema
       : yield* loadTargetUserSchemas(params.target, params.connectOptions);
-  const env: Record<string, string> = { SOURCE: params.source, TARGET: params.target };
-  if (isSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  const env: Record<string, string> = {
+    SOURCE: yield* containerDatabaseUrl(params.source),
+    TARGET: yield* containerDatabaseUrl(params.target),
+  };
+  if (yield* isSslDebugEnabled) env["SUPABASE_SSL_DEBUG"] = "true";
   // The script runs as a string, so command-line args must be set manually via `set --`
   // for migra.sh's `"$@"` loop to see the schema list.
   const args = `set -- ${schema.join(" ")};`;
@@ -219,11 +240,9 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new MigraDiffError({
-        message: `error diffing schema:\n${result.stderr}`,
-      }),
-    );
+    return yield* new MigraDiffError({
+      message: `error diffing schema:\n${result.stderr}`,
+    });
   }
   return new TextDecoder().decode(result.stdout);
 });

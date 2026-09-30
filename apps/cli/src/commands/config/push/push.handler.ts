@@ -1,8 +1,7 @@
-import { dirname } from "node:path";
 import { fromApiProjectConfig, fromConfigDocument } from "@supabase/config";
 import { diffProjectConfig, findCliProjectRoot, type ConfigChange } from "@supabase/config/effect";
 import { operationDefinitions } from "@supabase/api/effect";
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { DateTime, Effect, FileSystem, Option, Path } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -15,6 +14,8 @@ import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import {
   assertDecryptableSecrets,
+  configEnvOption,
+  envRefName,
   loadProjectEnv,
 } from "../../../command-internal/db-config.toml-read.ts";
 import { resolveLinkedParentRef } from "../../../command-internal/parent-project-ref.ts";
@@ -133,6 +134,26 @@ function toSecretReport(decision: PushSecretDecision) {
   return report;
 }
 
+function envRefNames(node: unknown): ReadonlyArray<string> {
+  if (typeof node === "string") {
+    const name = envRefName(node);
+    return name === undefined ? [] : [name];
+  }
+  return typeof node === "object" && node !== null ? Object.values(node).flatMap(envRefNames) : [];
+}
+
+/** `assertDecryptableSecrets` takes a synchronous lookup, so every referenced name resolves up front. */
+const resolveShellEnvRefs = Effect.fnUntraced(function* (nodes: ReadonlyArray<unknown>) {
+  const resolved = new Map<string, string>();
+  for (const name of new Set(nodes.flatMap(envRefNames))) {
+    const value = yield* configEnvOption(name).pipe(
+      Effect.mapError((error) => new ConfigPushLoadConfigError({ message: error.message })),
+    );
+    if (Option.isSome(value)) resolved.set(name, value.value);
+  }
+  return resolved;
+});
+
 const mapPushBranchResolveError = mapHttpError({
   networkError: ConfigPushBranchResolveNetworkError,
   statusError: ConfigPushBranchResolveStatusError,
@@ -187,10 +208,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project env;
     // `process.env` wins over `supabase/.env`, matching `db-config.toml-read.ts`.
     const dotenvPrivateKeys = collectDotenvPrivateKeys({ ...projectEnv, ...process.env });
-    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
-    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
-    const secretEnvLookup = (name: string): string | undefined =>
-      process.env[name] ?? projectEnv[name];
 
     // 0.5. An explicit `--workdir`/`SUPABASE_WORKDIR` with no project fails here, before a
     // branch-name/UUID lookup burns a network round trip. A defaulted workdir is untouched: in a
@@ -233,6 +250,14 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       );
     }
     const config = loaded.config;
+    const shellEnv = yield* resolveShellEnvRefs([
+      loaded.document,
+      loaded.removedDeprecatedExternalProviders,
+    ]);
+    // Reached only when an `env(VAR)` literal survives `@supabase/config`'s own (narrower)
+    // interpolation pass unresolved but this wider shell+project-env lookup can still resolve it.
+    const secretEnvLookup = (name: string): string | undefined =>
+      shellEnv.get(name) ?? projectEnv[name];
 
     // 3. Assert every `encrypted:` value in the document can be decrypted, even fields `config
     // push` never itself pushes — this must run before the cost matrix or any service is touched.
@@ -252,19 +277,13 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     }
 
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
-    const configProjectRoot = dirname(dirname(loaded.path));
+    const configProjectRoot = path.dirname(path.dirname(loaded.path));
 
     // 4. Email content validation runs during config load, before any network call, and is
     // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
     // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would
     // silently push empty content over a real hosted customization.
-    const authEmailContent = yield* Effect.try({
-      try: () => loadAuthEmailContent(configProjectRoot, config.auth.email),
-      catch: (cause) =>
-        new ConfigPushLoadConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const authEmailContent = yield* loadAuthEmailContent(configProjectRoot, config.auth.email);
 
     // 5. Determine the push target and, for a confirmed branch, gate the push behind an explicit
     // confirmation before any further network call. A target resolved from an explicit
@@ -409,7 +428,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
-    const now = new Date(yield* Clock.currentTimeMillis);
+    const now = yield* DateTime.now;
 
     // Whether each resource's local gate is on, computed once for the resource loop below and
     // for excluding a gated-off resource's own `unmanaged` entries from the summary note.

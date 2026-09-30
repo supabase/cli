@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -224,7 +224,12 @@ describe("db lint", () => {
     return Effect.gen(function* () {
       yield* dbLint(flags({ schema: ["public"] }));
       const expected = encodeLintResults([
-        parseLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
+        parseLintResult(
+          yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+            issues: [ERROR_ISSUE],
+          }),
+          "public.f1",
+        ),
       ]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
@@ -252,7 +257,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to enable pgsql_check");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to enable pgsql_check");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -263,7 +269,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to marshal json");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to marshal json");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -274,7 +281,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to query rows");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to query rows");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -285,7 +293,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to list schemas");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("failed to list schemas");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -337,7 +346,8 @@ describe("db lint", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("fail-on is set to error, non-zero exit");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("fail-on is set to error, non-zero exit");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -373,7 +383,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be",
         );
       }
@@ -506,7 +517,8 @@ describe("db lint", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -558,7 +570,8 @@ describe("db lint", () => {
       const exit = yield* Effect.exit(dbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }

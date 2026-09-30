@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { StorageUnsupportedOperationError } from "../storage.errors.ts";
 import { storageCp } from "./cp.handler.ts";
 import type { StorageCpFlags } from "./cp.command.ts";
@@ -653,7 +654,6 @@ describe("stack backend", () => {
       toml: 'project_id = "test"\n',
       local: true,
       stackBackend: true,
-      stackApi: { apiEndpoint: "http://127.0.0.1:59999", serviceRoleJwt: "stack-jwt" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
@@ -666,7 +666,9 @@ describe("stack backend", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
-      expect(requests[0]?.headers["apikey"]).toBe("stack-jwt");
+      expect(requests[0]?.headers["apikey"]).toBe(
+        generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"),
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -691,7 +693,7 @@ describe("stack backend", () => {
           (error) => error instanceof StackStorageCapabilityError,
         );
         expect(capability).toBeInstanceOf(StackStorageCapabilityError);
-        expect(capability?.suggestion).toContain("-x storage");
+        expect(capability?.suggestion).toContain("--exclude storage");
         expect(requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },

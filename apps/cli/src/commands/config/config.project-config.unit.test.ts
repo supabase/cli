@@ -33,13 +33,14 @@ describe("configProjectConfigTry", () => {
 
   it.effect("dies on any other thrown value", () => {
     return Effect.gen(function* () {
+      const thrown = new Error("not a ProjectConfigParseError");
       const exit = yield* configProjectConfigTry(() => {
-        throw new Error("not a ProjectConfigParseError");
+        throw thrown;
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const hasDie = exit.cause.reasons.some(Cause.isDieReason);
-        expect(hasDie).toBe(true);
+        const die = exit.cause.reasons.find(Cause.isDieReason);
+        expect(die?.defect).toBe(thrown);
       }
     });
   });
