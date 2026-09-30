@@ -3,6 +3,7 @@ import type { Stream } from "effect";
 import type { Effect, Ref } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
 import type { ServiceDefinition } from "../Service.ts";
+import type { HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
 type CatalogRuntime = "native" | "docker" | "podman";
@@ -53,6 +54,8 @@ export interface CatalogOptions {
   readonly platform?: { readonly os: string; readonly arch: string };
   /** Reuses one volume helper across databases in this host. */
   readonly helpers?: DockerHelperRegistry;
+  /** Shares one host-gateway probe across this host's container runtimes. */
+  readonly hostGateway?: HostGateway;
 }
 
 export interface CatalogLog {

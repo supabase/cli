@@ -57,7 +57,10 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## Docker
 
-- Edge-runtime container (migra engine only).
+- Edge-runtime container (migra engine only). It and the `supabase/migra` fallback get
+  loopback `SOURCE`/`TARGET` hosts rewritten to `host.docker.internal` when `--network-id`
+  puts them on a named network, or when a stack-backend URL is used outside Linux host
+  networking.
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
   in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
@@ -77,7 +80,8 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   (`dockerfileServiceImage("differ")`). One `docker run --rm` when no `--schema` is given; one
   run per `--schema` value, in flag order. Runs on the project's Docker network (`--network-id`
   or the generated `supabase_network_<projectId>` — never the host network, unlike the migra
-  bash fallback), with `--add-host host.docker.internal:host-gateway` on Linux only, and both
+  bash fallback), so loopback source and shadow hosts become `host.docker.internal` unless
+  `--network-id host` is set, with `--add-host host.docker.internal:host-gateway` on Linux only, and both
   `com.supabase.cli.project`/`com.docker.compose.project` labels — no env vars, bind mounts, or
   working-directory override.
 
