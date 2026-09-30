@@ -15,15 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
+    concurrency:
+      group: live-e2e-notify-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
     steps:
       - name: Notify Slack
+        id: notify
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
@@ -53,59 +55,43 @@ jobs:
             exit 0
           fi
 
-          prior_conclusion=""
-          if (( RUN_ATTEMPT > 1 )); then
-            if ! prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/$((RUN_ATTEMPT - 1))/jobs?per_page=100")"; then
-              echo "::warning::Could not inspect the prior attempt for ${WORKFLOW_NAME} run ${RUN_ID}; suppressing transition notification."
-              exit 0
+          # The artifact records what this notifier last reported for the branch;
+          # reruns and repeated results dedupe against it. Fork runs can upload
+          # artifacts with the same name, so only same-repository runs count.
+          state_artifact="live-e2e-alert-state-${BRANCH//[^A-Za-z0-9._-]/-}"
+          state_dir="${RUNNER_TEMP}/live-e2e-alert-state"
+          mkdir -p "$state_dir"
+          recorded_state=unknown
+          if artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=20)"; then
+            artifact_id="$(jq -r 'first(.artifacts[]? | select(.workflow_run.head_repository_id == .workflow_run.repository_id)) // empty | select(.expired != true) | .id' <<< "$artifacts")"
+            if [[ -z "$artifact_id" ]]; then
+              recorded_state=none
+            elif gh api "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${state_dir}/previous.zip" \
+              && stored="$(unzip -p "${state_dir}/previous.zip" state)" \
+              && [[ "$stored" == failing || "$stored" == passing ]]; then
+              recorded_state="$stored"
             fi
-            prior_conclusion="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-            [[ "$prior_conclusion" != none ]] || prior_conclusion=""
           fi
+          echo "Recorded state for ${BRANCH}: ${recorded_state}"
+          echo "Current ${WORKFLOW_NAME} suite: ${current_suite}"
 
-          if ! history="$(gh api -X GET "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs" -f "branch=${BRANCH}" -F per_page=25)"; then
-            if [[ "$current_suite" == success && -z "$prior_conclusion" ]]; then
-              echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; suppressing recovery notification."
-              exit 0
-            fi
-            echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; continuing with the confirmed current result."
-          else
-            candidates="$(jq -r --argjson current_number "$RUN_NUMBER" --argjson current_attempt "$RUN_ATTEMPT" '(.workflow_runs // []) | map(select((.run_number != $current_number or (.run_attempt // 1) != $current_attempt) and .status == "completed" and (.conclusion == "failure" or .conclusion == "success"))) | sort_by(.run_number, (.run_attempt // 1)) | reverse | .[] | [.id, (.run_attempt // 1), .run_number, .conclusion] | @tsv' <<< "$history")"
-            while IFS=$'\t' read -r candidate_id candidate_attempt candidate_number candidate_conclusion; do
-              [[ -z "$candidate_id" ]] && continue
-              if (( candidate_number > RUN_NUMBER || (candidate_number == RUN_NUMBER && candidate_attempt > RUN_ATTEMPT) )); then
-                relation=newer
-              else
-                relation=older
-              fi
-              if [[ "$relation" == newer || -z "$prior_conclusion" ]]; then
-                if ! candidate_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${candidate_id}/attempts/${candidate_attempt}/jobs?per_page=100")"; then
-                  echo "::warning::Could not inspect candidate run ${candidate_id}; suppressing notification because history is incomplete."
-                  exit 0
-                fi
-                candidate_suite="$(printf '%s\n' "$candidate_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-                if [[ "$candidate_suite" == none && "$WORKFLOW_NAME" == "Live E2E" && "$candidate_conclusion" == failure ]]; then
-                  candidate_suite=failure
-                fi
-                if [[ "$candidate_suite" == failure || "$candidate_suite" == success ]]; then
-                  if [[ "$relation" == newer ]]; then
-                    echo "A newer completed relevant suite exists; suppressing stale notification."
-                    exit 0
-                  fi
-                  prior_conclusion="$candidate_suite"
-                  break
-                fi
-              fi
-            done <<< "$candidates"
-          fi
-
+          # Passes are not posted; recording them re-arms the next failure alert.
           if [[ "$current_suite" == success ]]; then
-            [[ "$prior_conclusion" == failure ]] || exit 0
-            header="✅ Live E2E recovered"
-            text="Live E2E recovered"
-            detail="The previous relevant ${WORKFLOW_NAME} live suite failed; this run passed."
+            if [[ "$recorded_state" != failing && "$recorded_state" != unknown ]]; then
+              echo "Action: none (no open failure)"
+              exit 0
+            fi
+            new_state=passing
+            echo "Action: recorded ${BRANCH} as passing"
           else
-            [[ "$prior_conclusion" != failure ]] || exit 0
+            if [[ "$recorded_state" == failing ]]; then
+              echo "Action: none (failure already reported)"
+              exit 0
+            fi
+            if [[ "$recorded_state" == unknown ]]; then
+              echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
+            fi
+            new_state=failing
             if [[ "$startup_failure" == true ]]; then
               header="❌ Live E2E failed to start"
               text="Live E2E failed to start"
@@ -115,9 +101,24 @@ jobs:
               text="Live E2E failed"
               detail="The ${WORKFLOW_NAME} live suite failed."
             fi
+            run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+            commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
+            payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
+            curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+            echo "Action: posted ${text}"
           fi
 
-          run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
-          commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
-          payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
-          curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+          printf '%s\n' "$new_state" > "${state_dir}/state"
+          {
+            echo "state=${new_state}"
+            echo "artifact=${state_artifact}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record reported state
+        if: steps.notify.outputs.state != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.notify.outputs.artifact }}
+          path: ${{ runner.temp }}/live-e2e-alert-state/state
+          retention-days: 90
+          if-no-files-found: error
