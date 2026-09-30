@@ -29,7 +29,9 @@ with `timestamp`, `service`, `instance_id`, `stream`, `line`, and `source: "live
 Lines preserve their content in machine output. UTF-8 and line fragments are
 assembled separately for each instance and stdout/stderr channel. Timestamps
 reflect receipt by the CLI. Delivery is best effort: slow subscribers can lose entries. Ordering across
-stdout/stderr channels and different services is not guaranteed.
+stdout/stderr channels and different services is not guaranteed. The owner's
+log shipping to Analytics reads the persisted logs separately and does not
+affect this command.
 
 Interrupting the command cancels its subscriptions, exits with status 130, and
 leaves the owner and services running. Successful stream completion exits 0;

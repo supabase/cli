@@ -1250,26 +1250,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.analytics.enabled
-              ? [
-                  {
-                    service: "vector" as const,
-                    config: { apiKey: "api-key" },
-                    endpoints: {
-                      http: endpoint(
-                        envPortOrConfigured(
-                          "SUPABASE_ANALYTICS_VECTOR_PORT",
-                          document,
-                          "analytics",
-                          "vector_port",
-                          validatedConfig.analytics.vector_port ?? 0,
-                          context.projectEnvValues,
-                        ),
-                      ),
-                    },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
             ...(validatedConfig.storage.image_transformation?.enabled === true
               ? [
                   {

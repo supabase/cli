@@ -65,8 +65,8 @@ export interface LogStoreOptions {
 
 /** Selects the records a read returns. */
 export interface ReadOptions {
-  /** `end` skips every record written before the read starts. */
-  readonly from: "oldest" | "end";
+  /** `end` skips every record written before the read starts; a position resumes there. */
+  readonly from: "oldest" | "end" | LogPosition;
   /** Epoch milliseconds; older records are skipped. */
   readonly since?: number;
   /** Returns only the last records of the history before following. */
@@ -82,7 +82,7 @@ export interface AttachedInstance {
   readonly observation: Stream.Stream<{ readonly launchId: number | undefined }>;
 }
 
-interface Interface {
+export interface Interface {
   /** Subscribes to the instance's output before returning; persistence failures never fail it. */
   readonly attach: (instance: AttachedInstance) => Effect.Effect<void>;
   /** Fixes the read's start and wake subscription in the scope; the stream reads lazily. */
@@ -90,6 +90,8 @@ interface Interface {
     instanceId: string,
     options: ReadOptions,
   ) => Effect.Effect<Stream.Stream<LogRecord, LogStoreError>, LogStoreError, Scope.Scope>;
+  /** The directory holding an attached instance's segments and its forwarding cursor. */
+  readonly directory: (instanceId: string) => Effect.Effect<string, LogStoreError>;
   /** Streams output lines as they are split, whether or not their append succeeds. */
   readonly tail: (
     instanceId: string,
@@ -474,9 +476,13 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     const wake =
       options.follow && live !== undefined ? yield* PubSub.subscribe(live.wake) : undefined;
     const start =
-      options.from === "end" && live !== undefined
-        ? yield* live.lock.withPermits(1)(Ref.get(live.end))
-        : { generation: 0, byteOffset: 0 };
+      options.from === "oldest"
+        ? { generation: 0, byteOffset: 0 }
+        : options.from === "end"
+          ? live === undefined
+            ? { generation: 0, byteOffset: 0 }
+            : yield* live.lock.withPermits(1)(Ref.get(live.end))
+          : options.from;
     if (options.tail === undefined)
       return follow(directory, { cursor: start, listed: undefined }, options, live, wake);
     return Stream.unwrap(
@@ -895,7 +901,15 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
 
   yield* Effect.addFinalizer(() => close);
 
-  return { attach, read, tail, remove, removeOrphans: removeOrphans(), close } satisfies Interface;
+  return {
+    attach,
+    read,
+    directory: (instanceId) => Effect.map(attached(instanceId), (instance) => instance.directory),
+    tail,
+    remove,
+    removeOrphans: removeOrphans(),
+    close,
+  } satisfies Interface;
 });
 
 /** Reads persisted records of a stack's instances, merged by time, service, instance and position. */

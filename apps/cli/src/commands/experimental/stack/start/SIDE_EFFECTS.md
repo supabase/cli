@@ -20,9 +20,10 @@ If the stack is otherwise in a partial lifecycle state, start fails with guidanc
 and start it again before applying configuration.
 Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
-S3 protocol/vector controls, and configured Vector ports are forwarded to their services. Storage
-receives the local S3 access keys and region, and uses the gateway's `/storage/v1` prefix to verify
-S3 signatures and to build resumable upload URLs.
+S3 protocol/vector controls are forwarded to their services. Storage receives the local S3 access
+keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
+resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
+but unused: the stack composes no Vector service.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
@@ -78,10 +79,25 @@ it again to apply those changes.
 
 `--exclude` accepts repeated or comma-separated capability names: `rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
-Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
+Storage includes its Imgproxy companion and Studio includes Pgmeta.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
-Vector runs a stack-owned default configuration that enables its health API and forwards no service
-logs; log collection into Analytics is not implemented yet.
+
+## Service logs in Analytics
+
+The owner ships the persisted Auth, REST, Realtime, Storage, Functions, and database output lines
+(not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its direct backend,
+using the Analytics API key and the legacy Logflare source names (`gotrue.logs.prod`,
+`postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`, `deno-relay-logs`,
+`postgres.logs`) with the legacy per-service field remaps. This applies to the Docker, Podman, and
+native runtimes. Shipping runs only while the composed Analytics service is running and healthy;
+each instance keeps its position in `logs/<service>/<instance-id>/cursor.json`, so lines written
+while Analytics is stopped, starting, or unhealthy are shipped with their original timestamps once
+it is healthy again, including after an owner restart. A missing or unreadable position starts from
+the oldest retained line. Lines already deleted by log retention are skipped, and Analytics refusing
+the API key pauses shipping until Analytics restarts or the composition changes. Each event carries an id derived from its instance and position, so a request that fails
+after it may have been ingested is repeated without duplicating rows. Shipping never wakes Analytics
+and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
+services log. Service log streams and `supabase stack logs` are never blocked by shipping.
 
 After an explicit stop, start compares the project configuration with the saved composition through
 the stack package's composition plan, ignoring values the composition and stack credentials supply.

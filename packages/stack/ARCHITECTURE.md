@@ -659,6 +659,17 @@ position. Destroying an instance deletes its segments, and an owner start remove
 instances no longer saved, so a failed deletion is retried; destroying the stack removes `logs/`;
 resetting database data keeps them.
 
+While the composed Analytics instance is running and healthy, the owner ships the persisted
+stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances to its
+direct backend (never the proxy, so shipping neither wakes it nor counts as activity), in bodies of
+at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
+position of its last shipped record, written atomically after each body settles: a missing cursor
+or unreadable cursor starts at the oldest retained segment, and a cursor in a deleted segment
+resumes at the oldest retained one. Bodies of an instance are sequential. Event ids
+derive from the instance and record position, and Logflare keeps the first row per id, so a failed
+body is posted again until it settles or the target changes. A 401, 403 or 404 response pauses the
+instance with its cursor until the target changes; any other 4xx except 408 and 429 skips the body. The target is re-selected when the composition or Analytics' health changes.
+
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
 `<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
 SQLite busy waiting, and retries `BEGIN IMMEDIATE` contention for up to five seconds through

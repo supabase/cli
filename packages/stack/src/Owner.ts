@@ -67,6 +67,7 @@ import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
+import * as LogForwarder from "./host/LogForwarder.ts";
 import * as LogStore from "./host/LogStore.ts";
 
 export interface OwnerOptions {
@@ -190,6 +191,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const logStore = yield* LogStore.make({ root: options.state.logsRoot(options.saved.id) }).pipe(
     Effect.provideContext(services),
   );
+  const forwarder = yield* LogForwarder.make({
+    composition: orchestrator.composition,
+    logs: logStore,
+  }).pipe(Effect.provideContext(services));
   const definitionGate = yield* Semaphore.make(1);
   const draining = yield* Ref.make(false);
   const { id: stackId, runtime } = options.saved;
@@ -440,6 +445,13 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       logs: recipe.logs,
       observation: core.observation,
     });
+    yield* forwarder.attach({
+      id,
+      service: initial.service,
+      endpoint: recipe.endpoint,
+      creation: Ref.get(creation),
+      observation: core.observation,
+    });
   });
 
   for (const saved of options.saved.instances)
@@ -448,6 +460,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     Effect.catch((cause) => Effect.logWarning("Orphaned instance logs were not removed", cause)),
   );
   yield* orchestrator.configure(options.saved.composition);
+  yield* forwarder.rebind;
 
   const removeSaved = (id: string) => updateState((current) => withoutInstance(current, id));
 
@@ -469,14 +482,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 
   const configure = (configuration: CompositionConfig) =>
     options.state.withLock(
-      orchestrator.configure(
-        configuration,
-        readSaved.pipe(
-          Effect.flatMap((current) =>
-            options.state.save({ ...current, composition: configuration }),
+      orchestrator
+        .configure(
+          configuration,
+          readSaved.pipe(
+            Effect.flatMap((current) =>
+              options.state.save({ ...current, composition: configuration }),
+            ),
           ),
-        ),
-      ),
+        )
+        .pipe(Effect.andThen(forwarder.rebind)),
     );
 
   // A failed cleanup must not replace the failure that triggered it.

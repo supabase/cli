@@ -231,6 +231,49 @@ const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: strin
     );
   }).pipe(Effect.ignore);
 
+/**
+ * Replaces `target` with `content` (mode 0600) through a temporary file in a fresh directory under
+ * `directory`, which must share the target's file system, retrying Windows sharing violations.
+ */
+export const writeFileAtomically = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  options: {
+    readonly directory: string;
+    readonly target: string;
+    readonly content: string;
+    readonly platform?: NodeJS.Platform;
+  },
+): Effect.Effect<void, StateError> =>
+  Effect.acquireUseRelease(
+    fs
+      .makeTempDirectory({ directory: options.directory, prefix: stateWritePrefix })
+      .pipe(Effect.mapError((cause) => stateError("write", cause))),
+    (directory) =>
+      Effect.gen(function* () {
+        const temporary = path.join(directory, path.basename(options.target));
+        yield* fs
+          .writeFileString(temporary, options.content, { mode: 0o600 })
+          .pipe(Effect.mapError((cause) => stateError("write", cause)));
+        yield* fs.rename(temporary, options.target).pipe(
+          retrySharingViolation(options.platform),
+          Effect.mapError(
+            (cause) =>
+              new StateError({
+                operation: "publish",
+                message: `Unable to publish state to ${options.target}${errorCode(cause) ? ` (${errorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                cause,
+              }),
+          ),
+          Effect.withSpan("State.publish"),
+        );
+      }),
+    (directory) =>
+      fs
+        .remove(directory, { recursive: true, force: true })
+        .pipe(Effect.mapError((cause) => stateError("cleanup", cause))),
+  );
+
 const makeState = (
   options: Options,
 ): Effect.Effect<Interface, StateError, FileSystem.FileSystem | Path.Path> =>
@@ -261,19 +304,6 @@ const makeState = (
         retryShared,
         Effect.mapError((cause) => stateError("read", cause)),
       );
-    const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
-      yield* fs.rename(temporary, target).pipe(
-        retryShared,
-        Effect.mapError(
-          (cause) =>
-            new StateError({
-              operation: "publish",
-              message: `Unable to publish state to ${target}${errorCode(cause) ? ` (${errorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
-              cause,
-            }),
-        ),
-      );
-    });
     const removeEmptyDirectory = (directory: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),
@@ -333,28 +363,17 @@ const makeState = (
       );
     const claims = Effect.fn("State.claims")(() => readEntries(readClaims, () => Effect.void));
     const writeAtomically = (id: string, target: string, serialized: string) =>
-      Effect.gen(function* () {
-        yield* fs
-          .makeDirectory(stackRoot(id), { recursive: true, mode: 0o700 })
-          .pipe(Effect.mapError((cause) => stateError("write", cause)));
-        yield* Effect.acquireUseRelease(
-          fs
-            .makeTempDirectory({ directory: root, prefix: stateWritePrefix })
-            .pipe(Effect.mapError((cause) => stateError("write", cause))),
-          (directory) =>
-            Effect.gen(function* () {
-              const temporary = path.join(directory, path.basename(target));
-              yield* fs
-                .writeFileString(temporary, serialized, { mode: 0o600 })
-                .pipe(Effect.mapError((cause) => stateError("write", cause)));
-              yield* publish(temporary, target);
-            }),
-          (directory) =>
-            fs
-              .remove(directory, { recursive: true, force: true })
-              .pipe(Effect.mapError((cause) => stateError("cleanup", cause))),
-        );
-      });
+      fs.makeDirectory(stackRoot(id), { recursive: true, mode: 0o700 }).pipe(
+        Effect.mapError((cause) => stateError("write", cause)),
+        Effect.andThen(
+          writeFileAtomically(fs, path, {
+            directory: root,
+            target,
+            content: serialized,
+            ...(options.platform === undefined ? {} : { platform: options.platform }),
+          }),
+        ),
+      );
     const save = Effect.fn("State.save")(function* (state: SavedStack) {
       yield* checkId(state.id);
       const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(SavedStack))(state).pipe(
