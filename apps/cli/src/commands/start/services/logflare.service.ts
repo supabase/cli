@@ -49,6 +49,8 @@ const LOGFLARE_ENTRYPOINT_SCRIPT =
   "EOF\n";
 
 export interface LogflareContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /**
    * The already-resolved `config.analytics.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility.
@@ -111,7 +113,7 @@ export function buildLogflareContainerSpec(
   };
 
   const binds: Array<string> = [];
-  const slim = usesSlimImageRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image, input.slim);
 
   if (input.backend === "bigquery") {
     const hostJwtPath = path.join(input.workdir, input.gcpJwtPath);

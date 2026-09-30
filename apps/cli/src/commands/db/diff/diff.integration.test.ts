@@ -2096,7 +2096,7 @@ describe("db diff", () => {
           yield* dbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differCalls).toHaveLength(1);
           const call = s.differCalls[0] as DockerRunOpts;
-          expect(call.image).toBe(dockerfileServiceImage("differ"));
+          expect(call.image).toBe(dockerfileServiceImage("differ", false));
           expect(call.image).toBe("supabase/pgadmin-schema-diff:cli-0.0.5");
           expect(call.cmd).toEqual(["--json-diff", PGADMIN_SOURCE_URL, PGADMIN_TARGET_URL]);
           expect(call.env).toEqual({});

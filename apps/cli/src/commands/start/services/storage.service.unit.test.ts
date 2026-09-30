@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   appendStorageVectorEnv,
@@ -7,10 +7,6 @@ import {
   type StorageContainerSpecInput,
   type StorageEnvInput,
 } from "./storage.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 const baseEnvInput: StorageEnvInput = {
   targetMigration: "",
@@ -178,6 +174,7 @@ describe("appendStorageVectorEnv", () => {
 
 describe("buildStorageContainerSpec", () => {
   const input: StorageContainerSpecInput = {
+    slim: false,
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "supabase/storage-api:v1",
@@ -230,9 +227,9 @@ describe("buildStorageContainerSpec", () => {
   });
 
   test("uses BusyBox wget flags on a slim storage image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildStorageContainerSpec({
       ...input,
+      slim: true,
       image: "ghcr.io/supabase/cli/storage:v1.72.1",
     });
     expect(spec.healthcheck?.test).toEqual([

@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect } from "effect";
+import { vi } from "vitest";
 
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
@@ -10,10 +12,6 @@ import {
   toSlimImage,
   usesSlimImageRuntime,
 } from "./slim-images.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 describe("toSlimImage", () => {
   it.each([
@@ -106,31 +104,53 @@ describe("toSlimImage", () => {
 });
 
 describe("slimImagesEnabled", () => {
-  it.each([
-    ["true", true],
-    ["1", true],
-    ["false", false],
-    ["0", false],
-    ["yes", false],
-    ["TRUE", false],
-    ["", false],
-  ])("reads %j as %s", (value, expected) => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", value);
-    expect(slimImagesEnabled()).toBe(expected);
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
+
+  it.effect.each([
+    { value: "true", expected: true },
+    { value: "1", expected: true },
+    { value: "false", expected: false },
+    { value: "0", expected: false },
+    { value: "yes", expected: false },
+    { value: "TRUE", expected: false },
+    { value: "", expected: false },
+    { value: undefined, expected: false },
+  ])("reads $value as $expected", ({ value, expected }) =>
+    Effect.gen(function* () {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", value);
+      expect(yield* slimImagesEnabled).toBe(expected);
+    }),
+  );
+
+  it.effect("reads the process environment, not the active ConfigProvider", () =>
+    Effect.gen(function* () {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+      const pinned = ConfigProvider.fromEnvRecord({ SUPABASE_USE_SLIM_IMAGES: "true" });
+      const failing = ConfigProvider.make(() =>
+        Effect.fail(new ConfigProvider.SourceError({ message: "injected" })),
+      );
+      for (const provider of [pinned, failing]) {
+        expect(
+          yield* slimImagesEnabled.pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, provider),
+          ),
+        ).toBe(false);
+      }
+    }),
+  );
 });
 
 describe("slimImageForAlias", () => {
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
-    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165")).toBe(
+    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165", false)).toBe(
       "supabase/postgres:17.6.1.165",
     );
   });
 
   it("translates when the flag is on", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165")).toBe(
+    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165", true)).toBe(
       "ghcr.io/supabase/cli/postgres:17.6.1.165",
     );
   });
@@ -138,14 +158,12 @@ describe("slimImageForAlias", () => {
 
 describe("usesSlimImageRuntime", () => {
   it("is false while the flag is off even for a ghcr ref", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
-    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165")).toBe(false);
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165", false)).toBe(false);
   });
 
   it("is true only when the flag is on and the ref is slim", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0")).toBe(true);
-    expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0")).toBe(false);
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0", true)).toBe(true);
+    expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0", true)).toBe(false);
   });
 });
 
@@ -162,22 +180,22 @@ describe("pinMatchesCurrentImage", () => {
 
 describe("slimImageForCurrentPin", () => {
   it("slim-translates the current pin and leaves a historical pin on docker.io", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const current = dockerfileServiceImageRaw("storage");
     const currentTag = current.split(":")[1] ?? "";
-    expect(slimImageForCurrentPin("storage", current)).toBe(toSlimImage("storage", current));
-    expect(slimImageForCurrentPin("storage", current, currentTag)).toBe(
+    expect(slimImageForCurrentPin("storage", current, undefined, true)).toBe(
       toSlimImage("storage", current),
     );
-    expect(slimImageForCurrentPin("storage", current, "v1.67.0")).toBe(
+    expect(slimImageForCurrentPin("storage", current, currentTag, true)).toBe(
+      toSlimImage("storage", current),
+    );
+    expect(slimImageForCurrentPin("storage", current, "v1.67.0", true)).toBe(
       "supabase/storage-api:v1.67.0",
     );
   });
 
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     const current = dockerfileServiceImageRaw("storage");
-    expect(slimImageForCurrentPin("storage", current, "v1.67.0")).toBe(
+    expect(slimImageForCurrentPin("storage", current, "v1.67.0", false)).toBe(
       "supabase/storage-api:v1.67.0",
     );
   });
