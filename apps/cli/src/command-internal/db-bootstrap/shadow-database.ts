@@ -279,10 +279,9 @@ export interface ShadowSourceResult {
   /** The diff source Postgres URL (the provisioned shadow). */
   readonly sourceUrl: string;
   /**
-   * When set, replaces the diff target with a second database on the same shadow container
-   * (`contrib_regression`, cloned from `postgres` during shadow setup — see
-   * {@link setupShadowConn}) with declarative schemas applied, so the user's local DB is never
-   * diffed directly in that branch.
+   * Legacy migra only. When set, replaces the diff target with `contrib_regression` on the
+   * same shadow container (cloned from `postgres` by {@link setupShadowConn}) after declarative
+   * schemas are applied. pg-delta leaves this unset and diffs `postgres`.
    */
   readonly targetUrlOverride: string | undefined;
 }
@@ -462,10 +461,9 @@ export const setupShadowConn = (
   });
 
 /**
- * {@link setupShadowConn}'s trailing {@link SHADOW_CREATE_TEMPLATE_SQL} step on its own. Split
- * out because it's the one part a warm shadow-cache hit still has to run: the cache's PGDATA
- * snapshot is taken before this statement, so a restored cluster carries the platform baseline
- * but no `contrib_regression`.
+ * Clones `contrib_regression` for the legacy migra shadow. The cache snapshot is taken
+ * before this statement, so a warm hit still runs it when that caller asks for the clone.
+ * pg-delta does not call this.
  */
 const createShadowTemplateDatabase = (
   session: DbSession,
@@ -645,8 +643,8 @@ const SHADOW_BASELINE_COLD: ShadowBaselineState = {
 /**
  * Lists local migrations first, so a bad migrations directory fails before any DB connection,
  * then connects, resolves the setup prelude, and runs the platform baseline before applying
- * every listed migration. `createTemplateDatabase` clones `contrib_regression` for the legacy
- * engine only. Connect-then-setup for the same reason as {@link setupShadowDatabase}.
+ * every listed migration. `options.createTemplateDatabase` clones `contrib_regression` for the
+ * legacy engine only. Connect-then-setup for the same reason as {@link setupShadowDatabase}.
  *
  * `baseline` defaults to {@link SHADOW_BASELINE_COLD}. A warm hit skips the prelude and setup; a
  * cold cache-enabled provision snapshots between the baseline and later steps. Only that
@@ -657,7 +655,7 @@ const migrateShadowDatabaseWith = <E>(
   input: ShadowSetupRunInput<E>,
   setupOptions: SetupDatabaseOptions,
   baseline: ShadowBaselineState = SHADOW_BASELINE_COLD,
-  createTemplateDatabase = true,
+  options: { readonly createTemplateDatabase?: boolean } = {},
 ): Effect.Effect<
   void,
   StartSetupLocalDatabaseError | ShadowDbError | ImagePrepullError | E,
@@ -710,7 +708,7 @@ const migrateShadowDatabaseWith = <E>(
           ),
         );
       }
-      if (createTemplateDatabase) {
+      if (options.createTemplateDatabase !== false) {
         yield* createShadowTemplateDatabase(session);
       }
       yield* applyMigrations(
@@ -757,4 +755,4 @@ export const migrateNextShadowDatabase = <E>(
   void,
   StartSetupLocalDatabaseError | ShadowDbError | ImagePrepullError | E,
   Output | DockerRun | RuntimeInfo | DbConnection
-> => migrateShadowDatabaseWith(spawner, input, {}, baseline, false);
+> => migrateShadowDatabaseWith(spawner, input, {}, baseline, { createTemplateDatabase: false });

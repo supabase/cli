@@ -716,63 +716,60 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     );
   });
 
-  it.effect(
-    "skips the platform baseline and contrib_regression on a warm cache hit",
-    () => {
-      const { session, calls } = fakeSession();
-      const workdir = tempRoot.current;
-      const mock = mockSpawner();
-      let jwksEvaluated = false;
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* setupShadowDatabase(
-          mock.spawner,
-          {
-            fs,
-            path,
-            workdir,
-            projectId: "proj",
-            container: "shadow-container-id-0123456789abcdef",
-            networkId: "supabase_network_proj",
-            connConfig: {
-              host: "127.0.0.1",
-              port: 54320,
-              user: "postgres",
-              password: "postgres",
-              database: "postgres",
-            },
-            setup: baseShadowSetup({
-              majorVersion: 17,
-              realtimeEnabledForSetup: true,
-              jwks: Effect.sync(() => {
-                jwksEvaluated = true;
-                return '{"keys":[]}';
-              }),
+  it.effect("skips the platform baseline and contrib_regression on a warm cache hit", () => {
+    const { session, calls } = fakeSession();
+    const workdir = tempRoot.current;
+    const mock = mockSpawner();
+    let jwksEvaluated = false;
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* setupShadowDatabase(
+        mock.spawner,
+        {
+          fs,
+          path,
+          workdir,
+          projectId: "proj",
+          container: "shadow-container-id-0123456789abcdef",
+          networkId: "supabase_network_proj",
+          connConfig: {
+            host: "127.0.0.1",
+            port: 54320,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          setup: baseShadowSetup({
+            majorVersion: 17,
+            realtimeEnabledForSetup: true,
+            jwks: Effect.sync(() => {
+              jwksEvaluated = true;
+              return '{"keys":[]}';
             }),
-          },
-          {},
-          {
-            baselinePresent: true,
-            snapshotRequired: false,
-            snapshotBaseline: Effect.void,
-          },
-        );
-        expect(jwksEvaluated).toBe(false);
-        expect(calls).toEqual([]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            BunServices.layer,
-            mockOutput().layer,
-            mockDockerRun(),
-            mockRuntimeInfo(),
-            mockDbConnection(session),
-          ),
-        ),
+          }),
+        },
+        {},
+        {
+          baselinePresent: true,
+          snapshotRequired: false,
+          snapshotBaseline: Effect.void,
+        },
       );
-    },
-  );
+      expect(jwksEvaluated).toBe(false);
+      expect(calls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          mockOutput().layer,
+          mockDockerRun(),
+          mockRuntimeInfo(),
+          mockDbConnection(session),
+        ),
+      ),
+    );
+  });
 
   it.effect(
     "migrateShadowDatabase lists local migrations BEFORE connecting, tolerating a missing migrations directory as an empty list rather than a failure",
