@@ -25,6 +25,7 @@ import {
   ContainerLaunchError,
   DOCKER_HOST_ALIAS,
   makeContainerRuntime,
+  makeHostGateway,
   type ContainerProcess,
 } from "./Container.ts";
 
@@ -35,6 +36,7 @@ const image = await Effect.gen(function* () {
   const version = yield* fs.readFileString(file);
   return `oven/bun:${version.trim()}-slim`;
 }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
 const stoppableIdleScript =
   "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
@@ -153,31 +155,155 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("resolves the stack host alias to IPv4 addresses only", () =>
+  it.live("maps the stack host alias to an explicit IPv4 host gateway only", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        });
         yield* runtime.prepare(image);
         const process = yield* runtime.launchCommand({
           image,
           stackId: "e".repeat(64),
           instanceId: "host-alias",
           env: {},
-          args: [
-            "-e",
-            `console.log(JSON.stringify(await require("node:dns/promises").lookup("${DOCKER_HOST_ALIAS}", { all: true })))`,
-          ],
+          args: ["-e", "console.log(await Bun.file('/etc/hosts').text())"],
         });
-        const [stdout, exitCode] = yield* Effect.all(
+        const [hosts, exitCode] = yield* Effect.all(
           [process.stdout.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
           { concurrency: "unbounded" },
         );
         expect(exitCode).toBe(0);
-        const addresses = yield* Schema.decodeEffect(
-          Schema.fromJsonString(Schema.Array(Schema.Struct({ family: Schema.Finite }))),
-        )(stdout.trim());
+        const addresses = hosts
+          .split("\n")
+          .map((line) => line.trim().split(/\s+/u))
+          .filter(([, ...names]) => names.includes(DOCKER_HOST_ALIAS))
+          .map(([address]) => address ?? "");
         expect(addresses.length).toBeGreaterThan(0);
-        expect(addresses.every(({ family }) => family === 4)).toBe(true);
+        expect(addresses.every((address) => ipv4.test(address))).toBe(true);
+        expect(yield* inspectExtraHosts(process.id)).toContain(
+          `${DOCKER_HOST_ALIAS}:${addresses[0]}`,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("probes the host gateway once for concurrent launches across runtimes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const hostGateway = yield* makeHostGateway;
+        const makeRuntime = makeContainerRuntime({ engine: "docker", root: ".", hostGateway }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(delegate, probes, () => undefined),
+          ),
+        );
+        const first = yield* makeRuntime;
+        const second = yield* makeRuntime;
+        yield* first.prepare(image);
+        const processes = yield* Effect.all(
+          [first, second].map((runtime, index) =>
+            runtime.launchCommand({
+              image,
+              stackId: "e".repeat(64),
+              instanceId: `host-alias-concurrent-${index}`,
+              env: {},
+              args: ["-e", "process.exit(0)"],
+            }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        expect(yield* Ref.get(probes)).toBe(1);
+        for (const process of processes) {
+          const aliases = (yield* inspectExtraHosts(process.id)).filter((entry) =>
+            entry.startsWith(`${DOCKER_HOST_ALIAS}:`),
+          );
+          expect(aliases).toHaveLength(1);
+          expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("falls back to host-gateway without reprobing when the gateway has no IPv4 address", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(
+              delegate,
+              probes,
+              () => `console.log("fdc4:f303:9324::254\\t${DOCKER_HOST_ALIAS}")`,
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        for (const instanceId of ["host-alias-fallback-a", "host-alias-fallback-b"]) {
+          const process = yield* runtime.launchCommand({
+            image,
+            stackId: "e".repeat(64),
+            instanceId,
+            env: {},
+            args: ["-e", "process.exit(0)"],
+          });
+          expect(yield* process.exitCode).toBe(0);
+          expect(yield* inspectExtraHosts(process.id)).toContain(
+            `${DOCKER_HOST_ALIAS}:host-gateway`,
+          );
+        }
+        expect(yield* Ref.get(probes)).toBe(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("probes again with a later launch when the first image lacks cat", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(delegate, probes, (attempt) =>
+              attempt === 1
+                ? `console.error('exec: "cat": executable file not found in $PATH'); process.exit(127)`
+                : undefined,
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const launchExit = (instanceId: string) =>
+          runtime.launchCommand({
+            image,
+            stackId: "e".repeat(64),
+            instanceId,
+            env: {},
+            args: ["-e", "process.exit(0)"],
+          });
+        const first = yield* launchExit("host-alias-no-cat");
+        expect(yield* inspectExtraHosts(first.id)).toContain(`${DOCKER_HOST_ALIAS}:host-gateway`);
+        const second = yield* launchExit("host-alias-with-cat");
+        const aliases = (yield* inspectExtraHosts(second.id)).filter((entry) =>
+          entry.startsWith(`${DOCKER_HOST_ALIAS}:`),
+        );
+        expect(aliases).toHaveLength(1);
+        expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
+        expect(yield* Ref.get(probes)).toBe(2);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -987,6 +1113,30 @@ const makePullFailureSpawner = (
     return delegate.spawn(command);
   });
 
+/** Replaces a host-gateway probe with the script `fake` returns for its attempt, if any. */
+const makeHostGatewayProbeSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  probes: Ref.Ref<number>,
+  fake: (attempt: number) => string | undefined,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      !ChildProcess.isStandardCommand(command) ||
+      command.command !== "docker" ||
+      command.args[0] !== "run" ||
+      !command.args.includes("/etc/hosts")
+    )
+      return delegate.spawn(command);
+    return Effect.gen(function* () {
+      const script = fake(yield* Ref.updateAndGet(probes, (count) => count + 1));
+      return yield* delegate.spawn(
+        script === undefined
+          ? command
+          : ChildProcess.make(process.execPath, ["-e", script], { stdin: "ignore" }),
+      );
+    });
+  });
+
 const makeStopFailureSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   failStop: Ref.Ref<boolean>,
@@ -1358,6 +1508,20 @@ const inspectLabels = (id: string) =>
     return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.trim());
+  });
+
+const inspectExtraHosts = (id: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["inspect", "--format={{json .HostConfig.ExtraHosts}}", id], {
+        stdin: "ignore",
+      }),
+    );
+    const output = yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+    return yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(
+      output.trim(),
+    );
   });
 
 const removeExternally = (id: string) =>

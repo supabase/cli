@@ -14,6 +14,7 @@ import {
   Schedule,
   Schema,
   Scope,
+  Semaphore,
   Sink,
   Stream,
 } from "effect";
@@ -127,10 +128,43 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 const PULL_MAX_RETRIES = 4;
 
 /**
- * Host alias present only in Docker containers' `/etc/hosts`; it resolves to the IPv4 host
- * gateway, unlike Docker Desktop's DNS for `host.docker.internal`, which answers IPv6 first.
+ * Host alias mapped in Docker containers' `/etc/hosts` to the engine's IPv4 host gateway; Docker
+ * Desktop's `host.docker.internal` and `host-gateway` also resolve to an IPv6 address.
  */
 export const DOCKER_HOST_ALIAS = "host.supabase.internal";
+
+/** Bounds the throwaway container that resolves the IPv4 host gateway. */
+const HOST_GATEWAY_PROBE_TIMEOUT: Duration.Input = "15 seconds";
+
+const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
+
+/** One stack host's `--add-host` target for `DOCKER_HOST_ALIAS`, shared by its Docker runtimes. */
+export interface HostGateway {
+  /**
+   * Returns the cached target or runs `probe` single-flight; a probe yielding `undefined` leaves
+   * the target unresolved for the next caller.
+   */
+  readonly resolve: (probe: Effect.Effect<string | undefined>) => Effect.Effect<string>;
+}
+
+/** Probes on every platform: engines with IPv6 on the bridge map `host-gateway` to both families. */
+export const makeHostGateway: Effect.Effect<HostGateway> = Effect.gen(function* () {
+  const target = yield* Ref.make<string | undefined>(undefined);
+  const gate = yield* Semaphore.make(1);
+  return {
+    resolve: (probe) =>
+      gate.withPermits(1)(
+        Effect.gen(function* () {
+          const cached = yield* Ref.get(target);
+          if (cached !== undefined) return cached;
+          const probed = yield* probe;
+          if (probed === undefined) return "host-gateway";
+          yield* Ref.set(target, probed);
+          return probed;
+        }),
+      ),
+  };
+});
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 
@@ -165,6 +199,8 @@ export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
   readonly root: string;
   readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
+  /** Omitted gives this runtime its own host-gateway probe. */
+  readonly hostGateway?: HostGateway;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -286,6 +322,52 @@ export const makeContainerRuntime = (options: {
       prepareImage(image).pipe(Effect.asVoid),
     );
 
+    const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
+    /** Probes the engine's first IPv4 `host-gateway` address with an already present image. */
+    const hostAliasTarget = (image: string, spec: ContainerSpec) =>
+      hostGateway.resolve(
+        run(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--add-host",
+            `${DOCKER_HOST_ALIAS}:host-gateway`,
+            // No instance label: `--rm` removal is asynchronous and must not count as an
+            // instance container; the stack labels keep it sweepable.
+            "--label",
+            `com.supabase.stack=${spec.stackId}`,
+            "--label",
+            `com.supabase.stack-root=${stackRoot}`,
+            "--entrypoint",
+            "cat",
+            image,
+            "/etc/hosts",
+          ],
+          { timeout: undefined },
+        ).pipe(
+          Effect.map(
+            (hosts) =>
+              hosts
+                .split("\n")
+                .map((line) => line.trim().split(/\s+/u))
+                .find(
+                  ([address, ...names]) =>
+                    IPV4_ADDRESS.test(address ?? "") && names.includes(DOCKER_HOST_ALIAS),
+                )?.[0] ?? "host-gateway",
+          ),
+          // A failed or slow probe (e.g. an image without `cat`) is retried by the next launch.
+          Effect.timeoutOption(HOST_GATEWAY_PROBE_TIMEOUT),
+          Effect.map(Option.getOrUndefined),
+          Effect.catch((error) =>
+            Effect.logDebug(`Host gateway probe failed: ${error.message}`).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+        ),
+      );
+
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
@@ -322,15 +404,17 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
+      const hostAlias =
+        options.engine === "docker" ? yield* hostAliasTarget(image, spec) : undefined;
       const args = [
         "create",
         "--pull",
         "never",
         ...(interactive ? ["--interactive", "--init"] : []),
-        ...(options.engine === "docker"
+        ...(hostAlias !== undefined
           ? [
               "--add-host",
-              `${DOCKER_HOST_ALIAS}:host-gateway`,
+              `${DOCKER_HOST_ALIAS}:${hostAlias}`,
               ...(process.platform === "linux"
                 ? ["--add-host", "host.docker.internal:host-gateway"]
                 : []),
