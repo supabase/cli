@@ -240,6 +240,11 @@ interface PinSpan {
   readonly start: number;
   readonly end: number;
   readonly version: string;
+  /**
+   * Span of an additional (release-line-keyed) pin's own string key, content only (no quotes).
+   * Absent for the default pin, which carries no separate key to keep in sync.
+   */
+  readonly key?: { readonly start: number; readonly end: number };
 }
 
 /**
@@ -337,7 +342,9 @@ function collectServicePins(source: string, service: string): ServicePins | unde
       keyPattern.lastIndex = valueStart;
       continue;
     }
-    additional.push(pin);
+    const keyText = keyMatch[1] ?? "";
+    const keyStart = keyMatch.index + keyMatch[0].indexOf(keyText);
+    additional.push({ ...pin, key: { start: keyStart, end: keyStart + keyText.length } });
     keyPattern.lastIndex = pin.end;
   }
 
@@ -495,7 +502,12 @@ function slimVersions(dockerfile: string): ReadonlyMap<string, string> {
 
 const normalizeText = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** Writes `pin` over `entry`'s span in `source`, or returns `source` unchanged when it already matches. */
+/**
+ * Writes `pin` over `entry`'s span in `source`, or leaves it unchanged when it already matches.
+ * An additional (release-line-keyed) pin also gets its own string key rewritten to `pin`'s
+ * `upstreamVersion` when it moves to a different upstream version, so the key an additional pin
+ * is looked up by never drifts from the `upstreamVersion` its resolved pin literal carries.
+ */
 function writePin(
   source: string,
   entry: Extract<SelectedEntry, { kind: "default" | "additional" }>,
@@ -503,11 +515,18 @@ function writePin(
 ): { readonly source: string; readonly changed: boolean } {
   const desired = serializePin(pin);
   const current = source.slice(entry.span.start, entry.span.end);
-  if (normalizeText(current) === normalizeText(desired)) return { source, changed: false };
-  return {
-    source: source.slice(0, entry.span.start) + desired + source.slice(entry.span.end),
-    changed: true,
-  };
+  let next = source;
+  let changed = false;
+  if (normalizeText(current) !== normalizeText(desired)) {
+    next = next.slice(0, entry.span.start) + desired + next.slice(entry.span.end);
+    changed = true;
+  }
+  const key = entry.span.key;
+  if (key !== undefined && source.slice(key.start, key.end) !== pin.upstreamVersion) {
+    next = next.slice(0, key.start) + pin.upstreamVersion + next.slice(key.end);
+    changed = true;
+  }
+  return { source: next, changed };
 }
 
 /**

@@ -527,6 +527,60 @@ describe("refreshCatalogPin", () => {
     expect(refreshed.source).toContain('placeholderPin("postgres", "17.6.1.168")');
     expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
   });
+
+  test("moves the Postgres 15 additional pin to a new upstream version, updating its key", async () => {
+    const digests = nativeDigests("u");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["postgres-15.19.0.002-r0"],
+      fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r0", digests),
+      imageDigest: async () => digest("v"),
+      s3Sha256: matchingS3("postgres", "15.19.0.002-r0", digests),
+    };
+
+    const written = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgres",
+      upstream: "15.19.0.002",
+      io,
+    });
+    expect(written.update).toEqual({
+      service: "postgres",
+      version: "15.19.0.002",
+      revision: 0,
+      previousVersion: "15.14.1.168",
+      target: "additional",
+    });
+    // The old key is gone; the new key matches the resolved pin's `upstreamVersion`.
+    expect(written.source).not.toContain('"15.14.1.168"');
+    expect(written.source).toContain('"15.19.0.002": { upstreamVersion: "15.19.0.002"');
+    // The default (17.x) postgres line is untouched.
+    expect(written.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+
+    // The renamed key resolves the entry again after real formatting, e.g. for a later hotfix.
+    const formatted = await formatWithOxfmt(written.source);
+    const nextDigests = nativeDigests("w");
+    const nextIo: RevisionIo = {
+      listReleaseTags: async () => ["postgres-15.19.0.002-r0", "postgres-15.19.0.002-r1"],
+      fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r1", nextDigests),
+      imageDigest: async () => digest("x"),
+      s3Sha256: matchingS3("postgres", "15.19.0.002-r1", nextDigests),
+    };
+    const refreshed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "postgres",
+      upstream: "15.19.0.002",
+      io: nextIo,
+    });
+
+    expect(refreshed.update).toEqual({
+      service: "postgres",
+      version: "15.19.0.002",
+      revision: 1,
+      previousVersion: "15.19.0.002",
+      target: "additional",
+    });
+    expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+  });
 });
 
 describe("against the real catalog", () => {
@@ -581,26 +635,30 @@ describe("against the real catalog", () => {
 
   test("a real catalog entry survives real formatting and can be refreshed again", async () => {
     const catalog = await Bun.file(CATALOG_PATH).text();
+    const pinnedVersion = /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)"/.exec(
+      catalog,
+    )?.[1];
+    if (pinnedVersion === undefined) throw new Error("auth pin not found in the real catalog");
 
     const first = nativeDigests("q");
     const firstIo: RevisionIo = {
-      listReleaseTags: async () => ["auth-v2.196.0-r0"],
-      fetchChecksums: async () => checksumsFor("auth", "v2.196.0-r0", first),
+      listReleaseTags: async () => [`auth-${pinnedVersion}-r0`],
+      fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r0`, first),
       imageDigest: async () => digest("r"),
-      s3Sha256: matchingS3("auth", "v2.196.0-r0", first),
+      s3Sha256: matchingS3("auth", `${pinnedVersion}-r0`, first),
     };
     const written = await refreshCatalogPin({ catalog, service: "auth", io: firstIo });
     expect(written.update?.revision).toBe(0);
 
     const formatted = await formatWithOxfmt(written.source);
-    expect(formatted).toContain('upstreamVersion: "v2.196.0"');
+    expect(formatted).toContain(`upstreamVersion: "${pinnedVersion}"`);
 
     const second = nativeDigests("s");
     const secondIo: RevisionIo = {
-      listReleaseTags: async () => ["auth-v2.196.0-r0", "auth-v2.196.0-r1"],
-      fetchChecksums: async () => checksumsFor("auth", "v2.196.0-r1", second),
+      listReleaseTags: async () => [`auth-${pinnedVersion}-r0`, `auth-${pinnedVersion}-r1`],
+      fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r1`, second),
       imageDigest: async () => digest("t"),
-      s3Sha256: matchingS3("auth", "v2.196.0-r1", second),
+      s3Sha256: matchingS3("auth", `${pinnedVersion}-r1`, second),
     };
     const refreshed = await refreshCatalogPin({
       catalog: formatted,
@@ -610,9 +668,9 @@ describe("against the real catalog", () => {
 
     expect(refreshed.update).toEqual({
       service: "auth",
-      version: "v2.196.0",
+      version: pinnedVersion,
       revision: 1,
-      previousVersion: "v2.196.0",
+      previousVersion: pinnedVersion,
       target: "default",
     });
     expect(refreshed.source).toContain("revision: 1");
