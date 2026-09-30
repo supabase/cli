@@ -99,11 +99,14 @@ const makeSpec = (
         }),
       ),
     args: (creation, _endpoints, context) =>
-      Effect.succeed(
-        context.container
+      Effect.succeed([
+        // Vector 0.58 disabled `${VAR}` config interpolation by default; the API address is our
+        // own `VECTOR_API_ADDRESS` env var, not user-supplied config, so opting back in is safe.
+        "--dangerously-allow-env-var-interpolation",
+        ...(context.container
           ? ["--config", containerPipelinePath, "--config", containerApiPath]
-          : ["--config", pipelinePath(creation), "--config", apiConfigPath],
-      ),
+          : ["--config", pipelinePath(creation), "--config", apiConfigPath]),
+      ]),
     mounts: (creation) =>
       Effect.succeed([
         { source: pipelinePath(creation), target: containerPipelinePath, readOnly: true },
