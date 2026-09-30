@@ -18,10 +18,14 @@
  * Plan-updates mode (used by the `slim-release-published` dispatch workflow):
  * lists a service's committed slim-services releases and computes, per
  * release line, the hotfix and/or upgrade a workflow should apply. Pure
- * planning: `planSlimUpdates` takes the release tag list as an argument and
- * makes no network calls.
+ * planning: `planSlimUpdates` takes the release tag list as an argument,
+ * makes no network calls, and never logs — it returns `{ updates, warnings }`.
+ * Records go only to `--output <path>` (never stdout); warnings print to
+ * stdout as `::warning ::…` lines, so the two channels can't corrupt one
+ * another when a caller redirects stdout separately from the records file.
  *
- *   bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service <service> [--format lines]
+ *   bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service <service> \
+ *     --output <path> [--format lines]
  *
  * Validate-payload mode (used by the same workflow, before anything else):
  * checks an untrusted `slim-release-published` dispatch payload against
@@ -698,29 +702,45 @@ function buildUpdate(
   };
 }
 
+export interface PlanSlimUpdatesResult {
+  readonly updates: ReadonlyArray<SlimUpdate>;
+  /** `::warning ::…` workflow-command lines, for the caller to print to stdout. */
+  readonly warnings: ReadonlyArray<string>;
+}
+
+/** Groups every candidate release tag under one bucket, for a service with no additional pins. */
+const SINGLE_LINE_KEY = "*";
+
 /**
  * The hotfix and/or upgrade a `slim-release-published` run should apply for `service`, computed
  * against `catalog`'s current pins and `releaseTags` (every committed — published, non-draft —
  * slim-services release tag; the caller filters drafts before calling this). Pure: no network, no
- * file I/O.
+ * file I/O, no logging — every diagnostic comes back in `warnings` instead, so a caller (the CLI,
+ * or a test) decides where it goes. This matters because `plan-updates` writes `updates` straight
+ * into a file the workflow parses as records; a `console.log`'d warning on the same stdout the
+ * workflow captures would corrupt that file instead of just being informational.
  *
  * Per release line (ruling: the default pin's line, plus one per additional pin — only postgres
- * has more than one): a **hotfix** fires when the pinned upstream has a committed revision higher
+ * has more than one) a **hotfix** fires when the pinned upstream has a committed revision higher
  * than the pinned one; an **upgrade** fires when the newest committed upstream on the line is
  * newer than the pinned one (ties, e.g. two Studio builds dated the same day, are not newer).
- * Both can fire in the same run. A release tag whose upstream sits on no line the catalog carries
- * for `service`, or whose version isn't comparable, is logged and ignored — it never causes a
- * plan-updates run to fail.
+ * Both can fire in the same run. A service with no additional pins has exactly one line and
+ * accepts any comparable upstream on it — a Studio year rollover or a postgrest major bump is
+ * the same line moving forward, not a different one, so it is never filtered by `releaseLine`.
+ * Only a service that does carry additional pins (postgres) filters a release tag to the line its
+ * `releaseLine` names; a tag on no such line, or whose version isn't comparable, is warned about
+ * and ignored — it never causes a plan-updates run to fail.
  */
 export function planSlimUpdates(
   catalog: string,
   service: string,
   releaseTags: ReadonlyArray<string>,
-): ReadonlyArray<SlimUpdate> {
+): PlanSlimUpdatesResult {
+  const warnings: string[] = [];
   const pins = collectServicePins(catalog, service);
   if (pins === undefined) {
-    console.log(`::warning ::${CATALOG_PATH} has no slim entry for ${service}; nothing to plan.`);
-    return [];
+    warnings.push(`::warning ::${CATALOG_PATH} has no slim entry for ${service}; nothing to plan.`);
+    return { updates: [], warnings };
   }
 
   const allPins = [pins.defaultPin, ...pins.additional];
@@ -728,7 +748,7 @@ export function planSlimUpdates(
 
   const pinnedByLine = new Map<string, { readonly upstream: string; readonly revision: number }>();
   for (const span of allPins) {
-    const line = releaseLine(span.version);
+    const line = hasLines ? releaseLine(span.version) : SINGLE_LINE_KEY;
     const text = catalog.slice(span.start, span.end);
     const revisionMatch = PIN_REVISION.exec(text);
     const revision = revisionMatch === null ? -1 : Number(revisionMatch[1]);
@@ -742,12 +762,17 @@ export function planSlimUpdates(
     if (match === null) continue; // not this service, or a legacy tag with no `-rN`: ignored.
     const upstream = match[1] as string;
     const revision = Number(match[2]);
-    const line = releaseLine(upstream);
-    if (!pinnedByLine.has(line)) {
-      console.log(
-        `::warning ::${service} ${upstream} is not on a release line ${CATALOG_PATH} carries for it; ignoring ${tag}.`,
-      );
-      continue;
+    let line: string;
+    if (hasLines) {
+      line = releaseLine(upstream);
+      if (!pinnedByLine.has(line)) {
+        warnings.push(
+          `::warning ::${service} ${upstream} is not on a release line ${CATALOG_PATH} carries for it; ignoring ${tag}.`,
+        );
+        continue;
+      }
+    } else {
+      line = SINGLE_LINE_KEY;
     }
     const list = candidatesByLine.get(line) ?? [];
     list.push({ upstream, revision });
@@ -782,7 +807,7 @@ export function planSlimUpdates(
     for (const upstream of highestRevisionByUpstream.keys()) {
       const comparedToPinned = compareVersions(upstream, pinned.upstream);
       if (comparedToPinned === undefined) {
-        console.log(`::warning ::${service} ${upstream} is not a comparable version; ignoring.`);
+        warnings.push(`::warning ::${service} ${upstream} is not a comparable version; ignoring.`);
         continue;
       }
       if (bestUpstream === undefined || (compareVersions(upstream, bestUpstream) ?? 0) > 0) {
@@ -795,7 +820,22 @@ export function planSlimUpdates(
     }
   }
 
-  return updates;
+  return { updates, warnings };
+}
+
+/**
+ * Reads every committed release tag through `listReleaseTags` and plans against `catalog`. The
+ * injectable lister is the seam a dry run or an end-to-end test uses to exercise the whole
+ * `plan-updates` transport — this function plus the CLI's file/stdout wiring — without a network
+ * call, the same pattern `RevisionIo.listReleaseTags` already uses.
+ */
+export async function planUpdatesForService(input: {
+  readonly catalog: string;
+  readonly service: string;
+  readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
+}): Promise<PlanSlimUpdatesResult> {
+  const releaseTags = await input.listReleaseTags();
+  return planSlimUpdates(input.catalog, input.service, releaseTags);
 }
 
 export interface CatalogRefreshResult {
@@ -819,6 +859,9 @@ export async function refreshCatalogPin(input: {
 }): Promise<CatalogRefreshResult> {
   if (input.upstream !== undefined && input.release !== undefined) {
     throw new InvalidPayloadError("--upstream and --release are mutually exclusive.");
+  }
+  if (input.upstream !== undefined && !UPSTREAM_VERSION_PATTERN.test(input.upstream)) {
+    throw new InvalidPayloadError(`invalid --upstream '${input.upstream}'`);
   }
 
   let upstream = input.upstream;
@@ -1050,12 +1093,18 @@ function updateLine(update: SlimUpdate): string {
   );
 }
 
+/**
+ * `plan-updates`' records go only into `--output <path>`, never stdout: a caller (the workflow)
+ * reads warnings from stdout as `::warning ::…` lines, and would otherwise mistake one for a
+ * malformed record and abort a run that had valid updates alongside it.
+ */
 async function runPlanUpdates(argv: ReadonlyArray<string>): Promise<void> {
   const flags = parseFlags(argv);
   const service = flags.get("service");
-  if (service === undefined) {
+  const output = flags.get("output");
+  if (service === undefined || output === undefined) {
     throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> [--format lines]",
+      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path> [--format lines]",
     );
   }
   const format = flags.get("format") ?? "json";
@@ -1063,13 +1112,17 @@ async function runPlanUpdates(argv: ReadonlyArray<string>): Promise<void> {
     throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
   }
   const catalog = await Bun.file(CATALOG_PATH).text();
-  const releaseTags = await listReleaseTags();
-  const updates = planSlimUpdates(catalog, service, releaseTags);
-  if (format === "lines") {
-    for (const update of updates) console.log(updateLine(update));
-    return;
-  }
-  console.log(JSON.stringify(updates));
+  const { updates, warnings } = await planUpdatesForService({
+    catalog,
+    service,
+    listReleaseTags,
+  });
+  for (const warning of warnings) console.log(warning);
+  const content =
+    format === "lines"
+      ? updates.map((update) => `${updateLine(update)}\n`).join("")
+      : `${JSON.stringify(updates)}\n`;
+  await Bun.write(output, content);
 }
 
 async function runValidatePayload(argv: ReadonlyArray<string>): Promise<void> {

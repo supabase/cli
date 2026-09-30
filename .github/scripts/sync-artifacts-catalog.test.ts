@@ -7,6 +7,7 @@ import { InvalidPayloadError, nativeFileNames, nativeObjectUrl } from "./slim-mi
 import {
   CATALOG_PATH,
   planSlimUpdates,
+  planUpdatesForService,
   refreshCatalogPin,
   validateSlimReleasePublishedPayload,
   type RevisionIo,
@@ -205,8 +206,11 @@ describe("validateSlimReleasePublishedPayload", () => {
 
 describe("planSlimUpdates", () => {
   test("hotfix only: a higher committed revision of the pinned upstream", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.2-r1"]);
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v16.2-r1",
+    ]);
 
+    expect(warnings).toEqual([]);
     expect(updates).toEqual([
       {
         kind: "hotfix",
@@ -221,7 +225,7 @@ describe("planSlimUpdates", () => {
   });
 
   test("upgrade only: a newer committed upstream on the same line", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4-r0"]);
+    const { updates } = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4-r0"]);
 
     expect(updates).toEqual([
       {
@@ -237,7 +241,7 @@ describe("planSlimUpdates", () => {
   });
 
   test("both a hotfix and an upgrade can be planned in the same run", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", [
+    const { updates } = planSlimUpdates(plannerFixture, "postgrest", [
       "postgrest-v16.2-r1",
       "postgrest-v16.4-r0",
     ]);
@@ -265,18 +269,26 @@ describe("planSlimUpdates", () => {
   });
 
   test("an older committed upstream is a backlog republish: it plans nothing", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.1-r0"]);
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v16.1-r0",
+    ]);
 
     expect(updates).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 
-  test("postgres: upgrade on the 17 line, hotfix on the 15 line, a major-18 release ignored", () => {
-    const updates = planSlimUpdates(postgresPlannerFixture, "postgres", [
+  test("postgres: upgrade on the 17 line, hotfix on the 15 line, a major-18 release ignored and warned about", () => {
+    const { updates, warnings } = planSlimUpdates(postgresPlannerFixture, "postgres", [
       "postgres-17.11.0.002-r0",
       "postgres-15.14.1.168-r4",
       "postgres-18.0.0.001-r0",
     ]);
 
+    // The ignored major-18 tag is warned about, but doesn't block the two valid updates
+    // alongside it (P1: a warning must never corrupt or swallow the plan).
+    expect(warnings).toEqual([
+      "::warning ::postgres 18.0.0.001 is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-r0.",
+    ]);
     expect(updates).toEqual([
       {
         kind: "upgrade",
@@ -315,12 +327,12 @@ describe("planSlimUpdates", () => {
 `;
 
     const sameDate = planSlimUpdates(studioFixture, "studio", ["studio-2026.09.14-sha-bbbbbbb-r0"]);
-    expect(sameDate).toEqual([]);
+    expect(sameDate.updates).toEqual([]);
 
     const newerDate = planSlimUpdates(studioFixture, "studio", [
       "studio-2026.09.28-sha-ccccccc-r0",
     ]);
-    expect(newerDate).toEqual([
+    expect(newerDate.updates).toEqual([
       {
         kind: "upgrade",
         line: undefined,
@@ -333,20 +345,78 @@ describe("planSlimUpdates", () => {
     ]);
   });
 
-  test("a non-comparable version (OrioleDB-style suffix) is ignored", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.2-orioledb-r0"]);
+  test("Studio: a year rollover upgrades even though releaseLine differs (single-pin services accept any upstream)", () => {
+    const studioFixture = `const workloadCatalog = {
+  studio: definition(
+    "studio",
+    {
+      upstreamVersion: "2026.09.28-sha-5e59b60",
+      revision: 0,
+      image: "ghcr.io/supabase/cli/studio:2026.09.28-sha-5e59b60-r0@sha256:5555555555555555555555555555555555555555555555555555555555555",
+      natives: {},
+    },
+    "bin/studio",
+  ),
+};
+`;
+
+    const { updates, warnings } = planSlimUpdates(studioFixture, "studio", [
+      "studio-2027.01.01-sha-abcdef0-r0",
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(updates).toEqual([
+      {
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/studio",
+        title: "chore(stack): bump studio to 2027.01.01-sha-abcdef0-r0",
+        fromRelease: "2026.09.28-sha-5e59b60-r0",
+        toUpstream: "2027.01.01-sha-abcdef0",
+        toRelease: "2027.01.01-sha-abcdef0-r0",
+      },
+    ]);
+  });
+
+  test("postgrest: a major-version bump upgrades even though releaseLine differs (single-pin services accept any upstream)", () => {
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v17.0-r0",
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(updates).toEqual([
+      {
+        kind: "upgrade",
+        line: undefined,
+        branch: "slim-bump/postgrest",
+        title: "chore(stack): bump postgrest to v17.0-r0",
+        fromRelease: "v16.2-r0",
+        toUpstream: "v17.0",
+        toRelease: "v17.0-r0",
+      },
+    ]);
+  });
+
+  test("a non-comparable version (OrioleDB-style suffix) is ignored and warned about", () => {
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v16.2-orioledb-r0",
+    ]);
 
     expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgrest v16.2-orioledb is not a comparable version; ignoring.",
+    ]);
   });
 
   test("a legacy tag with no -rN is ignored", () => {
-    const updates = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4"]);
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4"]);
 
     expect(updates).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 
   test("postgrest tags never match postgres, even as a prefix", () => {
-    const updates = planSlimUpdates(postgresPlannerFixture, "postgres", [
+    const { updates } = planSlimUpdates(postgresPlannerFixture, "postgres", [
       "postgrest-v16.4-r0",
       "postgres-17.11.0.002-r0",
     ]);
@@ -365,7 +435,7 @@ describe("planSlimUpdates", () => {
   });
 
   test("branch and title carry no -<line> suffix for a service with a single line", () => {
-    const updates = planSlimUpdates(plannerFixture, "storage", ["storage-v1.74.0-r0"]);
+    const { updates } = planSlimUpdates(plannerFixture, "storage", ["storage-v1.74.0-r0"]);
 
     expect(updates).toEqual([
       {
@@ -405,10 +475,43 @@ describe("planSlimUpdates", () => {
     ).toThrow(InvalidPayloadError);
   });
 
-  test("plans nothing for a service the catalog does not model", () => {
-    const updates = planSlimUpdates(plannerFixture, "no-such-service", ["no-such-service-v1.0-r0"]);
+  test("plans nothing for a service the catalog does not model, and warns about it", () => {
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "no-such-service", [
+      "no-such-service-v1.0-r0",
+    ]);
 
     expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::packages/stack/src/Artifacts.ts has no slim entry for no-such-service; nothing to plan.",
+    ]);
+  });
+});
+
+describe("planUpdatesForService (the plan-updates transport's IO seam)", () => {
+  test("an ignored tag alongside a valid update: the valid record comes back, plus a separate warning", async () => {
+    const result = await planUpdatesForService({
+      catalog: postgresPlannerFixture,
+      service: "postgres",
+      listReleaseTags: async () => [
+        "postgres-17.11.0.002-r0",
+        "postgres-18.0.0.001-r0", // ignored: no line 18
+      ],
+    });
+
+    expect(result.warnings).toEqual([
+      "::warning ::postgres 18.0.0.001 is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-r0.",
+    ]);
+    expect(result.updates).toEqual([
+      {
+        kind: "upgrade",
+        line: "17",
+        branch: "slim-bump/postgres-17",
+        title: "chore(stack): bump postgres to 17.11.0.002-r0",
+        fromRelease: "17.6.1.168-r1",
+        toUpstream: "17.11.0.002",
+        toRelease: "17.11.0.002-r0",
+      },
+    ]);
   });
 });
 
