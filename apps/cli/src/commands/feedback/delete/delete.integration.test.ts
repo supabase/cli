@@ -152,7 +152,7 @@ function setupFeedbackDeleteHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback", "delete"]),
+    commandRuntimeLayer(["feedback", "delete"]).pipe(Layer.provide(BunServices.layer)),
     Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "delete", TOKEN])]) }),
   );
   return { ...base, layer, analytics, processControl };

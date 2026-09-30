@@ -23,6 +23,9 @@ cache described below. Native artifacts
 are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
 find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
 and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Migra (`--diff-engine migra`) is rejected in stack mode.
+A `--db-url` whose host and port match the running project stack's SQL endpoint (the `DB_URL`
+from `stack status --env`) is a local target and connects in plaintext, like `--local`; a remote
+or multi-host `--db-url` without an explicit `sslmode` still requires TLS.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under

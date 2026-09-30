@@ -25,7 +25,7 @@ export default defineConfig({
           hookTimeout: 120_000,
           testTimeout: 30_000,
           // Integration workers start real service processes and containers.
-          maxWorkers: 2,
+          maxWorkers: 4,
           sequence: { groupOrder: 1 },
         },
       },

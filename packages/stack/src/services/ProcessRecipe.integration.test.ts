@@ -24,7 +24,6 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-import { prepareNativeArtifact } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -246,10 +245,13 @@ describe("ProcessRecipe launch cleanup", () => {
             }),
           ),
         );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-native-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativeRestArtifact(cacheRoot);
         const nativeOptions: CatalogOptions = {
           ...options,
-          root: yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-native-" }),
-          cacheRoot: "/tmp/supabase-stack-artifacts",
+          root,
+          cacheRoot,
           runtime: "native",
         };
         const nativeSpec: ProcessRecipeSpec<TestCreation> = {
@@ -294,17 +296,8 @@ describe("ProcessRecipe launch cleanup", () => {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const testScope = yield* Scope.Scope;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-order-" });
-        const cacheRoot = "/tmp/supabase-stack-artifacts";
-        const artifact = yield* prepareNativeArtifact(
-          { service: "rest", version: "v16.2" },
-          cacheRoot,
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(HttpClient.HttpClient, client),
-        );
+        const cacheRoot = path.join(root, "cache");
+        const artifact = yield* nativeRestArtifact(cacheRoot);
         const nativeOptions: CatalogOptions = {
           ...options,
           root,
@@ -367,7 +360,7 @@ describe("ProcessRecipe launch cleanup", () => {
             }),
           startupCommands: [
             {
-              nativeExecutable: path.relative(path.join(artifact.root, "bin"), process.execPath),
+              nativeExecutable: path.relative(path.join(artifact.path, "bin"), process.execPath),
               args: [
                 "-e",
                 `import net from "node:net"; const server = net.createServer(); server.once("error", () => process.exit(17)); server.listen(Number(process.env.PORT), "127.0.0.1", () => server.close((error) => process.exit(error ? 18 : 0)));`,
@@ -508,8 +501,15 @@ const nativeFixtureArtifact = Effect.fn(function* (
       ),
   };
   const store = yield* makeArtifactStore({ cacheRoot, source });
-  yield* store.prepare(request);
+  return yield* store.prepare(request);
 });
+
+const nativeRestArtifact = (cacheRoot: string, program = "") =>
+  nativeFixtureArtifact(cacheRoot, {
+    name: "postgrest/v16.2",
+    executablePath: "bin/postgrest",
+    files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
+  });
 
 const nativePoolerArtifact = (cacheRoot: string) => {
   const server =
@@ -631,11 +631,7 @@ const nativeRestRecipe = Effect.fn(function* (
   const crypto = yield* Crypto.Crypto;
   const client = yield* HttpClient.HttpClient;
   const cacheRoot = path.join(root, "cache");
-  yield* nativeFixtureArtifact(cacheRoot, {
-    name: "postgrest/v16.2",
-    executablePath: "bin/postgrest",
-    files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
-  });
+  yield* nativeRestArtifact(cacheRoot, program);
   return yield* makeProcessRecipe(
     creation,
     {

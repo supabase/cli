@@ -664,7 +664,7 @@ function setup(opts: SetupOpts = {}) {
       goOutput: opts.goOutput ?? Option.none(),
     }),
     machineErrorContextLayer,
-    commandRuntimeLayer(["pull"]),
+    commandRuntimeLayer(["pull"]).pipe(Layer.provide(BunServices.layer)),
     capturingStdio?.layer ?? Stdio.layerTest({ args: Effect.succeed(["pull"]) }),
     dbConfig.layer,
     pgDelta.layer,

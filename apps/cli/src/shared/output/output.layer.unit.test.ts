@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
-import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stdio, Stream } from "effect";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
@@ -50,7 +50,7 @@ vi.mock("@clack/prompts", () => ({
   outro: (a: unknown) => mockClack.outro(a),
   note: (a: unknown, b?: unknown, c?: unknown) => mockClack.note(a, b, c),
   log: mockClack.log,
-  spinner: () => mockClack.spinnerFactory(),
+  spinner: (opts?: unknown) => mockClack.spinnerFactory(opts),
   text: (a: unknown) => mockClack.text(a),
   password: (a: unknown) => mockClack.password(a),
   confirm: (a: unknown) => mockClack.confirm(a),
@@ -337,6 +337,206 @@ describe("Output", () => {
         expect(mock.stderr).toEqual(["to stderr\n"]);
       }).pipe(Effect.provide(sunk));
     });
+
+    it.effect("pauses and resumes the task spinner around a log while it is shown", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const out = yield* Output;
+        yield* out.task("Loading organizations...");
+        vi.advanceTimersByTime(200);
+
+        yield* out.warn("no files matched pattern: missing.sql");
+
+        expect(mockClack.spinnerFactory).toHaveBeenNthCalledWith(2, { withGuide: false });
+        expect(mockClack.log.warn).toHaveBeenCalledWith("no files matched pattern: missing.sql", {
+          spacing: 0,
+        });
+        const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
+        const [warn] = mockClack.log.warn.mock.invocationCallOrder;
+        const [, resume] = mockClack.spinnerHandle.start.mock.invocationCallOrder;
+        expect(clear).toBeLessThan(warn!);
+        expect(warn).toBeLessThan(resume!);
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect(
+      "pauses and resumes the task spinner around a stderr raw write while it is shown",
+      () => {
+        const order: string[] = [];
+        const stderr: string[] = [];
+        const stdioLayer = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+            stderr: () =>
+              Sink.forEach((item: string | Uint8Array) =>
+                Effect.sync(() => {
+                  order.push("write");
+                  stderr.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+                }),
+              ),
+          }),
+        );
+        const sunk = textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), stdioLayer)),
+        );
+        return Effect.gen(function* () {
+          vi.useFakeTimers();
+          const out = yield* Output;
+          yield* out.task("Loading organizations...");
+          vi.advanceTimersByTime(200);
+
+          mockClack.spinnerHandle.clear.mockImplementation(() => order.push("clear"));
+          mockClack.spinnerHandle.start.mockImplementation((msg?: string) =>
+            order.push(`start:${msg}`),
+          );
+
+          yield* out.raw("raw line\n", "stderr");
+
+          expect(stderr).toEqual(["raw line\n"]);
+          expect(order).toEqual(["clear", "write", "start:Loading organizations..."]);
+        }).pipe(Effect.provide(sunk));
+      },
+    );
+
+    it.effect("resumes and settles the spinner only after overlapping raw writes finish", () =>
+      Effect.gen(function* () {
+        const gate = (name: string) =>
+          Effect.all({ entered: Deferred.make<void>(), release: Deferred.make<void>() }).pipe(
+            Effect.map((deferreds) => ({ name, ...deferreds })),
+          );
+        const first = yield* gate("first\n");
+        const second = yield* gate("second\n");
+        const stdioLayer = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+            stderr: () =>
+              Sink.forEach((item: string | Uint8Array) => {
+                const write = [first, second].find(({ name }) => name === item);
+                return write === undefined
+                  ? Effect.void
+                  : Deferred.succeed(write.entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(write.release)),
+                    );
+              }),
+          }),
+        );
+        const sunk = textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), stdioLayer)),
+        );
+        yield* Effect.gen(function* () {
+          vi.useFakeTimers();
+          const out = yield* Output;
+          const task = yield* out.task("Loading organizations...");
+          vi.advanceTimersByTime(200);
+          vi.useRealTimers();
+
+          const firstWrite = yield* Effect.forkChild(out.raw(first.name, "stderr"));
+          yield* Deferred.await(first.entered);
+          const secondWrite = yield* Effect.forkChild(out.raw(second.name, "stderr"));
+          yield* Deferred.await(second.entered);
+
+          yield* Deferred.succeed(first.release, undefined);
+          yield* Fiber.join(firstWrite);
+          yield* task.succeed("Loaded.");
+          expect(mockClack.spinnerFactory).toHaveBeenCalledTimes(1);
+          expect(mockClack.spinnerHandle.stop).not.toHaveBeenCalled();
+
+          yield* Deferred.succeed(second.release, undefined);
+          yield* Fiber.join(secondWrite);
+          expect(mockClack.spinnerHandle.clear).toHaveBeenCalledTimes(1);
+          expect(mockClack.spinnerFactory).toHaveBeenCalledTimes(2);
+          expect(mockClack.spinnerHandle.stop).toHaveBeenCalledWith("Loaded.");
+        }).pipe(Effect.provide(sunk));
+      }),
+    );
+
+    it.effect("delays a due spinner until a raw write already in flight finishes", () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const stdioLayer = Layer.succeed(
+          Stdio.Stdio,
+          Stdio.make({
+            args: Effect.succeed([]),
+            stdin: Stream.empty,
+            stdout: () => Sink.forEach((_item: string | Uint8Array) => Effect.void),
+            stderr: () =>
+              Sink.forEach((_item: string | Uint8Array) =>
+                Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+              ),
+          }),
+        );
+        const sunk = textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), stdioLayer)),
+        );
+        yield* Effect.gen(function* () {
+          const out = yield* Output;
+          vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+          yield* out.task("Loading organizations...");
+          const write = yield* Effect.forkChild(out.raw("slow\n", "stderr"));
+          yield* Deferred.await(entered);
+
+          vi.advanceTimersByTime(200);
+          expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(write);
+          expect(mockClack.spinnerHandle.start).toHaveBeenCalledWith("Loading organizations...");
+        }).pipe(Effect.provide(sunk));
+      }),
+    );
+
+    it.effect("settles the task through the spinner resumed after a log", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const handle = () => ({
+          start: vi.fn(),
+          stop: vi.fn(),
+          cancel: vi.fn(),
+          error: vi.fn(),
+          message: vi.fn(),
+          clear: vi.fn(),
+          isCancelled: false,
+        });
+        const first = handle();
+        const resumed = handle();
+        mockClack.spinnerFactory.mockReturnValueOnce(first).mockReturnValueOnce(resumed);
+        const out = yield* Output;
+        const task = yield* out.task("Starting local Supabase stack...");
+        vi.advanceTimersByTime(200);
+
+        yield* out.info("Seeding globals from roles.sql...");
+        yield* task.succeed("Stack is ready.");
+
+        expect(first.clear).toHaveBeenCalledTimes(1);
+        expect(first.stop).not.toHaveBeenCalled();
+        expect(resumed.start).toHaveBeenCalledWith("Starting local Supabase stack...");
+        expect(resumed.stop).toHaveBeenCalledWith("Stack is ready.");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    it.effect("clears a shown task spinner before rendering a command failure", () =>
+      Effect.gen(function* () {
+        vi.useFakeTimers();
+        const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+        const out = yield* Output;
+        yield* out.task("Starting local Supabase stack...");
+        vi.advanceTimersByTime(200);
+
+        yield* out.fail({ code: "E_TEST", message: "no database", suggestion: "retry" });
+        const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
+        const [firstWrite] = writes.mock.invocationCallOrder;
+        writes.mockRestore();
+
+        expect(clear).toBeLessThan(firstWrite!);
+      }).pipe(Effect.provide(layer)),
+    );
 
     it.effect("promptText interrupts on cancel", () => {
       mockClack.text.mockResolvedValue(Symbol.for("clack:cancel"));

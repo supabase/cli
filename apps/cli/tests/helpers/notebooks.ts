@@ -286,7 +286,7 @@ export function setupNotebooks(options: NotebooksSetupOptions) {
       cache.layer,
       analytics.layer,
       process.layer,
-      commandRuntimeLayer(["notebooks", command]),
+      commandRuntimeLayer(["notebooks", command]).pipe(Layer.provide(BunServices.layer)),
       Layer.succeed(
         OutputFlag,
         options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),

@@ -31,6 +31,7 @@ import {
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
@@ -87,7 +88,16 @@ const instance = (
     endpoints:
       config.service === "database"
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
-        : [],
+        : config.service === "rest" || config.service === "studio"
+          ? [
+              {
+                name: "http",
+                protocol: "http" as const,
+                host: "127.0.0.1",
+                port: config.service === "rest" ? 23457 : 23458,
+              },
+            ]
+          : [],
     config,
     lifecycle: lifecycle(),
     health: health(),
@@ -288,7 +298,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
               () => memberReadiness.get(id) ?? Effect.void,
             );
           });
-          activations = new Map(members.map(({ id }) => [id, "eager"]));
+          activations = new Map(
+            members.map(({ id, service }) => [
+              id,
+              options?.eager === true || service === "database" ? "eager" : "lazy",
+            ]),
+          );
           return members;
         }),
       plan: (creations) =>
@@ -386,6 +401,7 @@ const layers = (
   fixture: ReturnType<typeof fakeStack>,
   output = mockOutput(),
   existing = true,
+  explicitWorkdir = false,
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
@@ -408,7 +424,7 @@ const layers = (
     runtimeInfoLayer,
     output.layer,
     telemetry.layer,
-    mockCommandSettings({ workdir: root }),
+    mockCommandSettings({ workdir: root, explicitWorkdir }),
     target,
     api,
     Layer.succeed(ExperimentalFlag, false),
@@ -507,6 +523,7 @@ describe("experimental stack start", () => {
         expect.objectContaining({
           data: {
             id: fixture.stack.id,
+            runtime: "native",
             endpoints: {
               "database.sql": {
                 protocol: "tcp",
@@ -515,6 +532,7 @@ describe("experimental stack start", () => {
                 url: "tcp://127.0.0.1:23456",
               },
             },
+            lazy_services: [],
           },
         }),
       );
@@ -549,6 +567,46 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports connection details and lazy services once the stack is ready", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-summary-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-summary"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(json.messages.find(({ data }) => data !== undefined)?.data).toMatchObject({
+        runtime: "native",
+        endpoints: {
+          "rest.http": { url: "http://127.0.0.1:23457" },
+          "studio.mcp": { port: 23458, url: "http://127.0.0.1:23458/api/mcp" },
+        },
+        lazy_services: ["pgmeta", "rest", "studio"],
+      });
+
+      yield* fixture.stack.composition.stop;
+      const text = mockOutput();
+      yield* stackStart({ ...flags(excluded), stack: Option.some("feature demo") }).pipe(
+        Effect.provide(layers(root, fixture, text, true, true)),
+      );
+      expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
+      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
+      expect(text.stdoutText).not.toContain("GraphQL");
+      expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
+      expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
+      // Windows temp paths contain `\` and `~`, so the PowerShell pointer quotes the workdir.
+      const workdir = process.platform === "win32" ? `'${root}'` : root;
+      expect(text.stdoutText).toContain(
+        `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1073,52 +1131,106 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves no stack registered when a new stack's owner cannot reach Docker", () =>
+  // The `#!/bin/sh` shim is never picked up on Windows, which only resolves `docker.exe` on PATH.
+  it.live.skipIf(process.platform === "win32")(
+    "leaves no stack registered when a new stack's owner cannot reach the Docker daemon",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "create-failure"\n',
+        );
+        yield* fs.makeDirectory(`${root}/bin`);
+        yield* fs.writeFileString(
+          `${root}/bin/docker`,
+          "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+        );
+        yield* fs.chmod(`${root}/bin/docker`, 0o755);
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+        const originalPath = process.env.PATH;
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+        process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+            process.env.PATH = originalPath;
+          }),
+        );
+        const output = mockOutput();
+        const target = Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+        });
+        const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+        const error = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+        );
+        expect(error.message).toContain("Cannot connect to the Docker daemon");
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.reason).toBe("runtime");
+          expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+        }
+        expect(output.stderrText).not.toContain("Failed to stop");
+
+        const stacks = yield* StackApi.pipe(
+          Effect.flatMap((stackApi) =>
+            stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+          ),
+          Effect.provide(api),
+        );
+        expect(stacks).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves no stack registered when a new stack's owner finds no Docker CLI", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
-      yield* fs.makeDirectory(`${root}/bin`);
-      yield* fs.writeFileString(
-        `${root}/bin/docker`,
-        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
-      );
-      yield* fs.chmod(`${root}/bin/docker`, 0o755);
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
-      const originalPath = process.env.PATH;
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
-      process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
-          process.env.PATH = originalPath;
+      // An empty PATH hides any installed Docker CLI on every platform.
+      yield* fs.makeDirectory(`${root}/empty-bin`);
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
+      const envKeys = Object.keys(process.env);
+      const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+      yield* withEnvVar(
+        pathKey,
+        `${root}/empty-bin`,
+        Effect.gen(function* () {
+          const output = mockOutput();
+          const target = Layer.succeed(StackTargetResolver, {
+            resolve: () =>
+              Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+          });
+          const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+          const error = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+          );
+          expect(error.message).toContain("docker ps");
+          expect(error).toBeInstanceOf(StackCommandStartError);
+          if (error instanceof StackCommandStartError) {
+            expect(error.reason).toBe("runtime");
+            expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+          }
+          expect(output.stderrText).not.toContain("Failed to stop");
+
+          const stacks = yield* StackApi.pipe(
+            Effect.flatMap((stackApi) =>
+              stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+            ),
+            Effect.provide(api),
+          );
+          expect(stacks).toEqual([]);
         }),
       );
-      const output = mockOutput();
-      const target = Layer.succeed(StackTargetResolver, {
-        resolve: () =>
-          Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
-      });
-      const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
-
-      const error = yield* stackStart(flags()).pipe(
-        Effect.flip,
-        Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
-      );
-      expect(error.message).toContain("Cannot connect to the Docker daemon");
-      expect(error).toBeInstanceOf(StackCommandStartError);
-      if (error instanceof StackCommandStartError) {
-        expect(error.reason).toBe("runtime");
-        expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
-      }
-      expect(output.stderrText).not.toContain("Failed to stop");
-
-      const stacks = yield* StackApi.pipe(
-        Effect.flatMap((stackApi) => stackApi.discover({ stateRoot: `${root}/.supabase/stacks` })),
-        Effect.provide(api),
-      );
-      expect(stacks).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

@@ -43,6 +43,41 @@ supabase stack prepare
 supabase stack prepare --capability rest --capability auth --output-format json
 ```
 
+## Connection details after start
+
+When the stack is ready, `supabase stack start` prints the API, REST, Functions,
+database, Studio, MCP, and Mailpit URLs, the local publishable and secret keys, each service's
+state, and the runtime. Ports are assigned per project, so read the MCP URL from this output rather
+than assuming a default port.
+With `--output-format json`, start returns:
+
+```json
+{
+  "id": "<stack id>",
+  "runtime": "docker",
+  "endpoints": {
+    "database.sql": {
+      "protocol": "tcp",
+      "address": "127.0.0.1",
+      "port": 54322,
+      "url": "tcp://127.0.0.1:54322"
+    },
+    "studio.mcp": {
+      "protocol": "http",
+      "address": "127.0.0.1",
+      "port": 54323,
+      "url": "http://127.0.0.1:54323/api/mcp"
+    }
+  },
+  "lazy_services": ["rest", "auth", "studio"],
+  "message": ""
+}
+```
+
+`endpoints` uses the same `service.endpoint` keys as `stack status`, and `lazy_services` lists the
+services that start on their first request. For the complete connection set including credentials,
+use `supabase stack status --env --output-format json`.
+
 ## Exporting environment variables
 
 ```sh
@@ -56,8 +91,10 @@ and credentials available from the observed composition; text mode emits dotenv 
 JSON or stream-JSON mode emits a variable map. Values that are unavailable because a member is
 stopped or unhealthy are omitted. Add `--output-format text` for an explicit dotenv file
 regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
-are quoted so that sourcing the file performs no shell expansion. Only this
-explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`
+are quoted so that sourcing the file performs no shell expansion. It also exports `MCP_URL`,
+Studio's MCP endpoint, whose port is assigned per project. The human-readable output of `start` and
+`status` shows the local publishable and secret keys and the database URL; their JSON results
+never include credentials, so this export is the machine-readable source for them. `--override-name`
 accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
 unknown variables, invalid names, and collisions. The DB-derived service-role JWT remains available
 when Auth is disabled; unavailable service URLs and credentials are omitted.

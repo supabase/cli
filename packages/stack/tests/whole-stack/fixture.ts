@@ -361,4 +361,7 @@ export const waitForLifecycle = Effect.fn("WholeStack.waitForLifecycle")(
     ),
 );
 
-export const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+
+export const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.scoped(effect).pipe(Effect.provide(servicesLayer));

@@ -12,6 +12,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  Schema,
 } from "effect";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
@@ -147,38 +148,57 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("re-downloads when required runtime paths expand on the same key", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-paths-expand-",
-        });
-        let checksumCalls = 0;
-        let materializeCalls = 0;
-        const source: ArtifactSource = {
-          checksum: () =>
-            Effect.sync(() => {
-              checksumCalls += 1;
-              return archiveSha256;
-            }),
-          materialize: (entry, destination) =>
-            Effect.sync(() => {
-              materializeCalls += 1;
-              return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
-        const first = yield* store.prepare(narrow);
-        const second = yield* store.prepare(request);
-        expect(first.outcome).toBe("downloaded");
-        expect(second.outcome).toBe("downloaded");
-        expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
-        expect(checksumCalls).toBe(2);
-        expect(materializeCalls).toBe(2);
-      }),
-    ),
+  it.live(
+    "keeps the published tree and reuses it when required runtime paths expand on the same key",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-paths-expand-",
+          });
+          let checksumCalls = 0;
+          let materializeCalls = 0;
+          const source: ArtifactSource = {
+            checksum: () =>
+              Effect.sync(() => {
+                checksumCalls += 1;
+                return archiveSha256;
+              }),
+            materialize: (entry, destination) =>
+              Effect.sync(() => {
+                materializeCalls += 1;
+                return entry;
+              }).pipe(
+                Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256)),
+              ),
+          };
+          const store = yield* makeArtifactStore({ cacheRoot: root, source });
+          const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
+          const first = yield* store.prepare(narrow);
+          const publishedIno = (yield* fs.stat(first.path)).ino;
+          const second = yield* store.prepare(request);
+          const stillPublishedIno = (yield* fs.stat(second.path)).ino;
+          expect(first.outcome).toBe("downloaded");
+          expect(second.outcome).toBe("cached");
+          expect(second.path).toBe(first.path);
+          expect(stillPublishedIno).toEqual(publishedIno);
+          expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
+          expect(checksumCalls).toBe(1);
+          expect(materializeCalls).toBe(1);
+          expect(yield* fs.readFileString(`${second.path}/bin/postgres`)).toBe("native postgres");
+          const metadata = yield* Schema.decodeEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                requiredRuntimePaths: Schema.Array(Schema.String),
+                requiredRuntimeKinds: Schema.Record(Schema.String, Schema.String),
+              }),
+            ),
+          )(yield* fs.readFileString(`${second.path}/.artifact.json`));
+          expect(metadata.requiredRuntimePaths).toContain("etc/postgres.conf");
+          expect(metadata.requiredRuntimeKinds["etc/postgres.conf"]).toBe("file");
+        }),
+      ),
   );
 
   it.live("replaces a cached tree with unknown artifact metadata", () =>
@@ -359,6 +379,33 @@ describe("verified native artifact preparation", () => {
         const exit = yield* store.prepare(request).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+      }),
+    ),
+  );
+
+  it.live("rejects a cache hit whose newly required path is missing from the published tree", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-path-missing-",
+        });
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
+        const published = yield* store.prepare(narrow);
+        const publishedIno = (yield* fs.stat(published.path)).ino;
+
+        const wider: ArtifactRequest = {
+          ...request,
+          requiredRuntimePaths: ["bin/postgres", "share/missing"],
+        };
+        const exit = yield* store.prepare(wider).pipe(Effect.exit);
+
+        const error = errorOf(exit);
+        expect(error).toBeInstanceOf(ArtifactIntegrityError);
+        expect(error?.message).toContain(`remove ${published.path} to download it again`);
+        expect(yield* fs.exists(published.path)).toBe(true);
+        expect((yield* fs.stat(published.path)).ino).toEqual(publishedIno);
       }),
     ),
   );
@@ -605,6 +652,57 @@ describe("verified native artifact preparation", () => {
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
         expect(yield* fs.exists(`${root}/database/postgres-nested-link`)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("rejects an escaping symlink nested in a newly required directory on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-nested-link-escape-",
+        });
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-nested-link-outside-",
+        });
+        const outsideConfig = `${outside}/config`;
+        yield* fs.writeFileString(outsideConfig, "outside");
+        const directoryRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-cache-new-nested-link",
+          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
+        };
+        const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
+              return;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const narrow: ArtifactRequest = {
+          ...directoryRequest,
+          requiredRuntimePaths: ["bin/postgres"],
+        };
+        const published = yield* store.prepare(narrow);
+
+        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(yield* fs.exists(published.path)).toBe(true);
       }),
     ),
   );

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { vi } from "vitest";
 
 // Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
@@ -41,10 +42,12 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer } from "./db-config.layer.ts";
+import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
+import { StackApi } from "./stack-api.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -66,6 +69,7 @@ function buildResolver(
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
     readonly configEnv?: Record<string, string | undefined>;
+    readonly stackApi?: Layer.Layer<StackApi>;
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -102,7 +106,9 @@ function buildResolver(
       ),
     ),
   );
-  return dbConfigLayer.pipe(Layer.provide(deps));
+  return opts.stackApi === undefined
+    ? dbConfigLayer.pipe(Layer.provide(deps))
+    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(deps, opts.stackApi)));
 }
 
 function withWorkdir(toml?: string) {
@@ -306,6 +312,22 @@ describe("dbConfigResolver (local + db-url)", () => {
     );
   });
 
+  it.effect("db-url mode: a multi-host url stays remote even when its primary is local", () => {
+    const dir = withWorkdir();
+    return resolve(
+      dir,
+      dbUrlFlags("postgres://postgres:pw@127.0.0.1:54322,db.example.com:5432/postgres"),
+    ).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+          expect(r.isLocal).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("db-url mode: a passwordless local url fills the password from config", () => {
     const dir = withWorkdir(["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"));
     return resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres")).pipe(
@@ -394,6 +416,195 @@ describe("dbConfigResolver (local + db-url)", () => {
         ),
       );
     },
+  );
+});
+
+describe("dbConfigResolver (db-url under the stack backend)", () => {
+  const STACK_SQL_PORT = 54329;
+  const stackUrl = (port: number) =>
+    `postgresql://supabase_admin:postgres@127.0.0.1:${port}/postgres?connect_timeout=10`;
+
+  type StackState = "running" | "stopped" | "unregistered";
+
+  const projectStackApi = (root: string, state: StackState) => {
+    const unused = Effect.die("unused by the resolver");
+    const database: DatabaseInstance = {
+      id: "database-primary",
+      service: "database",
+      start: unused,
+      ready: unused,
+      stop: unused,
+      restart: () => unused,
+      destroy: unused,
+      prepare: unused,
+      status: Effect.succeed({
+        id: "database-primary",
+        endpoints:
+          state === "running"
+            ? [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }]
+            : [],
+        config: {
+          service: "database",
+          config: {
+            version: "17.6.1.173",
+            databasePassword: Redacted.make("stack-password"),
+            jwtSecret: Redacted.make("secret"),
+            jwtExpiry: 3600,
+          },
+          endpoints: {},
+        },
+        lifecycle: state === "running" ? "running" : "stopped",
+        health: state === "running" ? "healthy" : undefined,
+        error: undefined,
+        cleanupError: undefined,
+        exit: undefined,
+        currentOperation: undefined,
+        launchId: undefined,
+        intentRevision: 0,
+        wakeEnabled: state === "running",
+        registered: true,
+      }),
+      followStatus: Stream.empty,
+      logs: Stream.empty,
+      credentials: () => unused,
+      saveSnapshot: () => unused,
+      restoreSnapshot: () => unused,
+      resetData: unused,
+    };
+    const stack: Stack = {
+      id: "b".repeat(64),
+      services: { create: () => unused, get: () => Effect.succeed(database), list: unused },
+      credentials: { get: unused },
+      composition: {
+        plan: () => unused,
+        describe: Effect.succeed({
+          members: [{ id: database.id, activation: "eager" }],
+          dependencies: [],
+        }),
+        supabase: () => unused,
+        configure: () => unused,
+        start: unused,
+        stop: unused,
+        restart: unused,
+      },
+      stop: unused,
+      destroy: unused,
+      commands: { run: () => unused },
+    };
+    return Layer.succeed(StackApi, {
+      create: () => unused,
+      open: () => Effect.succeed(stack),
+      discover: () => unused,
+      find: () =>
+        Effect.succeed(
+          state !== "unregistered"
+            ? Option.some({
+                definition: {
+                  id: stack.id,
+                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  runtime: "native" as const,
+                  instances: [],
+                  lifetime: "detached" as const,
+                  composition: { members: [], dependencies: [] },
+                  ports: [],
+                },
+                host: undefined,
+              })
+            : Option.none(),
+        ),
+    });
+  };
+
+  const resolveOnStack = (
+    dir: string,
+    url: string,
+    stackApi: Layer.Layer<StackApi> = projectStackApi(dir, "running"),
+  ) =>
+    resolve(dir, dbUrlFlags(url), { stackApi }).pipe(
+      Effect.provide(stackBackendLayer("stack")),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+
+  it.effect("treats the url printed by `stack status --env` as the local database", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(withWorkdir(), stackUrl(STACK_SQL_PORT));
+      expect(resolved.isLocal).toBe(true);
+    }),
+  );
+
+  it.effect("fills a passwordless stack url from the stack's credentials, not [db].password", () =>
+    Effect.gen(function* () {
+      const dir = withWorkdir(["[db]", 'password = "config-password"', ""].join("\n"));
+      const resolved = yield* resolveOnStack(
+        dir,
+        `postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`,
+      );
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }),
+  );
+
+  it.effect("keeps a loopback url on another port remote so it still requires TLS", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(withWorkdir(), stackUrl(STACK_SQL_PORT + 1));
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+
+  it.effect("fills from the stack's credentials when the stack port is also [db].port", () =>
+    Effect.gen(function* () {
+      const dir = withWorkdir(
+        ["[db]", `port = ${STACK_SQL_PORT}`, 'password = "config-password"', ""].join("\n"),
+      );
+      const resolved = yield* resolveOnStack(
+        dir,
+        `postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`,
+      );
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }),
+  );
+
+  for (const state of ["unregistered", "stopped"] as const) {
+    it.effect(`resolves the stack url as remote when the project stack is ${state}`, () =>
+      Effect.gen(function* () {
+        const dir = withWorkdir();
+        const resolved = yield* resolveOnStack(
+          dir,
+          stackUrl(STACK_SQL_PORT),
+          projectStackApi(dir, state),
+        );
+        expect(resolved.isLocal).toBe(false);
+      }),
+    );
+  }
+
+  it.effect("keeps a multi-host url remote even when its primary is the stack endpoint", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@127.0.0.1:${STACK_SQL_PORT},db.example.com:5432/postgres`,
+      );
+      expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+
+  it.effect("does not consult the stack for a non-loopback host", () =>
+    Effect.gen(function* () {
+      const untouchedStackApi = Layer.succeed(StackApi, {
+        create: () => Effect.die("unexpected stack create"),
+        open: () => Effect.die("unexpected stack open"),
+        discover: () => Effect.die("unexpected stack discover"),
+        find: () => Effect.die("unexpected stack lookup"),
+      });
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@db.example.com:${STACK_SQL_PORT}/postgres`,
+        untouchedStackApi,
+      );
+      expect(resolved.isLocal).toBe(false);
+    }),
   );
 });
 

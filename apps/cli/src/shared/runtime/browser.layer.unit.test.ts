@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Sink, Stream } from "effect";
+import { ConfigProvider, Effect, Layer, PlatformError, Sink, Stream } from "effect";
 import { FileSystem } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
@@ -142,7 +142,16 @@ describe("Browser", () => {
   it.effect("errors are ignored when spawner fails", () => {
     const failingLayer = Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() => Effect.fail(new Error("spawn failed") as any)),
+      ChildProcessSpawner.make(() =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "Unknown",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          }),
+        ),
+      ),
     );
     const configLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
     const layer = Layer.mergeAll(
