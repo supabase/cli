@@ -85,11 +85,25 @@ updates:
         update-types:
           - minor
           - patch
+    # These lines are generated from packages/stack/src/Artifacts.ts (the single version table
+    # for slim-capable services); updates to them arrive through slim-release-published.yml, not
+    # Dependabot. Dependabot keeps bumping only the upstream-only images the Dockerfile still
+    # hand-manages: kong, and the job images (migra, pg_prove, pgadmin-schema-diff).
     ignore:
       - dependency-name: "library/kong"
       - dependency-name: "axllent/mailpit"
       - dependency-name: "darthsim/imgproxy"
       - dependency-name: "timberio/vector"
+      - dependency-name: "supabase/postgres"
+      - dependency-name: "supabase/gotrue"
+      - dependency-name: "postgrest/postgrest"
+      - dependency-name: "supabase/realtime"
+      - dependency-name: "supabase/storage-api"
+      - dependency-name: "supabase/edge-runtime"
+      - dependency-name: "supabase/studio"
+      - dependency-name: "supabase/postgres-meta"
+      - dependency-name: "supabase/logflare"
+      - dependency-name: "supabase/supavisor"
     cooldown:
       default-days: 7
       exclude:
