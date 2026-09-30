@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect";
-import { makeHostGateway } from "./Container.ts";
+import { ContainerError, makeHostGateway } from "./Container.ts";
 
 const gatewayAddress = "192.168.65.254";
 
@@ -47,6 +47,21 @@ describe("host gateway", () => {
       expect(yield* Ref.get(later.runs)).toBe(1);
       expect(yield* gateway.resolve(later.probe)).toBe(gatewayAddress);
       expect(yield* Ref.get(later.runs)).toBe(1);
+    }),
+  );
+
+  it.effect("caches a probe failure for later resolves without probing again", () =>
+    Effect.gen(function* () {
+      const gateway = yield* makeHostGateway;
+      const runs = yield* Ref.make(0);
+      const unsupported = new ContainerError({ operation: "host-gateway", message: "unsupported" });
+      const probe = Ref.update(runs, (count) => count + 1).pipe(
+        Effect.andThen(Effect.fail(unsupported)),
+      );
+
+      expect(yield* Effect.flip(gateway.resolve(probe))).toBe(unsupported);
+      expect(yield* Effect.flip(gateway.resolve(probe))).toBe(unsupported);
+      expect(yield* Ref.get(runs)).toBe(1);
     }),
   );
 

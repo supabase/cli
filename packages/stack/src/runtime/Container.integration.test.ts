@@ -386,6 +386,145 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("maps the host alias to the engine's own host address when it rejects host-gateway", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(delegate, probes, (attempt) =>
+              attempt === 1 ? hostGatewayRejectionScript : podmanHostsScript,
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "host-alias-engine-host",
+          env: {},
+          args: ["-e", "process.exit(0)"],
+        });
+        expect(yield* process.exitCode).toBe(0);
+        expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
+        expect(yield* Ref.get(probes)).toBe(2);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("retries the engine host probe after it fails transiently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(delegate, probes, (attempt) =>
+              attempt === 2
+                ? `console.error("daemon busy"); process.exit(1)`
+                : attempt === 4
+                  ? podmanHostsScript
+                  : hostGatewayRejectionScript,
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "host-alias-engine-host-retry",
+          env: {},
+          args: ["-e", "process.exit(0)"],
+        });
+        expect(yield* process.exitCode).toBe(0);
+        expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
+        expect(yield* Ref.get(probes)).toBe(4);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails launches actionably when an engine rejecting host-gateway maps no IPv4 host", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const probes = yield* Ref.make(0);
+      const runtime = yield* makeContainerRuntime({
+        engine: "docker",
+        root: ".",
+        hostGateway: yield* makeHostGateway,
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeHostGatewayProbeSpawner(delegate, probes, (attempt) =>
+            attempt === 1
+              ? hostGatewayRejectionScript
+              : `console.log("127.0.0.1\\tlocalhost\\n::1\\thost.containers.internal")`,
+          ),
+        ),
+      );
+      yield* runtime.prepare(image);
+      for (const instanceId of ["host-alias-unsupported-a", "host-alias-unsupported-b"]) {
+        const failure = yield* Effect.scoped(
+          runtime.launchCommand({
+            image,
+            stackId: "e".repeat(64),
+            instanceId,
+            env: {},
+            args: ["-e", "process.exit(0)"],
+          }),
+        ).pipe(Effect.flip);
+        expect(failure._tag).toBe("ContainerError");
+        expect(failure.message).toContain("upgrade Podman or use --runtime podman");
+      }
+      expect(yield* Ref.get(probes)).toBe(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("recreates an unawaited launch the engine rejects for host-gateway", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const database = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+          awaitHostGateway: false,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(
+              makeHostGatewayRejectingCreateSpawner(delegate),
+              probes,
+              (attempt) => (attempt === 1 ? hostGatewayRejectionScript : podmanHostsScript),
+            ),
+          ),
+        );
+        yield* database.prepare(image);
+        const process = yield* database.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "host-alias-recreated",
+          env: {},
+          args: ["-e", "process.exit(0)"],
+        });
+        expect(yield* process.exitCode).toBe(0);
+        expect(yield* inspectExtraHosts(process.id)).toContain(`${DOCKER_HOST_ALIAS}:10.88.0.1`);
+        expect(yield* Ref.get(probes)).toBe(2);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("names and labels a service container for compose-style grouping", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1190,6 +1329,27 @@ const makePullFailureSpawner = (
       });
     return delegate.spawn(command);
   });
+
+const hostGatewayRejectionScript = `console.error(${JSON.stringify(
+  'Error response from daemon: invalid IP address in add-host: "host-gateway"',
+)}); process.exit(125)`;
+
+const podmanHostsScript = `console.log("10.88.0.1\\thost.containers.internal host.docker.internal")`;
+
+/** Rejects a `docker create` that maps the host alias to `host-gateway`, as older Podman does. */
+const makeHostGatewayRejectingCreateSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
+  ChildProcessSpawner.make((command) =>
+    ChildProcess.isStandardCommand(command) &&
+    command.command === "docker" &&
+    command.args[0] === "create" &&
+    command.args.includes(`${DOCKER_HOST_ALIAS}:host-gateway`)
+      ? delegate.spawn(
+          ChildProcess.make(process.execPath, ["-e", hostGatewayRejectionScript], {
+            stdin: "ignore",
+          }),
+        )
+      : delegate.spawn(command),
+  );
 
 /**
  * Replaces a host-gateway probe with the script `fake` returns for its attempt, if any; a probe
