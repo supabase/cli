@@ -127,9 +127,18 @@ jobs:
             exit 0
           fi
 
+          # A recorded failure is only saved after its alert was posted, so a
+          # recovery posts at most once per reported failure.
+          header=""
           if [[ "$CURRENT_SUITE" == success ]]; then
             new_state=passing
-            echo "Action: recorded ${BRANCH} as passing"
+            if [[ "$recorded_state" == failing ]]; then
+              header="✅ Live E2E recovered"
+              text="Live E2E recovered"
+              detail="Live E2E is passing again after the failure reported earlier."
+            else
+              echo "Action: recorded ${BRANCH} as passing"
+            fi
           else
             new_state=failing
             if [[ "$recorded_state" == failing ]]; then
@@ -147,12 +156,15 @@ jobs:
                 text="Live E2E failed"
                 detail="The ${WORKFLOW_NAME} live suite failed."
               fi
-              run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
-              commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
-              payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
-              curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
-              echo "Action: posted ${text}"
             fi
+          fi
+
+          if [[ -n "$header" ]]; then
+            run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+            commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
+            payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
+            curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+            echo "Action: posted ${text}"
           fi
 
           printf '%s\n%s\n' "$new_state" "$SOURCE_CREATED_AT" > "${state_dir}/state"
