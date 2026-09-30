@@ -24,7 +24,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-import { resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -49,12 +49,21 @@ import * as Pooler from "./Pooler.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
-  readonly version: "v16.4";
+  readonly version: string;
 };
+
+// The real catalog's default postgrest pin, not hardcoded — `makeProcessRecipe` resolves this
+// through the real catalog, which would otherwise fail once a bump moves past a literal.
+const postgrestVersion = catalogPins().find(
+  (entry) => entry.sourceService === "postgrest" && entry.isDefault,
+)?.pin.upstreamVersion;
+if (postgrestVersion === undefined) {
+  throw new Error("no default postgrest catalog pin found");
+}
 
 const creation: TestCreation = {
   service: "rest",
-  version: "v16.4",
+  version: postgrestVersion,
   config: {},
 };
 

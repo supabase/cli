@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { resolveArtifact } from "../Artifacts.ts";
+import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
@@ -10,7 +10,8 @@ import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
 
-const version = "17.11.0.002";
+// Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
+const version = postgresVersion("17");
 
 class ShellError extends Data.TaggedError("ShellError")<{ readonly message: string }> {}
 
@@ -510,8 +511,10 @@ for (const { name, make } of engines)
           const saved = yield* shell(`${tool}cat ${descriptor}`);
           const target = yield* engine.instance("target");
 
+          // Any version different from `version` proves the mismatch check; this one is a
+          // synthetic sentinel, not a real catalog pin, so it stays correct across catalog bumps.
           yield* shell(
-            `printf '%s' ${shellQuote(saved.replace(version, "15.19.0.002"))} > ${descriptor}`,
+            `printf '%s' ${shellQuote(saved.replace(version, "0.0.0-version-mismatch"))} > ${descriptor}`,
           );
           expect(yield* target.restoreSnapshot("key")).toBe(false);
           expect(yield* contents(target.data)).toBe("");

@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import { TestClock } from "effect/testing";
-import { resolveArtifact } from "../Artifacts.ts";
+import { catalogPins, resolveArtifact } from "../Artifacts.ts";
 import { initialization } from "../Commands.ts";
 import {
   makeArtifactStore,
@@ -21,6 +21,14 @@ const target =
       : process.platform === "linux" && process.arch === "arm64"
         ? "linux-arm64"
         : undefined;
+
+// The real catalog's default auth pin, not hardcoded — `resolveArtifact({ service: "auth",
+// version })` below would otherwise fail once a catalog bump moves past a literal.
+const authVersion = catalogPins().find((entry) => entry.sourceService === "auth" && entry.isDefault)
+  ?.pin.upstreamVersion;
+if (authVersion === undefined) {
+  throw new Error("no default auth catalog pin found");
+}
 
 const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: string) {
   if (target === undefined) return yield* Effect.fail("Unsupported test platform");
@@ -96,7 +104,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const error = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.197.0",
+              version: authVersion,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -139,7 +147,7 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.197.0",
+              version: authVersion,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
@@ -197,7 +205,7 @@ it.effect.skipIf(target === undefined || process.platform === "win32")(
         const command = yield* runner
           .run({
             command: initialization.auth({
-              version: "v2.197.0",
+              version: authVersion,
               databaseUrl: "postgresql://invalid:invalid@127.0.0.1:1/postgres",
             }),
             credentials,
