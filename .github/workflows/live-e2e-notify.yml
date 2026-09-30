@@ -79,66 +79,83 @@ jobs:
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           SHA: ${{ github.event.workflow_run.head_sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_CREATED_AT: ${{ github.event.workflow_run.created_at }}
           CURRENT_SUITE: ${{ needs.classify.outputs.suite }}
           STARTUP_FAILURE: ${{ needs.classify.outputs.startup_failure }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
         run: |
           set -euo pipefail
 
-          # The artifact records what this notifier last reported for the branch;
-          # reruns and repeated results dedupe against it. Fork runs can upload
-          # artifacts with the same name, so only same-repository runs count.
+          # The artifact holds the newest applied result and its source run's creation
+          # time, so late older results are ignored. Fork runs can upload the same
+          # artifact name, so only same-repository runs count.
           branch_digest="$(printf '%s' "$BRANCH" | sha256sum | cut -c1-12)"
           state_artifact="live-e2e-alert-state-${BRANCH//[^A-Za-z0-9._-]/-}-${branch_digest}"
           state_dir="${RUNNER_TEMP}/live-e2e-alert-state"
           mkdir -p "$state_dir"
+
+          artifact_id=""
+          lookup_ok=true
+          for page in $(seq 1 20); do
+            if ! artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=100 -F "page=${page}")"; then
+              lookup_ok=false
+              break
+            fi
+            artifact_id="$(jq -r '[.artifacts[]? | select(.expired != true and .workflow_run.repository_id != null and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last // empty | .id' <<< "$artifacts")"
+            if [[ -n "$artifact_id" ]] || (( $(jq '.artifacts | length' <<< "$artifacts") < 100 )); then
+              break
+            fi
+          done
+
           recorded_state=unknown
-          if artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=100)"; then
-            artifact_id="$(jq -r 'first(.artifacts[]? | select(.workflow_run.repository_id != null and .workflow_run.head_repository_id == .workflow_run.repository_id)) // empty | select(.expired != true) | .id' <<< "$artifacts")"
-            if [[ -z "$artifact_id" ]]; then
-              recorded_state=none
-            elif gh api "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${state_dir}/previous.zip" \
-              && stored="$(unzip -p "${state_dir}/previous.zip" state)" \
-              && [[ "$stored" == failing || "$stored" == passing ]]; then
-              recorded_state="$stored"
+          recorded_at=""
+          if [[ "$lookup_ok" == true && -z "$artifact_id" ]]; then
+            recorded_state=none
+          elif [[ -n "$artifact_id" ]] \
+            && gh api "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${state_dir}/previous.zip" \
+            && stored="$(unzip -p "${state_dir}/previous.zip" state)"; then
+            stored_state="$(sed -n 1p <<< "$stored")"
+            if [[ "$stored_state" == failing || "$stored_state" == passing ]]; then
+              recorded_state="$stored_state"
+              recorded_at="$(sed -n 2p <<< "$stored")"
             fi
           fi
-          echo "Recorded state for ${BRANCH}: ${recorded_state}"
+          echo "Recorded state for ${BRANCH}: ${recorded_state} (source created ${recorded_at:-unknown}); this run's source created ${SOURCE_CREATED_AT}"
 
-          # Passes are not posted; recording them re-arms the next failure alert.
+          if [[ -n "$recorded_at" && "$SOURCE_CREATED_AT" < "$recorded_at" ]]; then
+            echo "Action: none (a newer suite result is already recorded)"
+            exit 0
+          fi
+
           if [[ "$CURRENT_SUITE" == success ]]; then
-            if [[ "$recorded_state" != failing && "$recorded_state" != unknown ]]; then
-              echo "Action: none (no open failure)"
-              exit 0
-            fi
             new_state=passing
             echo "Action: recorded ${BRANCH} as passing"
           else
-            if [[ "$recorded_state" == failing ]]; then
-              echo "Action: none (failure already reported)"
-              exit 0
-            fi
-            if [[ "$recorded_state" == unknown ]]; then
-              echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
-            fi
             new_state=failing
-            if [[ "$STARTUP_FAILURE" == true ]]; then
-              header="❌ Live E2E failed to start"
-              text="Live E2E failed to start"
-              detail="The Live E2E workflow failed before it produced a Live e2e job."
+            if [[ "$recorded_state" == failing ]]; then
+              echo "Action: recorded ${BRANCH} as failing (failure already reported)"
             else
-              header="❌ Live E2E failed"
-              text="Live E2E failed"
-              detail="The ${WORKFLOW_NAME} live suite failed."
+              if [[ "$recorded_state" == unknown ]]; then
+                echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
+              fi
+              if [[ "$STARTUP_FAILURE" == true ]]; then
+                header="❌ Live E2E failed to start"
+                text="Live E2E failed to start"
+                detail="The Live E2E workflow failed before it produced a Live e2e job."
+              else
+                header="❌ Live E2E failed"
+                text="Live E2E failed"
+                detail="The ${WORKFLOW_NAME} live suite failed."
+              fi
+              run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+              commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
+              payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
+              curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+              echo "Action: posted ${text}"
             fi
-            run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
-            commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
-            payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
-            curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
-            echo "Action: posted ${text}"
           fi
 
-          printf '%s\n' "$new_state" > "${state_dir}/state"
+          printf '%s\n%s\n' "$new_state" "$SOURCE_CREATED_AT" > "${state_dir}/state"
           {
             echo "state=${new_state}"
             echo "artifact=${state_artifact}"
