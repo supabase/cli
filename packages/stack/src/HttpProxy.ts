@@ -326,7 +326,6 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute, agent: Agent) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      // Only replayable requests share pooled connections; the retry always opens a fresh one.
       yield* forward(request, response, route, backend, isReplayable(request) ? agent : false).pipe(
         Effect.catchIf(isRetryable(request, response), (error) =>
           Effect.logWarning(
