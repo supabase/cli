@@ -1,12 +1,23 @@
 import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, FileSystem, Layer, Path, Redacted, Ref, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Redacted,
+  Ref,
+  Stream,
+} from "effect";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
-import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
 
 const config: DatabaseConfig = {
   version: "17",
@@ -23,6 +34,7 @@ const query = (
   password: Redacted.Redacted<string>,
   statement: string,
   database = "postgres",
+  username = "supabase_admin",
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -32,7 +44,7 @@ const query = (
           host,
           port: endpoint.port,
           database,
-          username: "supabase_admin",
+          username,
           password,
         }),
       );
@@ -143,6 +155,61 @@ describe("database component", { timeout: 180_000 }, () => {
           }),
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
+
+  it.live("requires passwords from non-superusers on the native socket", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-hba-" });
+        const database = yield* makeDatabase({
+          stackId: "stack-integration",
+          instanceId: "hba",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeService(database.definition, { id: "database:hba", config });
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            "SELECT rolsuper FROM pg_roles WHERE rolname = 'postgres'",
+          ),
+        ).toEqual([{ rolsuper: false }]);
+        const rejected = yield* query(
+          endpoint,
+          Redacted.make("wrong-password"),
+          "SELECT 1",
+          "postgres",
+          "postgres",
+        ).pipe(Effect.flip);
+        expect(Predicate.isTagged(rejected.reason, "AuthenticationError")).toBe(true);
+        yield* query(
+          endpoint,
+          config.databasePassword,
+          "CREATE EXTENSION dblink; CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
+        );
+        const connected = yield* query(
+          endpoint,
+          config.databasePassword,
+          "SELECT dblink_connect(format('host=%s port=%s dbname=postgres user=dblink_probe password=probe-password', current_setting('unix_socket_directories'), current_setting('port'))) AS status",
+          "postgres",
+          "postgres",
+        );
+        expect(connected).toEqual([{ status: "OK" }]);
+        const rotated = Redacted.make("rotated-password");
+        yield* service.restart({ ...config, databasePassword: rotated });
+        yield* service.ready;
+        expect(
+          yield* query(yield* database.endpoint, rotated, "SELECT 1 AS ok", "postgres", "postgres"),
+        ).toEqual([{ ok: 1 }]);
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
 
   it.live(
     "persists SQL data across exact-session stop and reopen, isolates instances, and validates restart before stopping",
@@ -392,4 +459,135 @@ describe("database component", { timeout: 180_000 }, () => {
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
+
+  it.live("groups the database and its storage helper under one compose project", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const stackId = "stack-compose-group";
+        const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
+        const database = yield* makeDatabase({
+          stackId,
+          instanceId: "database",
+          project: "my.app",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "docker",
+        });
+        const service = yield* makeService(database.definition, {
+          id: "database:group",
+          config,
+        });
+        yield* service.start;
+        yield* service.ready;
+        const listed = yield* runDocker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack-root=${path.resolve(root)}`,
+          "--format",
+          '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+        ]);
+        const rows = listed.output
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => line.trim().split("|"));
+        expect(rows.some(([name]) => name?.startsWith("supabase-db-helper-"))).toBe(true);
+        expect(new Set(rows.map(([, project]) => project))).toEqual(
+          new Set(["supabase-my-app-stack-compos"]),
+        );
+        expect(new Set(rows.map(([, , group]) => group))).toEqual(
+          new Set(["database", "database-helper"]),
+        );
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("shuts PostgreSQL down fast while a client stays connected across stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const stackId = "stack-fast-shutdown";
+        const root = yield* makeDockerDatabaseRoot("stack-database-shutdown-", stackId);
+        const database = yield* makeDatabase({
+          stackId,
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "docker",
+        });
+        const service = yield* makeService(database.definition, {
+          id: "database:shutdown",
+          config: { ...config, stopGraceSeconds: 30 },
+        });
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        if (endpoint.kind !== "tcp") return yield* Effect.die("Expected a TCP endpoint");
+        const listed = yield* runDocker([
+          "ps",
+          "--filter",
+          `label=com.supabase.stack-root=${path.resolve(root)}`,
+          "--filter",
+          "label=com.supabase.instance=database",
+          "--format",
+          "{{.Names}}",
+        ]);
+        // The shared volume helper carries the same stack-root/instance labels; exclude it by name.
+        const containers = listed.output
+          .split("\n")
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0 && !name.startsWith("supabase-db-helper-"));
+        expect(containers).toHaveLength(1);
+        const container = containers.join("");
+        const startedAt = yield* runDocker([
+          "inspect",
+          "--format",
+          "{{.State.StartedAt}}",
+          container,
+        ]);
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const services = yield* Layer.build(
+              PgClient.layer({
+                host: endpoint.host,
+                port: endpoint.port,
+                database: "postgres",
+                username: "supabase_admin",
+                password: config.databasePassword,
+              }),
+            );
+            const connection = yield* Context.get(services, PgClient.PgClient).reserve;
+            expect(yield* connection.executeUnprepared("SELECT 1 AS ok", [], undefined)).toEqual([
+              { ok: 1 },
+            ]);
+            yield* service.stop;
+          }),
+        );
+
+        const stoppedAt = yield* runDocker(["info", "--format", "{{.SystemTime}}"]);
+        const events = yield* runDocker([
+          "events",
+          "--since",
+          startedAt.output.trim(),
+          "--until",
+          stoppedAt.output.trim(),
+          "--filter",
+          `container=${container}`,
+          "--filter",
+          "event=kill",
+          "--filter",
+          "event=die",
+          "--format",
+          '{{.Action}} {{index .Actor.Attributes "signal"}}{{index .Actor.Attributes "exitCode"}}',
+        ]);
+        expect(
+          events.output.trim().split("\n"),
+          "stop sends SIGINT and PostgreSQL exits cleanly",
+        ).toEqual(["kill 2", "die 0"]);
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
 });

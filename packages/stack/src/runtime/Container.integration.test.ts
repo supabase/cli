@@ -8,17 +8,30 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
+  Layer,
   Option,
+  Path,
   Ref,
+  Schema,
   Sink,
   Stream,
 } from "effect";
+import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import { ContainerLaunchError, makeContainerRuntime, type ContainerProcess } from "./Container.ts";
 
-const image = "oven/bun:1.4.1-slim";
+const image = await Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* path.fromFileUrl(new URL("../../../../.bun-version", import.meta.url));
+  const version = yield* fs.readFileString(file);
+  return `oven/bun:${version.trim()}-slim`;
+}).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+const stoppableIdleScript =
+  "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
 class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly message: string;
@@ -104,7 +117,7 @@ describe("container process adapter", () => {
         Effect.gen(function* () {
           const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
           yield* runtime.prepare(image);
-          const process = yield* runtime.launchTool({
+          const process = yield* runtime.launchCommand({
             image,
             stackId: "e".repeat(64),
             instanceId: "tool-input",
@@ -133,6 +146,53 @@ describe("container process adapter", () => {
       );
       expect(yield* exists(id)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("names and labels a service container for compose-style grouping", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launch({
+          image,
+          stackId: "9".repeat(64),
+          instanceId: "naming-service",
+          project: "My Cool App",
+          service: "auth",
+          env: {},
+          args: ["-e", stoppableIdleScript],
+        });
+        expect(process.id).toMatch(/^supabase-My-Cool-App-auth-[0-9a-f]{12}$/u);
+        const labels = yield* inspectLabels(process.id);
+        expect(labels["com.supabase.service"]).toBe("auth");
+        expect(labels["com.docker.compose.project"]).toBe(`supabase-my-cool-app-${"9".repeat(12)}`);
+        expect(labels["com.docker.compose.service"]).toBe("auth");
+        expect(labels["com.docker.compose.oneoff"]).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("marks a one-shot container's name and compose labels as a task", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "9".repeat(64),
+          instanceId: "naming-task",
+          project: "My Cool App",
+          service: "auth",
+          env: {},
+          args: ["-e", "process.exit(0)"],
+        });
+        expect(process.id).toMatch(/^supabase-My-Cool-App-auth-task-[0-9a-f]{12}$/u);
+        const labels = yield* inspectLabels(process.id);
+        expect(labels["com.supabase.service"]).toBe("auth");
+        expect(labels["com.docker.compose.service"]).toBe("auth");
+        expect(labels["com.docker.compose.oneoff"]).toBe("True");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(
@@ -172,6 +232,32 @@ describe("container process adapter", () => {
           yield* Fiber.interrupt(secondReady);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops a container with its configured stop signal", () =>
+    Effect.gen(function* () {
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      yield* runtime.prepare(image);
+      const process = yield* runtime.launch({
+        image,
+        stackId: "r".repeat(64),
+        instanceId: "stop-signal",
+        env: {},
+        args: [
+          "-e",
+          "process.on('SIGINT', () => process.exit(3)); setInterval(() => {}, 1000); console.log('ready')",
+        ],
+        stopSignal: "SIGINT",
+        stopGraceSeconds: 20,
+      });
+      const logs = yield* ready(process);
+
+      yield* process.stop;
+      expect(yield* process.exitCode).toBe(3);
+
+      yield* process.remove;
+      yield* Fiber.interrupt(logs);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("waits until a discarded container stops before returning", () =>
@@ -254,6 +340,71 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("releases a log follower that exits while its container keeps running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const released = yield* Deferred.make<void>();
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeLogFollowerSpawner(
+              delegate,
+              released,
+              "console.error('injected log stream failure'); process.exit(1)",
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launch({
+          image,
+          stackId: "s".repeat(64),
+          instanceId: "dropped-log-follower",
+          env: {},
+          args: ["-e", "setInterval(() => {}, 1000)"],
+        });
+        yield* Deferred.await(released).pipe(Effect.timeout("10 seconds"));
+        expect(
+          yield* process.stderr.pipe(
+            Stream.decodeText,
+            Stream.mkString,
+            Effect.timeout("10 seconds"),
+          ),
+        ).toContain("injected log stream failure");
+        expect(yield* running(process.id)).toBe(true);
+        yield* process.discard;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("releases a still running log follower when its launch scope closes", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const released = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makeLogFollowerSpawner(delegate, released, "setInterval(() => {}, 1000)"),
+            ),
+          );
+          yield* runtime.prepare(image);
+          const process = yield* runtime.launch({
+            image,
+            stackId: "t".repeat(64),
+            instanceId: "live-log-follower",
+            env: {},
+            args: ["-e", "setInterval(() => {}, 1000)"],
+          });
+          expect(yield* Deferred.isDone(released)).toBe(false);
+          yield* process.discard;
+        }),
+      );
+      expect(yield* Deferred.isDone(released)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("treats an externally removed container as already stopped", () =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
@@ -269,7 +420,7 @@ describe("container process adapter", () => {
               stackId: "x".repeat(64),
               instanceId,
               env: {},
-              args: ["-e", "setInterval(() => {}, 1000)"],
+              args: ["-e", stoppableIdleScript],
             });
             yield* removeExternally(process.id);
             yield* process.stop;
@@ -301,7 +452,7 @@ describe("container process adapter", () => {
                 stackId: "k".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -338,7 +489,7 @@ describe("container process adapter", () => {
                 stackId: "l".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -380,7 +531,7 @@ describe("container process adapter", () => {
                 stackId: "m".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -424,7 +575,7 @@ describe("container process adapter", () => {
                 stackId: "n".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               yield* process.remove;
@@ -463,7 +614,7 @@ describe("container process adapter", () => {
                 stackId: "p".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const removeResult = yield* process.remove.pipe(Effect.exit);
@@ -510,7 +661,7 @@ describe("container process adapter", () => {
                 stackId: "o".repeat(64),
                 instanceId,
                 env: {},
-                args: ["-e", "setInterval(() => {}, 1000)"],
+                args: ["-e", stoppableIdleScript],
               });
               yield* process.stop;
               const remover = yield* process.remove.pipe(
@@ -706,6 +857,47 @@ describe("container process adapter", () => {
       expect(yield* Ref.get(present)).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("bounds a hung docker create and removes the container it may still create", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeHangingCreateSpawner();
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+        Effect.provide(engine.layer),
+      );
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "i".repeat(64), instanceId: "hung-create", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.exit, Effect.forkChild);
+      yield* Deferred.await(engine.createStarted);
+      yield* TestClock.adjust("2 minutes");
+      const result = yield* Fiber.join(launch);
+      expect(Exit.isFailure(result)).toBe(true);
+      const failure = Exit.isFailure(result)
+        ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+        : undefined;
+      expect(failure instanceof ContainerLaunchError).toBe(true);
+      expect(
+        failure instanceof ContainerLaunchError ? failure.failure.message : undefined,
+      ).toContain("did not respond");
+      expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("removes the container a hung docker create may still create when interrupted", () =>
+    Effect.gen(function* () {
+      const engine = yield* makeHangingCreateSpawner();
+      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+        Effect.provide(engine.layer),
+      );
+      const launch = yield* Effect.scoped(
+        runtime.launch({ image, stackId: "i".repeat(64), instanceId: "interrupted", env: {} }),
+      ).pipe(Effect.provide(engine.layer), Effect.forkChild);
+      yield* Deferred.await(engine.createStarted);
+      yield* Fiber.interrupt(launch);
+      expect(Exit.hasInterrupts(yield* Fiber.await(launch))).toBe(true);
+      expect(engine.createdName()).toMatch(/^supabase-/u);
+      expect(engine.commands).toContainEqual(["rm", "--force", engine.createdName()]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 const repoDigest = (spawner: ChildProcessSpawnerService["Service"], image: string) =>
@@ -782,6 +974,26 @@ const makeStopFailureSpawner = (
         );
       });
     }
+    return delegate.spawn(command);
+  });
+
+const makeLogFollowerSpawner = (
+  delegate: ChildProcessSpawnerService["Service"],
+  released: Deferred.Deferred<void>,
+  script: string,
+) =>
+  ChildProcessSpawner.make((command) => {
+    if (
+      ChildProcess.isStandardCommand(command) &&
+      command.command === "docker" &&
+      command.args[0] === "logs"
+    )
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+        return yield* delegate.spawn(
+          ChildProcess.make(process.execPath, ["-e", script], { stdin: "ignore" }),
+        );
+      });
     return delegate.spawn(command);
   });
 
@@ -1034,6 +1246,44 @@ const successfulHandle = () =>
     unref: Effect.succeed(Effect.void),
   });
 
+const makeHangingCreateSpawner = Effect.fn("ContainerTest.hangingCreateSpawner")(function* () {
+  const commands: string[][] = [];
+  const createStarted = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (!ChildProcess.isStandardCommand(command)) return Effect.die("unexpected piped command");
+    commands.push([...command.args]);
+    if (command.args[0] !== "create") return Effect.succeed(successfulHandle());
+    // The engine never answers create; the real daemon may or may not have committed it.
+    return Deferred.succeed(createStarted, undefined).pipe(
+      Effect.as(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(0),
+          exitCode: Effect.never,
+          isRunning: Effect.succeed(true),
+          kill: () => Effect.void,
+          stdin: Sink.drain,
+          stdout: Stream.empty,
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+          unref: Effect.succeed(Effect.void),
+        }),
+      ),
+    );
+  });
+  const createdName = () => {
+    const args = commands.find((command) => command[0] === "create") ?? [];
+    return args[args.indexOf("--name") + 1];
+  };
+  return {
+    commands,
+    createStarted,
+    createdName,
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  };
+});
+
 const ready = (process: ContainerProcess) =>
   Effect.gen(function* () {
     const signal = yield* Deferred.make<void>();
@@ -1060,6 +1310,20 @@ const exists = (id: string) =>
       }),
     );
     return Number(yield* child.exitCode) === 0;
+  });
+
+const inspectLabels = (id: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make("docker", ["inspect", "--format={{json .Config.Labels}}", id], {
+        stdin: "ignore",
+      }),
+    );
+    const output = yield* child.stdout.pipe(Stream.decodeText, Stream.mkString);
+    return yield* Schema.decodeEffect(
+      Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+    )(output.trim());
   });
 
 const removeExternally = (id: string) =>

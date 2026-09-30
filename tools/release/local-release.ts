@@ -16,8 +16,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { oxfmtStubPlugin } from "../../apps/cli/scripts/bundle-externals.ts";
-import { compileOptions } from "../../apps/cli/scripts/compile-options.ts";
+import { compileOptions, stackReleaseDefine } from "../../apps/cli/scripts/compile-options.ts";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
@@ -188,7 +187,7 @@ async function main() {
       entrypoints: [entrypoint],
       compile: { target: platform.bunTarget, outfile: bunBinary },
       ...compileOptions,
-      plugins: [oxfmtStubPlugin],
+      define: await stackReleaseDefine(),
     });
     for (const log of buildResult.logs) {
       console.warn(log);

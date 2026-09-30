@@ -1,7 +1,9 @@
 import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";
@@ -270,27 +272,49 @@ describe("stdinLayer", () => {
   });
 });
 
+const killOnTimeout =
+  (child: ChildProcessSpawner.ChildProcessHandle, stderr: Fiber.Fiber<string, PlatformError>) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    self.pipe(
+      Effect.timeout("20 seconds"),
+      Effect.catchTag("TimeoutError", () =>
+        child.kill().pipe(
+          Effect.andThen(Fiber.join(stderr)),
+          Effect.flatMap((text) => Effect.die(new Error(`child timed out: ${text}`))),
+        ),
+      ),
+    );
+
 describe("stdinLayer over fd 0", () => {
-  it("waits out a non-blocking fd 0 until the answer lands", async () => {
-    // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
-    // so fd 0 stays non-blocking. The first prompt must run its window out to
-    // None rather than treat the empty read as a dead descriptor; the second
-    // reads the answer once that window closes.
-    const bun = Bun.which("bun");
-    const perl = Bun.which("perl");
-    if (!bun || !perl) throw new Error("bun and perl executables not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const child = Bun.spawn(
-      [
-        perl,
-        "-e",
-        `use Fcntl;
+  it.live(
+    "waits out a non-blocking fd 0 until the answer lands",
+    () =>
+      Effect.gen(function* () {
+        // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
+        // so fd 0 stays non-blocking. The first prompt must run its window out to
+        // None rather than treat the empty read as a dead descriptor; the second
+        // reads the answer once that window closes.
+        const bun = Bun.which("bun");
+        const perl = Bun.which("perl");
+        if (!bun || !perl) {
+          return yield* Effect.die(new Error("bun and perl executables not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            perl,
+            [
+              "-e",
+              `use Fcntl;
          fcntl(STDIN, F_SETFL, O_NONBLOCK) or die "fcntl: $!";
          print STDERR ((fcntl(STDIN, F_GETFL, 0) & O_NONBLOCK) ? "nonblock\\n" : "block\\n");
          exec @ARGV or die "exec: $!";`,
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+              bun,
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -302,52 +326,70 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      { cwd: import.meta.dirname, stdin: "pipe", stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const stdout = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-    let buffered = "";
-    const nextLine = async () => {
-      while (!buffered.includes("\n")) {
-        const { value, done } = await stdout.read();
-        if (done) throw new Error(`child exited early: ${await new Response(child.stderr).text()}`);
-        buffered += value;
-      }
-      const [line, ...rest] = buffered.split("\n");
-      buffered = rest.join("\n");
-      return line;
-    };
-    try {
-      expect(await nextLine()).toBe("<none>");
-      await child.stdin.write("y\n");
-      await child.stdin.flush();
-      expect(await nextLine()).toBe("y");
-      await child.stdin.end();
-      const [exitCode, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stderr).text(),
-      ]);
-      expect(exitCode, stderr).toBe(0);
-      expect(stderr).toContain("nonblock");
-    } finally {
-      // A failed assertion must not leave the child waiting on its second prompt.
-      child.kill();
-    }
-  }, 30_000);
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.fromQueue(input),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          ),
+        );
+        const lines = yield* Stream.toQueue(Stream.splitLines(Stream.decodeText(child.stdout)), {
+          capacity: "unbounded",
+        });
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        const nextLine = Queue.take(lines).pipe(
+          Effect.catchTag("Done", () =>
+            Fiber.join(stderrFiber).pipe(
+              Effect.flatMap((stderr) => Effect.die(new Error(`child exited early: ${stderr}`))),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          expect(yield* nextLine).toBe("<none>");
+          yield* Queue.offer(input, enc("y\n"));
+          expect(yield* nextLine).toBe("y");
+          yield* Queue.end(input);
+          const [exitCode, stderr] = yield* Effect.all([child.exitCode, Fiber.join(stderrFiber)], {
+            concurrency: "unbounded",
+          });
+          expect(exitCode, stderr).toBe(0);
+          expect(stderr).toContain("nonblock");
+        }).pipe(killOnTimeout(child, stderrFiber));
+      }).pipe(
+        // A failed assertion must not leave the child waiting on its second prompt.
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      ),
+    30_000,
+  );
 
-  it("answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0", async () => {
-    // 2 MiB of lines piped in; three prompts take the first three, then a
-    // child inheriting fd 0 counts what's left. A reader that fully drained
-    // stdin would leave it nothing.
-    const bun = Bun.which("bun");
-    if (!bun) throw new Error("Bun executable not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const payload = enc(Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""));
-    const child = Bun.spawn(
-      [
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+  it.live(
+    "answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0",
+    () =>
+      Effect.gen(function* () {
+        // 2 MiB of lines piped in; three prompts take the first three, then a
+        // child inheriting fd 0 counts what's left. A reader that fully drained
+        // stdin would leave it nothing.
+        const bun = Bun.which("bun");
+        if (!bun) {
+          return yield* Effect.die(new Error("Bun executable not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const payload = enc(
+          Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""),
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            bun,
+            [
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -367,19 +409,33 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
-      // vitest's 30 s guard, so the failure still carries its stderr.
-      { cwd: import.meta.dirname, stdin: payload, stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode, stderr).toBe(0);
-    const [answers, left] = stdout.trim().split("\n");
-    expect(answers).toBe("line-0 line-1 line-2");
-    expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
-  }, 30_000);
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.make(payload),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          ),
+        );
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
+        // vitest's 30 s guard, so the failure still carries its stderr.
+        const [exitCode, stdout, stderr] = yield* Effect.all(
+          [
+            child.exitCode,
+            Stream.mkString(Stream.decodeText(child.stdout)),
+            Fiber.join(stderrFiber),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(killOnTimeout(child, stderrFiber));
+        expect(exitCode, stderr).toBe(0);
+        const [answers, left] = stdout.trim().split("\n");
+        expect(answers).toBe("line-0 line-1 line-2");
+        expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    30_000,
+  );
 });

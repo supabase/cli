@@ -171,7 +171,7 @@ function setupFeedbackHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback", "add"]),
+    commandRuntimeLayer(["feedback", "add"]).pipe(Layer.provide(BunServices.layer)),
     Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "add"])]) }),
   );
   return { ...base, layer, analytics, processControl };

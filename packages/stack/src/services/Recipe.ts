@@ -45,6 +45,8 @@ export const serviceCreation = <
 export interface CatalogOptions {
   readonly stackId: string;
   readonly instanceId: string;
+  /** Project folder name; the container runtime sanitizes it into names and grouping labels. */
+  readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: CatalogRuntime;

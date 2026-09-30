@@ -1,5 +1,5 @@
 import { StackError } from "@supabase/stack/effect";
-import { Data } from "effect";
+import { Data, Schema } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -7,7 +7,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStackPrepareError")<{
-  readonly reason: "flags" | "invalid-config" | "artifact" | "lifecycle" | "unknown";
+  readonly reason: "flags" | "invalid-config" | "runtime" | "artifact" | "lifecycle" | "unknown";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -19,6 +19,8 @@ export class StackCommandPrepareError extends Data.TaggedError("ExperimentalStac
       case "invalid-config":
       case "lifecycle":
         return actionability.invalidConfig;
+      case "runtime":
+        return actionability.dockerNotRunning;
       case "artifact":
         return actionability.externalNetwork;
       case "unknown":
@@ -37,12 +39,11 @@ export const stackPrepareError = (error: unknown): StackCommandPrepareError => {
       ? error.message
       : String(error);
   return new StackCommandPrepareError({
-    reason:
-      error instanceof StackError
-        ? error.operation === "prepareService"
-          ? "artifact"
-          : "unknown"
-        : "unknown",
+    reason: Schema.is(StackError)(error)
+      ? error.operation === "prepareService"
+        ? "artifact"
+        : "unknown"
+      : "unknown",
     message,
     cause: error,
   });

@@ -29,9 +29,7 @@ import {
 import { aqua, yellow } from "../colors.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
 import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.ts";
-import { DbConnection } from "../db-connection.service.ts";
 import { loadLocalProjectContext } from "../local-project-context.ts";
-import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
 import { resolveResetSeedConfig } from "./db-setup.ts";
@@ -39,7 +37,7 @@ import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
 import { currentStackBackend } from "../stack-backend.ts";
-import { stackLocalDatabaseConn, stackOpenReadyProject } from "../stack-local-database.ts";
+import { stackOpenReadyProject } from "../stack-local-database.ts";
 import {
   classifyStorageCapability,
   describeStorageCapability,
@@ -48,7 +46,12 @@ import {
   stackStorageEndpointFor,
 } from "../stack-storage.ts";
 import { loadStackConfig } from "../stack-config.ts";
-import { StackCatalogSetup } from "../stack-catalog-setup.ts";
+import { catalogDatabaseServices, StackCatalogSetup } from "../stack-catalog-setup.ts";
+import {
+  initializeStackDatabase,
+  projectCatalogOverlay,
+  StackBootstrapError,
+} from "../stack-bootstrap.ts";
 
 /** The local database container is not running. */
 class ResetLocalDbNotRunningError extends Data.TaggedError("ResetLocalDbNotRunningError")<{
@@ -145,18 +148,13 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
           ),
         ),
     );
-    const composed = members.flatMap((member) =>
-      member.service === "auth" || member.service === "storage" || member.service === "realtime"
-        ? [member.service]
-        : [],
-    );
     // A database-only composition is the `db start` overlay, which provisions schemas from config;
     // a full stack keeps its saved members so `stack start --exclude` choices hold.
     const databaseServices = members.every((member) => member.service === "database")
       ? (["auth", "realtime", "storage"] as const).filter(
           (service) => config.source[service].enabled,
         )
-      : composed;
+      : catalogDatabaseServices(members);
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
     yield* opened.value.stack.composition.stop.pipe(
       Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),
@@ -170,44 +168,30 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     yield* opened.value.database.ready.pipe(
       Effect.mapError((cause) => resetFailed(`failed to ready local database: ${cause.message}`)),
     );
-    yield* catalog.value
-      .apply({
-        target: {
-          stack: opened.value.stack,
-          database: opened.value.database,
-          databaseServices,
-        },
-        overlay: {
-          webhooks: "config",
-          webhooksEnabled: toml.webhooksEnabled,
-          apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-          vault: toml.vault,
-          workdir,
-        },
-      })
-      .pipe(Effect.mapError((cause) => resetFailed(cause.message)));
-    const dbConn = yield* DbConnection;
-    const conn = yield* stackLocalDatabaseConn.pipe(
-      Effect.mapError((cause) => new ResetLocalDbNotRunningError({ message: cause.message })),
-    );
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* dbConn
-          .connect(conn, { isLocal: true, dnsResolver: "native" })
-          .pipe(
-            Effect.mapError((cause) =>
-              resetFailed(`failed to connect after reset: ${cause.message}`),
-            ),
-          );
-        yield* migrateAndSeed(session, fs, path, workdir, input.version, {
-          migrationsEnabled: toml.migrationsEnabled,
-          seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
-          experimental,
-          pgDeltaEnabled: toml.pgDelta.enabled,
-          schemaPaths: toml.schemaPaths,
-          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
-        }).pipe(Effect.mapError((cause) => resetFailed(cause.message)));
-      }),
+    yield* initializeStackDatabase({
+      target: {
+        stack: opened.value.stack,
+        database: opened.value.database,
+        databaseServices,
+      },
+      overlay: projectCatalogOverlay(toml, workdir),
+      migrations: {
+        workdir,
+        toml: { ...toml, seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path) },
+        experimental,
+        version: input.version,
+      },
+    }).pipe(
+      Effect.provideService(StackCatalogSetup, catalog.value),
+      Effect.mapError((cause) =>
+        !(cause instanceof StackBootstrapError)
+          ? resetFailed(cause.message)
+          : cause.reason === "unavailable"
+            ? new ResetLocalDbNotRunningError({ message: cause.message })
+            : cause.reason === "connect"
+              ? resetFailed(`failed to connect after reset: ${cause.message}`)
+              : resetFailed(cause.message),
+      ),
     );
     yield* opened.value.stack.composition.start.pipe(
       Effect.mapError((cause) =>

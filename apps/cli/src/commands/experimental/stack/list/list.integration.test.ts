@@ -102,8 +102,8 @@ describe("stack list", () => {
       }
       expect(yield* fixture.fs.readFileString(file)).toBe("{broken");
       expect(yield* fixture.fs.readFileString(mismatchFile)).toBe(healthyState);
-      const discoveryError = yield* fixture.api.discover(fixture.locations).pipe(Effect.flip);
-      expect(discoveryError.operation).toBe("discover");
+      const discovered = yield* fixture.api.discover(fixture.locations);
+      expect(discovered.map(({ definition }) => definition.id)).toEqual([healthy.id]);
       const openError = yield* fixture.api
         .open({ ...fixture.locations, id: broken.id })
         .pipe(Effect.flip);

@@ -9,7 +9,8 @@ The package accepts service configuration directly. Loading CLI configuration, m
 The Promise entrypoint accepts plain configuration:
 
 ```ts
-import { create, postgres } from "@supabase/stack";
+import { create } from "@supabase/stack";
+import { postgres } from "@supabase/stack/commands";
 
 const stack = await create({
   projectRoot: process.cwd(),
@@ -34,7 +35,7 @@ await database.ready(); // initialization and health completed
 const { databaseUrl } = await database.credentials({ from: "runtime" });
 
 if (databaseUrl === undefined) throw new Error("Database endpoint missing");
-await stack.tools.run(postgres.psql({ major: 17 }), {
+await stack.commands.run(postgres.psql({ major: 17 }), {
   args: ["--dbname", databaseUrl, "--command", "SELECT 1"],
   stdout: (bytes) => {
     process.stdout.write(bytes);
@@ -44,32 +45,49 @@ await stack.tools.run(postgres.psql({ major: 17 }), {
   },
 });
 
+// Runs recipe initialization without registering a service instance.
+const { authDatabaseUrl } = await database.credentials({ from: "runtime" });
+if (authDatabaseUrl === undefined) throw new Error("Auth database URL missing");
+await stack.commands.run({ type: "auth.initialize", databaseUrl: authDatabaseUrl });
+
 await database.stop();
 await database.saveSnapshot("baseline");
 await stack.close(); // disconnects this client
 ```
 
-`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. Managed retention may evict older keys, while snapshots survive destruction of the source stack. Other service handles have no snapshot methods.
+`start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. By default snapshots live in the shared cache, whose retention may evict older keys, and survive destruction of the source stack. `{ scope: "instance" }` keeps a snapshot with the instance instead: it is never evicted, restores only into that instance, survives `resetData`, and is removed when the instance is destroyed. Other service handles have no snapshot methods.
 
-Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Omitted public endpoints are not exposed.
+Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid numbers saved by any stack under the same `stateRoot`; a fixed port is decided by binding it, so another stack's saved port blocks only while something listens on it; that conflict names the stack that saved the port. Omitted public endpoints are not exposed.
 
 Native public listeners bind to loopback. Docker and Podman public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
 
-Functions configuration requires bootstrap source. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
+Functions use a package-provided, self-contained Edge Runtime main service unless the configuration supplies `bootstrap` source; only an explicit `bootstrap` is saved with the service definition. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
 
 On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker and Podman mount project files at a separate runtime path.
 
-`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. Offline definitions are not live lifecycle observations.
+`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. It skips each entry that cannot be read or decoded and reports it to `onInvalidState(id, error)`; only a failure to read `stateRoot` itself fails discovery. Port allocation skips the same entries. Offline definitions are not live lifecycle observations.
 
-Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services.
+`find({ stateRoot, projectRoot, name })` derives the stack ID with the same identity rules as `create` and reads only that stack; `find({ stateRoot, id })` reads a known ID. It returns the saved definition with the live owner's endpoint, if any, or nothing when no such stack is saved. Unlike `discover`, an unreadable state document fails the call instead of being skipped. The Effect entrypoint's `StackId` schema validates an ID before lookup.
 
-The stack owns database, Functions bootstrap, and tool-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
+Pass `startOwner: true` to `open` when live status and other owner-backed operations are needed; this starts only the detached owner and does not start services. The owner writes its output to `<stateRoot>/<id>/owner.log`, which each owner start truncates; owner start and connection failures name that file. A client drives only an owner of its own release; other operations fail and ask you to stop or destroy the stack, which work across releases.
+
+### Lifetimes
+
+`create` defaults to `lifetime: "detached"`: the stack and its owner outlive the creating client. `create({ ..., lifetime: "session" })` starts the owner immediately and ties the stack to the creating client. Closing that client, or its process exiting for any reason, destroys the stack: instances stop, data and registrations are removed, and port claims are released. Other clients may attach to a running session stack but cannot start its owner. A session stack whose owner has stopped is disposable: the next owner start in the state root removes it, and creating a stack with the same identity replaces it.
+
+`create({ ..., startOwner: true })` starts a detached stack's owner immediately and lets it register the stack under its lease, as a session stack always does. If the owner fails to start or the launch is interrupted before it reports ready, the owner removes that registration and `create` fails with the launch error, so a failed launch leaves no stack behind.
+
+`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` takes the stack's lease, so no owner can start meanwhile, and removes the local registration, port claims and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
+
+The stack owns database, Functions bootstrap, and command-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
 Omitted database `jwtSecret` and `rootKey` inputs use the shared local-development values exported
 as `DEFAULT_LOCAL_JWT_SECRET` and `DEFAULT_POSTGRES_ROOT_KEY`. Explicit values override these defaults.
 The effective root key is supplied through a stack-owned file for both native and container runtimes.
 
-Native PostgreSQL refuses to run as uid 0. When the stack runs as root inside a detected agent sandbox (Claude Code), or `SUPABASE_NATIVE_POSTGRES_USER=<name>` names a non-root system user, only the PostgreSQL process runs as that user: the instance data directory, root key file, socket directory, and the bundle's `pgsodium_getkey.sh` are chowned to it, and the instance directory, the PostgreSQL bundle directory, and their ancestors receive traverse-only (`o+x`) permission, which the artifact cache and stack state keep when they restrict their roots to the owner. Running as root elsewhere fails before PostgreSQL launches.
+Native PostgreSQL refuses to run as uid 0. When the stack runs as root inside a detected agent sandbox (Claude Code, Modal Sandbox), or `SUPABASE_NATIVE_POSTGRES_USER=<name>` names a non-root system user, only the PostgreSQL process runs as that user: the instance data directory, root key file, socket directory, and the bundle's `pgsodium_getkey.sh` are chowned to it, and the instance directory, the PostgreSQL bundle directory, and their ancestors receive traverse-only (`o+x`) permission, which the artifact cache and stack state keep when they restrict their roots to the owner. Running as root elsewhere fails before PostgreSQL launches.
+
+Native PostgreSQL listens only on its socket and reads a stack-generated HBA file, written to the socket directory on every launch, instead of `PGDATA/pg_hba.conf`. It trusts `supabase_admin`, including through the proxied loopback database port, and requires `scram-sha-256` passwords from every other role.
 
 ## Composition and operation scope
 
@@ -89,23 +107,27 @@ const services = await stack.composition.supabase([
   },
   {
     service: "rest",
-    config: { databaseUrl: "postgresql://configured-by-composition" },
+    config: {},
     endpoints: { http: { port: "auto" } },
   },
 ]);
 await stack.composition.start();
 ```
 
-The factory accepts one instance of each selected recipe, binds its configured public endpoints, and wires managed inputs such as REST's database URL. When the database SQL endpoint is configured, Functions receives the saved database URL as an ordinary input too; recompose the composition after rotating database credentials to refresh that value. This binding does not make Functions wait for database readiness. Database is eager; Functions are lazy without an idle timeout; other public services are lazy with a 60-second idle timeout. Services without public endpoints are eager. A managed URL binding requires its producer's endpoint to be configured. The factory also supplies ordinary host/runtime API URLs to Auth, Studio, and Functions without adding dependencies from those URLs. It rejects an already configured composition.
+The factory accepts one instance of each selected recipe, binds its configured public endpoints, and wires managed inputs such as REST's database URL. When the database SQL endpoint is configured, Functions receives the saved database URL as an ordinary input too; recompose the composition after rotating database credentials to refresh that value. This binding does not make Functions wait for database readiness. Database is eager; Functions are lazy without an idle timeout; Studio is lazy with a 5-minute idle timeout; other public services are lazy with a 60-second idle timeout. Services without public endpoints are eager. Pass `{ eager: true }` to start every member eagerly. A managed URL binding requires its producer's endpoint to be configured. The factory also supplies ordinary host/runtime API URLs to Auth, Studio, and Functions without adding dependencies from those URLs. It rejects an already configured composition.
 
-The whole-stack E2E suite covers the default lazy lifecycle and reopen, all-eager startup, idle and wake, and parallel stack isolation for native and Docker runtimes. Run one runtime with `pnpm --filter @supabase/stack test:e2e:run src/whole-stack.native.e2e.test.ts` or the corresponding Docker test file.
+Inputs that the composition binds or the owner fills from the stack credentials, such as REST's `databaseUrl` or a JWT secret, are optional in creation configuration. Starting or restarting an instance without a required input that was neither bound nor provided fails before any lifecycle change with a `ServiceError` whose `operation` is `"input"` and whose message names the input; a running instance keeps running.
+
+To recompose a stopped stack, pass the IDs to keep in `reuseIds`. `composition.plan(services)` compares requested creations with every saved instance of the same kinds without contacting the owner or changing state. Each entry reports its instance `id`, `service`, whether it is a composition `member`, and a `change`: `unchanged`, `changed` with the differing config `paths`, or `incompatible` with the `paths` of an endpoint, artifact version, or PostgreSQL major-version change that the saved instance cannot adopt. Inputs that the composition or the stack credentials supply are ignored, an automatic API port is compared as the shared fixed port the composition would assign, and a PostgreSQL major alias matches its pinned version. Recomposing with `reuseIds` replaces a `changed` instance's configuration while keeping its identity, data, and ports.
+
+The whole-stack E2E suite covers the default lazy lifecycle and reopen, all-eager startup, idle and wake, and parallel stack isolation for native and Docker runtimes, split into a `lifecycle` and an `idle-parallel` file per runtime. Run one runtime with a filter such as `pnpm --filter @supabase/stack test:e2e:run src/whole-stack.native` (matches both native files) or target one file, for example `src/whole-stack.docker.idle-parallel.e2e.test.ts`.
 
 For multiple instances or custom dependencies, configure members and bindings explicitly instead:
 
 ```ts
 const rest = await stack.services.create({
   service: "rest",
-  config: { databaseUrl: "postgresql://configured-by-composition" },
+  config: {},
   endpoints: { http: { port: "auto" } },
 });
 
@@ -129,31 +151,49 @@ Bindings supply ordinary configuration values; a URL alone never creates a depen
 
 - Instance methods affect that instance, subject to dependency checks.
 - Composition methods affect selected members; startup also includes declared prerequisites.
-- `stack.stop()` stops every owned instance and attached tool and returns after confirming owner exit. It requires a live owner; an unavailable owner cannot confirm cleanup.
+- `stack.stop()` stops every owned instance and attached command and returns after confirming owner exit. Without a live owner nothing runs, so it returns without starting one; an instance's `stop()` behaves the same way.
 - `stack.destroy()` additionally removes owned data and registrations, and also waits for owner exit.
-- `stack.close()` disposes the client and invalidates its active observation iterators. Stopping the last instance leaves the owner available.
+- `stack.close()` disposes the client and invalidates its active observation iterators. Closing the creating client of a session stack destroys the stack. Stopping the last instance leaves the owner available.
 
 Exit confirmation is bounded. If cleanup is acknowledged but owner exit cannot be confirmed, the operation fails with `operation: "shutdown-exit"` and the owner PID in the message. A failed or cancelled call does not guarantee that teardown has completed. Do not start or restart the same stack concurrently with whole-stack shutdown; separate stacks remain independent.
 
-Disposable test stacks need explicit teardown; closing a client does not own their lifetime:
+Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or command container.
+
+## Testing
+
+`@supabase/stack/testing` creates a disposable, ready stack for a test:
 
 ```ts
-try {
-  // Exercise the stack.
-} finally {
-  try {
-    await stack.destroy();
-  } finally {
-    await stack.close();
-  }
-}
+import { createTestStack } from "@supabase/stack/testing";
+
+await using test = await createTestStack({ services: ["database", "rest"] });
+const { databaseUrl } = await test.services.database.credentials();
+
+await test.checkpoint("seeded"); // after loading fixtures
+// Exercise the stack.
+await test.reset("seeded"); // discard writes made since the checkpoint
 ```
 
-Each service exposes `status`, `followStatus`, `logs`, and `credentials`. Observations include the currently bound public endpoints, including listeners for sleeping services. Credentials default to host addressing. Use `from: "runtime"` for a URL passed to a service or tool container.
+The stack is a session stack composed with `composition.supabase` and `{ eager: true }`; each selected service is configured for local development with every endpoint on an automatic port, and `test.services` holds a typed handle per selected kind. Select a kind by name, or pass `{ service, config, endpoints }` to override part of its configuration. Disposal destroys the stack, then closes the client and removes the temporary project root. A session stack is also destroyed when the test process exits.
+
+Every test stack for the current OS user shares one state root and the package's artifact cache root under the OS temp directory, so their ports are coordinated and Docker uses one data volume; each gets a unique temporary project root and name. Pass `stateRoot`, `cacheRoot`, or `projectRoot` to override them. The runtime comes from `runtime`, then `SUPABASE_STACK_TEST_RUNTIME`, then the platform default: native where the catalog publishes native artifacts and Docker elsewhere. A startup failure names the state of each registered service and the owner log.
+
+`checkpoint(name)` stops the composition, saves the database data as an instance-scoped snapshot, and starts the composition again. `reset(name)` stops it, clears the database data, restores that snapshot, and waits until every service is ready. Checkpoints are never evicted by other stacks' snapshots and are removed when the test stack is destroyed.
+
+Effect tests use the scoped `makeTestStack`, which destroys the stack when its scope closes:
+
+```ts
+import { makeTestStack } from "@supabase/stack/testing";
+
+const test = Effect.gen(function* () {
+  const { services } = yield* makeTestStack({ services: ["database"] });
+  yield* exercise(services.database);
+}).pipe(Effect.scoped);
+```
 
 ## Effect consumers
 
-The Effect entrypoint exposes the same operations as Effects and Streams. Database secrets use `Redacted` in the Effect configuration:
+The Effect entrypoint exposes the same operations as Effects and Streams. `create` and `open` return a handle that lasts until the enclosing `Scope` closes; closing the creating scope of a session stack destroys it. Database secrets use `Redacted` in the Effect configuration:
 
 ```ts
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
@@ -169,20 +209,15 @@ const program = Effect.gen(function* () {
 });
 
 await Effect.runPromise(
-  program.pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  program.pipe(
+    Effect.scoped,
+    Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+  ),
 );
 ```
 
-Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached tool ends that job and cleans up its resources. Tool input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise tool sinks should return a Promise when the destination requires waiting for capacity.
+The Promise entrypoint is derived from this one: each Effect becomes a call that accepts `{ signal }`, each Effect-returning function takes the same arguments plus a trailing `{ signal }` (a `signal` inside any other options object, such as command or composition options, is ignored), each Stream becomes an async iterable, and `Redacted` configuration values become plain strings. `commands.run` takes Promise-returning sinks and an async-iterable `stdin`.
 
-For disposable Effect test fixtures, `acquireUseRelease` runs teardown on failure and interruption while retaining typed cleanup errors:
+Cancelling an admitted lifecycle caller ends its wait; the owner finishes the operation. Cancelling an attached command ends that job and cleans up its resources. Command input and output stream with backpressure; the result contains a job ID and exit code, not collected output. Promise command sinks should return a Promise when the destination requires waiting for capacity.
 
-```ts
-const test = Effect.acquireUseRelease(
-  Stack.create(options),
-  (stack) => exerciseStack(stack),
-  (stack) => stack.destroy,
-);
-```
-
-The owner supports normal stop/start persistence. Unexpected owner death does not trigger resource adoption, orphan removal, or interrupted-operation recovery. CLI integration is maintained separately from this package.
+The owner supports normal stop/start persistence. When an owner dies unexpectedly, its native processes die with it. Its containers remain until the next owner start in the same `stateRoot` removes them; that start also destroys session stacks whose owner is gone. Unexpected owner death does not trigger resource adoption or interrupted-operation recovery. CLI integration is maintained separately from this package.

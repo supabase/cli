@@ -30,10 +30,10 @@ import {
   type ProcessRecipeResult,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
+import { missingInput } from "./ServiceConfig.ts";
+import type { SnapshotScope } from "./DatabaseSnapshot.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
 import type { ServiceInstanceContext } from "../Service.ts";
-
-export type { CatalogLog } from "./Recipe.ts";
 
 const endpointSchemas = [
   ["database", DatabaseEndpoints],
@@ -91,6 +91,31 @@ export const ServiceCreation = Schema.Union([
   Pooler.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
+
+/** Inputs a service cannot launch without; a composition binding or the caller supplies them. */
+const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = {
+  rest: ["databaseUrl"],
+  auth: ["databaseUrl"],
+  realtime: ["databaseUrl"],
+  storage: ["databaseUrl"],
+  pgmeta: ["databaseUrl"],
+  analytics: ["databaseUrl"],
+  pooler: ["databaseUrl"],
+  vector: ["analyticsUrl"],
+};
+
+/** Rejects a creation that lacks a required input before any lifecycle change. */
+export const requireInputs = (
+  creation: ServiceCreation,
+): Effect.Effect<ServiceCreation, ServiceError> => {
+  const config = new Map(Object.entries(creation.config));
+  const missing = (requiredInputs[creation.service] ?? []).find(
+    (input) => config.get(input) === undefined,
+  );
+  return missing === undefined
+    ? Effect.succeed(creation)
+    : Effect.fail(missingInput(creation.service, missing));
+};
 const DatabaseCreationInput = serviceCreation(
   "database",
   Schema.Struct({
@@ -142,20 +167,22 @@ const serviceError = (operation: string, cause: unknown) =>
 const widen = <C extends { readonly service: ServiceKind }>(
   isCreation: (value: unknown) => value is C,
   definition: ServiceDefinition<C>,
-): ServiceDefinition<ServiceCreation> => ({
-  prepare: (candidate) =>
-    isCreation(candidate)
-      ? (definition.prepare?.(candidate) ?? Effect.void)
-      : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
-  launch: (context) =>
-    isCreation(context.config)
-      ? definition.launch({ ...context, config: context.config })
-      : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
-  removeData: (context) =>
-    isCreation(context.config)
-      ? definition.removeData({ ...context, config: context.config })
-      : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
-});
+): ServiceDefinition<ServiceCreation> => {
+  return {
+    prepare: (candidate) =>
+      isCreation(candidate)
+        ? (definition.prepare?.(candidate) ?? Effect.void)
+        : Effect.fail(serviceError("prepare", "Service kind cannot change during restart")),
+    launch: (context) =>
+      isCreation(context.config)
+        ? definition.launch({ ...context, config: context.config })
+        : Effect.fail(serviceError("launch", "Service kind cannot change during restart")),
+    removeData: (context) =>
+      isCreation(context.config)
+        ? definition.removeData({ ...context, config: context.config })
+        : Effect.fail(serviceError("destroy", "Service kind cannot change during restart")),
+  };
+};
 
 const catalogRecipe = <C extends ServiceCreation>(
   creation: C,
@@ -213,10 +240,10 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "reset", message: "Service kind cannot change" }),
         ),
-  saveDatabaseSnapshot: (context, key) =>
+  saveDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .saveSnapshot({ ...context, config: context.config.config }, key)
+          .saveSnapshot({ ...context, config: context.config.config }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -226,10 +253,10 @@ const databaseRecipe = (
       : Effect.fail(
           new CatalogError({ operation: "snapshot-save", message: "Service kind cannot change" }),
         ),
-  restoreDatabaseSnapshot: (context, key) =>
+  restoreDatabaseSnapshot: (context, key, scope) =>
     context.config.service === "database"
       ? component
-          .restoreSnapshot({ ...context, config: context.config.config }, key)
+          .restoreSnapshot({ ...context, config: context.config.config }, key, scope)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -296,6 +323,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         const component = yield* makeDatabase({
           stackId: options.stackId,
           instanceId: options.instanceId,
+          project: options.project,
           root: options.root,
           cacheRoot: options.cacheRoot,
           runtime: options.runtime,
@@ -406,9 +434,11 @@ export type CatalogRecipe = RecipeCatalogRecipe<ServiceCreation> & {
   readonly saveDatabaseSnapshot?: (
     context: ServiceInstanceContext<ServiceCreation>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<void, CatalogError>;
   readonly restoreDatabaseSnapshot?: (
     context: ServiceInstanceContext<ServiceCreation>,
     key: string,
+    scope: SnapshotScope,
   ) => Effect.Effect<boolean, CatalogError>;
 };

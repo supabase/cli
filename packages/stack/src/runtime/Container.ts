@@ -9,6 +9,7 @@ import {
   Fiber,
   Option,
   Path,
+  PlatformError,
   Ref,
   Schedule,
   Schema,
@@ -17,17 +18,23 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly reason?: "engine-unavailable";
 }> {}
 
 interface ContainerSpec {
   readonly image: string;
   readonly stackId: string;
   readonly instanceId: string;
+  /** Labels the container with its service kind so stack log collectors can route it. */
+  readonly service?: string;
+  /** Groups this stack's containers under one name in Docker Desktop/OrbStack. */
+  readonly project?: string;
   readonly env: Readonly<Record<string, string>>;
   readonly args?: ReadonlyArray<string>;
   readonly entrypoint?: string;
@@ -42,6 +49,8 @@ interface ContainerSpec {
   readonly ports?: ReadonlyArray<number>;
   /** Seconds `docker stop` waits before SIGKILL. Omitted means 10. */
   readonly stopGraceSeconds?: number;
+  /** Signal `docker stop` sends first; omitted uses the image's stop signal. */
+  readonly stopSignal?: "SIGINT" | "SIGTERM";
 }
 
 export interface ContainerProcess {
@@ -71,7 +80,7 @@ export interface ContainerRuntime {
   readonly launch: (
     spec: ContainerSpec,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
-  readonly launchTool: (
+  readonly launchCommand: (
     spec: Omit<ContainerSpec, "ports">,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
@@ -86,9 +95,41 @@ const errorFor = (operation: string, cause: unknown) =>
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
 
+/**
+ * Matches a dropped registry connection, not a permanent rejection or a failing engine socket
+ * (`error during connect`, `%2F…` hosts). `EOF` only counts after a registry request URL.
+ */
+const transientPullFailure = (error: ContainerError) =>
+  !/error during connect/iu.test(error.message) &&
+  /(?:Get|Head|Post|Put) "https?:\/\/(?!%2F)[^"]+": (?:unexpected )?EOF|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
+    error.message,
+  );
+
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
+ * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
+ * authentication and TLS failures, so only their refused or missing-endpoint causes match.
+ */
+const engineUnreachable = (error: ContainerError) =>
+  (error.cause instanceof PlatformError.PlatformError &&
+    error.cause.reason._tag === "NotFound" &&
+    error.cause.reason.method === "spawn") ||
+  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
+    error.message,
+  );
+
+/** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
+const retryablePull = (error: ContainerError) =>
+  (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
+
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
 const PULL_MAX_RETRIES = 4;
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
+
+/** `docker create` only writes metadata; a healthy daemon answers well within this bound. */
+const CREATE_TIMEOUT: Duration.Input = "2 minutes";
 
 const PublishedPorts = Schema.Record(
   Schema.String,
@@ -110,8 +151,9 @@ const mountField = (key: string, value: string) => {
 /**
  * Captures the selected local engine; each launch owns one exact container. An image whose pull
  * fails is pulled from the first of its `imageMirrors` that succeeds, and launches of it then use
- * that mirror reference. When every mirror fails, the primary pull error is reported; a
- * rate-limited primary retries the whole chain with backoff.
+ * that mirror reference. When every mirror fails, the primary pull error is reported; a primary
+ * that is rate-limited or hits a transient registry transport failure retries the whole chain
+ * with backoff.
  */
 export const makeContainerRuntime = (options: {
   readonly engine: "docker" | "podman";
@@ -225,11 +267,13 @@ export const makeContainerRuntime = (options: {
       });
       return yield* attempt.pipe(
         Effect.tapError((error) =>
-          rateLimited(error)
-            ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
-            : Effect.void,
+          !retryablePull(error)
+            ? Effect.void
+            : rateLimited(error)
+              ? Effect.logWarning(`Registry rate-limited the pull of ${image}`)
+              : Effect.logWarning(`Registry pull of ${image} failed transiently`),
         ),
-        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: rateLimited }),
+        Effect.retry({ schedule: pullBackoff, times: PULL_MAX_RETRIES, while: retryablePull }),
       );
     });
     const prepare = Effect.fn("Container.prepare")((image: string) =>
@@ -239,6 +283,7 @@ export const makeContainerRuntime = (options: {
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
       interactive = false,
+      oneOff = false,
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
@@ -270,7 +315,7 @@ export const makeContainerRuntime = (options: {
       const token = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
-      const name = `supabase-${token}`;
+      const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const args = [
         "create",
         "--pull",
@@ -287,6 +332,12 @@ export const makeContainerRuntime = (options: {
         `com.supabase.instance=${spec.instanceId}`,
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
+        ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        "--label",
+        `com.docker.compose.project=${composeProject}`,
+        "--label",
+        `com.docker.compose.service=${composeService}`,
+        ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -302,6 +353,7 @@ export const makeContainerRuntime = (options: {
           ].join(","),
         ]),
         ...(spec.workingDir === undefined ? [] : ["--workdir", spec.workingDir]),
+        ...(spec.stopSignal === undefined ? [] : ["--stop-signal", spec.stopSignal]),
         ...(spec.ports ?? []).flatMap((port) => ["--publish", `127.0.0.1::${port}`]),
         ...(spec.entrypoint === undefined ? [] : ["--entrypoint", spec.entrypoint]),
         image,
@@ -310,18 +362,40 @@ export const makeContainerRuntime = (options: {
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          // Creation must settle before cleanup can safely run.
-          const creation = yield* run(args, { timeout: undefined }).pipe(
-            Effect.mapError(
-              (error) =>
-                new ContainerError({
-                  operation: error.operation,
-                  message: `${error.message} (container name ${name})`,
-                  cause: error,
-                }),
+          // Creation must settle before cleanup can safely run. The timeout below needs genuine
+          // interruptibility to bound a hung daemon, so this restores it just for the create
+          // call; either that timeout or an external interrupt reaching this window may still
+          // leave a container needing best-effort removal, handled in both branches below.
+          const creation = yield* restore(
+            run(args, { timeout: undefined }).pipe(
+              Effect.timeout(CREATE_TIMEOUT),
+              Effect.mapError((error) =>
+                error._tag === "TimeoutError"
+                  ? error
+                  : new ContainerError({
+                      operation: error.operation,
+                      message: `${error.message} (container name ${name})`,
+                      cause: error,
+                    }),
+              ),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    yield* run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(
+                      Effect.ignore,
+                    );
+                    return yield* errorFor(
+                      "create",
+                      `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
+                    );
+                  }),
+                ),
+              ),
+              Effect.onInterrupt(() =>
+                run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(Effect.ignore),
+              ),
             ),
-            Effect.exit,
-          );
+          ).pipe(Effect.exit);
           const stopped = yield* Ref.make(false);
           const removed = yield* Ref.make(false);
           const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (
@@ -333,7 +407,8 @@ export const makeContainerRuntime = (options: {
                 "--all",
                 "--no-trunc",
                 "--filter",
-                `name=^/?${name}$`,
+                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                `name=^/?${name.replaceAll(".", "\\.")}$`,
                 "--format",
                 "{{.State}}",
               ],
@@ -484,13 +559,27 @@ export const makeContainerRuntime = (options: {
               }
               const logProcess =
                 attached ??
-                (yield* spawner
-                  .spawn(
-                    ChildProcess.make(options.engine, ["logs", "--follow", name], {
-                      stdin: "ignore",
-                    }),
-                  )
-                  .pipe(Effect.mapError((cause) => errorFor("logs", cause))));
+                (yield* Effect.gen(function* () {
+                  // Released on exit, since a release left for service stop can hit a reused pid.
+                  const followerScope = yield* Scope.fork(owner);
+                  const follower = yield* spawner
+                    .spawn(
+                      ChildProcess.make(options.engine, ["logs", "--follow", name], {
+                        stdin: "ignore",
+                      }),
+                    )
+                    .pipe(
+                      Scope.provide(followerScope),
+                      Effect.mapError((cause) => errorFor("logs", cause)),
+                    );
+                  yield* Effect.forkIn(
+                    Effect.exit(follower.exitCode).pipe(
+                      Effect.andThen(Scope.close(followerScope, Exit.void)),
+                    ),
+                    owner,
+                  );
+                  return follower;
+                }));
               return {
                 ...partial,
                 ports,
@@ -504,7 +593,12 @@ export const makeContainerRuntime = (options: {
         }),
       );
     });
-    return { prepare, prepareImage, launch, launchTool: (spec) => launch(spec, true) };
+    return {
+      prepare,
+      prepareImage,
+      launch,
+      launchCommand: (spec) => launch(spec, true, true),
+    };
   });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
@@ -555,7 +649,22 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
         `label=com.supabase.stack-root=${stackRoot}`,
       ];
       const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
-      const ids = (yield* list()).split("\n").filter((id) => id.length > 0);
+      // Only the initial listing can show the engine itself is unreachable; a later `rm` or
+      // leftover check failing is a per-container cleanup problem instead.
+      const ids = (yield* list().pipe(
+        Effect.mapError((cause) =>
+          engineUnreachable(cause)
+            ? new ContainerError({
+                operation: cause.operation,
+                message: cause.message,
+                cause: cause.cause,
+                reason: "engine-unavailable",
+              })
+            : cause,
+        ),
+      ))
+        .split("\n")
+        .filter((id) => id.length > 0);
       yield* Effect.forEach(
         ids,
         (id) =>
@@ -575,3 +684,19 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
         return yield* errorFor("cleanup", `Stack containers remain: ${remaining}`);
     }),
 );
+
+/** Shell command that removes the same containers as `removeStackContainers`, succeeding when none remain. */
+export const removeStackContainersCommand = (options: {
+  readonly engine: "docker" | "podman";
+  readonly stackId: string;
+  readonly root: string;
+}): string => {
+  const filters = [
+    `label=com.supabase.stack=${options.stackId}`,
+    `label=com.supabase.stack-root=${options.root}`,
+  ]
+    .map((filter) => `--filter ${shellQuote(filter)}`)
+    .join(" ");
+  // `sh -c` keeps POSIX word splitting of `$ids` when pasted into shells like zsh that skip it.
+  return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
+};

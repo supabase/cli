@@ -3,53 +3,53 @@
 lockfile_version = 1
 
 [[tools.bun]]
-version = "1.4.1"
+version = "1.4.2"
 backend = "core:bun"
-specifiers = ["1.4.1"]
+specifiers = ["1.4.2"]
 
 [tools.bun."platforms.linux-arm64"]
-checksum = "sha256:580ce77533108dc6b10bec1721397e4f5aa44e909726da2451d483dfc5e581d6"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-aarch64.zip"
+checksum = "sha256:54328bbc2d9c8e0c9f892c544d66c57a83b84139e34909e5ee81758f1ac8fda7"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-aarch64.zip"
 
 [tools.bun."platforms.linux-arm64-musl"]
-checksum = "sha256:53895807a00508f70e76715947097aa533ec520aac066501c00fb77d2b1a7a6c"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-aarch64-musl.zip"
+checksum = "sha256:71760b6c8ea30623b81a4907cb815d48e2ea266f2e73e751534a44a0607950df"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-aarch64-musl.zip"
 
 [tools.bun."platforms.linux-x64"]
-checksum = "sha256:74c1c3bee7cd998500c8f969cd8972355ac6a07207e94a39eece1999b56ffabf"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-x64.zip"
+checksum = "sha256:36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip"
 
 [tools.bun."platforms.linux-x64-baseline"]
-checksum = "sha256:a8c9c6738202e2fced555dd860a953c56c0cd059f75041e7010ae81a32802646"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-x64-baseline.zip"
+checksum = "sha256:c678040f14fe0440eb839d37cbd0ce4c051a32da72806ac97de6a6aab6bf728f"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64-baseline.zip"
 
 [tools.bun."platforms.linux-x64-musl"]
-checksum = "sha256:ea116fe09f2f764c87b9bf735225b781d1f7674ca58d66040470f38a7943c8ab"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-x64-musl.zip"
+checksum = "sha256:4835eca59d6da70f4674f5642f6e459dcadab773695b2ed9922d131057989742"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64-musl.zip"
 
 [tools.bun."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:74d04038a21e6ae816f9e74525b754b85294be99632b336cb4c57019c9313829"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-linux-x64-musl-baseline.zip"
+checksum = "sha256:76e1db84e98f22f78de0a87e309bfbbf297732847f9720db36750646c85c8c18"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64-musl-baseline.zip"
 
 [tools.bun."platforms.macos-arm64"]
-checksum = "sha256:d8973ce835fa7867e5cc79afee6fc6f1ae0117aa4bd5fc2546fd00c512f71386"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-darwin-aarch64.zip"
+checksum = "sha256:90987a3a16d7db556d886ac3d551e7b6d3edf0a1cf43acaed622e8676be1d12f"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-aarch64.zip"
 
 [tools.bun."platforms.macos-x64"]
-checksum = "sha256:8f34239f276a3f0d27bfcd1ffecfe5d2127e74fb0aa4c0971a0cdec7b225c965"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-darwin-x64.zip"
+checksum = "sha256:80520d7e17526308c9185d261679ac6d27798d3803a0e9f7ff9121ab8affb012"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64.zip"
 
 [tools.bun."platforms.macos-x64-baseline"]
-checksum = "sha256:498e76d61bbe87d2306f65fed60ae86b6b0c8ee2da709f83202808db1a09e407"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-darwin-x64-baseline.zip"
+checksum = "sha256:bad5bbd6cf14d0980d115f5954c9ff904df619d5e994d2da1ffccd3f316300b0"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-darwin-x64-baseline.zip"
 
 [tools.bun."platforms.windows-x64"]
-checksum = "sha256:52b1f3028b01f43d37fefdf669d034a1ee2e0d96c56bb13c393bdaf169b1af84"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-windows-x64.zip"
+checksum = "sha256:ce4c17497b2f29712a99d3d53f028de28cd42e3bacb8589599e7f000e49b6405"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-windows-x64.zip"
 
 [tools.bun."platforms.windows-x64-baseline"]
-checksum = "sha256:2d1871e72b28165a8574a9c91de867cbe499f55b8c75facf4fb9e42888eddba6"
-url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.1/bun-windows-x64-baseline.zip"
+checksum = "sha256:78c221c2376f79731ccf4e4af0b3bb46d81fefa3296c5abee09ad8a1b21e68c6"
+url = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-windows-x64-baseline.zip"
 
 [[tools.go]]
 version = "1.26.5"
@@ -172,109 +172,121 @@ url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/4
 provenance = "github-attestations"
 
 [[tools.node]]
-version = "24.20.0"
+version = "24.21.0"
 backend = "core:node"
 specifiers = ["24"]
 
 [tools.node."platforms.linux-arm64"]
-checksum = "sha256:3515603e2487879a39bc75716f1a2affd027500c64ba50e845cf72cb33219013"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-arm64.tar.gz"
+checksum = "sha256:724282c3b43aec998aa9527380465b45d229e021b58035f5f4f63095eabfe5d5"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.gz"
 
 [tools.node."platforms.linux-arm64-musl"]
-checksum = "sha256:2c8c507ccb0f20812d9526ba8ca454b1652aadef68fc8bad06f07fb1122dd1ef"
-url = "https://unofficial-builds.nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-arm64-musl.tar.gz"
+checksum = "sha256:3048b0811e158ca0d8672b59c839861763e144492980d8d29b369dfee45747e4"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-arm64-musl.tar.gz"
 
 [tools.node."platforms.linux-x64"]
-checksum = "sha256:855d581f8a4eb1a8117e3426de25fe02770592febcfb31369aee1ffbfee9e8ec"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.gz"
+checksum = "sha256:6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz"
 
 [tools.node."platforms.linux-x64-baseline"]
-checksum = "sha256:855d581f8a4eb1a8117e3426de25fe02770592febcfb31369aee1ffbfee9e8ec"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.gz"
+checksum = "sha256:6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.gz"
 
 [tools.node."platforms.linux-x64-musl"]
-checksum = "sha256:9ae1399fef4bd8990e15773ce1327b336a20b9e97d8c7549f4f42ca73c43f562"
-url = "https://unofficial-builds.nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-x64-musl.tar.gz"
+checksum = "sha256:01a713e34da98e7b4d2a3191ee7ca3f93dd0384d1a2ef23c379b2161ee6e133a"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64-musl.tar.gz"
 
 [tools.node."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:9ae1399fef4bd8990e15773ce1327b336a20b9e97d8c7549f4f42ca73c43f562"
-url = "https://unofficial-builds.nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-x64-musl.tar.gz"
+checksum = "sha256:01a713e34da98e7b4d2a3191ee7ca3f93dd0384d1a2ef23c379b2161ee6e133a"
+url = "https://unofficial-builds.nodejs.org/download/release/v24.21.0/node-v24.21.0-linux-x64-musl.tar.gz"
 
 [tools.node."platforms.macos-arm64"]
-checksum = "sha256:40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-arm64.tar.gz"
+checksum = "sha256:bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz"
 
 [tools.node."platforms.macos-x64"]
-checksum = "sha256:9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-x64.tar.gz"
+checksum = "sha256:1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz"
 
 [tools.node."platforms.macos-x64-baseline"]
-checksum = "sha256:9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-darwin-x64.tar.gz"
+checksum = "sha256:1462cb3b3046b815cf8ea436d3da450ec1a9f11dac7e5a46b0ada5305d7e8097"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-x64.tar.gz"
 
 [tools.node."platforms.windows-x64"]
-checksum = "sha256:6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip"
+checksum = "sha256:158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip"
 
 [tools.node."platforms.windows-x64-baseline"]
-checksum = "sha256:6cac9ffbca8f6a47091e4b5c772e0606049c3871cb67d900c0cedde630e545ba"
-url = "https://nodejs.org/dist/v24.20.0/node-v24.20.0-win-x64.zip"
+checksum = "sha256:158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541"
+url = "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip"
 
 [[tools.pnpm]]
-version = "12.4.0"
+version = "12.8.1"
 backend = "aqua:pnpm/pnpm"
-specifiers = ["12.4.0"]
+specifiers = ["12.8.1"]
 
 [tools.pnpm."platforms.linux-arm64"]
-checksum = "sha256:74fc88eacd2975df4ec5bae517482986ce824bc35a7ac5965c1baf1c854fe933"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-arm64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351855"
+checksum = "sha256:75c5e34d3164fe3d3549580b1b1b59c9dd16543e558dec722b686193cdb7dfa1"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935899"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-arm64-musl"]
-checksum = "sha256:e2e9ec97dbf6165e0936883c078850af967fd7842cfabbb130c24f594bba589f"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-arm64-musl.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351859"
+checksum = "sha256:27ad77bdf5368c1747f46fff0d0ee213ed6185aaf69e13342964f5f7cc3f8714"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-arm64-musl.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935889"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-x64"]
-checksum = "sha256:fcff7ecad46365d356718a40a88a72b4c02eae9d075d567e032697d769f3d999"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-x64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351861"
+checksum = "sha256:db3906881f63e41b655e3b97d473603dc26326c2470d0b1b8083689e1bcbd1e8"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935887"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-x64-baseline"]
-checksum = "sha256:fcff7ecad46365d356718a40a88a72b4c02eae9d075d567e032697d769f3d999"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-x64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351861"
+checksum = "sha256:db3906881f63e41b655e3b97d473603dc26326c2470d0b1b8083689e1bcbd1e8"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935887"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-x64-musl"]
-checksum = "sha256:cb90483341f8601d7d62c93dbd3f17f057e1d95f8cc8720cfe6df4411a616bde"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-x64-musl.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351865"
+checksum = "sha256:f0a2db13d0a1b63c0053a5ddcfbf5c454b040e7ef54ca8771750e2cb55b86693"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-x64-musl.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935901"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:cb90483341f8601d7d62c93dbd3f17f057e1d95f8cc8720cfe6df4411a616bde"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-linux-x64-musl.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351865"
+checksum = "sha256:f0a2db13d0a1b63c0053a5ddcfbf5c454b040e7ef54ca8771750e2cb55b86693"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-linux-x64-musl.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935901"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.macos-arm64"]
-checksum = "sha256:dae611f18e7acc416fac9134ac86fcb1cc8670868ea2e5a51e82e184aec01d63"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-darwin-arm64.tar.gz"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351864"
+checksum = "sha256:8eeeae4cd714b2f1755750d303f5b1bcfe23d95ed7245536305d0c3877c5ce41"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935883"
+provenance = "github-attestations"
+
+[tools.pnpm."platforms.macos-x64"]
+checksum = "sha256:8cbc5a840b4bcd8c0da878e6616a832d88e98a8acbedf1736310b395467f4a13"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-darwin-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935890"
+provenance = "github-attestations"
+
+[tools.pnpm."platforms.macos-x64-baseline"]
+checksum = "sha256:8cbc5a840b4bcd8c0da878e6616a832d88e98a8acbedf1736310b395467f4a13"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-darwin-x64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935890"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.windows-x64"]
-checksum = "sha256:0c25c9921d61171c1551ed38cf6bc5240bcd3acaff81431a4edb5fe33c720674"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-win32-x64.zip"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351858"
+checksum = "sha256:823fc131326afeee292e113e2299ca9851c3ee5148a7de921c897f0170de6f05"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-win32-x64.zip"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935888"
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.windows-x64-baseline"]
-checksum = "sha256:0c25c9921d61171c1551ed38cf6bc5240bcd3acaff81431a4edb5fe33c720674"
-url = "https://github.com/pnpm/pnpm/releases/download/v12.4.0/pnpm-win32-x64.zip"
-url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/550351858"
+checksum = "sha256:823fc131326afeee292e113e2299ca9851c3ee5148a7de921c897f0170de6f05"
+url = "https://github.com/pnpm/pnpm/releases/download/v12.8.1/pnpm-win32-x64.zip"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/595935888"
 provenance = "github-attestations"

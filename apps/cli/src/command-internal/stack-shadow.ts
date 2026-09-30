@@ -3,10 +3,10 @@ import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import { StackApi } from "./stack-api.ts";
-import { StackCatalogSetup } from "./stack-catalog-setup.ts";
+import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
+import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
-import { defaultStackRuntime } from "./stack-runtime.ts";
+import { selectStackRuntime } from "./stack-runtime.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { toPostgresURL } from "./postgres-url.ts";
 import {
@@ -49,19 +49,32 @@ const shadowError = (cause: { readonly message: string }) =>
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
+/** Selects the shadow runtime: the project stack's saved runtime, otherwise automatic selection. */
+export const stackShadowRuntime = Effect.gen(function* () {
+  return yield* selectStackRuntime(yield* stackProjectRuntime).pipe(
+    Effect.mapError(
+      (error) =>
+        new ShadowDbError({
+          message: `${error.message} ${error.suggestion}`,
+          reason: "docker_daemon",
+        }),
+    ),
+  );
+});
+
 const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (opts: ShadowOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const api = yield* StackApi;
   const settings = yield* CommandSettings;
-  const runtimeInfo = yield* RuntimeInfo;
-  const runtime = opts.runtime ?? (yield* stackProjectRuntime) ?? defaultStackRuntime(runtimeInfo);
+  const runtime = opts.runtime ?? (yield* stackShadowRuntime);
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-shadow-" });
   const stack = yield* api.create({
     projectRoot: root,
     stateRoot: path.join(settings.supabaseHome, "stacks"),
     cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     runtime,
+    lifetime: "session",
   });
   return { stack, runtime };
 });
@@ -144,9 +157,8 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   } else {
     yield* startReady(database);
   }
-  const catalog = yield* StackCatalogSetup;
   if (!restored)
-    yield* catalog.apply({
+    yield* initializeStackDatabase({
       target: {
         stack,
         database,
@@ -212,7 +224,10 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   } satisfies StackShadowAcquiredHandle;
 });
 
-/** Acquires a fresh shadow for callers whose enclosing scope owns its lifetime. */
+/**
+ * Acquires a fresh shadow for callers whose enclosing scope owns its lifetime. The shadow is a
+ * session stack, so its owner destroys it even when this process exits abruptly.
+ */
 export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(function* (
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions = {},
@@ -220,11 +235,16 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   const output = yield* Output;
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
+      Effect.flatMap((result) =>
+        result.runtimeCleanup === "skipped"
+          ? output.raw(
+              `Warning: ${skippedRuntimeCleanupWarning(`shadow stack ${stack.id}`, result)}\n`,
+              "stderr",
+            )
+          : Effect.void,
+      ),
       Effect.catch((cause) =>
-        output.raw(
-          `Failed to destroy shadow stack ${stack.id}: ${cause.message}. Run supabase stack destroy --stack-id ${stack.id} to remove it.\n`,
-          "stderr",
-        ),
+        output.raw(`Failed to destroy shadow stack ${stack.id}: ${cause.message}.\n`, "stderr"),
       ),
     ),
   );

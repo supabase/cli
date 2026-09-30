@@ -1,7 +1,18 @@
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
@@ -33,7 +44,9 @@ import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
-import type { DatabaseInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { DatabaseInstance, ServiceCreation, Stack, StackError } from "@supabase/stack/effect";
+import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
+import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
@@ -66,6 +79,26 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     endpoints: { sql: { port: 54322 } },
   };
+  function runCommand<E, R>(
+    command: PostgresCommand,
+    options: PostgresCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E = never, R = never>(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E, R>(
+    command: PostgresCommand | InitializationCommand,
+    options?: PostgresCommandOptions<E, R> | InitializationCommandOptions<E, R>,
+  ) {
+    if ("type" in command) return Effect.die("initializer is unused");
+    if (options?.stdout === undefined) return Effect.die("Postgres command requires a stdout sink");
+    const stdout = options.stdout;
+    return Effect.gen(function* () {
+      yield* stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
+      return { jobId: "job", exitCode: 0 };
+    });
+  }
   const database: DatabaseInstance = {
     id,
     service: "database",
@@ -107,6 +140,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     credentials: { get: Effect.die("unused") },
     composition: {
+      plan: () => Effect.succeed([]),
       describe: Effect.succeed({
         members: [{ id, activation: "eager" as const }],
         dependencies: [],
@@ -118,40 +152,28 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       restart: Effect.succeed([]),
     },
     stop: Effect.void,
-    destroy: Effect.void,
-    tools: {
-      run: <E, R>(
-        _tool: { readonly command: string; readonly major: number },
-        options: {
-          readonly stdout: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
-          readonly stderr: (bytes: Uint8Array) => Effect.Effect<void, E, R>;
-        },
-      ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E, R> =>
-        Effect.gen(function* () {
-          yield* options.stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
-          return { jobId: "job", exitCode: 0 };
-        }),
-    },
+    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    commands: { run: runCommand },
   } satisfies Stack;
   return Layer.succeed(StackApi, {
     create: () => Effect.succeed(stack),
     open: () => Effect.succeed(stack),
-    discover: () =>
-      Effect.succeed([
-        {
+    discover: () => Effect.die("unused"),
+    find: () =>
+      Effect.succeed(
+        Option.some({
           definition: {
             id,
             identity: { projectRoot: "/work/project", branchContext: "main", stackName: "default" },
             runtime,
             instances: [],
             composition: { members: [{ id, activation: "eager" as const }], dependencies: [] },
+            lifetime: "detached" as const,
             ports: [],
           },
           host: undefined,
-        },
-      ]),
-    resolveIdentity: () =>
-      Effect.succeed({ projectRoot: "/work/project", branchContext: "main", stackName: "default" }),
+        }),
+      ),
   });
 };
 
@@ -159,7 +181,7 @@ const unusedStackApi = Layer.succeed(StackApi, {
   create: () => Effect.die("unused"),
   open: () => Effect.die("unused"),
   discover: () => Effect.die("unused"),
-  resolveIdentity: () => Effect.die("unused"),
+  find: () => Effect.die("unused"),
 });
 
 function mockResolver(opts: {
@@ -1084,13 +1106,24 @@ describe("db dump integration", () => {
 
   // A shell pipeline gets a genuine FIFO for the pipe probe below; Bun's spawnSync
   // "pipe" stdio is a socketpair, which fstats as a socket instead.
-  const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
+  const ttyProbe = Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const module = (file: string) =>
+      path
+        .fromFileUrl(new URL(`../../../shared/runtime/${file}`, import.meta.url))
+        .pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.String))));
+    const service = yield* module("tty.service.ts");
+    const layer = yield* module("tty.layer.ts");
+    return `import { Effect } from "effect"; import { Tty } from ${service}; import { ttyLayer } from ${layer}; Effect.runPromise(Tty.pipe(Effect.provide(ttyLayer))).then((tty) => process.stdout.write(String(tty.stdoutIsPipe)));`;
+  });
 
   it.live.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () =>
     Effect.gen(function* () {
+      const probe = yield* ttyProbe;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
+        ChildProcess.make("/bin/sh", ["-c", '"$1" -e "$2" | cat', "sh", process.execPath, probe], {
+          cwd: import.meta.dirname,
           stdin: "ignore",
           stderr: "ignore",
         }),
@@ -1110,13 +1143,19 @@ describe("db dump integration", () => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const file = path.join(tmp.current, "pipe-probe.txt");
+        const probe = yield* ttyProbe;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const exitCode = yield* spawner.exitCode(
-          ChildProcess.make("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' > "${file}"`], {
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "inherit",
-          }),
+          ChildProcess.make(
+            "/bin/sh",
+            ["-c", '"$1" -e "$2" > "$3"', "sh", process.execPath, probe, file],
+            {
+              cwd: import.meta.dirname,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "inherit",
+            },
+          ),
         );
         expect(exitCode).toBe(0);
         expect(yield* readUtf8(file)).toBe("false");

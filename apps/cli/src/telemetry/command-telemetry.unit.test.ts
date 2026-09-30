@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
@@ -99,7 +100,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["backups", "list"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -130,7 +131,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["backups", "list", "--output", "yaml"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("yaml");
@@ -159,7 +160,7 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("json");
@@ -183,7 +184,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"])),
+      Effect.provide(commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -211,7 +212,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "set"])),
+      Effect.provide(commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -234,7 +235,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(
         Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -260,7 +261,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "lint", "-s", "public"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -292,7 +293,7 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["stack", "logs", "-f", "--service", "database"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["stack", "logs"])),
+        Effect.provide(commandRuntimeLayer(["stack", "logs"]).pipe(Layer.provide(BunCrypto.layer))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -319,7 +320,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -345,7 +346,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "query", "-f", "query.sql"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -380,7 +381,11 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "generate"])),
+      Effect.provide(
+        commandRuntimeLayer(["db", "schema", "declarative", "generate"]).pipe(
+          Layer.provide(BunCrypto.layer),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -415,7 +420,11 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "sync"])),
+      Effect.provide(
+        commandRuntimeLayer(["db", "schema", "declarative", "sync"]).pipe(
+          Layer.provide(BunCrypto.layer),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -448,7 +457,9 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["ssl-enforcement", "update"])),
+      Effect.provide(
+        commandRuntimeLayer(["ssl-enforcement", "update"]).pipe(Layer.provide(BunCrypto.layer)),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -477,7 +488,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["link"])),
+      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -506,7 +517,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(
         Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"])),
+      Effect.provide(commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -538,7 +549,9 @@ describe("withCommandTelemetry", () => {
         Effect.provide(
           Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]) }),
         ),
-        Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
+        Effect.provide(
+          commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -567,7 +580,7 @@ describe("withCommandTelemetry", () => {
         Effect.provide(mockProcessControl().layer),
         Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
-        Effect.provide(commandRuntimeLayer(["sso", "add"])),
+        Effect.provide(commandRuntimeLayer(["sso", "add"]).pipe(Layer.provide(BunCrypto.layer))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -595,7 +608,9 @@ describe("withCommandTelemetry", () => {
       Effect.provide(
         Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
+      Effect.provide(
+        commandRuntimeLayer(["gen", "signing-key"]).pipe(Layer.provide(BunCrypto.layer)),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -625,7 +640,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"])),
+      Effect.provide(commandRuntimeLayer(["gen", "types"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -644,7 +659,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -663,7 +678,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -694,7 +709,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -718,7 +733,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -745,7 +760,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(processControl.layer),
       Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -775,7 +790,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(processControl.layer),
       Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "advisors"])),
+      Effect.provide(commandRuntimeLayer(["db", "advisors"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -810,7 +825,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(processControl.layer),
       Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -838,7 +853,9 @@ describe("withCommandTelemetry", () => {
       Effect.provide(processControl.layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) })),
-      Effect.provide(commandRuntimeLayer(["unknown", "command"])),
+      Effect.provide(
+        commandRuntimeLayer(["unknown", "command"]).pipe(Layer.provide(BunCrypto.layer)),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -871,7 +888,9 @@ describe("withCommandTelemetry", () => {
         Effect.provide(
           Stdio.layerTest({ args: Effect.succeed(["config", "diff", "--exit-code"]) }),
         ),
-        Effect.provide(commandRuntimeLayer(["config", "diff"])),
+        Effect.provide(
+          commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             expect(analytics.captured).toHaveLength(1);
@@ -904,7 +923,9 @@ describe("withCommandTelemetry", () => {
         Effect.provide(processControl.layer),
         Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             expect(analytics.captured[0]?.properties).toMatchObject({
@@ -932,7 +953,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["config", "diff"]) })),
-      Effect.provide(commandRuntimeLayer(["config", "diff"])),
+      Effect.provide(commandRuntimeLayer(["config", "diff"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -959,7 +980,9 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) })),
-      Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
+      Effect.provide(
+        commandRuntimeLayer(["telemetry", "enable"]).pipe(Layer.provide(BunCrypto.layer)),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toEqual([]);
@@ -992,7 +1015,9 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "restore"])),
+      Effect.provide(
+        commandRuntimeLayer(["backups", "restore"]).pipe(Layer.provide(BunCrypto.layer)),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1012,7 +1037,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(mockProcessControl().layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       // `table` is valid on the shared global union but not for a resource command.
       Effect.provide(Layer.succeed(OutputFlag, Option.some("table" as const))),
       Effect.flip,
@@ -1037,7 +1062,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(mockProcessControl().layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(Layer.succeed(OutputFlag, Option.some("csv" as const))),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1058,7 +1083,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"])),
+      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(stitch.layer),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1078,7 +1103,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(mockProcessControl().layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.provide(commandRuntimeLayer(["db", "query"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(Layer.succeed(OutputFlag, Option.some("yaml" as const))),
       Effect.flip,
       Effect.tap((error) =>
@@ -1101,7 +1126,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"])),
+      Effect.provide(commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(stitch.layer),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1123,7 +1148,9 @@ describe("withCommandTelemetry", () => {
         Effect.provide(mockProcessControl().layer),
         Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             expect(analytics.captured).toHaveLength(1);
@@ -1150,7 +1177,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1177,7 +1204,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1203,7 +1230,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1229,7 +1256,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(commandRuntimeLayer(["db", "lint"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1249,7 +1276,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(Layer.succeed(DebugFlag, true)),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1281,7 +1308,7 @@ describe("withCommandTelemetry", () => {
           ]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"])),
+      Effect.provide(commandRuntimeLayer(["secrets", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(Layer.succeed(DebugFlag, true)),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1310,7 +1337,9 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.provide(Layer.succeed(WorkdirFlag, Option.some("/tmp/project"))),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1337,7 +1366,9 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.provide(Layer.succeed(DnsResolverFlag, "https" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1364,7 +1395,9 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["backups", "list", "--agent", "yes"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.provide(Layer.succeed(AgentFlag, "yes" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1395,7 +1428,7 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["db", "diff"])),
+        Effect.provide(commandRuntimeLayer(["db", "diff"]).pipe(Layer.provide(BunCrypto.layer))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1415,7 +1448,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1438,7 +1471,7 @@ describe("withCommandTelemetry", () => {
           args: Effect.succeed(["test", "db", "--", "--linked"]),
         }),
       ),
-      Effect.provide(commandRuntimeLayer(["test", "db"])),
+      Effect.provide(commandRuntimeLayer(["test", "db"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags;
@@ -1457,7 +1490,7 @@ describe("withCommandTelemetry", () => {
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
       Effect.provide(Layer.succeed(OutputFlag, Option.some("json" as const))),
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1489,7 +1522,9 @@ describe("withCommandTelemetry", () => {
             args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
           }),
         ),
-        Effect.provide(commandRuntimeLayer(["secrets", "set"])),
+        Effect.provide(
+          commandRuntimeLayer(["secrets", "set"]).pipe(Layer.provide(BunCrypto.layer)),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];

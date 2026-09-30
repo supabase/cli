@@ -9,7 +9,7 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackLogs } from "./logs.handler.ts";
-import { destroyTestStack } from "../../../../../../../packages/stack/tests/stack-cleanup.ts";
+import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 const fixture = Effect.fn("StackLogsTest.fixture")(function* (

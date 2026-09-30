@@ -5,7 +5,7 @@
  * final timeout's failures surface to the caller.
  */
 
-import { Data, Duration, Effect, Schedule, Stream } from "effect";
+import { Context, Data, Duration, Effect, Schedule, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -22,8 +22,11 @@ import { kongAuthHeaders } from "../kong-auth.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** Default retry budget when the caller doesn't specify one. */
-const HEALTH_CHECK_TIMEOUT_SECONDS = 30;
+/** Retry budget, in seconds, for health waits whose caller passes no `timeoutSeconds`. */
+export const HealthCheckTimeoutSeconds = Context.Reference<number>(
+  "supabase/db-bootstrap/HealthCheckTimeoutSeconds",
+  { defaultValue: () => 30 },
+);
 
 /** Caps a single HTTP readiness probe so a hung response cannot stall the retry loop. */
 const HTTP_PROBE_TIMEOUT_SECONDS = 10;
@@ -269,7 +272,6 @@ export function waitForHealthyServices(
   containerIds: ReadonlyArray<string>,
   opts: WaitForHealthyServicesOptions = {},
 ): Effect.Effect<void, HealthCheckTimeoutError, HttpClient.HttpClient> {
-  const timeoutSeconds = opts.timeoutSeconds ?? HEALTH_CHECK_TIMEOUT_SECONDS;
   const postgrest = opts.postgrest;
   const edgeRuntime = opts.edgeRuntime;
 
@@ -284,6 +286,7 @@ export function waitForHealthyServices(
   };
 
   return Effect.gen(function* () {
+    const timeoutSeconds = opts.timeoutSeconds ?? (yield* HealthCheckTimeoutSeconds);
     let stillWatching = containerIds;
 
     // Each round narrows `stillWatching` to just the containers that failed, so a container
@@ -405,19 +408,19 @@ export function waitForShadowReady(
   connConfig: PgConnInput,
   opts: WaitForShadowReadyOptions = {},
 ): Effect.Effect<void, HealthCheckTimeoutError, DbConnection> {
-  const timeoutSeconds = opts.timeoutSeconds ?? HEALTH_CHECK_TIMEOUT_SECONDS;
+  return Effect.gen(function* () {
+    const timeoutSeconds = opts.timeoutSeconds ?? (yield* HealthCheckTimeoutSeconds);
 
-  // Twice the second-counted budget: 500ms spacing would otherwise exhaust `timeoutSeconds`
-  // retries in half the wall time of a 1-second poll.
-  const schedule = Schedule.max([
-    Schedule.spaced("500 millis"),
-    Schedule.recurs(timeoutSeconds * 2),
-  ]);
-  const boundSeconds = timeoutSeconds + SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
+    // Twice the second-counted budget: 500ms spacing would otherwise exhaust `timeoutSeconds`
+    // retries in half the wall time of a 1-second poll.
+    const schedule = Schedule.max([
+      Schedule.spaced("500 millis"),
+      Schedule.recurs(timeoutSeconds * 2),
+    ]);
+    const boundSeconds = timeoutSeconds + SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
 
-  // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
-  // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
-  return Effect.suspend(() => {
+    // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
+    // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
     let lastFailure: ShadowReadyFailure | undefined;
 
     const probe: Effect.Effect<void, ShadowReadyFailure, DbConnection> = Effect.gen(function* () {
@@ -439,7 +442,7 @@ export function waitForShadowReady(
       ),
     );
 
-    return probe.pipe(
+    return yield* probe.pipe(
       Effect.retry({ schedule, while: (failure) => !failure.fatal }),
       Effect.timeoutOrElse({
         duration: Duration.seconds(boundSeconds),

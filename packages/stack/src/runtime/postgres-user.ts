@@ -21,15 +21,23 @@ const sandboxes = [
     detect: (env: Environment) => (env["CLAUDECODE"] ?? "") !== "" && env["IS_SANDBOX"] === "yes",
     preferredUsers: ["ubuntu"],
   },
+  {
+    // Set only in Modal Sandboxes, not Functions; images have no fixed account, so rely on the scan.
+    name: "Modal Sandbox",
+    detect: (env: Environment) => (env["MODAL_SANDBOX_ID"] ?? "") !== "",
+    preferredUsers: [],
+  },
 ];
-const environmentNames = [NATIVE_POSTGRES_USER_ENV, "CLAUDECODE", "IS_SANDBOX"];
+const environmentNames = [NATIVE_POSTGRES_USER_ENV, "CLAUDECODE", "IS_SANDBOX", "MODAL_SANDBOX_ID"];
 
 export type NativePostgresUser =
   | { readonly _tag: "NotNeeded" }
   | { readonly _tag: "StepDown"; readonly user: PasswdEntry; readonly message: string }
   | { readonly _tag: "Unavailable"; readonly message: string; readonly suggestion: string };
 
-const suggestion = `Set ${NATIVE_POSTGRES_USER_ENV}=<user> to run PostgreSQL as a non-root user.`;
+const suggestion =
+  `Set ${NATIVE_POSTGRES_USER_ENV}=<user> to run PostgreSQL as a non-root user, creating one if ` +
+  "needed (on Linux, for example `useradd --system --user-group supabase-postgres`).";
 const unavailable = (message: string): NativePostgresUser => ({
   _tag: "Unavailable",
   message,
@@ -183,13 +191,14 @@ export const openNativePostgresInstance = Effect.fn("NativePostgresUser.openInst
 /** The bundle's first-boot init runs `chmod +x` on this script, which only its owner may do. */
 const GETKEY_SCRIPT = "share/supabase-cli/config/pgsodium_getkey.sh";
 
-/** Hands the instance data, key, socket, and the bundle's getkey script to the PostgreSQL user. */
+/** Hands the instance data, key, socket, HBA file, and the bundle's getkey script to the PostgreSQL user. */
 export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOverFiles")(function* (
   user: PasswdEntry,
   paths: {
     readonly dataPath: string;
     readonly rootKeyPath: string;
     readonly socketPath: string;
+    readonly hbaPath: string;
     readonly bundleRoot: string;
     readonly executable: string;
   },
@@ -199,7 +208,7 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const getkey = path.join(paths.bundleRoot, GETKEY_SCRIPT);
   const hasGetkey = yield* fs.exists(getkey);
-  const targets = [paths.dataPath, paths.rootKeyPath, paths.socketPath];
+  const targets = [paths.dataPath, paths.rootKeyPath, paths.socketPath, paths.hbaPath];
   if (hasGetkey) {
     yield* requireOwnedByRootOr(user, getkey);
     targets.push(getkey);
