@@ -85,8 +85,12 @@ class ReadyState implements State {
         return new TagState(offset);
       }
       case "'":
+        // `E'…'` is an escape string constant only when the `E` starts a token (scan.l
+        // `xestart`); in `type'…'` it ends an identifier. A digit or `$` before the `E`
+        // counts as one too, unlike PostgreSQL; valid SQL never has that.
+        return new QuoteState(rune, endsWithKeyword(data.slice(0, -1), "E"));
       case '"':
-        return new QuoteState(rune);
+        return new QuoteState(rune, false);
       case "-":
         return new CommentState();
       case "/":
@@ -134,7 +138,11 @@ class BlockState implements State {
 
 class QuoteState implements State {
   private escape = false;
-  constructor(private readonly delimiter: string) {}
+  private backslash = false;
+  constructor(
+    private readonly delimiter: string,
+    private readonly backslashEscapes: boolean,
+  ) {}
   next(rune: string, data: string): State | null {
     if (this.escape) {
       // Preserve a doubled quote ('' or "").
@@ -142,10 +150,49 @@ class QuoteState implements State {
         this.escape = false;
         return this;
       }
+      if (this.backslashEscapes) return new QuoteContinueState().next(rune, data);
       return new ReadyState().next(rune, data);
+    }
+    if (this.backslash) {
+      // Preserve the rune after a backslash (\' or \\).
+      this.backslash = false;
+      return this;
+    }
+    if (this.backslashEscapes && rune === "\\") {
+      this.backslash = true;
+      return this;
     }
     if (rune === this.delimiter) this.escape = true;
     return this;
+  }
+}
+
+// After an escape string's closing quote, whitespace holding a newline and then a quote
+// continues the same literal (scan.l `quotecontinue`); `--` comments count as whitespace.
+class QuoteContinueState implements State {
+  private newline = false;
+  private dashes = 0;
+  next(rune: string, data: string): State | null {
+    if (this.dashes === 2) {
+      // Unlike `CommentState`, the comment also ends at a bare `\r`, as in scan.l.
+      if (rune === "\n" || rune === "\r") {
+        this.dashes = 0;
+        this.newline = true;
+      }
+      return this;
+    }
+    if (rune === "-") {
+      this.dashes += 1;
+      return this;
+    }
+    if (this.dashes === 0) {
+      if (isSqlWhitespace(rune)) {
+        this.newline ||= rune === "\n" || rune === "\r";
+        return this;
+      }
+      if (this.newline && rune === "'") return new QuoteState(rune, true);
+    }
+    return new ReadyState().next(rune, data);
   }
 }
 

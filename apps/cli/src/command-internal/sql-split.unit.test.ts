@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findDropStatements, splitAndTrim, splitSql } from "./sql-split.ts";
+import { findDropStatements, splitAndTrim, splitSql, splitSqlTokens } from "./sql-split.ts";
 
 describe("splitAndTrim", () => {
   it("splits simple statements and trims trailing ; + whitespace", () => {
@@ -21,6 +21,85 @@ describe("splitAndTrim", () => {
 
   it("handles doubled single quotes inside a literal", () => {
     expect(splitAndTrim("SELECT 'a''; b'; SELECT 2")).toEqual(["SELECT 'a''; b'", "SELECT 2"]);
+  });
+
+  it.each([
+    String.raw`SELECT E'it\'s; here'`,
+    String.raw`SELECT e'it\'s; here'`,
+    String.raw`E'it\'s; here'`,
+    String.raw`SELECT (E'a\'; b'),E'c\'; d',1=E'e\'; f'`,
+    String.raw`SELECT E'a\\\'; b'`,
+    String.raw`SELECT E'a''\'; b'`,
+    String.raw`SELECT 'a'E'b\'; c'`,
+    String.raw`CREATE FUNCTION f() BEGIN ATOMIC SELECT E'a\'; END; b'; END`,
+    String.raw`SELECT $$a$$ /* b */E'c\'; d'`,
+  ])("keeps a backslash-escaped quote inside an escape string: %s", (statement) => {
+    expect(splitAndTrim(`${statement}; SELECT 2`)).toEqual([statement, "SELECT 2"]);
+    expect(splitSqlTokens(`${statement}; SELECT 2`).map((token) => token.trimmed)).toEqual([
+      statement,
+      "SELECT 2",
+    ]);
+  });
+
+  it.each([String.raw`SELECT E'a\\'`, String.raw`SELECT E'a''; b'`, String.raw`SELECT E'a\\\\'`])(
+    "ends an escape string at its closing quote: %s",
+    (statement) => {
+      expect(splitAndTrim(`${statement}; SELECT 2`)).toEqual([statement, "SELECT 2"]);
+    },
+  );
+
+  it("keeps an unterminated escape string ending in a backslash", () => {
+    const sql = String.raw`SELECT E'a; b` + "\\";
+    expect(splitAndTrim(sql)).toEqual([sql]);
+    expect(splitSqlTokens(sql)).toEqual([{ raw: sql, trimmed: sql, terminated: false }]);
+  });
+
+  it.each([
+    String.raw`SELECT 'a\'`,
+    String.raw`SELECT type'a\'`,
+    String.raw`SELECT éE'a\'`,
+    String.raw`SELECT 😀E'a\'`,
+    String.raw`SELECT _e'a\'`,
+    String.raw`SELECT U&'a\'`,
+    String.raw`SELECT 1 AS E"a\"`,
+  ])("keeps the backslash literal outside escape strings: %s", (statement) => {
+    expect(splitAndTrim(`${statement}; SELECT 2`)).toEqual([statement, "SELECT 2"]);
+  });
+
+  it.each([
+    "SELECT E'first'\n'second\\'; third'",
+    "SELECT E'first'\r\n'second\\'; third'",
+    "SELECT E'first'\r'second\\'; third'",
+    "SELECT E'first' \t\v\f\n\n \v'second\\'; third'",
+    "SELECT E'a'\n'b'\n'c\\'; d'",
+    "SELECT E'a'''\n'b\\'; c'",
+    "SELECT E'a' -- note;\n -- more\n'b\\'; c'",
+    "SELECT E'a' -- note;\r'b\\'; c'",
+    "SELECT (E'a'\n'b\\'; c')",
+    "CREATE FUNCTION f() BEGIN ATOMIC SELECT E'a'\n'b\\'; END; c'; END",
+  ])("keeps an escape string continued on a later line together: %j", (statement) => {
+    expect(splitAndTrim(`${statement}; SELECT 2`)).toEqual([statement, "SELECT 2"]);
+    expect(splitSqlTokens(`${statement}; SELECT 2`).map((token) => token.trimmed)).toEqual([
+      statement,
+      "SELECT 2",
+    ]);
+  });
+
+  it.each([
+    ["SELECT E'a' 'b\\'; SELECT 2", ["SELECT E'a' 'b\\'", "SELECT 2"]],
+    ["SELECT E'a'\n/* x */'b\\'; SELECT 2", ["SELECT E'a'\n/* x */'b\\'", "SELECT 2"]],
+    ["SELECT E'a'\n-'b\\'; SELECT 2", ["SELECT E'a'\n-'b\\'", "SELECT 2"]],
+    ["SELECT E'a'\n- 'b\\'; SELECT 2", ["SELECT E'a'\n- 'b\\'", "SELECT 2"]],
+    ["SELECT E'a'\n\"b\\\"; SELECT 2", ["SELECT E'a'\n\"b\\\"", "SELECT 2"]],
+    [
+      "SELECT E'a' -- c\r|| 'b'\n'c\\'; SELECT 'd', 'e;f'",
+      ["SELECT E'a' -- c\r|| 'b'\n'c\\'", "SELECT 'd', 'e;f'"],
+    ],
+    ["SELECT E'a';\n'b\\'; c'", ["SELECT E'a'", "'b\\'", "c'"]],
+    ["SELECT 'a'\n'b\\'; SELECT 2", ["SELECT 'a'\n'b\\'", "SELECT 2"]],
+  ])("starts a standard string when it is not a continuation: %j", (sql, statements) => {
+    expect(splitAndTrim(sql)).toEqual(statements);
+    expect(splitSqlTokens(sql).map((token) => token.trimmed)).toEqual(statements);
   });
 
   it("does not split on a ; inside a dollar-quoted function body", () => {
