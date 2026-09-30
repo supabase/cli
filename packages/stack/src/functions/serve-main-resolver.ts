@@ -101,6 +101,10 @@ const relativePath = (base: string, value: string): string =>
 
 const denoConfigNames = ["deno.json", "deno.jsonc"];
 
+/** Whether a path names a Deno config file rather than a plain import map. */
+export const isDenoConfigPath = (path: string): boolean =>
+  denoConfigNames.includes(path.slice(path.lastIndexOf("/") + 1));
+
 /** Mirrors Deno's nearest-config lookup from the entrypoint directory, bounded by `filesRoot`. */
 const nearestDenoConfig = (
   fs: FunctionFileSystem,
