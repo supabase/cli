@@ -363,15 +363,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
-          backend: orchestrator.acquire(id, name !== "inspector").pipe(
-            Effect.andThen(recipe.endpoint(name)),
-            Effect.flatMap(backendAddress),
-            Effect.mapError((cause) =>
-              cause instanceof ProxyError
-                ? cause
-                : new ProxyError({ message: cause.message, cause }),
+          backend: orchestrator
+            .acquire(id, name !== "inspector", `traffic on endpoint ${name}`)
+            .pipe(
+              Effect.andThen(recipe.endpoint(name)),
+              Effect.flatMap(backendAddress),
+              Effect.mapError((cause) =>
+                cause instanceof ProxyError
+                  ? cause
+                  : new ProxyError({ message: cause.message, cause }),
+              ),
             ),
-          ),
           enabled,
           ...(shared === undefined ? {} : { shared }),
           ...(join === undefined ? {} : { join }),
@@ -383,6 +385,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     yield* Ref.set(namespaceRef, namespace);
     const entry: Entry = {
       id,
+      service: initial.service,
       core,
       recipe,
       creation,
