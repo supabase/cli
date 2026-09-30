@@ -1975,6 +1975,30 @@ describe("readDbToml", () => {
     },
   );
 
+  it.effect(
+    "falls back to a non-empty legacy experimental.orioledb_version when db.orioledb_version is empty",
+    () => {
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 17",
+          'orioledb_version = ""',
+          "[experimental]",
+          'orioledb_version = "15.1.0.150"',
+          "",
+        ].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.150");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("prefers an explicit db.orioledb_version over a non-empty legacy value", () => {
     const dir = withConfig(
       [
