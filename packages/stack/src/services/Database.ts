@@ -517,6 +517,8 @@ export const makeDatabase = (
             root: options.root,
             imageMirrors: slimImageMirrors,
             ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+            // PostgreSQL's outbound HTTP falls back across address families.
+            awaitHostGateway: false,
           });
     const storage: DockerDatabaseStorage | undefined =
       options.runtime === "native"

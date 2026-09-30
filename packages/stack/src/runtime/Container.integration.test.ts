@@ -229,6 +229,86 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("launches without awaiting a background probe that later launches share", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const probes = yield* Ref.make(0);
+        const release = yield* Deferred.make<void>();
+        const hostGateway = yield* makeHostGateway;
+        const spawner = makeHostGatewayProbeSpawner(delegate, probes, () => undefined, release);
+        const database = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway,
+          awaitHostGateway: false,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        const service = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        yield* database.prepare(image);
+        const launchExit = (runtime: typeof service, instanceId: string) =>
+          runtime.launchCommand({
+            image,
+            stackId: "e".repeat(64),
+            instanceId,
+            env: {},
+            args: ["-e", "process.exit(0)"],
+          });
+
+        const early = yield* launchExit(database, "host-alias-background");
+        expect(yield* inspectExtraHosts(early.id)).toContain(`${DOCKER_HOST_ALIAS}:host-gateway`);
+        const waiting = yield* launchExit(service, "host-alias-awaiting").pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        const later = yield* Fiber.join(waiting);
+
+        const aliases = (yield* inspectExtraHosts(later.id)).filter((entry) =>
+          entry.startsWith(`${DOCKER_HOST_ALIAS}:`),
+        );
+        expect(aliases).toHaveLength(1);
+        expect(aliases[0]?.slice(DOCKER_HOST_ALIAS.length + 1)).toMatch(ipv4);
+        expect(yield* Ref.get(probes)).toBe(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("maps the host alias to the IPv4 gateway listed after an IPv6 one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const runtime = yield* makeContainerRuntime({
+          engine: "docker",
+          root: ".",
+          hostGateway: yield* makeHostGateway,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeHostGatewayProbeSpawner(
+              delegate,
+              yield* Ref.make(0),
+              () =>
+                `console.log("fdc4:f303:9324::254\\t${DOCKER_HOST_ALIAS}\\n192.168.65.254\\t${DOCKER_HOST_ALIAS}")`,
+            ),
+          ),
+        );
+        yield* runtime.prepare(image);
+        const process = yield* runtime.launchCommand({
+          image,
+          stackId: "e".repeat(64),
+          instanceId: "host-alias-dual-stack",
+          env: {},
+          args: ["-e", "process.exit(0)"],
+        });
+        expect(yield* process.exitCode).toBe(0);
+        expect(yield* inspectExtraHosts(process.id)).toContain(
+          `${DOCKER_HOST_ALIAS}:192.168.65.254`,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("falls back to host-gateway without reprobing when the gateway has no IPv4 address", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -267,7 +347,7 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("probes again with a later launch when the first image lacks cat", () =>
+  it.live("retries a probe whose image lacks cat before launching", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -295,10 +375,8 @@ describe("container process adapter", () => {
             env: {},
             args: ["-e", "process.exit(0)"],
           });
-        const first = yield* launchExit("host-alias-no-cat");
-        expect(yield* inspectExtraHosts(first.id)).toContain(`${DOCKER_HOST_ALIAS}:host-gateway`);
-        const second = yield* launchExit("host-alias-with-cat");
-        const aliases = (yield* inspectExtraHosts(second.id)).filter((entry) =>
+        const launched = yield* launchExit("host-alias-retried-probe");
+        const aliases = (yield* inspectExtraHosts(launched.id)).filter((entry) =>
           entry.startsWith(`${DOCKER_HOST_ALIAS}:`),
         );
         expect(aliases).toHaveLength(1);
@@ -1113,11 +1191,15 @@ const makePullFailureSpawner = (
     return delegate.spawn(command);
   });
 
-/** Replaces a host-gateway probe with the script `fake` returns for its attempt, if any. */
+/**
+ * Replaces a host-gateway probe with the script `fake` returns for its attempt, if any; a probe
+ * spawns only once `release`, when given, completes.
+ */
 const makeHostGatewayProbeSpawner = (
   delegate: ChildProcessSpawnerService["Service"],
   probes: Ref.Ref<number>,
   fake: (attempt: number) => string | undefined,
+  release?: Deferred.Deferred<void>,
 ) =>
   ChildProcessSpawner.make((command) => {
     if (
@@ -1129,6 +1211,7 @@ const makeHostGatewayProbeSpawner = (
       return delegate.spawn(command);
     return Effect.gen(function* () {
       const script = fake(yield* Ref.updateAndGet(probes, (count) => count + 1));
+      if (release !== undefined) yield* Deferred.await(release);
       return yield* delegate.spawn(
         script === undefined
           ? command

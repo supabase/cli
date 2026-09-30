@@ -2,6 +2,7 @@ import {
   Cause,
   Crypto,
   Data,
+  Deferred,
   type Duration,
   Effect,
   Exit,
@@ -14,7 +15,6 @@ import {
   Schedule,
   Schema,
   Scope,
-  Semaphore,
   Sink,
   Stream,
 } from "effect";
@@ -128,8 +128,9 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 const PULL_MAX_RETRIES = 4;
 
 /**
- * Host alias mapped in Docker containers' `/etc/hosts` to the engine's IPv4 host gateway; Docker
- * Desktop's `host.docker.internal` and `host-gateway` also resolve to an IPv6 address.
+ * Host alias mapped in Docker containers' `/etc/hosts` to the engine's IPv4 host gateway, or to
+ * `host-gateway` for runtimes that do not await the probe; Docker Desktop's `host.docker.internal`
+ * and `host-gateway` also resolve to an IPv6 address.
  */
 export const DOCKER_HOST_ALIAS = "host.supabase.internal";
 
@@ -138,33 +139,60 @@ const HOST_GATEWAY_PROBE_TIMEOUT: Duration.Input = "15 seconds";
 
 const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
 
-/** One stack host's `--add-host` target for `DOCKER_HOST_ALIAS`, shared by its Docker runtimes. */
+/**
+ * One stack host's `--add-host` target for `DOCKER_HOST_ALIAS`, shared by its Docker runtimes.
+ * At most one probe runs at a time, in the gateway's scope; a probe yielding `undefined` leaves
+ * the target unresolved so a later caller probes again.
+ */
 export interface HostGateway {
-  /**
-   * Returns the cached target or runs `probe` single-flight; a probe yielding `undefined` leaves
-   * the target unresolved for the next caller.
-   */
+  /** Awaits the cached or in-flight target, starting `probe` when there is neither. */
   readonly resolve: (probe: Effect.Effect<string | undefined>) => Effect.Effect<string>;
+  /** Starts `probe` in the background unless a target is cached or in flight. */
+  readonly prefetch: (probe: Effect.Effect<string | undefined>) => Effect.Effect<void>;
 }
 
 /** Probes on every platform: engines with IPv6 on the bridge map `host-gateway` to both families. */
-export const makeHostGateway: Effect.Effect<HostGateway> = Effect.gen(function* () {
-  const target = yield* Ref.make<string | undefined>(undefined);
-  const gate = yield* Semaphore.make(1);
-  return {
-    resolve: (probe) =>
-      gate.withPermits(1)(
+export const makeHostGateway: Effect.Effect<HostGateway, never, Scope.Scope> = Effect.gen(
+  function* () {
+    const scope = yield* Scope.Scope;
+    const target = yield* Ref.make<Deferred.Deferred<string | undefined> | undefined>(undefined);
+    const start = (probe: Effect.Effect<string | undefined>) =>
+      Effect.uninterruptible(
         Effect.gen(function* () {
-          const cached = yield* Ref.get(target);
-          if (cached !== undefined) return cached;
-          const probed = yield* probe;
-          if (probed === undefined) return "host-gateway";
-          yield* Ref.set(target, probed);
-          return probed;
+          const fresh = yield* Deferred.make<string | undefined>();
+          const current = yield* Ref.modify(target, (state) =>
+            state === undefined ? [undefined, fresh] : [state, state],
+          );
+          if (current !== undefined) return current;
+          // Starting immediately installs `onExit` before a closed scope can interrupt the fiber.
+          yield* probe.pipe(
+            Effect.onExit((exit) => {
+              const probed = Exit.isSuccess(exit) ? exit.value : undefined;
+              return (probed === undefined ? Ref.set(target, undefined) : Effect.void).pipe(
+                Effect.andThen(Deferred.succeed(fresh, probed)),
+              );
+            }),
+            Effect.forkIn(scope, { startImmediately: true }),
+          );
+          return fresh;
         }),
-      ),
-  };
-});
+      );
+    return {
+      // A waiter whose shared probe failed retries once before falling back.
+      resolve: (probe) =>
+        start(probe).pipe(
+          Effect.flatMap(Deferred.await),
+          Effect.flatMap((probed) =>
+            probed === undefined
+              ? start(probe).pipe(Effect.flatMap(Deferred.await))
+              : Effect.succeed(probed),
+          ),
+          Effect.map((probed) => probed ?? "host-gateway"),
+        ),
+      prefetch: (probe) => Effect.asVoid(start(probe)),
+    };
+  },
+);
 
 const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 
@@ -201,10 +229,19 @@ export const makeContainerRuntime = (options: {
   readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
   /** Omitted gives this runtime its own host-gateway probe. */
   readonly hostGateway?: HostGateway;
+  /**
+   * `false` launches with `host-gateway` at once and resolves the IPv4 target in the background,
+   * for containers that do not rely on reaching the host over IPv4.
+   */
+  readonly awaitHostGateway?: boolean;
 }): Effect.Effect<
   ContainerRuntime,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  | ChildProcessSpawner.ChildProcessSpawner
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -324,49 +361,49 @@ export const makeContainerRuntime = (options: {
 
     const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
     /** Probes the engine's first IPv4 `host-gateway` address with an already present image. */
-    const hostAliasTarget = (image: string, spec: ContainerSpec) =>
-      hostGateway.resolve(
-        run(
-          [
-            "run",
-            "--rm",
-            "--pull",
-            "never",
-            "--add-host",
-            `${DOCKER_HOST_ALIAS}:host-gateway`,
-            // No instance label: `--rm` removal is asynchronous and must not count as an
-            // instance container; the stack labels keep it sweepable.
-            "--label",
-            `com.supabase.stack=${spec.stackId}`,
-            "--label",
-            `com.supabase.stack-root=${stackRoot}`,
-            "--entrypoint",
-            "cat",
-            image,
-            "/etc/hosts",
-          ],
-          { timeout: undefined },
-        ).pipe(
-          Effect.map(
-            (hosts) =>
-              hosts
-                .split("\n")
-                .map((line) => line.trim().split(/\s+/u))
-                .find(
-                  ([address, ...names]) =>
-                    IPV4_ADDRESS.test(address ?? "") && names.includes(DOCKER_HOST_ALIAS),
-                )?.[0] ?? "host-gateway",
-          ),
-          // A failed or slow probe (e.g. an image without `cat`) is retried by the next launch.
-          Effect.timeoutOption(HOST_GATEWAY_PROBE_TIMEOUT),
-          Effect.map(Option.getOrUndefined),
-          Effect.catch((error) =>
-            Effect.logDebug(`Host gateway probe failed: ${error.message}`).pipe(
-              Effect.as(undefined),
-            ),
-          ),
+    const hostGatewayProbe = (image: string, spec: ContainerSpec) =>
+      run(
+        [
+          "run",
+          "--rm",
+          "--pull",
+          "never",
+          "--add-host",
+          `${DOCKER_HOST_ALIAS}:host-gateway`,
+          // No instance label: `--rm` removal is asynchronous and must not count as an
+          // instance container; the stack labels keep it sweepable.
+          "--label",
+          `com.supabase.stack=${spec.stackId}`,
+          "--label",
+          `com.supabase.stack-root=${stackRoot}`,
+          "--entrypoint",
+          "cat",
+          image,
+          "/etc/hosts",
+        ],
+        { timeout: undefined },
+      ).pipe(
+        Effect.map(
+          (hosts) =>
+            hosts
+              .split("\n")
+              .map((line) => line.trim().split(/\s+/u))
+              .find(
+                ([address, ...names]) =>
+                  IPV4_ADDRESS.test(address ?? "") && names.includes(DOCKER_HOST_ALIAS),
+              )?.[0] ?? "host-gateway",
+        ),
+        // A failed or slow probe (e.g. an image without `cat`) is retried by the next launch.
+        Effect.timeoutOption(HOST_GATEWAY_PROBE_TIMEOUT),
+        Effect.map(Option.getOrUndefined),
+        Effect.catch((error) =>
+          Effect.logDebug(`Host gateway probe failed: ${error.message}`).pipe(Effect.as(undefined)),
         ),
       );
+    const hostAliasTarget = (image: string, spec: ContainerSpec) =>
+      options.awaitHostGateway === false
+        ? hostGateway.prefetch(hostGatewayProbe(image, spec)).pipe(Effect.as("host-gateway"))
+        : hostGateway.resolve(hostGatewayProbe(image, spec));
 
     const launch = Effect.fn("Container.launch")(function* (
       spec: ContainerSpec,
