@@ -54,7 +54,6 @@ import {
 } from "../declarative.errors.ts";
 import {
   classifyDeclarativeCompatibilityGap,
-  currentShellPlatform,
   formatDeclarativeGapEvidence,
   formatDeclarativeUpgradeGate,
   formatStagedExportAdoption,
@@ -62,6 +61,7 @@ import {
   resolveDeclarativeMigrationName,
   resolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
+import { currentShellPlatform } from "../../../../../command-internal/shell-quote.ts";
 import { warnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { appendExtensionDeclarations } from "../declarative.extension-repair.ts";
 import { requirePgDelta } from "../declarative.gate.ts";
