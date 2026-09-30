@@ -20,7 +20,9 @@ If the stack is otherwise in a partial lifecycle state, start fails with guidanc
 and start it again before applying configuration.
 Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
-S3 protocol/vector controls, and configured Vector ports are forwarded to their services.
+S3 protocol/vector controls, and configured Vector ports are forwarded to their services. Storage
+receives the local S3 access keys and region, and uses the gateway's `/storage/v1` prefix to verify
+S3 signatures and to build resumable upload URLs.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
@@ -123,7 +125,8 @@ Storage HTTP endpoint. The CLI does not remove caller-owned Storage files during
 
 Text output reports progress and `Stack is ready.`, then prints the connection summary shared with
 `stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
-members that expose them, the publishable and secret keys, a services table, the runtime, and a
+members that expose them, the publishable and secret keys, the Storage S3 URL, access keys, and
+region when the S3 protocol is enabled, a services table, the runtime, and a
 pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
 and warnings written while the spinner is shown appear on their own rows.
 

@@ -16,7 +16,7 @@ const variableNames = [
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
-  "S3_PROTOCOL_URL",
+  "STORAGE_S3_URL",
 ] as const;
 
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
@@ -55,7 +55,7 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
 
 export const stackEnvValues = (
   status: {
-    readonly urls: Pick<StackConnections, "api" | "studio" | "mailpit" | "mcp">;
+    readonly urls: Pick<StackConnections, "api" | "studio" | "mailpit" | "mcp" | "s3">;
     readonly credentials?: Pick<
       StackCredentials,
       "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey"
@@ -76,6 +76,12 @@ export const stackEnvValues = (
   if (status.urls.studio !== undefined) values.STUDIO_URL = status.urls.studio;
   if (status.urls.mcp !== undefined) values.MCP_URL = status.urls.mcp;
   if (status.urls.mailpit !== undefined) values.INBUCKET_URL = status.urls.mailpit;
+  if (status.urls.s3 !== undefined) {
+    values.STORAGE_S3_URL = status.urls.s3.url;
+    values.S3_PROTOCOL_ACCESS_KEY_ID = status.urls.s3.accessKeyId;
+    values.S3_PROTOCOL_ACCESS_KEY_SECRET = status.urls.s3.secretAccessKey;
+    values.S3_PROTOCOL_REGION = status.urls.s3.region;
+  }
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
   );

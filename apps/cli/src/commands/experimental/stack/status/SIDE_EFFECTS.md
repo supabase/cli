@@ -37,7 +37,8 @@ Text output starts with one line naming the stack, its readiness, runtime, and
 project directory, noting when the owner is unavailable. It then prints the
 connection summary shared with `stack start`: the API, REST, Functions,
 Studio, MCP, Mailpit, and database URLs that the composition members expose, the
-saved publishable and secret keys, and a services table with each service's
+saved publishable and secret keys, the Storage S3 URL, access keys, and region
+when the Storage member enables the S3 protocol, and a services table with each service's
 state, health, and activation; sleeping lazy services are marked as starting on
 first request. Service errors follow the tables, and config drift ends the
 output as one muted line unless the configuration drifted. Stack and service IDs appear only
@@ -53,7 +54,9 @@ properties.
 owner and a running primary database, then derives the database URL from the
 observed SQL endpoint and saved database credentials, using the `supabase_admin` role.
 `API_URL` is the shared API listener of any member routed through it, and
-`MCP_URL` is Studio's MCP endpoint. It does not request live
+`MCP_URL` is Studio's MCP endpoint. `STORAGE_S3_URL`, `S3_PROTOCOL_ACCESS_KEY_ID`,
+`S3_PROTOCOL_ACCESS_KEY_SECRET`, and `S3_PROTOCOL_REGION` come from the Storage member's
+saved configuration when its S3 protocol is enabled. It does not request live
 credentials or launch an owner, and it does not load or compare project
 configuration. Text output emits dotenv assignments;
 JSON and stream-JSON output emit a plain variable map under a successful result.
