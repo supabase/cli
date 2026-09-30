@@ -67,36 +67,73 @@ const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/release
 /** Bounded retry for `waitForExpectedRelease`: 6 attempts, 10s apart, by default. */
 const EXPECT_RELEASE_ATTEMPTS = 6;
 const DEFAULT_EXPECT_RELEASE_INTERVAL_MS = 10_000;
+/** Bounded retry for the S3-mirror wait in `resolveRevisionPin`: ~10 min, covering a native upload of all three targets (`mirror-slim-image.yml`'s `upload-natives-s3`). */
+const S3_WAIT_ATTEMPTS = 20;
+const DEFAULT_S3_WAIT_INTERVAL_MS = 30_000;
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1; // setTimeout's own ceiling.
 
 /**
- * Parses `SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS` fresh on every call (not once at module load), so
- * an integration test can shrink the real delay between `waitForExpectedRelease` attempts by
- * setting the env var before spawning, not before this module is first imported. Unset keeps the
- * default; anything else must be a non-negative integer (no `"5ms"`, no `""`, no negative value,
- * no decimal) or this throws a clear configuration error instead of silently coercing it to NaN,
- * 0, or a meaningless delay.
+ * Parses a millisecond wait-interval override from `envVar` fresh on every call, not once at
+ * module load, so a test can set it right before spawning. Unset keeps `fallback`; anything else
+ * must be a non-negative integer of at most `MAX_TIMER_DELAY_MS`, or this throws.
  */
-const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
-
-function expectReleaseIntervalMs(): number {
-  const raw = process.env.SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS;
-  if (raw === undefined) return DEFAULT_EXPECT_RELEASE_INTERVAL_MS;
+function waitIntervalMs(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined) return fallback;
   const value = Number(raw);
-  // `setTimeout` clamps anything above 2^31 - 1 ms, so a larger value can't be honored either.
   if (!/^(0|[1-9][0-9]*)$/.test(raw) || value > MAX_TIMER_DELAY_MS) {
     throw new InvalidPayloadError(
-      `invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ${JSON.stringify(raw)}: expected a non-negative integer of at most ${MAX_TIMER_DELAY_MS}`,
+      `invalid ${envVar} ${JSON.stringify(raw)}: expected a non-negative integer of at most ${MAX_TIMER_DELAY_MS}`,
     );
   }
   return value;
 }
 
+const expectReleaseIntervalMs = (): number =>
+  waitIntervalMs("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS", DEFAULT_EXPECT_RELEASE_INTERVAL_MS);
+const s3WaitIntervalMs = (): number =>
+  waitIntervalMs("SLIM_UPDATES_S3_WAIT_MS", DEFAULT_S3_WAIT_INTERVAL_MS);
+
+/** Real delay, for a caller that didn't override `wait`. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type BoundedCheck<T> =
+  | { readonly kind: "done"; readonly value: T }
+  | { readonly kind: "retry" }
+  | { readonly kind: "failed"; readonly message: string };
+
+type BoundedWaitOutcome<T> =
+  | { readonly status: "done"; readonly value: T }
+  | { readonly status: "timed-out" }
+  | { readonly status: "failed"; readonly message: string };
+
 /**
- * A GitHub Actions workflow-command line (`::error ::…`/`::warning ::…`), with `message` run
- * through the workflow-command data encoding (`%` first, so encoding `\r`/`\n` into `%0D`/`%0A`
- * never gets re-escaped) — the single boundary every `::error ::`/`::warning ::` this script
- * emits goes through, so an external value embedding a newline can never start a second line the
- * runner's log would parse as its own workflow command.
+ * Generic bounded retry-with-wait: `waitForExpectedRelease`'s release-visibility wait and
+ * `resolveRevisionPin`'s S3-mirror wait both build on this. Calls `check` up to `attempts`
+ * times, `wait`-ing `intervalMs` between, until it reports `"done"` or an unrecoverable
+ * `"failed"` (never waited out). Exhausting every attempt on `"retry"` yields `"timed-out"`.
+ */
+async function boundedWait<T>(
+  check: () => Promise<BoundedCheck<T>>,
+  wait: (ms: number) => Promise<void>,
+  attempts: number,
+  intervalMs: number,
+): Promise<BoundedWaitOutcome<T>> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const result = await check();
+    if (result.kind === "done") return { status: "done", value: result.value };
+    if (result.kind === "failed") return { status: "failed", message: result.message };
+    if (attempt < attempts - 1) await wait(intervalMs);
+  }
+  return { status: "timed-out" };
+}
+
+/**
+ * A GitHub Actions workflow-command line, `message` run through the workflow-command data
+ * encoding (`%` first, so encoding `\r`/`\n` never gets re-escaped) — the boundary every
+ * `::error ::`/`::warning ::` this script emits goes through.
  */
 function workflowCommand(kind: "error" | "warning", message: string): string {
   const encoded = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
@@ -192,6 +229,8 @@ export interface RevisionIo {
   readonly fetchChecksums: (service: string, releaseVersion: string) => Promise<string | undefined>;
   readonly imageDigest: (service: string, releaseVersion: string) => Promise<string | undefined>;
   readonly s3Sha256: (url: string) => Promise<string | undefined>;
+  /** Overridable real delay between the S3-mirror wait's bounded attempts. */
+  readonly wait?: (ms: number) => Promise<void>;
   /**
    * Raw contents of a native target's `.manifest.json` release asset, for a derived service's
    * `upstream_image` (or `source_image` on an image-derived build, e.g. postgrest's Linux
@@ -300,15 +339,42 @@ export async function resolveRevisionPin(
     };
   }
 
+  // `mirror-slim-image.yml`'s S3 upload runs in parallel, best-effort, so a freshly committed
+  // revision's S3 copy can briefly lag GitHub: a missing object waits, bounded; a present object
+  // with the wrong bytes fails immediately instead of waiting.
   for (const target of NATIVE_TARGETS) {
     const files = nativeFileNames(service, releaseVersion, target);
     for (const part of ["archive", "manifest"] as const) {
       const url = nativeObjectUrl(service, releaseVersion, files[part]);
-      const actual = await io.s3Sha256(url);
-      if (actual === undefined || actual !== natives[target]?.[part]) {
+      const expected = natives[target]?.[part] as string;
+      const outcome = await boundedWait<true>(
+        async () => {
+          const actual = await io.s3Sha256(url);
+          if (actual === undefined) {
+            console.log(
+              `Waiting for the S3 mirror of ${service}-${releaseVersion} ${target} (${part})...`,
+            );
+            return { kind: "retry" };
+          }
+          if (actual !== expected) {
+            return {
+              kind: "failed",
+              message: `S3 copy of ${releaseVersion} ${target} (${part}) is stale (digest mismatch); run the slim-services mirror backfill.`,
+            };
+          }
+          return { kind: "done", value: true };
+        },
+        io.wait ?? sleep,
+        S3_WAIT_ATTEMPTS,
+        s3WaitIntervalMs(),
+      );
+      if (outcome.status === "failed") {
+        return { status: "stale", message: outcome.message };
+      }
+      if (outcome.status === "timed-out") {
         return {
           status: "stale",
-          message: `S3 copy of ${releaseVersion} ${target} is stale; run the slim-services mirror backfill`,
+          message: `S3 copy of ${releaseVersion} ${target} (${part}) never appeared; the S3 mirror hasn't finished — check mirror-slim-image.yml for this release, backfill if needed, and re-run.`,
         };
       }
     }
@@ -925,12 +991,16 @@ export async function waitForExpectedRelease(
 ): Promise<WaitForExpectedReleaseResult> {
   const expectedTag = `${service}-${releaseVersion}`;
   let tags: ReadonlyArray<string> = [];
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    tags = await io.listReleaseTags();
-    if (tags.includes(expectedTag)) return { visible: true, tags };
-    if (attempt < attempts - 1) await io.wait(intervalMs);
-  }
-  return { visible: false, tags };
+  const outcome = await boundedWait<true>(
+    async () => {
+      tags = await io.listReleaseTags();
+      return tags.includes(expectedTag) ? { kind: "done", value: true } : { kind: "retry" };
+    },
+    io.wait,
+    attempts,
+    intervalMs,
+  );
+  return { visible: outcome.status === "done", tags };
 }
 
 export interface CatalogRefreshResult {
@@ -1186,11 +1256,6 @@ function updateLine(update: SlimUpdate): string {
   return [update.kind, update.branch, update.title, update.toRelease, update.fromRelease].join(
     "\x1f",
   );
-}
-
-/** Real delay, for `runPlanUpdates`' default `io.wait`. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**

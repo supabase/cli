@@ -77,12 +77,13 @@ and either `--upstream` (the highest committed revision of that upstream version
 (exactly that committed `<upstream>-r<N>`, never "highest at apply time"), it reads the target
 release's `SHA256SUMS` for the archive and manifest sha256 per target, and resolves the image
 digest with `regctl manifest head`. Before writing the pin, it downloads each target's S3 archive
-and manifest and hashes them against those same release sums; a mismatch fails the sync instead
-of pinning bytes that don't match GitHub. This exists because `publish-release` does not wait for
-the ECR/S3 mirror to finish, so a freshly committed revision's S3 copy can briefly lag or hold
-bytes from an earlier failed attempt. Hosts that reach GitHub are unaffected — GitHub is the
-primary mirror — but a host that can only reach S3 would otherwise fail verification with no
-fallback. A mismatch here means "run the mirror backfill", not "the CLI is broken".
+and manifest and hashes them against those same release sums. This exists because
+`publish-release` does not wait for the ECR/S3 mirror to finish, so a freshly committed
+revision's S3 copy can briefly lag. A missing object waits, bounded (`waitForExpectedRelease`'s
+retry helper, generalized); an object that exists with the wrong bytes fails the sync
+immediately — that's corruption, not lag, and means "run the mirror backfill", not "the CLI is
+broken". Hosts that reach GitHub are unaffected — GitHub is the primary mirror — but a host that
+can only reach S3 would otherwise fail verification with no fallback.
 
 ### Hotfix and upgrade pickup
 

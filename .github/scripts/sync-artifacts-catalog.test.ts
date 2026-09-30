@@ -9,6 +9,7 @@ import {
   planSlimUpdates,
   planUpdatesForService,
   refreshCatalogPin,
+  resolveRevisionPin,
   validateSlimReleasePublishedPayload,
   waitForExpectedRelease,
   type RevisionIo,
@@ -1027,6 +1028,87 @@ describe("refreshCatalogPin", () => {
       target: "additional",
     });
     expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+  });
+});
+
+describe("resolveRevisionPin waits for the S3 mirror", () => {
+  test("waits while one S3 object is missing, then resolves once it appears", async () => {
+    const digests = nativeDigests("s3-wait");
+    const releaseVersion = "v16.2-r0";
+    const missingUrl = nativeObjectUrl(
+      "postgrest",
+      releaseVersion,
+      nativeFileNames("postgrest", releaseVersion, "darwin-arm64").archive,
+    );
+    const present = matchingS3("postgrest", releaseVersion, digests);
+    let missingCalls = 0;
+    const waits: number[] = [];
+    const io: RevisionIo = {
+      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
+      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
+      imageDigest: async () => digest("s3-wait-digest"),
+      s3Sha256: async (url) => {
+        if (url === missingUrl) {
+          missingCalls += 1;
+          if (missingCalls < 2) return undefined;
+        }
+        return present(url);
+      },
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    };
+
+    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
+
+    expect(resolution.status).toBe("resolved");
+    expect(missingCalls).toBe(2);
+    expect(waits).toHaveLength(1);
+  });
+
+  test("fails immediately on a digest mismatch, without waiting", async () => {
+    const digests = nativeDigests("s3-mismatch");
+    const releaseVersion = "v16.2-r0";
+    const waits: number[] = [];
+    const io: RevisionIo = {
+      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
+      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
+      imageDigest: async () => digest("s3-mismatch-digest"),
+      s3Sha256: async () => hex("wrong-bytes"),
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    };
+
+    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
+
+    expect(resolution.status).toBe("stale");
+    if (resolution.status !== "stale") throw new Error("expected status 'stale'");
+    expect(resolution.message).toContain("digest mismatch");
+    expect(waits).toEqual([]);
+  });
+
+  test("fails after the bounded attempts when an S3 object never appears, with an actionable message", async () => {
+    const digests = nativeDigests("s3-never");
+    const releaseVersion = "v16.2-r0";
+    const waits: number[] = [];
+    const io: RevisionIo = {
+      listReleaseTags: async () => [`postgrest-${releaseVersion}`],
+      fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
+      imageDigest: async () => digest("s3-never-digest"),
+      s3Sha256: async () => undefined,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    };
+
+    const resolution = await resolveRevisionPin("postgrest", "v16.2", io);
+
+    expect(resolution.status).toBe("stale");
+    if (resolution.status !== "stale") throw new Error("expected status 'stale'");
+    expect(resolution.message).toContain("mirror-slim-image.yml");
+    expect(resolution.message).toContain("hasn't finished");
+    expect(waits.length).toBeGreaterThan(0);
   });
 });
 
