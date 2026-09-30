@@ -687,6 +687,21 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
 
     expect(result.source).not.toContain("upstreamImage");
   });
+
+  test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", async () => {
+    const digests = nativeDigests("ak");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
+      imageDigest: async () => digest("al"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
+      fetchManifest: manifestFixture('supabase/logflare:1.50.9"] }; import("evil"); //'),
+    };
+
+    await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
+      InvalidPayloadError,
+    );
+  });
 });
 
 describe("against the real catalog", () => {

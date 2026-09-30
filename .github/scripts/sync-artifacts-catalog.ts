@@ -288,6 +288,23 @@ function normalizeUpstreamImage(image: string): string {
 }
 
 /**
+ * A normalized `upstreamImage`: one or more lowercase `registry`/`repository` path segments
+ * (each `[a-z0-9]`, optionally separated internally by `.`/`_`/`-`), a `:`, and a tag matching
+ * Docker's own tag grammar. Anchored, so no whitespace, quote, or template/expression syntax can
+ * slip through — this value gets embedded as a TypeScript string literal in `Artifacts.ts`.
+ */
+const IMAGE_REFERENCE_PATTERN =
+  /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
+
+/** Validates a normalized `upstreamImage` before it's ever written to `Artifacts.ts`. */
+function validateUpstreamImage(image: string, context: string): string {
+  if (!IMAGE_REFERENCE_PATTERN.test(image)) {
+    throw new InvalidPayloadError(`${context} has an invalid upstreamImage '${image}'.`);
+  }
+  return image;
+}
+
+/**
  * Resolves `service`'s `upstreamImage` for the release `releaseVersion` (`<upstream>-r<N>`):
  * a mirrored service's `oci-provenance.json` `source`, or a derived service's per-target
  * manifest `upstream_image` (falling back to `source_image` for an image-derived build, e.g.
@@ -317,7 +334,7 @@ async function resolveUpstreamImage(
         `${service}-${releaseVersion} oci-provenance has no 'source' field.`,
       );
     }
-    return normalizeUpstreamImage(source);
+    return validateUpstreamImage(normalizeUpstreamImage(source), `${service}-${releaseVersion}`);
   }
 
   if (io.fetchManifest === undefined) {
@@ -345,18 +362,23 @@ async function resolveUpstreamImage(
       `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values].sort().join(", ")}.`,
     );
   }
-  return [...values][0] as string;
+  return validateUpstreamImage([...values][0] as string, `${service}-${releaseVersion}`);
 }
 
-/** Serializes a resolved pin into the object literal `Artifacts.ts` embeds, in catalog order. */
+/**
+ * Serializes a resolved pin into the object literal `Artifacts.ts` embeds, in catalog order.
+ * Every string field goes through `JSON.stringify`, not manual `"${…}"` interpolation — this
+ * text is written straight into TypeScript source that later gets imported, so an unescaped
+ * quote or template expression in any field (release metadata included) would inject code.
+ */
 function serializePin(pin: ResolvedPin): string {
   const natives = NATIVE_TARGETS.map((target) => {
     const native = pin.natives[target];
-    return `"${target}": { archive: "${native.archive}", manifest: "${native.manifest}" }`;
+    return `${JSON.stringify(target)}: { archive: ${JSON.stringify(native.archive)}, manifest: ${JSON.stringify(native.manifest)} }`;
   }).join(", ");
   const upstreamImage =
-    pin.upstreamImage === undefined ? "" : ` upstreamImage: "${pin.upstreamImage}",`;
-  return `{ upstreamVersion: "${pin.upstreamVersion}", revision: ${pin.revision}, image: "${pin.image}",${upstreamImage} natives: { ${natives} } }`;
+    pin.upstreamImage === undefined ? "" : ` upstreamImage: ${JSON.stringify(pin.upstreamImage)},`;
+  return `{ upstreamVersion: ${JSON.stringify(pin.upstreamVersion)}, revision: ${pin.revision}, image: ${JSON.stringify(pin.image)},${upstreamImage} natives: { ${natives} } }`;
 }
 
 interface PinSpan {
