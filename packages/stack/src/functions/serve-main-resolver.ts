@@ -23,6 +23,12 @@ export type FunctionOverrides = Readonly<Record<string, FunctionOverride>>;
 export interface FunctionConfig {
   readonly entrypointPath: string;
   readonly importMapPath: string;
+  /**
+   * Whether Edge Runtime already loads `importMapPath` as the Deno config it discovers from the
+   * entrypoint. Passing it as a plain import map would drop config semantics such as `jsr:` subpath
+   * expansion.
+   */
+  readonly importMapDiscoveredByRuntime: boolean;
   readonly staticFiles: ReadonlyArray<string>;
   readonly verifyJWT: boolean;
   readonly env?: Readonly<Record<string, string>>;
@@ -93,6 +99,35 @@ const rejectSymlinkDescendants = (
 const relativePath = (base: string, value: string): string =>
   value.length === 0 ? "" : value.startsWith("/") ? value : join(base, value);
 
+const denoConfigNames = ["deno.json", "deno.jsonc"];
+
+/** Mirrors Deno's nearest-config lookup from the entrypoint directory, bounded by `filesRoot`. */
+const nearestDenoConfig = (
+  fs: FunctionFileSystem,
+  filesRoot: string,
+  entrypointPath: string,
+): Effect.Effect<string | undefined> =>
+  Effect.gen(function* () {
+    let directory = dirname(entrypointPath);
+    while (contained(filesRoot, directory)) {
+      for (const name of denoConfigNames) {
+        const candidate = join(directory, name);
+        const info = yield* optionalInfo(fs, candidate);
+        if (info !== undefined) return info.isFile && !info.isSymbolicLink ? candidate : undefined;
+      }
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+    return undefined;
+  });
+
+const samePath = (fs: FunctionFileSystem, left: string, right: string): Effect.Effect<boolean> =>
+  Effect.all([fs.realPath(left), fs.realPath(right)], { concurrency: 2 }).pipe(
+    Effect.map(([canonicalLeft, canonicalRight]) => canonicalLeft === canonicalRight),
+    Effect.orElseSucceed(() => false),
+  );
+
 /** Resolves one request's persisted override/default against the live functions tree. */
 export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig")(
   function* (options: {
@@ -160,7 +195,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
       const info = yield* optionalInfo(fs, importMapPath);
       if (info === undefined || !info.isFile || info.isSymbolicLink) return undefined;
     } else {
-      for (const candidate of ["deno.json", "deno.jsonc"]) {
+      for (const candidate of denoConfigNames) {
         const path = join(functionDirectory, candidate);
         const info = yield* optionalInfo(fs, path);
         if (info !== undefined) {
@@ -171,6 +206,13 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
         }
       }
     }
+    const discoveredDenoConfig =
+      importMapPath.length === 0
+        ? undefined
+        : yield* nearestDenoConfig(fs, filesRoot, entrypointPath);
+    const importMapDiscoveredByRuntime =
+      discoveredDenoConfig !== undefined &&
+      (yield* samePath(fs, discoveredDenoConfig, importMapPath));
 
     const staticFiles = (override.staticFiles ?? override.static_files ?? []).map((pattern) =>
       relativePath(functionDirectory, pattern),
@@ -197,6 +239,7 @@ export const resolveFunctionConfig = Effect.fn("Functions.resolveFunctionConfig"
     return {
       entrypointPath,
       importMapPath,
+      importMapDiscoveredByRuntime,
       staticFiles,
       verifyJWT: override.verifyJWT ?? override.verify_jwt ?? true,
       env: override.env,

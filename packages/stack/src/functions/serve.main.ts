@@ -455,7 +455,9 @@ Deno.serve({
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
               context: {
                 useReadSyncFileAPI: true,
-                ...(config.importMapPath === "" ? {} : { importMapPath: config.importMapPath }),
+                ...(config.importMapPath === "" || config.importMapDiscoveredByRuntime
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
               },
               staticPatterns: config.staticFiles,
             }),

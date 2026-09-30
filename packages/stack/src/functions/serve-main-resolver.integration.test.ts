@@ -36,6 +36,7 @@ describe("Edge Runtime worker service paths", () => {
     const alpha = {
       entrypointPath: "/functions/shared/alpha.ts",
       importMapPath: "",
+      importMapDiscoveredByRuntime: false,
       staticFiles: [],
       verifyJWT: true,
     };
@@ -265,6 +266,89 @@ describe("Edge Runtime request-time function resolver", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.live("marks the Deno config Edge Runtime discovers from the entrypoint", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-resolver-deno-config-",
+      });
+      const hello = path.join(root, "hello");
+      const shared = path.join(root, "shared");
+      yield* fs.makeDirectory(hello, { recursive: true });
+      yield* fs.makeDirectory(shared, { recursive: true });
+      yield* fs.writeFileString(path.join(hello, "index.ts"), "export default 1");
+      yield* fs.writeFileString(path.join(hello, "deno.json"), "{}");
+      yield* fs.writeFileString(path.join(shared, "index.ts"), "export default 2");
+      yield* fs.writeFileString(path.join(root, "deno.json"), "{}");
+      const canonicalRoot = yield* fs.realPath(root);
+
+      const template = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: { hello: { import_map: path.join(canonicalRoot, "hello", "deno.json") } },
+        fs: nodeFileSystem,
+      });
+      const discovered = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {},
+        fs: nodeFileSystem,
+      });
+      const ancestor = yield* resolveFunctionConfig({
+        root,
+        slug: "shared",
+        overrides: { $default: { import_map_root: "deno.json" } },
+        fs: nodeFileSystem,
+      });
+
+      expect(template).toMatchObject({
+        importMapPath: path.join(canonicalRoot, "hello", "deno.json"),
+        importMapDiscoveredByRuntime: true,
+      });
+      expect(discovered).toMatchObject({
+        importMapPath: path.join(canonicalRoot, "hello", "deno.json"),
+        importMapDiscoveredByRuntime: true,
+      });
+      expect(ancestor).toMatchObject({
+        importMapPath: path.join(canonicalRoot, "deno.json"),
+        importMapDiscoveredByRuntime: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.live("keeps import maps Edge Runtime would not discover as explicit import maps", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-resolver-plain-import-map-",
+      });
+      const hello = path.join(root, "hello");
+      yield* fs.makeDirectory(hello, { recursive: true });
+      yield* fs.writeFileString(path.join(hello, "index.ts"), "export default 1");
+      yield* fs.writeFileString(path.join(hello, "deno.json"), "{}");
+      yield* fs.writeFileString(path.join(hello, "import_map.json"), "{}");
+      yield* fs.writeFileString(path.join(root, "deno.json"), "{}");
+
+      const plain = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: { hello: { import_map: "import_map.json" } },
+        fs: nodeFileSystem,
+      });
+      const shadowed = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: { $default: { import_map_root: "deno.json" } },
+        fs: nodeFileSystem,
+      });
+
+      expect(plain?.importMapDiscoveredByRuntime).toBe(false);
+      expect(shadowed?.importMapDiscoveredByRuntime).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.live("accepts a symlinked functions root while enforcing canonical descendants", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -374,6 +458,7 @@ describe("Edge Runtime request-time function resolver", () => {
       const config = {
         entrypointPath: path.join(functionRoot, "index.ts"),
         importMapPath: "",
+        importMapDiscoveredByRuntime: false,
         staticFiles: [],
         verifyJWT: true,
       };
