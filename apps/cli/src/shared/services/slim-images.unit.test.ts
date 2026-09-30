@@ -51,6 +51,7 @@ afterEach(() => {
 describe("slimCatalogPin", () => {
   it.each([
     ["pg", "postgres"],
+    ["pg15", "postgres"],
     ["gotrue", "auth"],
     ["postgrest", "postgrest"],
     ["realtime", "realtime"],
@@ -129,7 +130,7 @@ describe("slimCatalogPin", () => {
   });
 
   it("is absent for aliases with no slim build", () => {
-    for (const alias of ["kong", "differ", "migra", "pgprove"]) {
+    for (const alias of ["kong", "pg14", "differ", "migra", "pgprove"]) {
       expect(slimCatalogPin(alias, dockerfileServiceImageRaw(alias))).toBeUndefined();
     }
   });
@@ -249,6 +250,14 @@ describe("slimImageForCurrentPin", () => {
   it("is a no-op while the flag is off", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     const current = "supabase/gotrue:v2.197.0";
+    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0")).toBe("supabase/gotrue:v1.67.0");
+  });
+
+  it("falls back to the upstream image on the linked-pin fallback path (a hosted version that doesn't match the pin)", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const current = "supabase/gotrue:v2.197.0";
+    // The linked project's hosted version (v1.67.0) differs from the catalog's pinned
+    // upstream version (v2.197.0): stay on the upstream (non-slim) image instead of guessing.
     expect(slimImageForCurrentPin("gotrue", current, "v1.67.0")).toBe("supabase/gotrue:v1.67.0");
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
+import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
@@ -108,12 +109,18 @@ describe("services shared", () => {
     ]);
   });
 
-  test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
-    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.8.1.085");
-    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.8.1.085");
+  test("resolves PG13/14/15 from the Dockerfile's pg15/pg14 stages, regardless of the slim flag", () => {
+    const pg15 = dockerfileServiceImageRaw("pg15");
+    const pg14 = dockerfileServiceImageRaw("pg14");
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
+    // Always the raw docker.io reference; slim translation is a separate, downstream concern
+    // (`toSlimImage`/`slimImageForCurrentPin`), so this function itself doesn't read the flag.
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.14.1.167");
-    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.14.1.167");
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
   });
 
   test("slim-translates a version override that matches a catalog pin", () => {

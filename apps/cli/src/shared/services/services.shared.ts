@@ -10,6 +10,7 @@ import {
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
 import {
+  dockerfileServiceImageRaw,
   dockerfileServiceImages,
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
@@ -119,19 +120,20 @@ export function localServiceImagesFromDockerfile(
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
-export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
-/** Flag-off PG13/15 docker.io pin. */
-export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.8.1.085";
-/** Published slim PG15 pin; flag-on majors 13/15 slim-translate this, not 15.8. */
-export const POSTGRES_FALLBACK_IMAGE_PG15_SLIM = "supabase/postgres:15.14.1.167";
-
+/**
+ * Resolves PG13/14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
+ * generated (`pg15`) or hand-pinned (`pg14`, no slim build) from the stack catalog. Always the
+ * raw docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
+ * …)` path every other slim-capable service uses, since a slim-capable service's Dockerfile tag
+ * always matches a catalog upstream version by construction.
+ */
 export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return slimImagesEnabled() ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM : POSTGRES_FALLBACK_IMAGE_PG15;
+      return dockerfileServiceImageRaw("pg15");
     case 14:
-      return POSTGRES_FALLBACK_IMAGE_PG14;
+      return dockerfileServiceImageRaw("pg14");
     default:
       return undefined;
   }

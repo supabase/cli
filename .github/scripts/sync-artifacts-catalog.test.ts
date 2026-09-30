@@ -583,6 +583,112 @@ describe("refreshCatalogPin", () => {
   });
 });
 
+const vectorFixture = `const workloadCatalog = {
+  vector: definition("vector", placeholderPin("vector", "0.53.0"), "bin/vector"),
+};
+`;
+
+/** Manifest fixture for a derived (nix-built) service, agreeing across every native target. */
+function manifestFixture(upstreamImage: string): RevisionIo["fetchManifest"] {
+  return async () => JSON.stringify({ upstream_image: upstreamImage });
+}
+
+describe("refreshCatalogPin backfills upstreamImage", () => {
+  test("resolves a derived service's upstreamImage from its per-target manifests", async () => {
+    const digests = nativeDigests("y");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0", "analytics-v1.50.9-r1"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r1", digests),
+      imageDigest: async () => digest("z"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
+      fetchManifest: manifestFixture("supabase/logflare:1.50.9"),
+    };
+
+    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
+
+    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+  });
+
+  test("falls back to source_image when a target's manifest has no upstream_image (image-derived build)", async () => {
+    const digests = nativeDigests("aa");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
+      imageDigest: async () => digest("ab"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
+      fetchManifest: async () => JSON.stringify({ source_image: "supabase/logflare:1.50.9" }),
+    };
+
+    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
+
+    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+  });
+
+  test("strips a docker.io prefix and a digest from the resolved upstreamImage", async () => {
+    const digests = nativeDigests("ac");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
+      imageDigest: async () => digest("ad"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
+      fetchManifest: manifestFixture("docker.io/supabase/logflare:1.50.9@sha256:deadbeef"),
+    };
+
+    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
+
+    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
+  });
+
+  test("fails loudly when a derived service's manifests disagree across native targets", async () => {
+    const digests = nativeDigests("ae");
+    let call = 0;
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
+      imageDigest: async () => digest("af"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
+      fetchManifest: async () => {
+        call += 1;
+        return JSON.stringify({ upstream_image: `supabase/logflare:1.50.${call}` });
+      },
+    };
+
+    await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
+      /manifests disagree/,
+    );
+  });
+
+  test("resolves a mirrored service's upstreamImage from its oci-provenance source", async () => {
+    const digests = nativeDigests("ag");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["vector-0.53.0-r0"],
+      fetchChecksums: async () => checksumsFor("vector", "0.53.0-r0", digests),
+      imageDigest: async () => digest("ah"),
+      s3Sha256: matchingS3("vector", "0.53.0-r0", digests),
+      fetchProvenance: async () =>
+        JSON.stringify({ source: "docker.io/timberio/vector:0.53.0-alpine" }),
+    };
+
+    const result = await refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
+
+    expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
+  });
+
+  test("leaves upstreamImage absent when io has no manifest/provenance fetchers", async () => {
+    const digests = nativeDigests("ai");
+    const io: RevisionIo = {
+      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
+      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
+      imageDigest: async () => digest("aj"),
+      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
+    };
+
+    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
+
+    expect(result.source).not.toContain("upstreamImage");
+  });
+});
+
 describe("against the real catalog", () => {
   test("every slim Dockerfile alias is a catalog entry", async () => {
     const dockerfile = await Bun.file("apps/cli/src/shared/services/Dockerfile").text();

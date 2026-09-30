@@ -45,6 +45,14 @@ export interface ArtifactPin {
   readonly revision: number;
   /** `ghcr.io/supabase/cli/<service>:<release version>@sha256:<digest>`. */
   readonly image: string;
+  /**
+   * The exact upstream image this release was built or mirrored from, as slim-services recorded
+   * it: the release manifest's `upstream_image` for a derived service, or the release's
+   * `oci-provenance.json` `source` for a mirrored one (vector, mailpit, imgproxy). Normalized to
+   * the Dockerfile's `FROM` form — no leading `docker.io/`, no digest — so legacy non-slim mode
+   * can use it as the upstream tag directly.
+   */
+  readonly upstreamImage: string;
   readonly natives: Readonly<Record<NativeTarget, NativePin>>;
 }
 
@@ -102,6 +110,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/postgres:17.11.0.002-r0@sha256:5a551a204a41267c4f78a2e5b34657f5c6fdd39eddccd50262466481b95739cc",
+      upstreamImage: "supabase/postgres:17.11.0.002",
       natives: {
         "darwin-arm64": {
           archive: "10410e402c77210a0543539d9bafcabd0c04923d8e796928cbd2a053cf7b4f4f",
@@ -125,6 +134,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
         revision: 0,
         image:
           "ghcr.io/supabase/cli/postgres:15.19.0.002-r0@sha256:a3f343f19323497a5766fa4e86a51dba495a8eca354cc128d879b4632c6bd017",
+        upstreamImage: "supabase/postgres:15.19.0.002",
         natives: {
           "darwin-arm64": {
             archive: "59b05ca76db9d807803840264d885a5ff435e552f294d7f22ca831fac1ffb4a3",
@@ -149,6 +159,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/postgrest:v16.4-r0@sha256:63a8d4acfdeb107b6568f4582759c78072100ef07951a7fbe58c9a51241138a7",
+      upstreamImage: "postgrest/postgrest:v16.4",
       natives: {
         "darwin-arm64": {
           archive: "a1f5449d739404cbd042ec9dbabadea6dcf810db636e44c7176b859d5e78ab07",
@@ -173,6 +184,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:7eb303831d170865840dbb3f9018b48561c988704ad1d9a2bafabb4e93e92da5",
+      upstreamImage: "supabase/gotrue:v2.197.0",
       natives: {
         "darwin-arm64": {
           archive: "eb365c4aea1e1cd04998ed16cd49b1b90e6a097ce633e5ee55f8bbbebdd349c7",
@@ -197,6 +209,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/realtime:v2.140.3-r0@sha256:af7b883647770351eef150cc16e1f12d7fe4b4920324e2e40487961ad3b22789",
+      upstreamImage: "supabase/realtime:v2.140.3",
       natives: {
         "darwin-arm64": {
           archive: "e015ced15ed2110c2a0123b6e75edb2aeb12ac6bdbacffdfb296262a4215f97e",
@@ -222,6 +235,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/storage:v1.79.26-r0@sha256:277bac6513c4b6d5e45dc80a5a98021a407d83852393fd368585e51e0d11e41b",
+      upstreamImage: "supabase/storage-api:v1.79.26",
       natives: {
         "darwin-arm64": {
           archive: "5039b176ed7fce641c9bb94a6cfb232450775680c7bb268f50910b52b4bd5047",
@@ -247,6 +261,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/imgproxy:v3.26.0-r0@sha256:5871582cf6c5140d3b50b21e0d1aa236fdf46ee6133e3bfec1baf63545e01cf0",
+      upstreamImage: "ghcr.io/imgproxy/imgproxy:v3.26.0",
       natives: {
         "darwin-arm64": {
           archive: "1f82084b056bf4806bf492bca0b6f963068d07a6776a2a122b61da940732683b",
@@ -271,6 +286,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/edge-runtime:v1.77.1-r0@sha256:98582ce39914bba6ac856a5bf6ed3c1584ce4616687ca359c8acd5f59dd9ff59",
+      upstreamImage: "supabase/edge-runtime:v1.77.1",
       natives: {
         "darwin-arm64": {
           archive: "e52fdbedccf258fd9a427b19bd34569ca210c1ca257a85fc23f66b4e18c1d6a1",
@@ -295,6 +311,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/studio:2026.09.28-sha-5e59b60-r0@sha256:4cf4f70978bb0866d1644b43cb0d23acc4b4ef7a898592043ad0d13cad8059be",
+      upstreamImage: "supabase/studio:2026.09.28-sha-5e59b60",
       natives: {
         "darwin-arm64": {
           archive: "37f420f6af3d5ee7dab884e8c39fe2c3bcddcee0d90e53d1e075a05ae3cb4b73",
@@ -319,6 +336,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/pgmeta:v0.99.0-r0@sha256:c19f6bba3ab66fcf30c8737d2361ec9f8e12a4fa8a071481f53366dc13e83340",
+      upstreamImage: "supabase/postgres-meta:v0.99.0",
       natives: {
         "darwin-arm64": {
           archive: "337f8cc6a23d93f3f9cfeed12de2a86d686ce6f4346ff9b334b5dfdcba7e890f",
@@ -343,6 +361,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/mailpit:v1.31.3-r0@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d",
+      upstreamImage: "axllent/mailpit:v1.31.3",
       natives: {
         "darwin-arm64": {
           archive: "d460a6a55693a2a321ad83ebb83417b8078324751a744f982bb3512da0632712",
@@ -367,6 +386,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/analytics:v1.50.15-r0@sha256:cea1595bafa6ab32df4854d407261ddef6e35394e300ae29770ba48c49c8dc7e",
+      upstreamImage: "supabase/logflare:1.50.15",
       natives: {
         "darwin-arm64": {
           archive: "336c78c501aff270b0fcd2a42229b76d9f2feafa646f49a59c3de29358e3de17",
@@ -392,6 +412,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/vector:0.58.0-r0@sha256:5dcf67db0ee378caa87f3395cb9484ebe3e97bb0334d119f2ac33116e00c5773",
+      upstreamImage: "timberio/vector:0.58.0-alpine",
       natives: {
         "darwin-arm64": {
           archive: "567245cf9a7d54eee45ecf74e1c9a61ca6d02cdca103edc7b32b005e54f4e632",
@@ -417,6 +438,7 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
       revision: 0,
       image:
         "ghcr.io/supabase/cli/pooler:v2.9.13-r0@sha256:3a32b56d03675ed24e84408afcbb12fa52b7ec6e7741f913770fea5b66c2ddd3",
+      upstreamImage: "supabase/supavisor:2.9.13",
       natives: {
         "darwin-arm64": {
           archive: "c05285be2a945a29d5be491661926f8c88d976540d49ddbcab10aa7276b29934",
@@ -548,15 +570,25 @@ export const postgresVersion = (version: string): string =>
 /** Service kinds in artifact catalog order. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.keys(definitions);
 
-/** Every catalog pin in catalog order, including additional upstream lines. */
+/**
+ * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
+ * pin `resolveArtifact` picks when no version is requested (postgres's 17.x line today); every
+ * other pin (postgres's 15.x additional line) carries `isDefault: false`.
+ */
 export const catalogPins = (): ReadonlyArray<{
   readonly service: ServiceKind;
   readonly sourceService: string;
   readonly pin: ArtifactPin;
+  readonly isDefault: boolean;
 }> =>
   artifactServiceKinds().flatMap((service) => {
-    const { sourceService, pins } = definitions[service];
-    return Object.values(pins).map((pin) => ({ service, sourceService, pin }));
+    const { sourceService, defaultVersion, pins } = definitions[service];
+    return Object.values(pins).map((pin) => ({
+      service,
+      sourceService,
+      pin,
+      isDefault: pin.upstreamVersion === defaultVersion,
+    }));
   });
 
 const artifactKey = (artifact: SlimServicesArtifact): string =>

@@ -111,6 +111,12 @@ interface ResolvedPin {
   readonly upstreamVersion: string;
   readonly revision: number;
   readonly image: string;
+  /**
+   * The pin's `ArtifactPin.upstreamImage`. Left undefined on the Dependabot (`planArtifactCatalogUpdate`)
+   * path, which has no use for it and whose `io` doesn't carry `fetchManifest`/`fetchProvenance`;
+   * populated by manual mode (`refreshCatalogPin`) via `resolveUpstreamImage` below.
+   */
+  readonly upstreamImage?: string;
   readonly natives: Readonly<
     Record<NativeTargetName, { readonly archive: string; readonly manifest: string }>
   >;
@@ -133,6 +139,27 @@ export interface RevisionIo {
   readonly fetchChecksums: (service: string, releaseVersion: string) => Promise<string | undefined>;
   readonly imageDigest: (service: string, releaseVersion: string) => Promise<string | undefined>;
   readonly s3Sha256: (url: string) => Promise<string | undefined>;
+  /**
+   * Raw contents of a native target's `.manifest.json` release asset, for a derived service's
+   * `upstream_image` (or `source_image` on an image-derived build, e.g. postgrest's Linux
+   * targets). Optional: only manual mode's `upstreamImage` backfill (`resolveUpstreamImage`)
+   * calls this, so a test `io` that doesn't exercise that path can omit it.
+   */
+  readonly fetchManifest?: (
+    service: string,
+    releaseVersion: string,
+    target: NativeTargetName,
+  ) => Promise<string | undefined>;
+  /**
+   * Raw contents of a mirrored service's `<service>-<upstreamVersion>.oci-provenance.json`
+   * release asset, whose `source` field is the mirrored upstream image. Optional for the same
+   * reason as `fetchManifest`.
+   */
+  readonly fetchProvenance?: (
+    service: string,
+    releaseVersion: string,
+    upstreamVersion: string,
+  ) => Promise<string | undefined>;
 }
 
 function desiredImage(service: string, releaseVersion: string, digest: string): string {
@@ -227,13 +254,109 @@ export async function resolveRevisionPin(
   };
 }
 
+/**
+ * Services slim-services mirrors from an unmodified upstream image rather than building from
+ * source: their `upstreamImage` comes from the release's `oci-provenance.json` `source` field,
+ * not a native target's manifest. Keep this in sync with `SlimServicesSource`'s mirror-mode
+ * services.
+ */
+const MIRROR_MODE_SOURCE_SERVICES: ReadonlySet<string> = new Set(["vector", "mailpit", "imgproxy"]);
+
+function parseJsonRecord(raw: string): Record<string, unknown> | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return typeof parsed === "object" && parsed !== null
+    ? (parsed as Record<string, unknown>)
+    : undefined;
+}
+
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Strips a `docker.io/` prefix and any `@sha256:…` digest, to match the Dockerfile's `FROM` form. */
+function normalizeUpstreamImage(image: string): string {
+  const withoutDigest = image.split("@")[0] ?? image;
+  return withoutDigest.startsWith("docker.io/")
+    ? withoutDigest.slice("docker.io/".length)
+    : withoutDigest;
+}
+
+/**
+ * Resolves `service`'s `upstreamImage` for the release `releaseVersion` (`<upstream>-r<N>`):
+ * a mirrored service's `oci-provenance.json` `source`, or a derived service's per-target
+ * manifest `upstream_image` (falling back to `source_image` for an image-derived build, e.g.
+ * postgrest's Linux targets) — cross-checked across every native target, so a derived service
+ * whose manifests disagree fails instead of silently picking one. Only manual mode
+ * (`refreshCatalogPin`) calls this; `io` must carry `fetchManifest`/`fetchProvenance`.
+ */
+async function resolveUpstreamImage(
+  service: string,
+  releaseVersion: string,
+  upstreamVersion: string,
+  io: RevisionIo,
+): Promise<string> {
+  if (MIRROR_MODE_SOURCE_SERVICES.has(service)) {
+    if (io.fetchProvenance === undefined) {
+      throw new InvalidPayloadError(
+        `${service} needs an io.fetchProvenance to resolve upstreamImage.`,
+      );
+    }
+    const provenance = await io.fetchProvenance(service, releaseVersion, upstreamVersion);
+    if (provenance === undefined) {
+      throw new InvalidPayloadError(`${service}-${releaseVersion} has no oci-provenance asset.`);
+    }
+    const source = stringField(parseJsonRecord(provenance), "source");
+    if (source === undefined) {
+      throw new InvalidPayloadError(
+        `${service}-${releaseVersion} oci-provenance has no 'source' field.`,
+      );
+    }
+    return normalizeUpstreamImage(source);
+  }
+
+  if (io.fetchManifest === undefined) {
+    throw new InvalidPayloadError(`${service} needs an io.fetchManifest to resolve upstreamImage.`);
+  }
+  const values = new Set<string>();
+  for (const target of NATIVE_TARGETS) {
+    const manifest = await io.fetchManifest(service, releaseVersion, target);
+    if (manifest === undefined) {
+      throw new InvalidPayloadError(
+        `${service}-${releaseVersion}-${target} has no manifest asset.`,
+      );
+    }
+    const record = parseJsonRecord(manifest);
+    const value = stringField(record, "upstream_image") ?? stringField(record, "source_image");
+    if (value === undefined) {
+      throw new InvalidPayloadError(
+        `${service}-${releaseVersion}-${target} manifest has neither 'upstream_image' nor 'source_image'.`,
+      );
+    }
+    values.add(normalizeUpstreamImage(value));
+  }
+  if (values.size !== 1) {
+    throw new InvalidPayloadError(
+      `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values].sort().join(", ")}.`,
+    );
+  }
+  return [...values][0] as string;
+}
+
 /** Serializes a resolved pin into the object literal `Artifacts.ts` embeds, in catalog order. */
 function serializePin(pin: ResolvedPin): string {
   const natives = NATIVE_TARGETS.map((target) => {
     const native = pin.natives[target];
     return `"${target}": { archive: "${native.archive}", manifest: "${native.manifest}" }`;
   }).join(", ");
-  return `{ upstreamVersion: "${pin.upstreamVersion}", revision: ${pin.revision}, image: "${pin.image}", natives: { ${natives} } }`;
+  const upstreamImage =
+    pin.upstreamImage === undefined ? "" : ` upstreamImage: "${pin.upstreamImage}",`;
+  return `{ upstreamVersion: "${pin.upstreamVersion}", revision: ${pin.revision}, image: "${pin.image}",${upstreamImage} natives: { ${natives} } }`;
 }
 
 interface PinSpan {
@@ -633,7 +756,22 @@ export async function refreshCatalogPin(input: {
   if (resolution.status !== "resolved") {
     throw new InvalidPayloadError(resolution.message);
   }
-  const written = writePin(input.catalog, entry, resolution.pin);
+  // Manual mode also backfills `upstreamImage`, so a plain `io` (most tests, and the
+  // Dependabot-driven `planArtifactCatalogUpdate` path) can still exercise revision resolution
+  // without stubbing the extra fetchers.
+  const pin =
+    input.io.fetchManifest === undefined && input.io.fetchProvenance === undefined
+      ? resolution.pin
+      : {
+          ...resolution.pin,
+          upstreamImage: await resolveUpstreamImage(
+            input.service,
+            `${resolution.pin.upstreamVersion}-r${resolution.pin.revision}`,
+            upstream,
+            input.io,
+          ),
+        };
+  const written = writePin(input.catalog, entry, pin);
   if (!written.changed) return { source: input.catalog };
   return {
     source: written.source,
@@ -718,8 +856,43 @@ async function s3Sha256(url: string): Promise<string | undefined> {
   return hasher.digest("hex");
 }
 
+async function fetchManifest(
+  service: string,
+  releaseVersion: string,
+  target: NativeTargetName,
+): Promise<string | undefined> {
+  const files = nativeFileNames(service, releaseVersion, target);
+  const response = await fetch(
+    `${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${files.manifest}`,
+  );
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new InvalidPayloadError(
+      `manifest download failed for ${service}-${releaseVersion} ${target} (HTTP ${response.status}).`,
+    );
+  }
+  return response.text();
+}
+
+async function fetchProvenance(
+  service: string,
+  releaseVersion: string,
+  upstreamVersion: string,
+): Promise<string | undefined> {
+  const response = await fetch(
+    `${RELEASE_DOWNLOAD_BASE}/${service}-${releaseVersion}/${service}-${upstreamVersion}.oci-provenance.json`,
+  );
+  if (response.status === 404) return undefined;
+  if (!response.ok) {
+    throw new InvalidPayloadError(
+      `oci-provenance download failed for ${service}-${releaseVersion} (HTTP ${response.status}).`,
+    );
+  }
+  return response.text();
+}
+
 function defaultRevisionIo(): RevisionIo {
-  return { listReleaseTags, fetchChecksums, imageDigest, s3Sha256 };
+  return { listReleaseTags, fetchChecksums, imageDigest, s3Sha256, fetchManifest, fetchProvenance };
 }
 
 function parseFlags(argv: ReadonlyArray<string>): ReadonlyMap<string, string> {

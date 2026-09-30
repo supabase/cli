@@ -5,11 +5,13 @@ const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 
 /**
  * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
- * no slim build (kong, the `differ`/`migra`/`pgprove` job images) are absent and
- * keep their docker.io reference. OrioleDB tags are excluded in `slimCatalogPin`.
+ * no slim build (kong, `pg14`, the `differ`/`migra`/`pgprove` job images) are
+ * absent and keep their docker.io reference. OrioleDB tags are excluded in
+ * `slimCatalogPin`.
  */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
+  pg15: "postgres",
   gotrue: "auth",
   postgrest: "postgrest",
   realtime: "realtime",

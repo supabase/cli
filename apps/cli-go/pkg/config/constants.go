@@ -9,14 +9,15 @@ import (
 )
 
 const (
-	pg13  = "supabase/postgres:13.3.0"
-	pg14  = "supabase/postgres:14.1.0.89"
-	pg15  = "supabase/postgres:15.8.1.085"
 	deno1 = "supabase/edge-runtime:v1.68.4"
 )
 
 type images struct {
 	Pg string `mapstructure:"pg"`
+	// PG13/15 and PG14 come from the Dockerfile's generated `pg15`/hand-pinned `pg14` stages
+	// (the single version table), not hardcoded constants.
+	Pg15 string `mapstructure:"pg15"`
+	Pg14 string `mapstructure:"pg14"`
 	// Append to Services when adding new dependencies below
 	Kong        string `mapstructure:"kong"`
 	Inbucket    string `mapstructure:"mailpit"`
