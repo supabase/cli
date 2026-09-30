@@ -519,8 +519,7 @@ it.live("reports the Studio MCP and gateway API endpoints without REST", () =>
   }),
 );
 
-const storageServices = (s3ProtocolEnabled: boolean) => {
-  const creation = storage(s3ProtocolEnabled);
+const storageServices = (creation: ServiceCreation) => {
   return [
     makeService({
       id: "database-id",
@@ -547,14 +546,14 @@ const storageServices = (s3ProtocolEnabled: boolean) => {
 
 it.live("reports the Storage S3 endpoint and access keys through the gateway", () =>
   Effect.gen(function* () {
-    const text = yield* runStatus({ services: storageServices(true), reachable: true });
+    const text = yield* runStatus({ services: storageServices(storage(true)), reachable: true });
     yield* text.effect;
     expect(text.out.stdoutText).toMatch(/URL +│ http:\/\/127\.0\.0\.1:54321\/storage\/v1\/s3 +│/u);
     expect(text.out.stdoutText).toMatch(/Access Key +│ local-access-key +│/u);
     expect(text.out.stdoutText).toMatch(/Secret Key +│ local-secret-key +│/u);
     expect(text.out.stdoutText).toMatch(/Region +│ local +│/u);
     const env = yield* runStatus({
-      services: storageServices(true),
+      services: storageServices(storage(true)),
       reachable: true,
       flags: flags({ env: true }),
     });
@@ -568,12 +567,30 @@ it.live("reports the Storage S3 endpoint and access keys through the gateway", (
 
 it.live("omits Storage S3 details when the S3 protocol is disabled", () =>
   Effect.gen(function* () {
-    const text = yield* runStatus({ services: storageServices(false), reachable: true });
+    const text = yield* runStatus({ services: storageServices(storage(false)), reachable: true });
     yield* text.effect;
     expect(text.out.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:54321 +│/u);
     expect(text.out.stdoutText).not.toContain("Storage (S3)");
     const env = yield* runStatus({
-      services: storageServices(false),
+      services: storageServices(storage(false)),
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* env.effect;
+    expect(env.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
+    expect(env.out.stdoutText).not.toContain("S3_PROTOCOL_");
+    expect(env.out.stdoutText).not.toContain("STORAGE_S3_URL");
+  }),
+);
+
+it.live("omits Storage S3 details for a Storage member saved without S3 keys", () =>
+  Effect.gen(function* () {
+    const env = yield* runStatus({
+      services: storageServices({
+        service: "storage",
+        config: { filePath: "/project/supabase/.temp/stack-uploads", jwtSecret },
+        endpoints: { http: { port: 54321 } },
+      }),
       reachable: true,
       flags: flags({ env: true }),
     });

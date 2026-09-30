@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from "effect";
-import { HttpClient, HttpClientRequest, type HttpMethod } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
@@ -12,7 +12,6 @@ import * as State from "../State.ts";
 import type { SavedStack } from "../State.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
-import { signS3Request } from "../../tests/s3-signature.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
@@ -32,8 +31,11 @@ const layout = Effect.fnUntraced(function* (runtime: SavedStack["runtime"], stac
   const dataRoot = yield* makeDockerDatabaseRoot("storage-gateway-docker-", stackId).pipe(
     Effect.flatMap(fs.realPath),
   );
-  const stateRoot = path.dirname(path.dirname(dataRoot));
-  return { stateRoot, dataRoot, storageRoot: `${path.dirname(stateRoot)}/storage` };
+  return {
+    stateRoot: path.dirname(path.dirname(dataRoot)),
+    dataRoot,
+    storageRoot: `${dataRoot}/storage`,
+  };
 });
 
 /** Starts Database and Storage in an owned stack and returns Storage's gateway URL. */
@@ -84,13 +86,6 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
   return { url, serviceRoleKey };
 });
 
-const signed = (method: HttpMethod.HttpMethod, url: string) =>
-  signS3Request({ method, url, credentials: s3Credentials }).pipe(
-    Effect.map((headers) =>
-      HttpClientRequest.make(method)(url).pipe(HttpClientRequest.setHeaders(headers)),
-    ),
-  );
-
 for (const runtime of ["native", "docker"] as const)
   it.live(
     `accepts S3 requests signed over the gateway path and resumes TUS uploads there (${runtime})`,
@@ -101,12 +96,20 @@ for (const runtime of ["native", "docker"] as const)
           const { url, serviceRoleKey } = yield* serveStorage(runtime);
           const bucket = "gateway";
 
-          const createBucket = yield* client.execute(yield* signed("PUT", `${url}/s3/${bucket}`));
+          const createBucket = yield* client.execute(
+            HttpClientRequest.post(`${url}/bucket`).pipe(
+              HttpClientRequest.setHeaders({ authorization: `Bearer ${serviceRoleKey}` }),
+              HttpClientRequest.bodyJsonUnsafe({ name: bucket }),
+            ),
+          );
           expect(createBucket.status, yield* createBucket.text).toBe(200);
-          const listBuckets = yield* client.execute(yield* signed("GET", `${url}/s3/`));
-          const listing = yield* listBuckets.text;
-          expect(listBuckets.status, listing).toBe(200);
-          expect(listing).toContain(`<Name>${bucket}</Name>`);
+          const s3 = new Bun.S3Client({ ...s3Credentials, endpoint: `${url}/s3`, bucket });
+          yield* Effect.promise(() => s3.write("signed.txt", "signed over the gateway"));
+          const listing = yield* Effect.promise(() => s3.list());
+          expect(listing.contents?.map(({ key }) => key)).toEqual(["signed.txt"]);
+          expect(yield* Effect.promise(() => s3.file("signed.txt").text())).toBe(
+            "signed over the gateway",
+          );
 
           const metadata = [
             ["bucketName", bucket],
