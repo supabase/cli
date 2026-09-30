@@ -80,6 +80,16 @@ function isLocalDatabase(
   return host === localHost && (port === dbPort || port === shadowPort);
 }
 
+/** Stack databases listen on loopback, so only loopback or services-hostname URLs can match one. */
+function mayBeStackDatabaseHost(host: string, localHost: string): boolean {
+  return (
+    host === localHost ||
+    host === "localhost" ||
+    host === "::1" ||
+    (net.isIPv4(host) && host.startsWith("127."))
+  );
+}
+
 /** Best-effort TCP reachability probe with a 5s timeout. */
 const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
   Effect.callback<boolean>((resume) => {
@@ -379,7 +389,8 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   return poolerConn.value;
 });
 
-const dbConfigResolverLayer = Layer.effect(
+/** The resolver without its `StackApi`, for callers that supply their own stack boundary. */
+export const dbConfigResolverLayer = Layer.effect(
   DbConfigResolver,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
@@ -456,6 +467,13 @@ const dbConfigResolverLayer = Layer.effect(
       ambientLayer;
     void _ambientCoverageCheck;
 
+    // `resolve`'s R is `never`, so capture StackApi at layer build.
+    const stackDatabaseConn = stackLocalDatabaseConn.pipe(
+      Effect.provideService(CommandSettings, cliSettings),
+      Effect.provideService(StackApi, stackApi),
+      Effect.provideService(Path.Path, path),
+    );
+
     const resolve = (flags: DbConfigFlags) =>
       Effect.gen(function* () {
         const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
@@ -492,21 +510,34 @@ const dbConfigResolverLayer = Layer.effect(
               }),
             );
           }
-          const isLocal = isLocalDatabase(
-            conn.host,
-            localHost,
-            conn.port,
-            tomlValues.port,
-            tomlValues.shadowPort,
-          );
-          // A local direct URL fills an empty password from the local `[db].password` config,
-          // so a passwordless local DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
+          // A multi-host URL stays remote: local disables TLS for every fallback host as well.
+          const singleHost = conn.fallbacks === undefined;
+          const legacyLocal =
+            singleHost &&
+            isLocalDatabase(
+              conn.host,
+              localHost,
+              conn.port,
+              tomlValues.port,
+              tomlValues.shadowPort,
+            );
+          // The stack backend publishes its database on a runtime-assigned port rather than
+          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
+          const stackConn =
+            singleHost &&
+            (yield* currentStackBackend).kind === "stack" &&
+            mayBeStackDatabaseHost(conn.host, localHost)
+              ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
+              : undefined;
+          const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
+          const isLocal = legacyLocal || onStack;
+          // A local direct URL fills an empty password from the local database's own
+          // credentials, so a passwordless DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
           // still authenticates.
+          const localPassword = onStack ? stackConn.password : tomlValues.password;
           return {
             conn:
-              isLocal && conn.password.length === 0
-                ? { ...conn, password: tomlValues.password }
-                : conn,
+              isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
             isLocal,
           };
         }
@@ -575,13 +606,7 @@ const dbConfigResolverLayer = Layer.effect(
         });
         const backend = yield* currentStackBackend;
         if (backend.kind === "stack") {
-          // `resolve`'s R is `never`, so capture StackApi at layer build.
-          const conn = yield* stackLocalDatabaseConn.pipe(
-            Effect.provideService(CommandSettings, cliSettings),
-            Effect.provideService(StackApi, stackApi),
-            Effect.provideService(Path.Path, path),
-          );
-          return { conn, isLocal: true };
+          return { conn: yield* stackDatabaseConn, isLocal: true };
         }
         return {
           conn: {
