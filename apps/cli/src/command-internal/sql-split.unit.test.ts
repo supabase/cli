@@ -128,6 +128,13 @@ describe("splitAndTrim", () => {
     expect(splitAndTrim("SELECT 1 -- a; b\n; SELECT 2")).toEqual(["SELECT 1 -- a; b", "SELECT 2"]);
   });
 
+  it.each(["E'a'", "'a'"])("ends a line comment after %s at a bare carriage return", (literal) => {
+    expect(splitAndTrim(`SELECT ${literal} -- a; b\r; SELECT 2`)).toEqual([
+      `SELECT ${literal} -- a; b`,
+      "SELECT 2",
+    ]);
+  });
+
   it("ignores a ; inside a block comment (nested)", () => {
     expect(splitAndTrim("SELECT 1 /* a; /* n; */ b; */; SELECT 2")).toEqual([
       "SELECT 1 /* a; /* n; */ b; */",
@@ -183,6 +190,12 @@ describe("splitAndTrim", () => {
   ])("does not close a BEGIN ATOMIC body at an END inside %s", (expression) => {
     const body = `CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT ${expression}; SELECT 1; END`;
     expect(splitAndTrim(`${body}; SELECT 2;`)).toEqual([body, "SELECT 2"]);
+  });
+
+  it("does not close a BEGIN ATOMIC body at an END after a carriage-return-ended comment", () => {
+    const body =
+      "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; -- c\rSELECT CASE WHEN true THEN 2 END; END";
+    expect(splitAndTrim(`${body}; SELECT 3;`)).toEqual([body, "SELECT 3"]);
   });
 
   it.each(["-- note END\n", "/* note; */ ", "\n/* a /* b; */ */ -- c\n"])(
