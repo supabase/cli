@@ -9,6 +9,7 @@ const variableNames = [
   "STUDIO_URL",
   "MCP_URL",
   "MAILPIT_URL",
+  "INBUCKET_URL",
   "PUBLISHABLE_KEY",
   "SECRET_KEY",
   "ANON_KEY",

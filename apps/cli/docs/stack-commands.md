@@ -84,7 +84,9 @@ With `--output-format json`, start returns:
 `lazy_services` lists the services that start on their first request. `env` is the same connection
 map `supabase stack status --env` exports, present on every success path; `stack status` (without
 `--env`) returns the same `env` key, degrading to whatever is available when credentials or the
-owner are unreachable.
+owner are unreachable. Plain `status` JSON `env` comes from saved bindings and can list values for
+stopped or sleeping members, while `--env` requires a reachable owner and a running primary
+database.
 
 ## Exporting environment variables
 
@@ -103,7 +105,8 @@ are quoted so that sourcing the file performs no shell expansion. The exported v
 `API_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`, `PUBLISHABLE_KEY`, `SECRET_KEY`,
 `ANON_KEY`, and `SERVICE_ROLE_KEY`; `MCP_URL` is `<API_URL>/mcp`, whose port is assigned per
 project, and `DB_URL` uses the `postgres` role with the saved database password, URI-encoded, and
-no query string. `start` and `status` JSON/stream-JSON results include this same connection map
+no query string. `INBUCKET_URL` is also exported alongside `MAILPIT_URL`, with the same value,
+as a deprecated alias. `start` and `status` JSON/stream-JSON results include this same connection map
 under `env`, as their text output already shows the local keys and database URL; `status --env`
 remains the dotenv/variable-map export, and `--override-name` only applies there. `--override-name`
 accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects

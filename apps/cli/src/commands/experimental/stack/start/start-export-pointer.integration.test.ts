@@ -28,6 +28,22 @@ import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackStatusCommand } from "../status/status.command.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 
+/** Distinguishable credentials, keyed by a short tag, for one fake target stack. */
+const credentialsFor = (tag: string): StackCredentials => ({
+  jwtSecret: `${tag}-secret`.padEnd(32, "0"),
+  postgresRootKey: `root-key-${tag}`,
+  databasePassword: `password-${tag}`,
+  publishableKey: `sb_publishable_${tag}`,
+  secretKey: `sb_secret_${tag}`,
+  anonKey: `anon-${tag}`,
+  serviceRoleKey: `service-${tag}`,
+  jwks: "{}",
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+});
+
 const databaseCreation = (sqlPort: number, credentials: StackCredentials): ServiceCreation => ({
   service: "database",
   config: {
@@ -110,80 +126,49 @@ const definitionFor = (id: string, projectRoot: string, creation: ServiceCreatio
   ports: [],
 });
 
+interface TargetSpec {
+  readonly projectRoot: string;
+  readonly name?: string;
+  readonly sqlPort: number;
+  readonly tag: string;
+}
+
+/** The fake resolver's key, matching the real resolver's `(projectRoot, name)` lookup. */
+const targetKey = (projectRoot: string, name: string | undefined) =>
+  `${projectRoot}\u0000${name ?? ""}`;
+
 /**
- * Runs the `start`-printed `status --env` pointer for `projectA` (with an optional `--stack`
- * name) through the real command grammar, with `projectB` standing in for the caller's cwd, and
- * returns the decoded `--env` JSON so callers can assert which stack actually resolved.
+ * Runs `stackStatusCommand` with the given literal argv (excluding the `supabase` program
+ * name) against a fake resolver stocked with `specs`, so a `--stack` that failed to reach the
+ * resolver resolves the project's default stack instead of the intended one — a distinguishable
+ * failure rather than a silent pass.
  */
-const runPointer = (input: {
-  readonly projectA: string;
-  readonly projectB: string;
-  readonly stack?: string;
+const runStatusEnv = (input: {
+  readonly argv: ReadonlyArray<string>;
+  readonly ambientCwd: string;
+  readonly specs: ReadonlyArray<TargetSpec>;
 }) =>
   Effect.gen(function* () {
-    const credentialsA: StackCredentials = {
-      jwtSecret: "a".repeat(32),
-      postgresRootKey: "root-key-a",
-      databasePassword: "password-a",
-      publishableKey: "sb_publishable_a",
-      secretKey: "sb_secret_a",
-      anonKey: "anon-a",
-      serviceRoleKey: "service-a",
-      jwks: "{}",
-      gotrueJwtKeys: "[]",
-      remoteJwks: "[]",
-      anonKeyIsOverride: false,
-      serviceRoleKeyIsOverride: false,
-    };
-    const credentialsB: StackCredentials = {
-      jwtSecret: "b".repeat(32),
-      postgresRootKey: "root-key-b",
-      databasePassword: "password-b",
-      publishableKey: "sb_publishable_b",
-      secretKey: "sb_secret_b",
-      anonKey: "anon-b",
-      serviceRoleKey: "service-b",
-      jwks: "{}",
-      gotrueJwtKeys: "[]",
-      remoteJwks: "[]",
-      anonKeyIsOverride: false,
-      serviceRoleKeyIsOverride: false,
-    };
-    const stackA = makeDatabaseStack(40001, credentialsA);
-    const stackB = makeDatabaseStack(40002, credentialsB);
-    const targets = new Map([
-      [
-        input.projectA,
-        {
-          id: stackA.id,
-          definition: definitionFor(
-            stackA.id,
-            input.projectA,
-            databaseCreation(40001, credentialsA),
-          ),
-        },
-      ],
-      [
-        input.projectB,
-        {
-          id: stackB.id,
-          definition: definitionFor(
-            stackB.id,
-            input.projectB,
-            databaseCreation(40002, credentialsB),
-          ),
-        },
-      ],
-    ]);
-    const stacksById = new Map([
-      [stackA.id, stackA],
-      [stackB.id, stackB],
-    ]);
+    const targets = new Map<string, { readonly id: string; readonly definition: SavedStack }>();
+    const stacksById = new Map<string, Stack>();
+    for (const spec of input.specs) {
+      const credentials = credentialsFor(spec.tag);
+      const stack = makeDatabaseStack(spec.sqlPort, credentials);
+      targets.set(targetKey(spec.projectRoot, spec.name), {
+        id: stack.id,
+        definition: definitionFor(
+          stack.id,
+          spec.projectRoot,
+          databaseCreation(spec.sqlPort, credentials),
+        ),
+      });
+      stacksById.set(stack.id, stack);
+    }
 
     const resolver = Layer.succeed(StackTargetResolver, {
       resolve: (resolveInput) =>
         Effect.sync(() => {
-          const target = targets.get(resolveInput.projectRoot);
+          const target = targets.get(targetKey(resolveInput.projectRoot, resolveInput.name));
           return {
             projectRoot: resolveInput.projectRoot,
             ...(target === undefined ? {} : { id: target.id, definition: target.definition }),
@@ -200,13 +185,14 @@ const runPointer = (input: {
       discover: () => Effect.die("unused"),
       find: () => Effect.die("unused"),
     });
-    // Only `--workdir` selects the project here; an absent flag falls back to `projectB`, so
-    // a pointer that fails to carry `--workdir` through would resolve the wrong stack.
+    // Only `--workdir` selects the project here; an absent flag falls back to the ambient cwd,
+    // which is registered under its own distinguishable stack so a dropped `--workdir` fails
+    // the test's assertions instead of passing unnoticed.
     const commandSettings = Layer.effect(
       CommandSettings,
       Effect.gen(function* () {
         const workdirFlag = yield* WorkdirFlag;
-        const workdir = Option.getOrElse(workdirFlag, () => input.projectB);
+        const workdir = Option.getOrElse(workdirFlag, () => input.ambientCwd);
         return CommandSettings.of({
           profile: "supabase",
           profileEnvValue: Option.none(),
@@ -242,17 +228,7 @@ const runPointer = (input: {
       Command.withGlobalFlags(GLOBAL_FLAGS),
     );
 
-    // The exact string `start` prints for this stack's selection, in the format tokenizePointer
-    // below reverses.
-    const pointer = statusEnvPointer({
-      explicitWorkdir: true,
-      projectRoot: input.projectA,
-      ...(input.stack === undefined ? {} : { stack: input.stack }),
-    });
-    const [programName, ...args] = tokenizePointer(pointer);
-    expect(programName).toBe("supabase");
-
-    yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+    yield* Command.runWith(testRoot, { version: "0.0.0-test" })(input.argv).pipe(
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
@@ -260,10 +236,10 @@ const runPointer = (input: {
           output.layer,
           analytics.layer,
           mockProcessControl().layer,
-          Layer.succeed(CliArgs, { args }),
+          Layer.succeed(CliArgs, { args: input.argv }),
           mockTty({ stdinIsTty: false, stdoutIsTty: false }),
           mockStdin(false),
-          mockRuntimeInfo({ cwd: input.projectB, homeDir: "/pointer-test/home" }),
+          mockRuntimeInfo({ cwd: input.ambientCwd, homeDir: "/pointer-test/home" }),
           mockTelemetryRuntime({
             configDir: "/pointer-test/.supabase",
             tracesDir: "/pointer-test/.supabase/traces",
@@ -272,81 +248,66 @@ const runPointer = (input: {
       ),
     );
 
-    const values = yield* Schema.decodeEffect(
+    return yield* Schema.decodeEffect(
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(output.rawChunks.map(({ text }) => text).join(""));
-    return { pointer, values };
   }).pipe(Effect.provide(BunServices.layer));
-
-/**
- * Reverses `shellQuoteArgument`'s exact POSIX quoting — not a general shell parser — so this
- * test exercises the literal string `start` prints, the same bytes a user would paste. A bare
- * argument is unquoted; a quoted one wraps in `'...'`, with an embedded `'` written as the
- * adjoining segments `'` `"'"` `'` (close single-quote, a double-quoted literal `'`, reopen).
- * Adjoining quoted/unquoted segments with no space between them form one shell word, so this
- * only needs to track which quote (if any) is currently open and split on unquoted spaces.
- */
-function tokenizePointer(command: string): ReadonlyArray<string> {
-  const tokens: Array<string> = [];
-  let i = 0;
-  while (i < command.length) {
-    while (command[i] === " ") i++;
-    if (i >= command.length) break;
-    let token = "";
-    let quote: "'" | '"' | undefined;
-    while (i < command.length && (quote !== undefined || command[i] !== " ")) {
-      const char = command[i];
-      if (quote === undefined && (char === "'" || char === '"')) quote = char;
-      else if (char === quote) quote = undefined;
-      else token += char;
-      i++;
-    }
-    tokens.push(token);
-  }
-  return tokens;
-}
 
 describe("stack start export pointer", () => {
   it.live(
-    "the printed `status --env` pointer parses through the real command grammar and resolves the --workdir project, not the caller's cwd",
+    "the printed pointer's argv resolves --workdir and the named --stack to that stack, not the caller's cwd or the project's default stack",
     () =>
       Effect.gen(function* () {
-        // Two distinct projects: the pointer explicitly names `projectA`, while the ambient
-        // "current directory" (the fallback when no --workdir is given) is `projectB`. A correct
-        // parse and resolution must reach A's stack; a wrong argv order either fails to parse or
-        // silently resolves B.
-        // `--stack` is a flag of the `status` subcommand itself (unlike `--workdir`, a real
-        // global flag), so it only proves the fix if it appears after the subcommand keyword.
-        const { pointer, values } = yield* runPointer({
-          projectA: "/pointer-test/project-a",
-          projectB: "/pointer-test/project-b",
-          stack: "docker",
+        const projectRoot = "/pointer-test/project";
+        const ambientCwd = "/pointer-test/project-b";
+        const values = yield* runStatusEnv({
+          argv: ["status", "--env", "--workdir", projectRoot, "--stack", "docker"],
+          ambientCwd,
+          specs: [
+            { projectRoot, sqlPort: 40001, tag: "default" },
+            { projectRoot, name: "docker", sqlPort: 40002, tag: "named" },
+            { projectRoot: ambientCwd, sqlPort: 40003, tag: "cwd" },
+          ],
         });
-        expect(pointer).toBe(
-          "supabase status --env --workdir /pointer-test/project-a --stack docker",
+        expect(values.DB_URL).toContain(":40002/");
+        expect(values.PUBLISHABLE_KEY).toBe("sb_publishable_named");
+
+        // `statusEnvPointer` defaults to `currentShellPlatform()`, which renders PowerShell
+        // quoting on win32; pass `"posix"` explicitly so this assertion doesn't depend on the
+        // host running the test.
+        const pointer = statusEnvPointer(
+          { explicitWorkdir: true, projectRoot, stack: "docker" },
+          "posix",
         );
-        expect(values.DB_URL).toContain(":40001/");
-        expect(values.DB_URL).not.toContain(":40002/");
-        expect(values.PUBLISHABLE_KEY).toBe("sb_publishable_a");
+        expect(pointer).toBe(`supabase status --env --workdir ${projectRoot} --stack docker`);
       }),
   );
 
   it.live(
-    "quotes a workdir and stack name that need it, and both still round-trip to the same stack",
+    "quotes a workdir and stack name that need it, and the same raw values still resolve that stack",
     () =>
       Effect.gen(function* () {
-        const projectA = "/pointer-test/project with space";
-        const { pointer, values } = yield* runPointer({
-          projectA,
-          projectB: "/pointer-test/project-b",
-          stack: "feature one's box",
+        const projectRoot = "/pointer-test/project with space";
+        const stackName = "feature one's box";
+        const ambientCwd = "/pointer-test/project-b";
+        const values = yield* runStatusEnv({
+          argv: ["status", "--env", "--workdir", projectRoot, "--stack", stackName],
+          ambientCwd,
+          specs: [
+            { projectRoot, sqlPort: 40004, tag: "default" },
+            { projectRoot, name: stackName, sqlPort: 40005, tag: "named" },
+          ],
         });
-        expect(pointer).toBe(
-          `supabase status --env --workdir '/pointer-test/project with space' --stack 'feature one'"'"'s box'`,
+        expect(values.DB_URL).toContain(":40005/");
+        expect(values.PUBLISHABLE_KEY).toBe("sb_publishable_named");
+
+        const pointer = statusEnvPointer(
+          { explicitWorkdir: true, projectRoot, stack: stackName },
+          "posix",
         );
-        expect(values.DB_URL).toContain(":40001/");
-        expect(values.DB_URL).not.toContain(":40002/");
-        expect(values.PUBLISHABLE_KEY).toBe("sb_publishable_a");
+        expect(pointer).toBe(
+          `supabase status --env --workdir '${projectRoot}' --stack 'feature one'"'"'s box'`,
+        );
       }),
   );
 });

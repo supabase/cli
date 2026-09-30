@@ -64,6 +64,16 @@ describe("stack environment overrides", () => {
     }),
   );
 
+  it.effect("emits INBUCKET_URL as a deprecated alias of MAILPIT_URL", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides([]);
+      expect(stackEnvValues({ mailpit: "http://127.0.0.1:54324" }, undefined, names)).toEqual({
+        MAILPIT_URL: "http://127.0.0.1:54324",
+        INBUCKET_URL: "http://127.0.0.1:54324",
+      });
+    }),
+  );
+
   it.effect("accepts renames and rejects malformed or colliding destinations", () =>
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
@@ -93,6 +103,7 @@ describe("stack environment overrides", () => {
         "STUDIO_URL",
         "MCP_URL",
         "MAILPIT_URL",
+        "INBUCKET_URL",
         "PUBLISHABLE_KEY",
         "SECRET_KEY",
         "ANON_KEY",
@@ -106,7 +117,6 @@ describe("stack environment overrides", () => {
         "S3_PROTOCOL_ACCESS_KEY_SECRET",
         "S3_PROTOCOL_REGION",
         "S3_PROTOCOL_URL",
-        "INBUCKET_URL",
         "JWT_SECRET",
       ]) {
         const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);

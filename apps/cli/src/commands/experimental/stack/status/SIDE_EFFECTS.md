@@ -43,11 +43,15 @@ first request. Service errors follow the tables, and config drift ends the
 output as one muted line unless the configuration drifted. Stack and service IDs appear only
 in JSON. JSON nests only identity fields under `identity`; runtime, lifecycle,
 readiness, composition, services, endpoints, config drift, and `env` remain
-top-level fields. `endpoints` reports only the raw per-member observations
-(`service.endpoint`); it carries no synthetic entries. `env` is the same
-connection map `--env` exports (see below), degrading to whatever is available
-when credentials or the owner are unreachable; it never fails the command.
-Stack identity, endpoints, and credentials are never telemetry properties.
+top-level fields. `endpoints` reports the raw observations
+(`service.endpoint`) of every observed instance, not only composition members;
+it carries no synthetic entries. `env` is the member-scoped connection map
+`--env` exports (see below), degrading to whatever is available when
+credentials or the owner are unreachable; it never fails the command. Plain
+`status` JSON `env` comes from saved bindings and can list values for stopped
+or sleeping members, while `--env` requires a reachable owner and a running
+primary database. Stack identity, endpoints, and credentials are never
+telemetry properties.
 
 ## Exporting environment variables (`--env`)
 

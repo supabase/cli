@@ -389,6 +389,9 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       .pipe(Effect.mapError(mapStackError));
     const observed = yield* observe(stack, target.owner);
     const memberIds = new Set(observed.members.map(({ id }) => id));
+    const members = observed.observed.flatMap(({ instance, observation }) =>
+      memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
+    );
     if (flags.env) {
       const database = observed.observed.find(
         ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
@@ -418,11 +421,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The stack's active credentials are unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      const connections = stackConnections(
-        observed.observed.flatMap(({ instance, observation }) =>
-          memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
-        ),
-      );
+      const connections = stackConnections(members);
       const values = stackEnvValues(connections, identity, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);
@@ -436,11 +435,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       ),
     );
     const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
-    const connections = stackConnections(
-      observed.observed.flatMap(({ instance, observation }) =>
-        memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
-      ),
-    );
+    const connections = stackConnections(members);
     const report = reportFor(
       target.definition,
       target.owner,

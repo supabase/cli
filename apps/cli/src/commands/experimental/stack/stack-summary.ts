@@ -6,6 +6,7 @@ import {
   type StackCredentials,
 } from "@supabase/stack/effect";
 import { red } from "../../../command-internal/colors.ts";
+import { toUserFacingDatabaseUrl } from "../../../command-internal/postgres-url.ts";
 import {
   renderStatusGroups,
   statusGroups,
@@ -67,14 +68,15 @@ export const stackEndpoints = (
     ),
   );
 
-/** `postgres`-role connection string for users, without the tool-only query parameters `toPostgresURL` adds. */
 const stackDatabaseUrl = (observation: Observation | undefined): string | undefined => {
   if (observation?.config.service !== "database") return undefined;
   const sql = observation.endpoints.find(({ name }) => name === "sql");
   if (sql === undefined) return undefined;
-  const host = sql.host.includes(":") ? `[${sql.host}]` : sql.host;
-  const password = Redacted.value(observation.config.config.databasePassword);
-  return `postgresql://postgres:${encodeURIComponent(password)}@${host}:${sql.port}/postgres`;
+  return toUserFacingDatabaseUrl({
+    host: sql.host,
+    port: sql.port,
+    password: Redacted.value(observation.config.config.databasePassword),
+  });
 };
 
 /** Derives connection URLs; callers pass composition members only. */
@@ -127,7 +129,11 @@ export const connectionEnv = (
   if (connections.database !== undefined) values.DB_URL = connections.database;
   if (connections.studio !== undefined) values.STUDIO_URL = connections.studio;
   if (connections.mcp !== undefined) values.MCP_URL = connections.mcp;
-  if (connections.mailpit !== undefined) values.MAILPIT_URL = connections.mailpit;
+  if (connections.mailpit !== undefined) {
+    values.MAILPIT_URL = connections.mailpit;
+    // Deprecated alias of `MAILPIT_URL`, kept for parity with legacy `status --env`.
+    values.INBUCKET_URL = connections.mailpit;
+  }
   if (credentials !== undefined) {
     values.PUBLISHABLE_KEY = credentials.publishableKey;
     values.SECRET_KEY = credentials.secretKey;
