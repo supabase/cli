@@ -62,7 +62,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch((cause) => handleShowError(providerId, cause)),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       // `--metadata` short-circuits regardless of `--output`.
       if (flags.metadata) {

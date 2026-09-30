@@ -196,7 +196,7 @@ export function resolveConfigTarget<TError, EResolve extends ConfigTargetResolve
           reclassifyBranchNotFoundError(cause, errors.branchNotFound(target)),
         ),
       );
-      yield* resolving?.clear() ?? Effect.void;
+      yield* resolving?.clear ?? Effect.void;
 
       // The resolved branch might not have a project ref yet (still provisioning); don't
       // let an empty ref reach the config-read call.

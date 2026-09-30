@@ -4,7 +4,7 @@ import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
-import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";
+import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { OutputFormatFlag } from "./global-flags.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
@@ -12,44 +12,6 @@ import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
 const testBranchesCommand = branchesCommand.pipe(
   Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
 );
-
-/**
- * A `Console.Console` test double that records `log`/`error` calls into `calls` instead of
- * writing anywhere. Not `vi.spyOn`-based: spying on `console.log` and `console.error` in the same
- * test unreliably breaks call detection under this repo's Bun + Vitest combination.
- */
-function fakeConsole(): { readonly console: Console.Console; readonly calls: Array<string> } {
-  const calls: Array<string> = [];
-  const unused = () => {};
-  return {
-    calls,
-    console: {
-      assert: unused,
-      clear: unused,
-      count: unused,
-      countReset: unused,
-      debug: unused,
-      dir: unused,
-      dirxml: unused,
-      error: (...args: ReadonlyArray<unknown>) => {
-        calls.push(`error:${args.join(" ")}`);
-      },
-      group: unused,
-      groupCollapsed: unused,
-      groupEnd: unused,
-      info: unused,
-      log: (...args: ReadonlyArray<unknown>) => {
-        calls.push(`log:${args.join(" ")}`);
-      },
-      table: unused,
-      time: unused,
-      timeEnd: unused,
-      timeLog: unused,
-      trace: unused,
-      warn: unused,
-    },
-  };
-}
 
 /**
  * Runs the real `branchesCommand` definition directly (not nested under `rootCommand`) through
@@ -97,8 +59,8 @@ describe("group command exit codes (CLI-1906)", () => {
 
 /**
  * Runs commands through `Command.runWith`, wrapped in `withoutParseErrorHelpDump`, and asserts on
- * the calls recorded by a fake `Console.Console` (see `fakeConsole` above) substituted for the
- * real one — the exact service `withoutParseErrorHelpDump` overrides and replays through.
+ * the calls recorded by `fakeConsole()` substituted for the real `Console.Console` — the exact
+ * service `withoutParseErrorHelpDump` overrides and replays through.
  *
  * `branchesCommand` covers the `UnrecognizedOption` shape end to end. `MissingOption`/
  * `InvalidValue` need a genuinely required flag or `Flag.choice`, which every shipped command

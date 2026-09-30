@@ -4453,12 +4453,12 @@ content_path = "./supabase/templates/custom_notice.html"
     );
   });
 
-  describe("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION override", () => {
+  describe("SUPABASE_DB_ORIOLEDB_VERSION override", () => {
     it.live(
       "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
       () =>
         withEnvVar(
-          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+          "SUPABASE_DB_ORIOLEDB_VERSION",
           "16.0.0.1",
           Effect.gen(function* () {
             const { layer, child } = yield* setup();
@@ -4482,7 +4482,7 @@ content_path = "./supabase/templates/custom_notice.html"
 
     it.live("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () =>
       withEnvVar(
-        "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+        "SUPABASE_DB_ORIOLEDB_VERSION",
         "16.0.0.1",
         withEnvVar(
           "SUPABASE_EXPERIMENTAL_S3_HOST",

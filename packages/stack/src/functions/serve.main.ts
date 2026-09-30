@@ -60,6 +60,7 @@ declare const EdgeRuntime: EdgeRuntimeApi;
 import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
   createWorkerServicePathResolver,
+  isDenoConfigPath,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
@@ -350,6 +351,20 @@ const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined>
     overrides: configured,
     fs: denoFileSystem,
   });
+const warnedPlainDenoConfigs = new Set<string>();
+// Edge Runtime has no user-worker option to load a Deno config from an arbitrary path.
+const warnPlainDenoConfig = (slug: string, config: FunctionConfig): Effect.Effect<void> =>
+  config.importMapDiscoveredByRuntime ||
+  !isDenoConfigPath(config.importMapPath) ||
+  warnedPlainDenoConfigs.has(slug)
+    ? Effect.void
+    : Effect.sync(() => warnedPlainDenoConfigs.add(slug)).pipe(
+        Effect.andThen(
+          Console.warn(
+            `[functions] ${slug}: ${config.importMapPath} is not the nearest Deno config of ${config.entrypointPath}, so Edge Runtime loads it as a plain import map without comments or jsr:/npm: subpath imports. Move it next to the entrypoint or into a parent directory without a closer deno.json(c).`,
+          ),
+        ),
+      );
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -411,6 +426,7 @@ Deno.serve({
         if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
         const config = yield* functionConfig(functionName);
         if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
           if (typeof token !== "string") return getAuthErrorResponse(token);
@@ -455,7 +471,9 @@ Deno.serve({
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
               context: {
                 useReadSyncFileAPI: true,
-                ...(config.importMapPath === "" ? {} : { importMapPath: config.importMapPath }),
+                ...(config.importMapPath === "" || config.importMapDiscoveredByRuntime
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
               },
               staticPatterns: config.staticFiles,
             }),

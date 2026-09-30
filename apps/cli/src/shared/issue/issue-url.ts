@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Config, Effect, Option } from "effect";
 
 const ISSUE_NEW_URL = "https://github.com/supabase/cli/issues/new";
 const MAX_FIELD_LENGTH = 1_500;
@@ -134,11 +134,18 @@ function validInstallMethod(value: string): string {
   return issueInstallMethodValueSet.has(value) ? value : "Other";
 }
 
-export function inferIssueInstallMethod(runtimeInfo: { readonly execPath: string }): string {
-  const explicit = process.env["SUPABASE_INSTALL_METHOD"]?.trim();
-  if (explicit) return validInstallMethod(explicit);
+export const inferIssueInstallMethod = Effect.fnUntraced(function* (runtimeInfo: {
+  readonly execPath: string;
+}) {
+  const explicit = (yield* Config.option(Config.string("SUPABASE_INSTALL_METHOD"))).pipe(
+    Option.map((value) => value.trim()),
+    Option.filter((value) => value.length > 0),
+  );
+  if (Option.isSome(explicit)) return validInstallMethod(explicit.value);
 
-  const userAgent = process.env["npm_config_user_agent"]?.toLowerCase();
+  const userAgent = Option.getOrUndefined(
+    yield* Config.option(Config.string("npm_config_user_agent")),
+  )?.toLowerCase();
   if (userAgent?.startsWith("pnpm/")) return "pnpm";
   if (userAgent?.startsWith("npm/")) return "npm";
   if (userAgent?.startsWith("yarn/")) return "yarn";
@@ -149,4 +156,4 @@ export function inferIssueInstallMethod(runtimeInfo: { readonly execPath: string
   if (execPath.includes("/node_modules/") || execPath.includes("\\node_modules\\")) return "npm";
 
   return "Other";
-}
+});

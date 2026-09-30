@@ -358,6 +358,7 @@ export function shadowRunInputFromLocalContainerInputs(
   return {
     db: {
       major_version: postgresSpecBase.db.major_version,
+      orioledb_version: postgresSpecBase.db.orioledb_version,
       settings: postgresSpecBase.db.settings,
     },
     experimental: postgresSpecBase.experimental,

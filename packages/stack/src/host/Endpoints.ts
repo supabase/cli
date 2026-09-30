@@ -88,6 +88,12 @@ export const sharedRoutes = (
   }
 };
 
+/** Shared-listener routes a dedicated HTTP endpoint also serves: Studio's MCP server at `/mcp`. */
+export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndpoint["join"] =>
+  creation.service === "studio" && name === "http"
+    ? [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }]
+    : undefined;
+
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
 export const backendAddress = (
   endpoint: ServiceEndpoint,

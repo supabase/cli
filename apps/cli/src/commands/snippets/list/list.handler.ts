@@ -184,7 +184,7 @@ export const snippetsList = Effect.fn("snippets.list")(function* (flags: Snippet
             }),
         ),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const parsed = parseSnippetsResponse(rawBody);
       const goFmt = Option.getOrUndefined(goOutputFlag);

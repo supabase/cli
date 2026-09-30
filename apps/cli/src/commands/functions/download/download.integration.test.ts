@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
   Config,
   ConfigProvider,
@@ -596,7 +597,7 @@ describe("functions download", () => {
       // The unbundle tail is always the last 6 args regardless of whether
       // `--add-host` (Linux-only) was inserted before it.
       expect(runCommand?.args.slice(-6)).toEqual([
-        `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`,
+        `public.ecr.aws/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
         "unbundle",
         "--eszip",
         "/root/eszips/output_hello-world.eszip",
@@ -2044,7 +2045,7 @@ describe("functions download", () => {
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
-            `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
+            `ghcr.io/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
           );
           expect(
             child.spawned.filter(
@@ -2123,7 +2124,7 @@ describe("functions download", () => {
         ).toHaveLength(2);
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args.slice(-6)[0]).toBe(
-          `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
+          `ghcr.io/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
         );
       }).pipe(Effect.provide(layer));
     });

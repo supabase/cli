@@ -91,7 +91,7 @@ export const vanitySubdomainsCheckAvailability = Effect.fn("vanity-subdomains.ch
               }),
             ),
           );
-        yield* checking?.clear() ?? Effect.void;
+        yield* checking?.clear ?? Effect.void;
 
         const goOutput = Option.getOrUndefined(outputFlag);
 

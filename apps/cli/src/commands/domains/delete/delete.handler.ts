@@ -35,7 +35,7 @@ export const domainsDelete = Effect.fn("domains.delete")(function* (flags: Domai
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
       Effect.catch(mapDeleteError),
     );
-    yield* deleting?.clear() ?? Effect.void;
+    yield* deleting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success(DELETE_SUCCESS_MESSAGE, {});

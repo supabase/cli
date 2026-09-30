@@ -6,7 +6,7 @@ import {
   type StackCredentials,
 } from "@supabase/stack/effect";
 import { red } from "../../../command-internal/colors.ts";
-import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
+import { toUserFacingDatabaseUrl } from "../../../command-internal/postgres-url.ts";
 import {
   renderStatusGroups,
   statusGroups,
@@ -56,38 +56,27 @@ export const serviceState = (observation: Observation | undefined): StackService
   return observation.lifecycle;
 };
 
-// Studio serves MCP itself; the stack gateway has no `/mcp` route.
-const mcpUrl = (studioUrl: string) => `${studioUrl}/api/mcp`;
-
-/** Reports endpoints keyed `service.endpoint`, plus `studio.mcp` when Studio has an HTTP endpoint. */
+/** Reports raw endpoint observations keyed `service.endpoint`. */
 export const stackEndpoints = (
   services: ReadonlyArray<Pick<StackServiceView, "service" | "observation">>,
-) => {
-  const endpoints = Object.fromEntries(
+) =>
+  Object.fromEntries(
     services.flatMap(({ service, observation }) =>
       Object.entries(endpointReports(observation)).map(
         ([name, endpoint]) => [`${service}.${name}`, endpoint] as const,
       ),
     ),
   );
-  const studio = endpoints["studio.http"];
-  return studio === undefined
-    ? endpoints
-    : { ...endpoints, "studio.mcp": { ...studio, url: mcpUrl(studio.url) } };
-};
 
 const stackDatabaseUrl = (observation: Observation | undefined): string | undefined => {
   if (observation?.config.service !== "database") return undefined;
   const sql = observation.endpoints.find(({ name }) => name === "sql");
-  return sql === undefined
-    ? undefined
-    : toPostgresURL({
-        host: sql.host,
-        port: sql.port,
-        user: "supabase_admin",
-        password: Redacted.value(observation.config.config.databasePassword),
-        database: "postgres",
-      });
+  if (sql === undefined) return undefined;
+  return toUserFacingDatabaseUrl({
+    host: sql.host,
+    port: sql.port,
+    password: Redacted.value(observation.config.config.databasePassword),
+  });
 };
 
 /** Derives connection URLs; callers pass composition members only. */
@@ -119,10 +108,41 @@ export const stackConnections = (
     ...(api === undefined ? {} : { api }),
     ...(rest === undefined ? {} : { rest }),
     ...(functions === undefined ? {} : { functions }),
-    ...(studio === undefined ? {} : { studio, mcp: mcpUrl(studio) }),
+    ...(studio === undefined ? {} : { studio }),
+    // The shared API listener serves `/mcp` only when Studio is a composition member with an
+    // HTTP endpoint.
+    ...(api !== undefined && studio !== undefined ? { mcp: `${api}/mcp` } : {}),
     ...(mailpit === undefined ? {} : { mailpit }),
     ...(database === undefined ? {} : { database }),
   };
+};
+
+/** The `status --env` variable map; shared by `stack start`'s JSON `env` and `stack status`. */
+export const connectionEnv = (
+  connections: StackConnections,
+  credentials:
+    | Pick<StackCredentials, "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey">
+    | undefined,
+): Readonly<Record<string, string>> => {
+  const values: Record<string, string> = {};
+  if (connections.api !== undefined) values.API_URL = connections.api;
+  if (connections.rest !== undefined) values.REST_URL = connections.rest;
+  if (connections.functions !== undefined) values.FUNCTIONS_URL = connections.functions;
+  if (connections.database !== undefined) values.DB_URL = connections.database;
+  if (connections.studio !== undefined) values.STUDIO_URL = connections.studio;
+  if (connections.mcp !== undefined) values.MCP_URL = connections.mcp;
+  if (connections.mailpit !== undefined) {
+    values.MAILPIT_URL = connections.mailpit;
+    // Deprecated alias of `MAILPIT_URL`, kept for parity with legacy `status --env`.
+    values.INBUCKET_URL = connections.mailpit;
+  }
+  if (credentials !== undefined) {
+    values.PUBLISHABLE_KEY = credentials.publishableKey;
+    values.SECRET_KEY = credentials.secretKey;
+    values.ANON_KEY = credentials.anonKey;
+    values.SERVICE_ROLE_KEY = credentials.serviceRoleKey;
+  }
+  return values;
 };
 
 const connectionValues = (

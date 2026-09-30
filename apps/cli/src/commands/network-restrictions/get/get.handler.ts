@@ -51,7 +51,7 @@ export const networkRestrictionsGet = Effect.fn("network-restrictions.get")(func
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 

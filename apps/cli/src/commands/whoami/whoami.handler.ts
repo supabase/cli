@@ -64,7 +64,7 @@ export const whoami = Effect.fn("whoami")(function* (_flags: WhoamiFlags) {
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapProfileError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     if (output.format !== "text") {
       yield* emitMachineProfile(profile);

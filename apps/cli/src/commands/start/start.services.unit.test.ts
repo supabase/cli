@@ -1,6 +1,6 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
@@ -216,10 +216,6 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
 });
 
 describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   const allGatesOpen: StartGates = {
     kong: true,
     gotrue: true,
@@ -236,26 +232,29 @@ describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
     edgeRuntime: true,
   };
 
-  const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
-    resolveStartImagePlan(allGatesOpen, serviceVersions).find((entry) => entry.service === service)
-      ?.image;
+  const imageFor = (
+    service: string,
+    slim: boolean,
+    serviceVersions: LocalServiceVersionOverrides = {},
+  ) =>
+    resolveStartImagePlan(allGatesOpen, slim, serviceVersions).find(
+      (entry) => entry.service === service,
+    )?.image;
 
   it("plans docker.io images while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    expect(imageFor("gotrue")).toBe(currentGotrue);
-    expect(imageFor("vector")).toBe(currentVector);
-    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    expect(imageFor("gotrue", false)).toBe(currentGotrue);
+    expect(imageFor("vector", false)).toBe(currentVector);
+    expect(imageFor("supavisor", false, { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
   });
 
   it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue));
-    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare));
-    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector));
-    expect(imageFor("supavisor", { pooler: currentPoolerTag })).toBe(
+    expect(imageFor("gotrue", true)).toBe(toSlimImage("gotrue", currentGotrue));
+    expect(imageFor("logflare", true)).toBe(toSlimImage("logflare", currentLogflare));
+    expect(imageFor("vector", true)).toBe(toSlimImage("vector", currentVector));
+    expect(imageFor("supavisor", true, { pooler: currentPoolerTag })).toBe(
       toSlimImage("supavisor", currentPooler),
     );
-    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
-    expect(imageFor("kong")).toBe("library/kong:2.8.1");
+    expect(imageFor("supavisor", true, { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    expect(imageFor("kong", true)).toBe("library/kong:2.8.1");
   });
 });

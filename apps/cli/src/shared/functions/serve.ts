@@ -89,6 +89,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
@@ -1676,17 +1677,15 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
-          bitbucketCloneDirDefined,
-          additionalModuleRoots: [flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: (message) => {
-            bindWarnings.push(message);
-            return Promise.resolve();
-          },
-        }),
-      )) {
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
+        bitbucketCloneDirDefined,
+        additionalModuleRoots: [flagCwd],
+        skipMissingImportMapTargets: true,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Promise.resolve();
+        },
+      })) {
         binds.add(formatDockerBind(bind));
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
@@ -1771,17 +1770,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, config, {
-          bitbucketCloneDirDefined,
-          additionalModuleRoots: [input.flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: (message) => {
-            bindWarnings.push(message);
-            return Promise.resolve();
-          },
-        }),
-      )) {
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, config, {
+        bitbucketCloneDirDefined,
+        additionalModuleRoots: [input.flagCwd],
+        skipMissingImportMapTargets: true,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Promise.resolve();
+        },
+      })) {
         const key = formatDockerBind(bind);
         functionBinds.set(key, bind);
         if (!bind.externalScope) {
@@ -2035,7 +2032,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     // `docker pull` on cold cache instead of immediately — left open since
     // fixing it risks `start`'s shared, more critical bring-up path.
     const image = yield* resolveFunctionsDockerImage(
-      edgeRuntimeImage(edgeRuntimeVersion),
+      edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled),
       resolved.projectEnvValues,
     );
 

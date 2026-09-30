@@ -36,6 +36,7 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -750,7 +751,9 @@ describe("migration squash", () => {
         return Effect.gen(function* () {
           yield* seedHappyPathMigrations(tmp.current);
           yield* migrationSquash(flags());
-          const expectedImage = yield* getRegistryImageUrl(dockerfileServiceImage("pg"));
+          const expectedImage = yield* getRegistryImageUrl(
+            dockerfileServiceImage("pg", yield* slimImagesEnabled),
+          );
           expect(s.dumpCalls).toHaveLength(3);
           for (const call of s.dumpCalls) {
             expect(call.env["PGPORT"]).toBe("54320");

@@ -138,8 +138,8 @@ describe("buildPostgresStartContainerSpec", () => {
   test("OrioleDB branch: adds POSTGRES_INITDB_ARGS + S3 env vars and skips the version-compare branch", () => {
     const spec = buildPostgresStartContainerSpec(
       baseInput({
+        db: baseDb({ orioledb_version: "17.4.1.030" }),
         experimental: baseExperimental({
-          orioledb_version: "17.4.1.030",
           s3_host: "s3.example.com",
           s3_region: "us-east-1",
           s3_access_key: "access-key",
@@ -165,7 +165,7 @@ describe("buildPostgresStartContainerSpec", () => {
 
   test("OrioleDB branch defaults unset S3 fields to empty strings, matching Go's zero-value string fields", () => {
     const spec = buildPostgresStartContainerSpec(
-      baseInput({ experimental: baseExperimental({ orioledb_version: "17.4.1.030" }) }),
+      baseInput({ db: baseDb({ orioledb_version: "17.4.1.030" }) }),
     );
     expect(spec.env).toMatchObject({
       S3_HOST: "",

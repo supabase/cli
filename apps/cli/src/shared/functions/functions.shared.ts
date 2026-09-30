@@ -32,11 +32,11 @@ export const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
  * is substituted verbatim into the (possibly slim-rewritten) default image,
  * with no `v` prefix synthesized.
  */
-export function edgeRuntimeImage(tag: string): string {
+export function edgeRuntimeImage(tag: string, slim: boolean): string {
   if (tag === DENO1_EDGE_RUNTIME_VERSION) {
     return `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
   }
-  return slimImageForCurrentPin("edgeruntime", dockerfileServiceImageRaw("edgeruntime"), tag);
+  return slimImageForCurrentPin("edgeruntime", dockerfileServiceImageRaw("edgeruntime"), tag, slim);
 }
 
 /**

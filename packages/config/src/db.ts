@@ -92,6 +92,13 @@ export const db = Schema.Struct({
     tags,
     links: [links.postgres],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMajorVersion))),
+  orioledb_version: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "OrioleDB version of the Postgres image to use for the local database. Requires `major_version` 15 or 17.",
+      tags,
+    }),
+  ),
   pooler: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultPoolerEnabled,

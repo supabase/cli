@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   buildSupavisorContainerSpec,
@@ -6,11 +6,8 @@ import {
   type SupavisorContainerSpecInput,
 } from "./supavisor.service.ts";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
 const base: SupavisorContainerSpecInput = {
+  slim: false,
   image: "supabase/supavisor:2.0.0",
   projectId: "proj",
   networkId: "supabase_network_proj",
@@ -133,9 +130,9 @@ describe("buildSupavisorContainerSpec", () => {
   });
 
   test("uses wget for the healthcheck on a slim pooler image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildSupavisorContainerSpec({
       ...base,
+      slim: true,
       image: "ghcr.io/supabase/cli/pooler:v2.9.12",
     });
     expect(spec.healthcheck?.test).toEqual([

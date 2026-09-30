@@ -83,7 +83,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
       ),
       Effect.tapError(() => fetching.fail()),
     );
-    yield* fetching.clear();
+    yield* fetching.clear;
 
     const deployed = lookup.compute;
     const machineOutput = yield* computeMachineOutputRequested();
@@ -153,7 +153,7 @@ export const computeDelete = Effect.fn("compute.delete")(function* (flags: Compu
     if (deployed !== undefined || !lookup.readable) {
       const deleting = yield* output.task("Deleting compute...");
       yield* deleteCompute(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
-      yield* deleting.clear();
+      yield* deleting.clear;
     }
 
     // A compute deployed from another checkout has neither a local entry nor a

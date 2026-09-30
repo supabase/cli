@@ -32,7 +32,7 @@ export const domainsGet = Effect.fn("domains.get")(function* (flags: DomainsGetF
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(gateMapError({ projectRef: ref }, mapGetError)),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
