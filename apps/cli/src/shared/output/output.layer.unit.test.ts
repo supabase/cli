@@ -744,10 +744,9 @@ describe("Output", () => {
 
     it.effect("task logs each distinct progress message as a plain line instead of a spinner", () =>
       Effect.gen(function* () {
-        vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
-        vi.advanceTimersByTime(200);
+        yield* TestClock.adjust(200);
         yield* task.message("Loading projects...");
         yield* task.message("Loading projects...");
         yield* task.succeed("Loaded organizations.");
