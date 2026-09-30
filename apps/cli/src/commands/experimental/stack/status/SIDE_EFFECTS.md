@@ -65,9 +65,12 @@ It does not request live credentials or launch an owner, and it does not load
 or compare project configuration. Text output emits dotenv assignments;
 JSON and stream-JSON output emit a plain variable map under a successful result.
 Unavailable optional credentials and endpoints are omitted. The exported
-variable set is `API_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`,
-`PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `ANON_KEY`
-and `SERVICE_ROLE_KEY` are emitted from the required saved database JWT secret.
+variable set is `API_URL`, `REST_URL`, `FUNCTIONS_URL`, `DB_URL`, `STUDIO_URL`,
+`MCP_URL`, `MAILPIT_URL`, `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and
+`SERVICE_ROLE_KEY`; `REST_URL` and `FUNCTIONS_URL` are `<API_URL>/rest/v1` and
+`<API_URL>/functions/v1`, present only when their member is a composition
+member with an HTTP endpoint. `ANON_KEY` and `SERVICE_ROLE_KEY` are emitted
+from the required saved database JWT secret.
 
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires

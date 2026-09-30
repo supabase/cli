@@ -1,5 +1,4 @@
 import {
-  currentShellPlatform,
   shellQuoteArgument,
   type ShellPlatform,
 } from "../../../../command-internal/shell-quote.ts";
@@ -12,10 +11,7 @@ export interface StatusEnvPointerInput {
 }
 
 /** The `supabase status --env ...` pointer `start` prints to reproduce this stack's selection. */
-export const statusEnvPointer = (
-  input: StatusEnvPointerInput,
-  platform: ShellPlatform = currentShellPlatform(),
-): string => {
+export const statusEnvPointer = (input: StatusEnvPointerInput, platform: ShellPlatform): string => {
   const selector = [
     ...(input.explicitWorkdir ? ["--workdir", input.projectRoot] : []),
     ...(input.stack === undefined ? [] : ["--stack", input.stack]),

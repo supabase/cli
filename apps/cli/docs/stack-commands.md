@@ -102,16 +102,19 @@ JSON or stream-JSON mode emits a variable map. Values that are unavailable becau
 stopped or unhealthy are omitted. Add `--output-format text` for an explicit dotenv file
 regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
 are quoted so that sourcing the file performs no shell expansion. The exported variable set is
-`API_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`, `PUBLISHABLE_KEY`, `SECRET_KEY`,
-`ANON_KEY`, and `SERVICE_ROLE_KEY`; `MCP_URL` is `<API_URL>/mcp`, whose port is assigned per
-project, and `DB_URL` uses the `postgres` role with the saved database password, URI-encoded, and
-no query string. `INBUCKET_URL` is also exported alongside `MAILPIT_URL`, with the same value,
-as a deprecated alias. `start` and `status` JSON/stream-JSON results include this same connection map
-under `env`, as their text output already shows the local keys and database URL; `status --env`
-remains the dotenv/variable-map export, and `--override-name` only applies there. `--override-name`
-accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
-unknown variables, invalid names, and collisions. The DB-derived service-role JWT remains available
-when Auth is disabled; unavailable service URLs and credentials are omitted.
+`API_URL`, `REST_URL`, `FUNCTIONS_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`,
+`PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
+`FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
+whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
+password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
+`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
+only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
+and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
+applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
+entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The
+DB-derived service-role JWT remains available when Auth is disabled; unavailable service URLs and
+credentials are omitted.
 
 The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
 `toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.

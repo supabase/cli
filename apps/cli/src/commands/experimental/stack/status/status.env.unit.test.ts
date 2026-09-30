@@ -99,6 +99,8 @@ describe("stack environment overrides", () => {
     Effect.gen(function* () {
       for (const name of [
         "API_URL",
+        "REST_URL",
+        "FUNCTIONS_URL",
         "DB_URL",
         "STUDIO_URL",
         "MCP_URL",
@@ -122,6 +124,23 @@ describe("stack environment overrides", () => {
         const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);
         expect(error.reason).toBe("flags");
       }
+    }),
+  );
+
+  it.effect("names the offending entry in --override-name error messages", () =>
+    Effect.gen(function* () {
+      const malformed = yield* stackEnvOverrides(["API_URL="]).pipe(Effect.flip);
+      expect(malformed.message).toContain('"API_URL="');
+
+      const removed = yield* stackEnvOverrides(["S3_PROTOCOL_URL=RENAMED"]).pipe(Effect.flip);
+      expect(removed.message).toContain("S3_PROTOCOL_URL");
+      expect(removed.message).toContain("not exported by the stack backend");
+
+      const unknown = yield* stackEnvOverrides(["UNKNOWN=RENAMED"]).pipe(Effect.flip);
+      expect(unknown.message).toContain("UNKNOWN");
+      expect(unknown.message).toContain("API_URL");
+      expect(unknown.message).toContain("REST_URL");
+      expect(unknown.message).toContain("FUNCTIONS_URL");
     }),
   );
 });

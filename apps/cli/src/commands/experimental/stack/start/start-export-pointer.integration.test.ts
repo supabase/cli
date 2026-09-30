@@ -272,9 +272,8 @@ describe("stack start export pointer", () => {
         expect(values.DB_URL).toContain(":40002/");
         expect(values.PUBLISHABLE_KEY).toBe("sb_publishable_named");
 
-        // `statusEnvPointer` defaults to `currentShellPlatform()`, which renders PowerShell
-        // quoting on win32; pass `"posix"` explicitly so this assertion doesn't depend on the
-        // host running the test.
+        // Pass `"posix"` explicitly so this assertion doesn't depend on the host running the
+        // test; `currentShellPlatform()` would render PowerShell quoting on win32.
         const pointer = statusEnvPointer(
           { explicitWorkdir: true, projectRoot, stack: "docker" },
           "posix",

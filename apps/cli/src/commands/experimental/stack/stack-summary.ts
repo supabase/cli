@@ -126,6 +126,8 @@ export const connectionEnv = (
 ): Readonly<Record<string, string>> => {
   const values: Record<string, string> = {};
   if (connections.api !== undefined) values.API_URL = connections.api;
+  if (connections.rest !== undefined) values.REST_URL = connections.rest;
+  if (connections.functions !== undefined) values.FUNCTIONS_URL = connections.functions;
   if (connections.database !== undefined) values.DB_URL = connections.database;
   if (connections.studio !== undefined) values.STUDIO_URL = connections.studio;
   if (connections.mcp !== undefined) values.MCP_URL = connections.mcp;

@@ -5,6 +5,8 @@ import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
   "API_URL",
+  "REST_URL",
+  "FUNCTIONS_URL",
   "DB_URL",
   "STUDIO_URL",
   "MCP_URL",
@@ -16,6 +18,14 @@ const variableNames = [
   "SERVICE_ROLE_KEY",
 ] as const;
 
+/** Names the stack backend used to export, since removed; still worth naming in errors. */
+const removedVariableNames = new Set([
+  "S3_PROTOCOL_ACCESS_KEY_ID",
+  "S3_PROTOCOL_ACCESS_KEY_SECRET",
+  "S3_PROTOCOL_REGION",
+  "S3_PROTOCOL_URL",
+]);
+
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const names = new Map(variableNames.map((name) => [String(name), String(name)]));
@@ -24,15 +34,20 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
       const [source, target, extra] = entry.split("=");
       if (
         source === undefined ||
-        !names.has(source) ||
         target === undefined ||
         extra !== undefined ||
         !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(target)
       )
         return yield* new StackCommandStatusError({
           reason: "flags",
-          message:
-            "--override-name must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.",
+          message: `--override-name entry "${entry}" must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.`,
+        });
+      if (!names.has(source))
+        return yield* new StackCommandStatusError({
+          reason: "flags",
+          message: removedVariableNames.has(source)
+            ? `--override-name entry "${entry}" refers to ${source}, which is not exported by the stack backend.`
+            : `--override-name entry "${entry}" refers to ${source}, which is not an exported variable; valid variables are ${variableNames.join(", ")}.`,
         });
       if (sources.has(source))
         return yield* new StackCommandStatusError({

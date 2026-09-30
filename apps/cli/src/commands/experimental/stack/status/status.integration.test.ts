@@ -766,6 +766,7 @@ it.live("the status JSON env map equals the status --env export for the same sta
       Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
     )(exported.out.stdoutText);
     expect(result.env).toEqual(exportedValues);
+    expect(result.env.REST_URL).toBe("http://127.0.0.1:54321/rest/v1");
   }),
 );
 

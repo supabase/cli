@@ -8,6 +8,7 @@ import {
   type StackServiceView,
 } from "../stack-summary.ts";
 import { gray } from "../../../../command-internal/colors.ts";
+import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
@@ -301,12 +302,15 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         stackAcquireError(cause, { selectedRuntime, runtime, creating: target.id === undefined }),
       ),
     );
-    const statusPointer = statusEnvPointer({
-      explicitWorkdir: settings.explicitWorkdir,
-      projectRoot: target.projectRoot,
-      ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
-      ...(Option.isSome(flags.stackId) ? { stackId: flags.stackId.value } : {}),
-    });
+    const statusPointer = statusEnvPointer(
+      {
+        explicitWorkdir: settings.explicitWorkdir,
+        projectRoot: target.projectRoot,
+        ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
+        ...(Option.isSome(flags.stackId) ? { stackId: flags.stackId.value } : {}),
+      },
+      currentShellPlatform(),
+    );
     const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
       Effect.gen(function* () {
         const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);

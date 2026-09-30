@@ -644,6 +644,7 @@ describe("experimental stack start", () => {
         lazy_services: ["pgmeta", "rest", "studio"],
         env: {
           API_URL: "http://127.0.0.1:23457",
+          REST_URL: "http://127.0.0.1:23457/rest/v1",
           DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
           STUDIO_URL: "http://127.0.0.1:23458",
           MCP_URL: "http://127.0.0.1:23457/mcp",
