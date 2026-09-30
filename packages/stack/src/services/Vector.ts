@@ -20,8 +20,35 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("vector", Config, Endpoints);
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
-// Vector has no API flag or env var, so the recipe loads this alongside the pipeline config.
-const apiConfig = 'api:\n  enabled: true\n  address: "${VECTOR_API_ADDRESS}"\n';
+/**
+ * Vector has no API flag or env var, so the recipe loads this alongside the pipeline config.
+ * `address` is templated directly into the file content at write time (not through Vector's own
+ * `${VAR}` config interpolation, which 0.58 disabled by default) — this is the only stack-owned
+ * config Vector loads that ever varied per launch, so no interpolation flag is needed at all.
+ */
+const apiConfigFor = (address: string | undefined): string =>
+  address === undefined
+    ? "api:\n  enabled: false\n"
+    : `api:\n  enabled: true\n  address: "${address}"\n`;
+
+/**
+ * Every `${VAR}` name the recipe's own `env` sets and documents for a pipeline config
+ * (`Config.analyticsUrl`/`apiKey`, mirrored into `LOGFLARE_URL`/`LOGFLARE_PRIVATE_ACCESS_TOKEN`).
+ * A caller-supplied pipeline (`Config.configPath`) may reference these the same way the recipe's
+ * own API config used to. `renderKnownPlaceholders` substitutes only this closed, recipe-owned
+ * set directly into the file at write time — never a caller's or the process's arbitrary
+ * environment — so a caller config keeps working on Vector 0.58 without the recipe ever passing
+ * `--dangerously-allow-env-var-interpolation` (which would expose every env var, not just these).
+ */
+const renderKnownPlaceholders = (
+  content: string,
+  values: Readonly<Record<string, string | undefined>>,
+): string =>
+  Object.entries(values).reduce(
+    (rendered, [name, value]) =>
+      value === undefined ? rendered : rendered.replaceAll(`\${${name}}`, value),
+    content,
+  );
 
 // Vector requires at least one source and sink; the default forwards nothing.
 const defaultPipelineConfig = [
@@ -73,7 +100,10 @@ const makeSpec = (
   const configRoot = path.join(instanceRoot, "runtime", "vector");
   const apiConfigPath = path.join(configRoot, "vector-api.yaml");
   const defaultPipelinePath = path.join(configRoot, "vector.yaml");
-  const pipelinePath = (creation: Creation) => creation.config.configPath ?? defaultPipelinePath;
+  const renderedPipelinePath = path.join(configRoot, "vector.rendered.yaml");
+  /** What Vector actually loads: a caller's file is rendered to a recipe-owned copy first. */
+  const resolvedPipelinePath = (creation: Creation) =>
+    creation.config.configPath === undefined ? defaultPipelinePath : renderedPipelinePath;
   const ownedInstance = (operation: string) =>
     /^[a-zA-Z0-9_-]+$/u.test(instanceId)
       ? Effect.void
@@ -83,33 +113,47 @@ const makeSpec = (
     executable: "bin/vector",
     ports: { http: 9001 },
     healthPath: "/health",
-    env: (creation, endpoints, container) =>
+    env: (creation, _endpoints, _container) =>
       requiredInput("vector", "analyticsUrl", creation.config.analyticsUrl).pipe(
-        Effect.map((analyticsUrl) => {
-          const http = endpoints.get("http");
-          return {
-            ...(http === undefined
-              ? {}
-              : { VECTOR_API_ADDRESS: `${container ? "0.0.0.0" : "127.0.0.1"}:${http.port}` }),
-            LOGFLARE_URL: analyticsUrl,
-            ...(creation.config.apiKey === undefined
-              ? {}
-              : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
-          };
-        }),
+        Effect.map((analyticsUrl) => ({
+          LOGFLARE_URL: analyticsUrl,
+          ...(creation.config.apiKey === undefined
+            ? {}
+            : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
+        })),
       ),
-    args: (creation, _endpoints, context) =>
-      Effect.succeed([
-        // Vector 0.58 disabled `${VAR}` config interpolation by default; the API address is our
-        // own `VECTOR_API_ADDRESS` env var, not user-supplied config, so opting back in is safe.
-        "--dangerously-allow-env-var-interpolation",
-        ...(context.container
+    args: (creation, endpoints, context) =>
+      Effect.gen(function* () {
+        const http = endpoints.get("http");
+        const address =
+          http === undefined
+            ? undefined
+            : `${context.container ? "0.0.0.0" : "127.0.0.1"}:${http.port}`;
+        yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(address));
+        if (creation.config.configPath !== undefined) {
+          const source = yield* fs.readFileString(creation.config.configPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServiceError({
+                  operation: "prepare",
+                  message: "Unable to read Vector configPath",
+                  cause,
+                }),
+            ),
+          );
+          const rendered = renderKnownPlaceholders(source, {
+            LOGFLARE_URL: creation.config.analyticsUrl,
+            LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey,
+          });
+          yield* writeAtomically(fs, path, renderedPipelinePath, rendered);
+        }
+        return context.container
           ? ["--config", containerPipelinePath, "--config", containerApiPath]
-          : ["--config", pipelinePath(creation), "--config", apiConfigPath]),
-      ]),
+          : ["--config", resolvedPipelinePath(creation), "--config", apiConfigPath];
+      }),
     mounts: (creation) =>
       Effect.succeed([
-        { source: pipelinePath(creation), target: containerPipelinePath, readOnly: true },
+        { source: resolvedPipelinePath(creation), target: containerPipelinePath, readOnly: true },
         { source: apiConfigPath, target: containerApiPath, readOnly: true },
       ]),
     startupCommands: [],
@@ -139,6 +183,7 @@ const makeSpec = (
           const owned = yield* Effect.all([
             canonical(apiConfigPath),
             canonical(defaultPipelinePath),
+            canonical(renderedPipelinePath),
           ]).pipe(
             Effect.mapError(
               (cause) =>
@@ -155,7 +200,9 @@ const makeSpec = (
               message: "Vector configPath must not point at a stack-owned Vector config file",
             });
         }
-        yield* writeAtomically(fs, path, apiConfigPath, apiConfig);
+        // A safe placeholder until `args` writes the real address — the listening port isn't
+        // known until endpoints are reserved for an actual launch, which happens after `prepare`.
+        yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(undefined));
         if (callerPath === undefined)
           yield* writeAtomically(fs, path, defaultPipelinePath, defaultPipelineConfig);
       }),
@@ -165,6 +212,7 @@ const makeSpec = (
         yield* ownedInstance("destroy");
         yield* fs.remove(apiConfigPath, { force: true });
         yield* fs.remove(defaultPipelinePath, { force: true });
+        yield* fs.remove(renderedPipelinePath, { force: true });
         if (yield* fs.exists(configRoot))
           for (const entry of yield* fs.readDirectory(configRoot))
             if (entry.startsWith(temporaryPrefix))
