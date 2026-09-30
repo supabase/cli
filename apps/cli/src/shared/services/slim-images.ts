@@ -117,11 +117,13 @@ function catalogImageFor(service: SlimServiceName, upstreamVersion: string): str
  * digest) whose `upstreamVersion` normalizes to `image`'s tag for `alias`.
  * This owns tag normalization (`v`-prefixing, `tagPrefix`, vector's `-alpine`
  * strip) via {@link slimCatalogPin}, so pins that differ only in prefix
- * between the two registries (`supavisor`, `logflare`) still match. Returns
- * `undefined` when no catalog entry's `upstreamVersion` matches — the catalog is the single
- * version table now, so this only happens for an alias with no slim build (kong, `pg14`, the
- * one-shot job images) — so callers keep the upstream (non-slim) image instead of guessing a
- * slim tag.
+ * between the two registries (`supavisor`, `logflare`) still match. Returns `undefined` whenever
+ * no catalog pin matches `alias` and `image`'s tag — callers then keep the upstream (non-slim)
+ * image instead of guessing a slim tag. That covers more than "no slim build": an alias with no
+ * slim build at all (kong, `pg14`, the one-shot job images); an excluded tag on an alias that
+ * does have one (an OrioleDB `pg` tag, which {@link slimCatalogPin} always excludes); and a tag
+ * the catalog simply doesn't pin (an upstream version the catalog hasn't caught up to yet, or a
+ * hosted-project override from `supabase link` that doesn't match the pinned upstream version).
  */
 export function toSlimImage(alias: string, image: string): string | undefined {
   const pin = slimCatalogPin(alias, image);
