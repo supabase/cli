@@ -34,12 +34,33 @@ semver library — ordering is the service's upstream version key, then revision
 **Legacy tags** (without `-rN`) are frozen: nothing parses, audits, rewrites, or unpublishes
 them, so CLIs pinned to a legacy tag keep working.
 
+### The catalog is the single version table
+
+The CLI's stack catalog (`packages/stack/src/Artifacts.ts`) is the single version table for
+every consumer of a slim-capable service: the new stack, legacy `supabase start`, and legacy
+slim mode. Each slim-capable service pins exactly one committed slim-services release per
+release line it carries (`ArtifactPin`, keyed by upstream version; only postgres carries more
+than one line, its default plus an additional Postgres 15 pin). Everything else is derived from
+that pin — never the other way around.
+
+`apps/cli/src/shared/services/Dockerfile`, and its byte-identical Go copy
+(`apps/cli-go/pkg/config/templates/Dockerfile`), keep every existing consumer (the legacy TS
+stack, the Go CLI embed, `mirror-template-images.yml`, `detect-unmirrored-images.ts`) unchanged,
+but for a slim-capable alias its `FROM` line is now a **generated view** of the catalog's
+`ArtifactPin.upstreamImage`: `apps/cli/scripts/render-service-dockerfile.ts` rewrites those lines
+in place, and a CI check (`render-service-dockerfile.unit.test.ts`) fails on drift between the
+Dockerfile and the catalog. Kong, Postgres 14, and the one-shot job images (migra, pg_prove,
+pgadmin-schema-diff) have no slim build and stay hand- or Dependabot-managed, as today.
+
 ### Content pins, not runtime checksums
 
-The CLI's stack catalog (`packages/stack/src/Artifacts.ts`) pins every artifact by content:
+Every `ArtifactPin` pins its release by content:
 
 - the slim image, as `ghcr.io/supabase/cli/<service>:<R>@sha256:<digest>`;
-- each target's archive sha256 and manifest sha256 (`ArtifactPin.natives`).
+- each target's archive sha256 and manifest sha256 (`ArtifactPin.natives`);
+- `upstreamImage`, the exact upstream image the release was built or mirrored from, normalized to
+  the Dockerfile's `FROM` form — this is what legacy non-slim mode resolves against, and what the
+  generator reads to render the Dockerfile.
 
 `SlimServicesSource` hash-checks the manifest against its pin before parsing it (its `version`
 field must equal `R`) and hash-checks the archive against its pin while it streams. There is no
@@ -49,30 +70,41 @@ hash — that comes only from the pin already committed to the catalog.
 
 ### Sync and the S3-staleness check
 
-`.github/scripts/sync-artifacts-catalog.ts` writes those pins. On a Dependabot upstream bump to
-`U`, it picks the highest committed revision `N` of `<svc>-U-rN`, reads that release's
-`SHA256SUMS` for the archive and manifest sha256 per target, and resolves the image digest with
-`regctl manifest head`. Before writing the pin, it downloads each target's S3 archive and
-manifest and hashes them against those same release sums; a mismatch fails the sync instead of
-pinning bytes that don't match GitHub. This exists because `publish-release` does not wait for
+`.github/scripts/sync-artifacts-catalog.ts` writes those pins, in manual mode: given a service
+and either `--upstream` (the highest committed revision of that upstream version) or `--release`
+(exactly that committed `<upstream>-r<N>`, never "highest at apply time"), it reads the target
+release's `SHA256SUMS` for the archive and manifest sha256 per target, and resolves the image
+digest with `regctl manifest head`. Before writing the pin, it downloads each target's S3 archive
+and manifest and hashes them against those same release sums; a mismatch fails the sync instead
+of pinning bytes that don't match GitHub. This exists because `publish-release` does not wait for
 the ECR/S3 mirror to finish, so a freshly committed revision's S3 copy can briefly lag or hold
 bytes from an earlier failed attempt. Hosts that reach GitHub are unaffected — GitHub is the
 primary mirror — but a host that can only reach S3 would otherwise fail verification with no
-fallback. A mismatch here means "run the mirror backfill", not "the CLI is broken". A Dependabot
-bump to a version _older_ than the catalog's current pin is a non-blocking skip: the catalog is
-allowed to lead the Dockerfile, and the skip still prevents a downgrade.
+fallback. A mismatch here means "run the mirror backfill", not "the CLI is broken".
 
-### Hotfix pickup
+### Hotfix and upgrade pickup
 
-`mirror-ecr` runs before `publish-release`, so the mirror dispatch fires before a revision is
-committed and can't trigger a catalog update. Instead, the last step of slim-services'
-`publish-release` sends a `repository_dispatch` (`slim-release-published`) to the CLI repo with
-`{service, upstream_version, revision}`. A CLI workflow handles it: when `upstream_version`
-matches any pinned upstream version for that service and `revision` is newer than the pinned
-one, it runs the sync for that entry and opens a pull request. The fallback, if that dispatch or
-the PR step fails, is a documented manual `bun .github/scripts/sync-artifacts-catalog.ts`
-invocation — the release itself is already committed by then, so a failure here means "notify
-the CLI by hand", not "republish".
+The last step of slim-services' `publish-release` sends a `repository_dispatch`
+(`slim-release-published`) to the CLI repo with `{service, upstream_version, revision,
+release_version}`. `slim-release-published.yml` treats the dispatch as a trigger, not as the
+payload to apply: it reconciles the named service against every committed (published, non-draft)
+`<service>-...-r<N>` release it can currently see (`planSlimUpdates`), and opens or updates, per
+release line the service carries:
+
+- a **hotfix**, when the pinned upstream version has a higher committed revision — branch
+  `slim-hotfix/<svc>[-<line>]`, title `chore(stack): pin <svc> <release_version>`;
+- an **upgrade**, when the newest committed upstream on that line is newer than the pinned one —
+  branch `slim-bump/<svc>[-<line>]`, title `chore(stack): bump <svc> to <release_version>`.
+
+Both can be planned in the same run. Plan and apply run from the same checkout of the default
+branch in one job, so a re-run always recomputes from the latest develop: a stale plan can never
+be applied, and a superseded PR's branch is rewritten (force-pushed) in place rather than raced
+by a new one — the workflow deliberately never auto-closes a superseded PR. A backlog republish
+of an older upstream version naturally plans nothing. The fallback, if the push or PR step fails,
+is a documented manual `bun .github/scripts/sync-artifacts-catalog.ts --service <svc> --release
+<U>-r<N>` invocation, followed by `apps/cli/scripts/render-service-dockerfile.ts` — the release
+itself is already committed by then, so a failure here means "open the pull request by hand", not
+"republish".
 
 ### Registry and bucket mirrors
 
@@ -116,6 +148,21 @@ or considered stale and backfilled — never rewritten in place.
 - A revision's ECR/S3 copy can briefly lag GitHub after publish; the sync's S3-staleness check
   and the mirror backfill are what keep them converging.
 - Old CLI releases keep pulling their originally pinned image digest and native bytes forever.
+
+### Tradeoffs of moving updates onto the catalog
+
+- Upstream and security fixes for slim-capable images now reach the CLI only once
+  slim-services publishes a release. Direct Dependabot discovery is gone for them; Dependabot
+  still bumps only the upstream-only images `.github/dependabot.yml`'s docker `ignore` list
+  excludes (kong, and the job images: migra, pg_prove, pgadmin-schema-diff).
+- Dependabot's 7-day cooldown no longer governs those images — hotfix and upgrade PRs land as
+  soon as `slim-release-published` fires, on whatever cadence slim-services publishes.
+- `pg14` has no slim build and was already upstream-only; it is bumped by hand (Dependabot's
+  `docker` ecosystem also ignores `supabase/postgres` entirely now, since Dependabot cannot tell
+  `pg14`'s `FROM` line apart from `pg`'s and `pg15`'s by repository name alone).
+- The Deno 1 edge-runtime override (`apps/cli/src/shared/functions/functions.shared.ts`, and the
+  Go `deno1` constant) stays a separately pinned, upstream-only exception — it never goes through
+  the catalog.
 
 ## Alternatives considered
 
