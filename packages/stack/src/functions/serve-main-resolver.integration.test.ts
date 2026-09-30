@@ -317,6 +317,37 @@ describe("Edge Runtime request-time function resolver", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+  it.live("walks from the normalized entrypoint when it contains parent segments", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const nodeFileSystem = makeNodeFileSystem(fs);
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-resolver-parent-segments-",
+      });
+      const canonicalRoot = yield* fs.realPath(root);
+      const hello = path.join(canonicalRoot, "hello");
+      yield* fs.makeDirectory(path.join(hello, "nested"), { recursive: true });
+      yield* fs.writeFileString(path.join(hello, "index.ts"), "export default 1");
+      yield* fs.writeFileString(path.join(hello, "nested", "deno.json"), "{}");
+      yield* fs.writeFileString(path.join(canonicalRoot, "deno.json"), "{}");
+
+      const config = yield* resolveFunctionConfig({
+        root,
+        slug: "hello",
+        overrides: {
+          $default: { import_map_root: "deno.json" },
+          hello: { entrypointPath: `${hello}/nested/../index.ts` },
+        },
+        fs: nodeFileSystem,
+      });
+
+      expect(config).toMatchObject({
+        importMapPath: path.join(canonicalRoot, "deno.json"),
+        importMapDiscoveredByRuntime: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.live("keeps import maps Edge Runtime would not discover as explicit import maps", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

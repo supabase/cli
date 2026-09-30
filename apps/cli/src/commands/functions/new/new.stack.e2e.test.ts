@@ -18,6 +18,7 @@ const CLEANUP_TIMEOUT_MS = 120_000;
 // The template's first request resolves `jsr:@supabase/functions-js` and `npm:@supabase/server`
 // over the network, on top of waking the lazily-started Functions member.
 const INVOKE_TIMEOUT_MS = 5 * 60_000;
+const SETUP_MARGIN_MS = 60_000;
 
 const minimalConfig = `project_id = "functions-new-stack-e2e"
 
@@ -100,7 +101,16 @@ describe("functions new (stack e2e)", () => {
                   home: home.dir,
                   env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
                   exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-                }).pipe(Effect.orDie, Effect.asVoid),
+                }).pipe(
+                  Effect.orDie,
+                  Effect.flatMap((destroyed) =>
+                    destroyed.exitCode === 0
+                      ? Effect.void
+                      : Effect.die(
+                          `stack destroy exited ${destroyed.exitCode}\nstdout:\n${destroyed.stdout}\nstderr:\n${destroyed.stderr}`,
+                        ),
+                  ),
+                ),
           );
 
           const started = yield* runSupabaseEffect(
@@ -146,7 +156,15 @@ describe("functions new (stack e2e)", () => {
           );
           expect(decoded).toEqual({ message: "Hello e2e!" });
         }).pipe(Effect.provide(layer)),
-      { timeout: START_TIMEOUT_MS + CLEANUP_TIMEOUT_MS },
+      {
+        timeout:
+          NEW_TIMEOUT_MS +
+          START_TIMEOUT_MS +
+          CLEANUP_TIMEOUT_MS +
+          INVOKE_TIMEOUT_MS +
+          CLEANUP_TIMEOUT_MS +
+          SETUP_MARGIN_MS,
+      },
     );
   }
 });

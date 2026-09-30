@@ -108,7 +108,8 @@ const nearestDenoConfig = (
   entrypointPath: string,
 ): Effect.Effect<string | undefined> =>
   Effect.gen(function* () {
-    let directory = dirname(entrypointPath);
+    // Edge Runtime receives the entrypoint as a file URL, which resolves `..` segments.
+    let directory = dirname(join(entrypointPath));
     while (contained(filesRoot, directory)) {
       for (const name of denoConfigNames) {
         const candidate = join(directory, name);
