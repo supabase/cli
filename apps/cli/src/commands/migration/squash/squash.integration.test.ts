@@ -1286,6 +1286,16 @@ describe("migration squash", () => {
       }).pipe(Effect.provide(s.layer));
     });
 
+    it.effect("an unrecognised piped answer leaves the remote migration history alone", () => {
+      const s = setupRemote({ isTTY: false, pipedInput: "nope\n" });
+      return Effect.gen(function* () {
+        yield* seedMigration(tmp.current, "0_init.sql");
+        yield* migrationSquash(flags());
+        expect(s.execs).not.toContain("BEGIN");
+        expect(s.queries).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    });
+
     it.effect(
       "--version 0 baselines exactly version 0 even though a newer migration survives",
       () => {

@@ -133,7 +133,7 @@ describe("promptYesNo piped text answers", () => {
     },
   );
 
-  it("keeps the default when a caller that never asked reads an unrecognised line", async () => {
+  it("keeps the default for an unrecognised line under interactive: false", async () => {
     expect(await ask("echo next-step\n", true, false)).toBe(true);
     expect(await ask("echo next-step\n", false, false)).toBe(false);
     expect(await ask("   \n", true, false)).toBe(true);
