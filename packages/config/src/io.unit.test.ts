@@ -2524,6 +2524,67 @@ orioledb_version = "15.1.0.150"
     ).toBe(true);
   });
 
+  test("rejects a non-string legacy experimental.orioledb_version instead of silently discarding it", async () => {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(
+      path,
+      `project_id = "abc123"
+
+[experimental]
+orioledb_version = 1
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value._tag).toBe("CliConfigParseError");
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a non-string canonical db.orioledb_version beside a valid legacy value", async () => {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(
+      path,
+      `project_id = "abc123"
+
+[db]
+orioledb_version = 1
+
+[experimental]
+orioledb_version = "15.1.0.150"
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadCliConfigFile(path).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value._tag).toBe("CliConfigParseError");
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("normalizes a deprecated remotes.*.experimental.orioledb_version", async () => {
     captureWarnings();
     const loaded = await loadToml(

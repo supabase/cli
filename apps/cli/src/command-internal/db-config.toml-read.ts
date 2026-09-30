@@ -1,3 +1,4 @@
+import { normalizeDeprecatedOrioleDBVersion } from "@supabase/config/internal";
 import { Config, Effect, Match, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import {
@@ -61,10 +62,9 @@ export interface DbTomlValues {
   /** `[db] major_version`, default 17. */
   readonly majorVersion: number;
   /**
-   * `[db] orioledb_version` (env-expanded), falling back to the deprecated
-   * `[experimental] orioledb_version` when the former is absent/empty. Set on a
-   * 15/17 project to rewrite the Postgres image to the OrioleDB tag; `None` for
-   * a vanilla project.
+   * `[db] orioledb_version` (env-expanded); the deprecated `[experimental] orioledb_version` is
+   * already promoted into this path by `normalizeDeprecatedOrioleDBVersion`. Set on a 15/17
+   * project to rewrite the Postgres image to the OrioleDB tag; `None` for a vanilla project.
    */
   readonly orioledbVersion: Option.Option<string>;
   /**
@@ -1115,6 +1115,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         }),
       );
     }
+    // Same per-section promotion as the config loader, before the remote merge; the loader owns
+    // the deprecation warning.
+    doc = asRecord(normalizeDeprecatedOrioleDBVersion(doc).document);
     // Config load aborts when two `[remotes.*]` blocks share a `project_id`,
     // regardless of which command runs — check before merging.
     const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
@@ -1279,12 +1282,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const orioledbVersionRaw =
     (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
     db?.["orioledb_version"];
-  // `db.orioledb_version` wins when present; a non-empty legacy `experimental.orioledb_version`
-  // is still honored (no separate deprecation warning here — `@supabase/config`'s loader already
-  // emits it) so an unmigrated config keeps selecting the OrioleDB image.
-  const orioledbVersion = Option.orElse(expandString(orioledbVersionRaw), () =>
-    expandString(experimentalRaw?.["orioledb_version"]),
-  );
+  const orioledbVersion = expandString(orioledbVersionRaw);
   if (Option.isSome(orioledbVersion) && (majorVersion === 15 || majorVersion === 17)) {
     // Warns (does not fail) when an S3 field still holds an unexpanded `env(VAR)`;
     // matches the established stderr line, with the env var name from the capture.

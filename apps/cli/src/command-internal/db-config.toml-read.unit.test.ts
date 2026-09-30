@@ -1996,6 +1996,72 @@ describe("readDbToml", () => {
     );
   });
 
+  it.effect(
+    "a matched remote's legacy experimental.orioledb_version overrides the base db.orioledb_version",
+    () => {
+      // Matches `@supabase/config`'s loader precedence: each `[remotes.*]` block's own legacy
+      // value is promoted before the remote merge, so it can override the base canonical value.
+      const ref = "abcdefghijklmnopqrst";
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 17",
+          'orioledb_version = "A"',
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental]",
+          'orioledb_version = "B"',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("B");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "a matched remote's legacy experimental.orioledb_version still beats a conflicting SUPABASE_DB_ORIOLEDB_VERSION",
+    () => {
+      // Same precedence as any other `ENV_OVERRIDABLE_KEYS` field (e.g. db.major_version):
+      // an explicit remote value beats its matching `SUPABASE_*` env override.
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+      process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = "env-value";
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 17",
+          'orioledb_version = "A"',
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental]",
+          'orioledb_version = "B"',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("B");
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+            else process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
     delete process.env["S3_KEY"];
     const writes: Array<string> = [];

@@ -1165,6 +1165,8 @@ func TestDeprecatedOrioleDBVersionConfig(t *testing.T) {
 		t.Helper()
 		r, w, err := os.Pipe()
 		require.NoError(t, err)
+		defer r.Close()
+		defer w.Close()
 		orig := os.Stderr
 		os.Stderr = w
 		defer func() { os.Stderr = orig }()

@@ -254,7 +254,7 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
-interface NormalizedOrioleDBVersionDocument {
+export interface NormalizedOrioleDBVersionDocument {
   readonly document: unknown;
   /**
    * Dotted paths whose legacy `experimental.orioledb_version` was non-empty, e.g.
@@ -266,12 +266,10 @@ interface NormalizedOrioleDBVersionDocument {
 }
 
 /**
- * Promotes a section's legacy `experimental.orioledb_version` to `db.orioledb_version` when the
- * legacy value is non-empty and `db.orioledb_version` is absent or empty (the init template
- * always writes `db.orioledb_version = ""`, which must not block the legacy fallback); a
- * non-empty explicit `db.orioledb_version` always wins over a non-empty legacy value. The legacy
- * leaf is deleted unconditionally (even when empty) so the decoded `CliConfig` only ever has one
- * location for the setting. Returns `section` unchanged when there's no legacy key to normalize.
+ * Moves a section's string `experimental.orioledb_version` out of `experimental`, promoting a
+ * non-empty value to `db.orioledb_version` when that is absent or `""` (the init template always
+ * writes `""`). Non-string values, a non-empty `db.orioledb_version`, and a non-table `db` are
+ * left untouched so schema validation still sees them.
  */
 function promoteOrioleDBVersion(section: Record<string, unknown>): {
   readonly section: Record<string, unknown>;
@@ -282,30 +280,44 @@ function promoteOrioleDBVersion(section: Record<string, unknown>): {
     return { section, warned: false };
   }
   const legacyValue = experimental.orioledb_version;
-  const legacyNonEmpty = typeof legacyValue === "string" && legacyValue.length > 0;
-  const db = isObject(section.db) ? section.db : undefined;
-  const dbValue = db?.orioledb_version;
-  const dbHasValue = typeof dbValue === "string" && dbValue.length > 0;
+  if (typeof legacyValue !== "string") {
+    return { section, warned: false };
+  }
+  const legacyNonEmpty = legacyValue.length > 0;
 
   const normalizedExperimental = { ...experimental };
   delete normalizedExperimental.orioledb_version;
-
   const normalizedSection: Record<string, unknown> = {
     ...section,
     experimental: normalizedExperimental,
   };
-  if (legacyNonEmpty && !dbHasValue) {
+
+  if (!legacyNonEmpty) {
+    return { section: normalizedSection, warned: false };
+  }
+  if ("db" in section && !isObject(section.db)) {
+    return { section: normalizedSection, warned: true };
+  }
+
+  const db = isObject(section.db) ? section.db : undefined;
+  const dbValue = db?.orioledb_version;
+  const dbCanBePromotedOver = dbValue === undefined || dbValue === "";
+  if (dbCanBePromotedOver) {
     normalizedSection.db = { ...db, orioledb_version: legacyValue };
   }
 
-  return { section: normalizedSection, warned: legacyNonEmpty };
+  return { section: normalizedSection, warned: true };
 }
 
 /**
  * Rewrites the deprecated `experimental.orioledb_version` (top-level and per `[remotes.*]`) to
  * `db.orioledb_version`, following the same shape as {@link normalizeDeprecatedSMTPSections}.
+ * Exposed via `@supabase/config/internal` so `apps/cli`'s raw TOML reader
+ * (`db-config.toml-read.ts`) can apply the same precedence before its own `[remotes.*]` merge.
  */
-function normalizeDeprecatedOrioleDBVersion(document: unknown): NormalizedOrioleDBVersionDocument {
+export function normalizeDeprecatedOrioleDBVersion(
+  document: unknown,
+): NormalizedOrioleDBVersionDocument {
   if (!isObject(document)) {
     return { document, deprecatedPaths: [] };
   }
