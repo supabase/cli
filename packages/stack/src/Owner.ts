@@ -359,7 +359,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
           backend: orchestrator
-            .acquire(id, name !== "inspector", `incoming connection on endpoint ${name}`)
+            .acquire(id, name !== "inspector", `traffic on endpoint ${name}`)
             .pipe(
               Effect.andThen(recipe.endpoint(name)),
               Effect.flatMap(backendAddress),

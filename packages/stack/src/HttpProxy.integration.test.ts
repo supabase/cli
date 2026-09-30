@@ -1,11 +1,12 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
+import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -35,14 +36,6 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
-const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
-  Logger.layer([
-    Logger.make(({ logLevel, message }) => {
-      if (levels.some((level) => level === logLevel))
-        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
-    }),
-  ]);
 
 const captureErrors = captureLogs(["Error"]);
 

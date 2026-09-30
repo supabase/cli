@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Logger, Predicate, type LogLevel } from "effect";
+import { Deferred, Effect, Fiber, Predicate } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -11,15 +11,8 @@ import {
 import * as Http from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw client and backend fixtures for connection failures.
 import { createServer, Socket, type Server } from "node:net";
+import { captureLogs } from "../tests/logs.ts";
 import { bindTcp, serveTcp, ProxyError } from "./Proxy.ts";
-
-const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
-  Logger.layer([
-    Logger.make(({ logLevel, message }) => {
-      if (levels.some((level) => level === logLevel))
-        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
-    }),
-  ]);
 
 const captureErrors = captureLogs(["Error"]);
 

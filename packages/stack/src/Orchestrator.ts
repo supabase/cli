@@ -236,6 +236,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <
   const registry = yield* Ref.make<ReadonlyMap<string, Entry>>(new Map());
   const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
   const activity = yield* Ref.make<ReadonlyMap<string, ActivityState>>(new Map());
+  /** Tracks members with a wake in progress so only its initiating caller logs the transition. */
+  const wakes = yield* Ref.make<ReadonlySet<string>>(new Set());
 
   const withGraph = Effect.fn("Orchestrator.withGraph")(<A, E>(effect: Effect.Effect<A, E>) =>
     Effect.uninterruptibleMask((restore) =>
@@ -892,7 +894,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
         const instance = yield* node(id);
         const scope = yield* Scope.Scope;
         const now = yield* Clock.currentTimeMillis;
-        const wake = yield* withGraph(
+        const { wake, initiator } = yield* withGraph(
           Effect.gen(function* () {
             const observation = yield* instance.core.get;
             if (observation.lifecycle === "stopped" && !observation.wakeEnabled)
@@ -912,32 +914,54 @@ export const make = Effect.fn("Orchestrator.make")(function* <
                 Effect.ignore,
               ),
             );
-            return observation.lifecycle !== "running";
+            // A "starting" observer is always joining an in-flight start (a wake or an
+            // eager/explicit start), never its initiator, regardless of the marker below.
+            if (observation.lifecycle === "running" || observation.lifecycle === "starting")
+              return { wake: observation.lifecycle === "starting", initiator: false } as const;
+            const inFlight = yield* Ref.get(wakes);
+            const initiator = !inFlight.has(id);
+            if (initiator) yield* Ref.set(wakes, new Set(inFlight).add(id));
+            return { wake: true, initiator } as const;
           }),
         );
         if (wake) {
-          yield* Effect.logInfo(
-            `Waking ${instance.service} ${id}${trigger === undefined ? "" : ` (${trigger})`}`,
-          );
-          const plan = yield* snapshotPlan(id);
-          for (const member of plan.order) yield* (yield* node(member)).bind;
-          yield* startNode(id, true, awaitReady, plan).pipe(
-            Effect.tapError((cause) =>
-              Effect.logError(`${instance.service} ${id} failed to wake`, cause),
+          if (initiator)
+            yield* Effect.logInfo(
+              `Waking ${instance.service} ${id}${trigger === undefined ? "" : ` (${trigger})`}`,
+            );
+          yield* Effect.gen(function* () {
+            const plan = yield* snapshotPlan(id);
+            for (const member of plan.order) yield* (yield* node(member)).bind;
+            yield* startNode(id, true, false, plan).pipe(
+              Effect.tapError((cause) =>
+                initiator
+                  ? Effect.logError(`${instance.service} ${id} failed to wake`, cause)
+                  : Effect.void,
+              ),
+            );
+          }).pipe(
+            Effect.ensuring(
+              initiator
+                ? Ref.update(wakes, (ids) => {
+                    const next = new Set(ids);
+                    next.delete(id);
+                    return next;
+                  })
+                : Effect.void,
             ),
           );
-          if (!awaitReady)
+          if (!awaitReady && initiator)
             yield* Effect.logInfo(`${instance.service} ${id} started (readiness not awaited)`);
         }
         if (awaitReady) {
           yield* instance.core.ready.pipe(
             Effect.tapError((cause) =>
-              wake
+              wake && initiator
                 ? Effect.logError(`${instance.service} ${id} failed to become ready`, cause)
                 : Effect.void,
             ),
           );
-          if (wake) yield* Effect.logInfo(`${instance.service} ${id} is ready`);
+          if (wake && initiator) yield* Effect.logInfo(`${instance.service} ${id} is ready`);
         }
       }),
     ),

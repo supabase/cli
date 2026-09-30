@@ -88,15 +88,26 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
 const endpoint = (port: "auto") => ({ port });
 
 /** Bounds diagnostic log text to its last lines, so a runaway owner log stays readable. */
-export const tailLines = (content: string, limit: number): string =>
+const tailLines = (content: string, limit: number): string =>
   content.trimEnd().split("\n").slice(-limit).join("\n");
 
+/** Reads only the end of the owner log, so a runaway log doesn't slow down diagnostics. */
 const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
   (fs: FileSystem.FileSystem, path: Path.Path, stateRoot: string, stackId: string) =>
-    fs.readFileString(path.join(stateRoot, stackId, "owner.log")).pipe(
-      Effect.map((content) => tailLines(content, 40)),
-      Effect.orElseSucceed(() => ""),
-    ),
+    Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(path.join(stateRoot, stackId, "owner.log"));
+        const size = (yield* file.stat).size;
+        const length = size < 4096n ? size : 4096n;
+        yield* file.seek(size - length, "start");
+        const bytes = yield* file.readAlloc(length);
+        const content = Option.match(bytes, {
+          onNone: () => "",
+          onSome: (buffer) => new TextDecoder().decode(buffer),
+        });
+        return tailLines(content, 40);
+      }),
+    ).pipe(Effect.orElseSucceed(() => "")),
 );
 
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
