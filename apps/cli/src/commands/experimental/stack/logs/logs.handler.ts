@@ -63,10 +63,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
-    const discovery = yield* api.discover(locations).pipe(Effect.mapError(logsError));
-    if (
-      !discovery.some(({ definition, host }) => definition.id === target.id && host !== undefined)
-    )
+    if (!target.hostRunning)
       return yield* new StackCommandLogsError({
         reason: "lifecycle",
         message: "No owner is reachable; live logs are unavailable.",

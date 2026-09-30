@@ -30,7 +30,7 @@ export const domainsActivate = Effect.fn("domains.activate")(function* (
       Effect.tapError(() => activating?.fail() ?? Effect.void),
       Effect.catch(gateMapError({ projectRef: ref }, mapActivateError)),
     );
-    yield* activating?.clear() ?? Effect.void;
+    yield* activating?.clear ?? Effect.void;
 
     yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

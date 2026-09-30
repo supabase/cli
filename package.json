@@ -5,15 +5,15 @@
   "scripts": {
     "prepare": "effect-tsgo patch --no-typescript --oxlint && husky",
     "build": "pnpm exec turbo run build",
-    "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
+    "generate": "pnpm exec turbo run @supabase/api#generate @supabase/stack#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
     "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
     "test:smoke": "pnpm exec turbo run supabase#test:smoke --",
     "test:github-scripts": "bun test ./.github/scripts",
     "dev:docs": "pnpm exec turbo run @supabase/docs#dev",
-    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
-    "test:integration": "pnpm exec turbo run test:integration:run --",
-    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
+    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --continue=always --",
+    "test:integration": "pnpm exec turbo run test:integration:run --continue=always --",
+    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --continue=always --",
     "test:vitest": "bun --bun vitest run --project '!*e2e*' --project '!*live*'",
     "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check lint:effect:check",
     "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix && pnpm run lint:effect:fix",
@@ -52,7 +52,7 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.4.0",
+      "version": "12.8.1",
       "onFail": "warn"
     }
   }

@@ -3,6 +3,7 @@ import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
 } from "../functions/FunctionsBootstrap.ts";
+import { defaultFunctionsBootstrap } from "../functions/generated/serve-main-bundle.ts";
 import { StackIdSchema } from "../identity/StackId.ts";
 import { ServiceError } from "../Service.ts";
 import { serviceJwt } from "./ServiceConfig.ts";
@@ -32,7 +33,7 @@ export const Config = Schema.Struct({
   functionsRoot: Schema.String,
   filesRoot: Schema.optionalKey(Schema.String),
   functions: Schema.optionalKey(Schema.Record(Schema.String, FunctionSettings)),
-  bootstrap: Schema.String,
+  bootstrap: Schema.optionalKey(Schema.String),
   databaseUrl: Schema.optionalKey(Schema.String),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   apiUrl: Schema.optionalKey(Schema.String),
@@ -90,13 +91,17 @@ const makeSpec = (
                   }),
               ),
             );
-      const runtimePath = (value: string) =>
-        !path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined
-          ? value
-          : path.join(
-              container ? "/__supabase_project" : canonicalFilesRoot,
-              path.relative(filesRoot, value),
-            );
+      const runtimePath = (value: string) => {
+        if (!path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined)
+          return value;
+        const relative = path.relative(filesRoot, value);
+        // Container paths are POSIX regardless of the host path flavor.
+        return container
+          ? ["/__supabase_project", ...relative.split(path.sep).filter((part) => part !== "")].join(
+              "/",
+            )
+          : path.join(canonicalFilesRoot, relative);
+      };
       const root =
         container && filesRoot === undefined
           ? "/__supabase_functions"
@@ -200,9 +205,9 @@ const makeSpec = (
           : [{ source: override, target: "/__supabase_bootstrap", readOnly: true }]),
       ];
     }),
-  startup: [],
+  startupCommands: [],
   prepare: (creation) =>
-    bootstrap.write({ content: creation.config.bootstrap }).pipe(
+    bootstrap.write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap }).pipe(
       Effect.flatMap((target) => Ref.set(functionsRoot, path.dirname(target))),
       Effect.mapError(
         (cause) =>

@@ -22,7 +22,8 @@ import { trimGoSpace } from "../shared/go-string.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { DbDiffPgAdminError } from "./diff.errors.ts";
 
-const DIFFER_IMAGE = dockerfileServiceImage("differ");
+// `differ` has no slim build, so the slim flag never applies to it.
+const DIFFER_IMAGE = dockerfileServiceImage("differ", false);
 
 /**
  * Only the front of the buffer is trimmed, not every occurrence — a real pgAdmin4
@@ -288,23 +289,19 @@ export const diffSchemaPgAdmin = (
       }
       if (result.exitCode !== 0) {
         // Non-progress stderr lines are dropped silently, even under `--debug`.
-        return yield* Effect.fail(
-          new DbDiffPgAdminError({
-            message: `error running container: exit ${result.exitCode}`,
-            reason: "differ",
-          }),
-        );
+        return yield* new DbDiffPgAdminError({
+          message: `error running container: exit ${result.exitCode}`,
+          reason: "differ",
+        });
       }
       const stdout = new TextDecoder().decode(result.stdout);
       // Parsed per run, not concatenated across runs.
       const parsed = parsePgAdminDiffEntries(stdout);
       if (Result.isFailure(parsed)) {
-        return yield* Effect.fail(
-          new DbDiffPgAdminError({
-            message: parsed.failure.message,
-            reason: "invalid_output",
-          }),
-        );
+        return yield* new DbDiffPgAdminError({
+          message: parsed.failure.message,
+          reason: "invalid_output",
+        });
       }
       ddls.push(...parsed.success);
     }

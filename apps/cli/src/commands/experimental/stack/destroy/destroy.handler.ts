@@ -10,6 +10,7 @@ import {
   StackApi,
   StackTargetError,
   rejectStackOutput,
+  skippedRuntimeCleanupWarning,
   StackTargetResolver,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -72,17 +73,22 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         message: "Destroying a stack requires confirmation; rerun with --yes.",
         suggestion: "Pass --yes when running non-interactively or in a machine-readable format.",
       });
-    const confirmed = yield* promptYesNo(
-      output,
-      yes,
-      `Permanently destroy stack ${target.id} at ${target.projectRoot} and its owned data? Storage upload files will be preserved.`,
-      false,
-    );
-    if (!confirmed)
-      return yield* new StackCommandDestroyError({
-        reason: "cancelled",
-        message: "Stack destruction was not confirmed.",
-      });
+    const scope = `stack ${target.id} at ${target.projectRoot} and its owned data`;
+    const preserved = "Storage upload files will be preserved.";
+    if (yes) yield* output.raw(`Permanently destroying ${scope}. ${preserved}\n`, "stderr");
+    else {
+      const confirmed = yield* promptYesNo(
+        output,
+        false,
+        `Permanently destroy ${scope}? ${preserved}`,
+        false,
+      );
+      if (!confirmed)
+        return yield* new StackCommandDestroyError({
+          reason: "cancelled",
+          message: "Stack destruction was not confirmed.",
+        });
+    }
     const stack = yield* api
       .open({
         id: target.id,
@@ -91,18 +97,26 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       })
       .pipe(Effect.mapError(destroyError));
     const destroying = yield* output.task(`Destroying stack ${target.id}...`);
-    yield* stack.destroy.pipe(
+    const result = yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? destroying.clear()
+          ? destroying.clear
           : Cause.hasInterruptsOnly(exit.cause)
             ? destroying.cancel()
             : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
       ),
       Effect.mapError(destroyError),
     );
-    if (output.format === "text") yield* output.raw(`Stack ${target.id} destroyed.\n`);
-    else yield* output.success("", { destroyed: true, id: target.id });
+    if (result.runtimeCleanup === "skipped")
+      yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, result));
+    if (output.format !== "text")
+      yield* output.success("", { destroyed: true, id: target.id, ...result });
+    else if (result.runtimeCleanup === "complete")
+      yield* output.raw(`Stack ${target.id} destroyed.\n`);
+    else
+      yield* output.raw(
+        `Stack ${target.id} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`,
+      );
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });

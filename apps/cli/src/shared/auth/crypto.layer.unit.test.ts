@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { describe, expect, it } from "@effect/vitest";
 import { createCipheriv, createECDH, randomBytes } from "node:crypto";
 import { vi } from "vitest";
-import { Cause, Effect, Exit } from "effect";
+import { Cause, Clock, Effect, Exit } from "effect";
 import { Crypto } from "./crypto.service.ts";
 import { cryptoLayer } from "./crypto.layer.ts";
 
@@ -11,17 +11,16 @@ const mockOs = vi.hoisted(() => ({
   userInfoReturnEmptyUsername: false,
 }));
 
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
-  return {
+vi.mock("node:os", (importOriginal) =>
+  importOriginal<typeof import("node:os")>().then((actual) => ({
     ...actual,
     userInfo: (...args: Parameters<typeof actual.userInfo>) => {
       if (mockOs.userInfoShouldThrow) throw new Error("userInfo unavailable");
       if (mockOs.userInfoReturnEmptyUsername) return { ...actual.userInfo(...args), username: "" };
       return actual.userInfo(...args);
     },
-  };
-});
+  })),
+);
 
 const testLayer = cryptoLayer;
 
@@ -110,12 +109,12 @@ describe("Crypto", () => {
       }).pipe(Effect.provide(testLayer));
     });
 
-    it.effect("contains a numeric timestamp", () => {
-      const before = Date.now();
-      return Effect.gen(function* () {
+    it.live("contains a numeric timestamp", () =>
+      Effect.gen(function* () {
+        const before = yield* Clock.currentTimeMillis;
         const { defaultTokenName } = yield* Crypto;
         const name = yield* defaultTokenName;
-        const after = Date.now();
+        const after = yield* Clock.currentTimeMillis;
 
         // Token names end with _<timestamp>: cli_<ts> or cli_<user>@<host>_<ts>.
         const match = name.match(/_(\d+)$/);
@@ -123,8 +122,8 @@ describe("Crypto", () => {
         const ts = Number(match![1]);
         expect(ts).toBeGreaterThanOrEqual(before);
         expect(ts).toBeLessThanOrEqual(after);
-      }).pipe(Effect.provide(testLayer));
-    });
+      }).pipe(Effect.provide(testLayer)),
+    );
 
     it.effect("falls back to cli_<ts> when userInfo throws", () => {
       mockOs.userInfoShouldThrow = true;
@@ -134,15 +133,14 @@ describe("Crypto", () => {
         const { defaultTokenName } = yield* Crypto;
         const name = yield* defaultTokenName;
         expect(name).toMatch(/^cli_\d+$/);
-      })
-        .pipe(Effect.provide(testLayer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              mockOs.userInfoShouldThrow = false;
-            }),
-          ),
-        );
+      }).pipe(
+        Effect.provide(testLayer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            mockOs.userInfoShouldThrow = false;
+          }),
+        ),
+      );
     });
 
     it.effect("falls back to cli_<ts> when username is empty (if-branch false path)", () => {
@@ -151,15 +149,14 @@ describe("Crypto", () => {
         const { defaultTokenName } = yield* Crypto;
         const name = yield* defaultTokenName;
         expect(name).toMatch(/^cli_\d+$/);
-      })
-        .pipe(Effect.provide(testLayer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              mockOs.userInfoReturnEmptyUsername = false;
-            }),
-          ),
-        );
+      }).pipe(
+        Effect.provide(testLayer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            mockOs.userInfoReturnEmptyUsername = false;
+          }),
+        ),
+      );
     });
   });
 

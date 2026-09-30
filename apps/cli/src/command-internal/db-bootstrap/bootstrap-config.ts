@@ -113,13 +113,9 @@ export const resolveDbBootstrapConfig = <E>(
     // orioledb_version and the four S3 fields feed the Postgres container's image/env directly.
     // `envOverride` never throws, so these don't need `wrapConfigOverride`. Same remote-over-env
     // precedence as `majorVersion` applies to each.
-    const orioledbVersion = remoteWins("experimental.orioledb_version")
-      ? config.experimental.orioledb_version
-      : envOverride(
-          "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-          config.experimental.orioledb_version,
-          projectEnvValues,
-        );
+    const orioledbVersion = remoteWins("db.orioledb_version")
+      ? config.db.orioledb_version
+      : envOverride("SUPABASE_DB_ORIOLEDB_VERSION", config.db.orioledb_version, projectEnvValues);
     const s3Host = remoteWins("experimental.s3_host")
       ? config.experimental.s3_host
       : envOverride("SUPABASE_EXPERIMENTAL_S3_HOST", config.experimental.s3_host, projectEnvValues);

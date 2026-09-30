@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
+import { ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
 import * as State from "./State.ts";
 
 class FixtureError extends Data.TaggedError("StateLockFixtureError")<{
@@ -70,6 +71,7 @@ for (const compiled of [false, true]) {
             identity: { projectRoot: root, branchContext: "test", stackName: "lock" },
             runtime: "native",
             instances: [],
+            lifetime: "detached",
             composition: { members: [], dependencies: [] },
             ports: [],
           };
@@ -178,7 +180,9 @@ for (const compiled of [false, true]) {
               Effect.ignore,
               Effect.andThen(Fiber.join(output)),
               Effect.andThen(Fiber.join(diagnostics)),
-              Effect.timeout("5 seconds"),
+              // Windows keeps the compiled child's image in the temp root locked until it exits.
+              Effect.andThen(waitForOwnerExit(childPid, ownerExitProbe(fs)).pipe(Effect.ignore)),
+              Effect.timeout("10 seconds"),
               Effect.orDie,
             ),
           );

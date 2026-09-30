@@ -1,24 +1,33 @@
-import type { ServiceCreation, StackError } from "@supabase/stack/effect";
-import { Context, Data, Effect, Layer, Option, Path } from "effect";
+import {
+  StackId,
+  type SavedStack,
+  type ServiceCreation,
+  type StackError,
+} from "@supabase/stack/effect";
+import { Context, Data, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import {
+  skippedRuntimeCleanupWarning,
+  StackApi,
+  stackApiLayer,
+} from "../../../command-internal/stack-api.ts";
+import type { StackRuntime } from "../../../command-internal/stack-runtime.ts";
 
-export { StackApi, stackApiLayer };
-
-type StackId = string;
-const isStackId = (id: string): boolean => /^[0-9a-f]{64}$/u.test(id);
+export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
 
 /** The target selected by the CLI adapter for one stack command. */
 export interface StackTarget {
   readonly projectRoot: string;
-  readonly id?: StackId;
+  readonly id?: string;
   readonly name?: string;
-  readonly runtime?: "native" | "docker" | "podman";
+  readonly runtime?: StackRuntime;
+  readonly definition?: SavedStack;
+  readonly hostRunning: boolean;
 }
 
 export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetError")<{
@@ -37,7 +46,7 @@ interface StackTargetResolverShape {
     readonly projectRoot: string;
     readonly name?: string;
     readonly id?: string;
-    readonly runtime: "auto" | "docker" | "native";
+    readonly runtime: "auto" | StackRuntime;
   }) => Effect.Effect<StackTarget, StackTargetError>;
 }
 
@@ -59,8 +68,8 @@ export const validateStackTarget = (input: {
       )
     : Effect.void;
 
-const validateStackId = (id: string): Effect.Effect<StackId, StackTargetError> =>
-  isStackId(id)
+const validateStackId = (id: string): Effect.Effect<string, StackTargetError> =>
+  Schema.is(StackId)(id)
     ? Effect.succeed(id)
     : Effect.fail(
         new StackTargetError({
@@ -83,52 +92,43 @@ export const rejectStackOutput = (
       )
     : Effect.void;
 
-const runtimeForFlag = (
-  runtime: "auto" | "docker" | "native",
-): StackTarget["runtime"] | undefined =>
-  runtime === "auto" ? undefined : runtime === "docker" ? "docker" : "native";
+const runtimeForFlag = (runtime: "auto" | StackRuntime): StackTarget["runtime"] =>
+  runtime === "auto" ? undefined : runtime;
 
 const runtimeMatches = (
   saved: StackTarget["runtime"],
   requested: StackTarget["runtime"],
 ): boolean => requested === undefined || saved === requested;
 
-/** Resolves an existing stack by its persisted canonical package identity. */
+/** Resolves an existing stack by id or by the package identity of the project and stack name. */
 export const stackTargetResolverLayer = Layer.effect(
   StackTargetResolver,
   Effect.gen(function* () {
     const settings = yield* CommandSettings;
     const stackApi = yield* StackApi;
+    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {
       readonly projectRoot: string;
       readonly name?: string;
       readonly id?: string;
-      readonly runtime: "auto" | "docker" | "native";
+      readonly runtime: "auto" | StackRuntime;
     }) {
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);
-      const identity =
-        id === undefined
-          ? yield* stackApi
-              .resolveIdentity({
+      const stateRoot = path.join(settings.supabaseHome, "stacks");
+      const found = yield* stackApi
+        .find(
+          id === undefined
+            ? {
+                stateRoot,
                 projectRoot: input.projectRoot,
                 ...(input.name === undefined ? {} : { name: input.name }),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new StackTargetError({
-                      message: cause.message,
-                      reason: "invalid-config",
-                      cause,
-                    }),
-                ),
-              )
-          : undefined;
-      const discovered = yield* stackApi
-        .discover({ stateRoot: path.join(settings.supabaseHome, "stacks") })
+              }
+            : { stateRoot, id },
+        )
         .pipe(
+          Effect.map(Option.getOrUndefined),
           Effect.mapError(
             (cause) =>
               new StackTargetError({
@@ -138,16 +138,6 @@ export const stackTargetResolverLayer = Layer.effect(
               }),
           ),
         );
-      const found =
-        id === undefined
-          ? discovered.find(
-              ({ definition }) =>
-                identity !== undefined &&
-                definition.identity.projectRoot === identity.projectRoot &&
-                definition.identity.branchContext === identity.branchContext &&
-                definition.identity.stackName === identity.stackName,
-            )
-          : discovered.find(({ definition }) => definition.id === id);
       if (id !== undefined && found === undefined)
         return yield* new StackTargetError({
           message: `Stack ${id} was not found`,
@@ -160,16 +150,24 @@ export const stackTargetResolverLayer = Layer.effect(
             "Use --runtime auto to reuse the saved runtime, or omit --stack-id and choose a different --stack name.",
           reason: "flags",
         });
+      const runtime = found?.definition.runtime ?? requestedRuntime;
+      // A new stack saves paths under the canonical root its identity derives from.
+      const projectRoot =
+        found?.definition.identity.projectRoot ??
+        (yield* fs
+          .realPath(input.projectRoot)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackTargetError({ message: cause.message, reason: "invalid-config", cause }),
+            ),
+          ));
       return {
-        projectRoot:
-          found?.definition.identity.projectRoot ?? identity?.projectRoot ?? input.projectRoot,
-        ...(found === undefined ? {} : { id: found.definition.id }),
+        projectRoot,
+        ...(found === undefined ? {} : { id: found.definition.id, definition: found.definition }),
         ...(input.name === undefined ? {} : { name: input.name }),
-        ...(found === undefined && requestedRuntime === undefined
-          ? {}
-          : found === undefined
-            ? { runtime: requestedRuntime }
-            : { runtime: found.definition.runtime }),
+        ...(runtime === undefined ? {} : { runtime }),
+        hostRunning: found?.host !== undefined,
       };
     });
     return StackTargetResolver.of({ resolve });

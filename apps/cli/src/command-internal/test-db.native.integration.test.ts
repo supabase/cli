@@ -23,6 +23,10 @@ import { testDb } from "./test-db.handler.ts";
 import { runTestDbCommand } from "./test-db.command-handler.ts";
 import { DockerRun } from "./docker-run.service.ts";
 import { StackError } from "@supabase/stack/effect";
+import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
+import type { Stack } from "@supabase/stack/effect";
+import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -74,7 +78,7 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
               cacheRoot: `${root}/cache`,
               runtime,
             }),
-            (stack) => stack.destroy.pipe(Effect.catch((cause) => Effect.die(cause))),
+            destroyTestStack,
           );
           const [database] = yield* stack.composition.supabase([databaseCreation]);
           if (database === undefined) return yield* Effect.die("database was not composed");
@@ -157,20 +161,48 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
           const partialTap = "not ok 1 - managed tool failed after streaming\n";
           const jsonOutput = mockOutput({ format: "json" });
           const processControl = mockProcessControl();
+          const failingCommands = (commands: Stack["commands"]) => {
+            function run<E, R>(
+              command: PostgresCommand,
+              options: PostgresCommandOptions<E, R>,
+            ): Effect.Effect<
+              { readonly jobId: string; readonly exitCode: number },
+              E | StackError,
+              R
+            >;
+            function run<E = never, R = never>(
+              command: InitializationCommand,
+              options?: InitializationCommandOptions<E, R>,
+            ): Effect.Effect<
+              { readonly jobId: string; readonly exitCode: number },
+              E | StackError,
+              R
+            >;
+            function run<E, R>(
+              command: PostgresCommand | InitializationCommand,
+              options?: PostgresCommandOptions<E, R> | InitializationCommandOptions<E, R>,
+            ) {
+              if ("type" in command) return commands.run(command);
+              if (options?.stdout === undefined)
+                return Effect.die("Postgres command requires a stdout sink");
+              const stdout = options.stdout;
+              return Effect.gen(function* () {
+                yield* stdout(new TextEncoder().encode(partialTap));
+                return yield* Effect.fail(
+                  new StackError({ operation: "command", message: "pg_prove unavailable" }),
+                );
+              });
+            }
+            return run;
+          };
           const failingStackApi = Layer.succeed(StackApi, {
             ...api,
             open: () =>
               Effect.succeed({
                 ...stack,
-                tools: {
-                  ...stack.tools,
-                  run: (_tool, options) =>
-                    Effect.gen(function* () {
-                      yield* options.stdout(new TextEncoder().encode(partialTap));
-                      return yield* Effect.fail(
-                        new StackError({ operation: "tool", message: "pg_prove unavailable" }),
-                      );
-                    }),
+                commands: {
+                  ...stack.commands,
+                  run: failingCommands(stack.commands),
                 },
               }),
           });

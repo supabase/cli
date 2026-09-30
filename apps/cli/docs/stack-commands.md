@@ -2,8 +2,12 @@
 
 `supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
 command interface may change, and it is excluded from the CLI compatibility promise. It is
-available when the `experimental.stack` feature flag is enabled and supports both Docker and
+available when the `experimental.stack` feature flag is enabled and supports Docker, Podman, and
 native runtimes.
+
+Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
+and password-reconciliation connection uses that administrative role, so a native
+`supabase_admin` connection is not password-checked.
 
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
@@ -18,6 +22,16 @@ native runtimes.
 
 Use each command's `--help` for its available targeting and runtime options.
 
+A new stack created with `--runtime auto` uses Docker when its daemon answers, otherwise Podman
+when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64. On other
+platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
+selected runtime is saved with the stack and reused without probing; when auto selection skips
+Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
+`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
+the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+on platforms that support native. Project stacks created by database commands, and shadow stacks
+created without a project stack, use the same selection.
+
 `supabase stack prepare` downloads or pulls artifacts for the selected stack without starting
 services. If the target does not exist, prepare creates and registers it; the stack then appears in
 `supabase stack list` and can be removed with `supabase stack destroy`. Omit `--capability` to
@@ -28,6 +42,51 @@ capabilities. Each occurrence names one capability; use separate flags rather th
 supabase stack prepare
 supabase stack prepare --capability rest --capability auth --output-format json
 ```
+
+## Connection details after start
+
+When the stack is ready, `supabase stack start` prints the API, REST, Functions,
+database, Studio, MCP, and Mailpit URLs, the local publishable and secret keys, each service's
+state, and the runtime. Ports are assigned per project, so read the MCP URL from this output rather
+than assuming a default port. MCP is served at `<API_URL>/mcp`, present only when the shared API
+listener is up and Studio is a composition member with an HTTP endpoint.
+With `--output-format json`, start returns:
+
+```json
+{
+  "id": "<stack id>",
+  "runtime": "docker",
+  "endpoints": {
+    "database.sql": {
+      "protocol": "tcp",
+      "address": "127.0.0.1",
+      "port": 54322,
+      "url": "tcp://127.0.0.1:54322"
+    }
+  },
+  "lazy_services": ["rest", "auth", "studio"],
+  "env": {
+    "API_URL": "http://127.0.0.1:54321",
+    "DB_URL": "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+    "STUDIO_URL": "http://127.0.0.1:54323",
+    "MCP_URL": "http://127.0.0.1:54321/mcp",
+    "MAILPIT_URL": "http://127.0.0.1:54324",
+    "PUBLISHABLE_KEY": "sb_publishable_...",
+    "SECRET_KEY": "sb_secret_...",
+    "ANON_KEY": "ey...",
+    "SERVICE_ROLE_KEY": "ey..."
+  },
+  "message": ""
+}
+```
+
+`endpoints` uses the same `service.endpoint` keys as `stack status`, with no synthetic entries.
+`lazy_services` lists the services that start on their first request. `env` is the same connection
+map `supabase stack status --env` exports, present on every success path; `stack status` (without
+`--env`) returns the same `env` key, degrading to whatever is available when credentials or the
+owner are unreachable. Plain `status` JSON `env` comes from saved bindings and can list values for
+stopped or sleeping members, while `--env` requires a reachable owner and a running primary
+database.
 
 ## Exporting environment variables
 
@@ -42,19 +101,29 @@ and credentials available from the observed composition; text mode emits dotenv 
 JSON or stream-JSON mode emits a variable map. Values that are unavailable because a member is
 stopped or unhealthy are omitted. Add `--output-format text` for an explicit dotenv file
 regardless of automatic agent output detection; this is dotenv data, not a shell script, and values
-are quoted so that sourcing the file performs no shell expansion. Only this
-explicit export reveals credentials. Ordinary status remains free of secrets. `--override-name`
-accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME` entries, requires `--env`, and rejects
-unknown variables, invalid names, and collisions. The DB-derived service-role JWT remains available
-when Auth is disabled; unavailable service URLs and credentials are omitted.
+are quoted so that sourcing the file performs no shell expansion. The exported variable set is
+`API_URL`, `REST_URL`, `FUNCTIONS_URL`, `DB_URL`, `STUDIO_URL`, `MCP_URL`, `MAILPIT_URL`,
+`PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and `SERVICE_ROLE_KEY`; `REST_URL` and
+`FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, `MCP_URL` is `<API_URL>/mcp`,
+whose port is assigned per project, and `DB_URL` uses the `postgres` role with the saved database
+password, URI-encoded, and no query string. `INBUCKET_URL` is also exported alongside
+`MAILPIT_URL`, with the same value, as a deprecated alias. `start` and `status` text output shows
+only the publishable and secret keys; `ANON_KEY` and `SERVICE_ROLE_KEY` appear only in JSON `env`
+and `status --env`. `start` and `status` JSON/stream-JSON results include this same connection map
+under `env`; `status --env` remains the dotenv/variable-map export, and `--override-name` only
+applies there. `--override-name` accepts repeated or comma-separated `EXPORTED_VARIABLE=NAME`
+entries, requires `--env`, and rejects unknown variables, invalid names, and collisions. The
+DB-derived service-role JWT remains available when Auth is disabled; unavailable service URLs and
+credentials are omitted.
 
 The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pretty`, `json`,
 `toml`, `yaml`, `table`, and `csv`. `--output-format text`, `json`, or `stream-json` replace them.
 `-o env` becomes `--env`.
 
 `supabase stack list` reads the global managed-stack registry and reports each readable stack's
-project, branch, runtime, and owner availability. A corrupt or unsupported registry entry fails the
-whole discovery operation with a diagnostic; readable entries are not emitted as a partial list.
+project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
+are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
+directory itself fails discovery.
 The text table shortens readable IDs for scanning; use `--output-format json` or
 `--output-format stream-json` for the complete structured inventory with full IDs.
 
@@ -198,7 +267,8 @@ Host listener assignment for `supabase stack` is documented in [Port intents](./
 ## Service selection and shutdown
 
 With the current defaults, enabled non-database services with endpoints are lazy and stop after
-60 seconds without traffic; Functions has no automatic idle stop. An active HTTP request keeps a
+60 seconds without traffic, Studio after 5 minutes; Functions has no automatic idle stop. A service
+that a running service depends on stays up until that dependent stops. An active HTTP request keeps a
 capability running; an idle HTTP keep-alive socket does not. Open WebSocket or TCP connections
 keep a capability running during idle periods. Use `supabase stack start --eager` to activate all
 enabled capabilities and disable automatic idle stops. A request arriving while a capability is
@@ -225,8 +295,9 @@ Excluding `rest` while Studio remains selected is rejected; excluding `analytics
 Studio. The effective configuration is
 retained in stack state, so starting without `--exclude` restores the project's configured services.
 
-`supabase stack stop --all` stops every managed stack while preserving data. Discovery fails closed
-when any registry entry is unreadable, so no partial stop operation is attempted. Individual stop
+`supabase stack stop --all` stops every managed stack while preserving data. Registry entries that
+cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
+directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
 success or unavailable summary is emitted when a stop fails.
 

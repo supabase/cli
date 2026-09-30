@@ -66,7 +66,7 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
     const keys: ApiKeys = yield* getProjectApiKeys(ref, flags.reveal).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

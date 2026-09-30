@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -14,6 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
@@ -156,6 +155,7 @@ function setup(
     files?: Readonly<Record<string, string>>;
     format?: OutputFormat;
     confirm?: ReadonlyArray<boolean>;
+    piped?: string;
     args?: ReadonlyArray<string>;
     yes?: boolean;
     isLocal?: boolean;
@@ -174,15 +174,21 @@ function setup(
     simulateInitialisingLoginRole?: boolean;
   },
 ) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const workdirLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (opts.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+      }
+      for (const [rel, content] of Object.entries(opts.files ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFileString(abs, content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -218,6 +224,7 @@ function setup(
         : undefined,
   });
   const layer = Layer.mergeAll(
+    workdirLayer,
     out.layer,
     conn.layer,
     resolver.layer,
@@ -227,10 +234,9 @@ function setup(
     }),
     BunServices.layer,
     // Prompts are answered through mockOutput's `promptConfirmResponses` (the
-    // TTY/clack path); Stdin is only used by promptYesNo's non-TTY branch (unreached
-    // here).
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true),
+    // TTY/clack path) unless `piped` feeds promptYesNo's non-TTY branch.
+    mockTty({ stdinIsTty: opts.piped === undefined }),
+    mockStdin(opts.piped === undefined, opts.piped),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(DnsResolverFlag, "native"),
@@ -247,6 +253,11 @@ function setup(
     resolver,
   };
 }
+
+const failSuggestion = (
+  exit: Exit.Exit<unknown, { readonly message: string; readonly suggestion?: string }>,
+): string | undefined =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
 
 const MIGRATION_DIR = "supabase/migrations";
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -359,11 +370,42 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        expect(Cause.pretty(exit.cause)).toContain("context canceled");
       }
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
+
+  it.live.each(["u", "yess", "nope", "   ", "n", "no"])(
+    "applies nothing when the piped answer is %j",
+    (answer) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped: `${answer}\n`,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    },
+  );
+
+  it.live.each(["y\n", "yes\n", "\n", ""])(
+    "applies migrations when the piped answer is %j",
+    (piped) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped,
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs).toContain("BEGIN");
+      });
+    },
+  );
 
   it.live("prints the plan without applying in dry-run mode", () => {
     const { layer, out, conn } = setup(tmp.current, {
@@ -428,11 +470,11 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "Remote migration versions not found in local migrations directory.",
         );
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
-        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
+        expect(failSuggestion(exit)).toContain("migration repair --local --status reverted");
+        expect(failSuggestion(exit)).toContain("supabase db pull --local");
       }
       expect(out).toBeDefined();
     });
@@ -451,8 +493,10 @@ describe("db push", () => {
         dbUrl: Option.some(dbUrl),
         local: false,
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(JSON.stringify(exit)).toContain("migration repair --status reverted");
-      expect(JSON.stringify(exit)).not.toContain("migration repair --local");
+      expect(failSuggestion(exit)).toContain("migration repair --status reverted");
+      expect(failSuggestion(exit)).not.toContain("migration repair --local");
+      if (Exit.isFailure(exit))
+        expect(Cause.pretty(exit.cause)).not.toContain("migration repair --local");
     });
   });
 
@@ -467,7 +511,7 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("--include-all");
+        expect(failSuggestion(exit)).toContain("--include-all");
       }
     });
   });
@@ -559,12 +603,14 @@ describe("db push", () => {
       toml: 'project_id = "test"\n',
       remoteSeeds: { "supabase/seed.sql": rawHash },
     });
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), raw);
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFile(path.join(tmp.current, "supabase", "seed.sql"), raw);
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("skips seeding when disabled in config", () => {
@@ -648,7 +694,7 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -664,7 +710,7 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -783,7 +829,8 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse config:");
+      if (Exit.isFailure(exit))
+        expect(Cause.pretty(exit.cause)).toContain("failed to parse config:");
       expect(out.stderrText).not.toContain("Connecting to local database...");
       expect(conn.queries).toEqual([]);
     });
@@ -949,7 +996,7 @@ describe("db push", () => {
       if (Exit.isFailure(exit)) {
         // Config loads through the shared reader (`checkDbToml`), same as the other db
         // commands.
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        expect(Cause.pretty(exit.cause)).toContain("failed to load config");
       }
     });
   });
@@ -957,8 +1004,6 @@ describe("db push", () => {
   it.live("loads a Go-style env() boolean in config (no CliConfigParseError)", () => {
     // env-expansion + boolean parsing must resolve `env(VAR)` so the config loads and
     // the migration proceeds.
-    const previous = process.env["SEED_ENABLED"];
-    process.env["SEED_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       files: migrationFile("20240101000000"),
@@ -967,22 +1012,13 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SEED_ENABLED"];
-          else process.env["SEED_ENABLED"] = previous;
-        }),
-      ),
-    );
+    }).pipe((body) => withEnvVar("SEED_ENABLED", "true", body));
   });
 
   it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
     // A matched [remotes.<ref>] block overrides the shell env, so
     // `[remotes.preview.db.migrations] enabled = false` wins over
     // `SUPABASE_DB_MIGRATIONS_ENABLED=true`.
-    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
@@ -995,14 +1031,7 @@ describe("db push", () => {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).not.toContain("Applying migration 20240101000000");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
-        }),
-      ),
-    );
+    }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
   });
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {
@@ -1120,7 +1149,7 @@ describe("db push", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }

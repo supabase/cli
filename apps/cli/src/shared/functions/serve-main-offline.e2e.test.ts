@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { Effect } from "effect";
 import { describe, expect, test } from "vitest";
 
 import { START_KONG_YML_TEMPLATE } from "../../commands/start/templates/kong.yml.ts";
@@ -274,7 +275,7 @@ describe("functions serve runtime template (offline)", () => {
     "boots under edge-runtime with networking disabled and fetches nothing remote",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(edgeRuntimeDockerfileImage());
+      const runtimeImage = await ensureImage(await Effect.runPromise(edgeRuntimeDockerfileImage));
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-offline-e2e-"));
       const container = `supabase-serve-offline-e2e-${process.pid.toString()}`;
       try {
@@ -336,7 +337,7 @@ describe("functions serve runtime template (offline)", () => {
     "returns canonical JWT auth failures",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
-      const runtimeImage = await ensureImage(edgeRuntimeDockerfileImage());
+      const runtimeImage = await ensureImage(await Effect.runPromise(edgeRuntimeDockerfileImage));
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
       const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
       try {
@@ -431,8 +432,8 @@ describe("functions serve runtime template (offline)", () => {
     async () => {
       const imageDeadline = resolveDeadline();
       const [runtimeImage, kongImage] = await Promise.all([
-        ensureImage(edgeRuntimeDockerfileImage(), imageDeadline),
-        ensureImage(dockerfileServiceImage("kong"), imageDeadline),
+        ensureImage(await Effect.runPromise(edgeRuntimeDockerfileImage), imageDeadline),
+        ensureImage(dockerfileServiceImage("kong", false), imageDeadline),
       ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
@@ -593,7 +594,7 @@ describe("functions serve runtime template (offline)", () => {
           {
             method: "POST",
             headers: { "x-reject-before-body": "true" },
-            body: new Uint8Array(128 * 1024),
+            body: new Uint8Array(1024 * 1024),
             signal: AbortSignal.timeout(5_000),
           },
         );
@@ -606,7 +607,10 @@ describe("functions serve runtime template (offline)", () => {
         expect(runtimeLogs).not.toContain("must-not-appear-in-debug-logs");
 
         const authResponse = await fetch(authUrl, {
+          method: "POST",
           headers: { Origin: "http://localhost:3000" },
+          body: new Uint8Array(1024 * 1024),
+          signal: AbortSignal.timeout(5_000),
         });
         expect(authResponse.status).toBe(401);
         expect(authResponse.headers.get("sb-error-code")).toBe("UNAUTHORIZED_NO_AUTH_HEADER");

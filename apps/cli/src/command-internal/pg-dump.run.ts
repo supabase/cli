@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
-import { postgres, type Stack } from "@supabase/stack/effect";
+import type { Stack } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 type StackRuntimePreference =
   | { readonly kind: "native" }
   | { readonly kind: "container"; readonly engine: "docker" | "podman" };
@@ -104,7 +105,8 @@ export const pgDumpClientExitMessage = (client: PgDumpClient, exitCode: number):
     ? `error running ${client.command}: exit ${exitCode}`
     : `error running container: exit ${exitCode}`;
 
-const dumpNetworkMode = (
+/** Network for a pg_dump tool container; host unless `--network-id` or `SUPABASE_NETWORK_ID` names one. */
+export const dumpNetworkMode = (
   networkId: string | undefined,
   forceHostNetwork: boolean,
   projectEnvValues: Readonly<Record<string, string>>,
@@ -294,7 +296,7 @@ export const streamPgDumpWithClient = Effect.fn("streamPgDumpWithClient")(functi
     const emit = stackDumpStdout(params.script, params.env, params.onStdout);
     if (params.script.includes("--data-only"))
       yield* params.onStdout(new TextEncoder().encode("SET session_replication_role = replica;\n"));
-    const result = yield* params.client.stack.tools.run(
+    const result = yield* params.client.stack.commands.run(
       params.client.command === "pg_dump"
         ? postgres.pgDump({ major: params.client.major })
         : postgres.pgDumpAll({ major: params.client.major }),

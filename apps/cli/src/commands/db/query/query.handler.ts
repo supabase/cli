@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { DateTime, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -94,11 +94,9 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       // instead of letting `JSON.stringify` silently emit `null`.
       const nonFinite = findNonFiniteJsonValue(data);
       if (nonFinite !== undefined) {
-        return yield* Effect.fail(
-          new DbQueryExecError({
-            message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
-          }),
-        );
+        return yield* new DbQueryExecError({
+          message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
+        });
       }
       const jsonData = fieldTypeIds === undefined ? data : coerceLocalJsonRows(data, fieldTypeIds);
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
@@ -106,7 +104,7 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
         const compactRendered = rendered.trimEnd().replaceAll("\n", "");
         yield* output.raw(
-          `{"type":"result","data":${compactRendered},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
+          `{"type":"result","data":${compactRendered},"timestamp":"${DateTime.formatIso(yield* DateTime.now)}"}\n`,
         );
         return;
       }
@@ -187,22 +185,19 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
         ),
       );
       if (status !== 201) {
-        return yield* Effect.fail(
-          new DbQueryUnexpectedStatusError({
-            status,
-            message: `unexpected status ${status}: ${body}`,
-          }),
-        );
+        return yield* new DbQueryUnexpectedStatusError({
+          status,
+          message: `unexpected status ${status}: ${body}`,
+        });
       }
 
       // The API returns a JSON array of row objects for SELECT, or a plain command tag for
       // DDL/DML; anything else is printed verbatim.
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
+      const decoded = Schema.decodeOption(Schema.fromJsonString(Schema.Unknown))(body);
+      if (Option.isNone(decoded)) {
         return yield* output.raw(`${body}\n`);
       }
+      const parsed = decoded.value;
       const isRowArray =
         Array.isArray(parsed) &&
         parsed.every(
@@ -229,22 +224,18 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
     if (Option.isSome(flags.linked)) exclusive.push("linked");
     if (Option.isSome(flags.local)) exclusive.push("local");
     if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new DbQueryMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbQueryMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+      });
     }
 
     // `--project-ref` only applies to the linked target; it must not be silently ignored when
     // targeting `--local`/`--db-url`.
     if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
-      return yield* Effect.fail(
-        new DbQueryMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbQueryMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // For `--linked`, the access token is checked and the project ref is loaded before SQL is
@@ -274,12 +265,10 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       // rather than trusting env presence alone and surfacing a confusing status error later.
       const tokenOpt = yield* credentials.getAccessToken;
       if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new DbQueryLoginRequiredError({
-            message: MISSING_TOKEN_MESSAGE,
-            suggestion: "Run supabase login first.",
-          }),
-        );
+        return yield* new DbQueryLoginRequiredError({
+          message: MISSING_TOKEN_MESSAGE,
+          suggestion: "Run supabase login first.",
+        });
       }
       linkedAuth = { token: tokenOpt.value, ref };
     }
@@ -317,17 +306,13 @@ export const dbQuery = Effect.fn("db.query")(function* (flags: DbQueryFlags) {
       if (!stdin.isTTY) {
         const piped = yield* stdin.readPipedText;
         if (Option.isNone(piped)) {
-          return yield* Effect.fail(
-            new DbQueryNoStdinSqlError({ message: "no SQL provided via stdin" }),
-          );
+          return yield* new DbQueryNoStdinSqlError({ message: "no SQL provided via stdin" });
         }
         return piped.value;
       }
-      return yield* Effect.fail(
-        new DbQueryNoSqlError({
-          message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
-        }),
-      );
+      return yield* new DbQueryNoSqlError({
+        message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
+      });
     });
 
     // 2. Resolve the payload format: an explicit `-o json|table|csv` always wins; otherwise

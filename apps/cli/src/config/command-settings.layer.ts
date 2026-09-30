@@ -116,7 +116,11 @@ export const commandSettingsLayer = Layer.unwrap(
         const read = <A>(config: Config.Config<A>) => config.parse(provider);
         const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
         const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
-        const resolvedSupabaseHome = resolveSupabaseHomeValue(supabaseHome, runtimeInfo.homeDir);
+        const resolvedSupabaseHome = resolveSupabaseHomeValue(
+          path,
+          supabaseHome,
+          runtimeInfo.homeDir,
+        );
 
         // Optional service: tests without argv default to "not explicit". An empty command
         // path scans all of argv up to `--`, matching pflag.

@@ -20,6 +20,7 @@ const saved: State.SavedStack = {
   identity: { projectRoot: "C:\\project", branchContext: "test", stackName: "windows" },
   runtime: "native",
   instances: [],
+  lifetime: "detached",
   composition: { members: [], dependencies: [] },
   ports: [],
 };
@@ -95,11 +96,18 @@ const testSharingViolation = () =>
         ),
       );
       const ready = yield* Deferred.make<void>();
+      const observed = yield* Ref.make<ReadonlyArray<string>>([]);
       const output = yield* holder.stdout.pipe(
         Stream.decodeText,
         Stream.splitLines,
         Stream.runForEach((line) =>
-          line === "ready" ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid) : Effect.void,
+          Ref.update(observed, (lines) => [...lines, line]).pipe(
+            Effect.andThen(
+              line === "ready"
+                ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
         ),
         Effect.forkScoped,
       );
@@ -109,15 +117,32 @@ const testSharingViolation = () =>
         Stream.runForEach((chunk) => Ref.update(stderr, (text) => text + chunk)),
         Effect.forkScoped,
       );
+      const holderFailure = (reason: string) =>
+        Effect.all([Ref.get(observed), Ref.get(stderr)]).pipe(
+          Effect.flatMap(([lines, text]) =>
+            Effect.fail(new HolderError({ message: `${reason}: ${lines.join("\n")}\n${text}` })),
+          ),
+        );
+      const exitFailure = (reason: string) =>
+        Effect.all([Fiber.join(output), Fiber.join(diagnostics)]).pipe(
+          // The exit event can fire before the holder's stdio is drained.
+          Effect.timeout("5 seconds"),
+          Effect.ignore,
+          Effect.andThen(holderFailure(reason)),
+        );
       yield* Deferred.await(ready).pipe(
+        Effect.raceFirst(
+          holder.exitCode.pipe(
+            Effect.matchEffect({
+              onFailure: (cause) => exitFailure(`Holder exited before readiness: ${String(cause)}`),
+              onSuccess: (code) => exitFailure(`Holder exited before readiness (${code})`),
+            }),
+          ),
+        ),
         Effect.timeoutOrElse({
-          duration: "10 seconds",
-          orElse: () =>
-            Ref.get(stderr).pipe(
-              Effect.flatMap((text) =>
-                Effect.fail(new HolderError({ message: `Holder did not become ready: ${text}` })),
-              ),
-            ),
+          // A guard only, not a readiness assertion.
+          duration: "30 seconds",
+          orElse: () => holderFailure("Holder did not become ready"),
         }),
       );
       yield* Ref.set(armed, true);
@@ -153,5 +178,5 @@ const testSharingViolation = () =>
 it.live.skipIf(process.platform !== "win32")(
   "retries a real Windows sharing violation after the open state handle is released",
   () => testSharingViolation(),
-  30_000,
+  60_000,
 );

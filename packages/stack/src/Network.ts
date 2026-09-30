@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
+import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
@@ -6,23 +7,31 @@ import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
+type RouteContribution = Pick<
+  HttpRoute,
+  "prefix" | "upstreamPrefix" | "upstreamHost" | "keyRewrite"
+>;
+
 export interface NetworkEndpoint {
   readonly protocol: "tcp" | "http";
   readonly port: number | "auto";
   readonly backend: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>;
-  readonly shared?: ReadonlyArray<
-    Pick<HttpRoute, "prefix" | "upstreamPrefix" | "upstreamHost" | "keyRewrite">
-  >;
+  readonly shared?: ReadonlyArray<RouteContribution>;
+  /**
+   * Routes a dedicated endpoint additionally contributes to the shared API listener, without
+   * claiming the shared port itself. Installed when the shared listener exists, queued otherwise.
+   */
+  readonly join?: ReadonlyArray<RouteContribution>;
   readonly enabled: Effect.Effect<boolean>;
 }
 
-class NetworkError extends Data.TaggedError("NetworkError")<{
+export class NetworkError extends Data.TaggedError("NetworkError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-export interface NetworkBinding {
+interface NetworkBinding {
   readonly name: string;
   readonly protocol: "tcp" | "http";
   readonly host: string;
@@ -77,7 +86,8 @@ const makeNetwork = (options: {
         }
       | undefined
     >(undefined);
-    const namespaces = yield* Ref.make(new Map<string, ReadonlyArray<string>>());
+    // Join routes queued before any claiming endpoint has created the shared listener.
+    const pendingJoins = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
@@ -85,8 +95,46 @@ const makeNetwork = (options: {
       options.runtime === "native"
         ? "127.0.0.1"
         : options.runtime === "docker"
-          ? "host.docker.internal"
+          ? DOCKER_HOST_ALIAS
           : "host.containers.internal";
+
+    const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
+
+    /** Maps one endpoint's route contributions to the shared listener's `HttpRoute` shape. */
+    const toHttpRoutes = (
+      id: string,
+      contributions: ReadonlyArray<RouteContribution>,
+      backend: NetworkEndpoint["backend"],
+    ): ReadonlyArray<HttpRoute> =>
+      contributions.map((route) => ({
+        id,
+        prefix: route.prefix,
+        upstreamPrefix: route.upstreamPrefix,
+        upstreamHost: route.upstreamHost,
+        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
+        target: backend,
+      }));
+
+    /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
+    const installJoin = Effect.fn("Network.installJoin")(function* (
+      routeId: string,
+      join: NonNullable<NetworkEndpoint["join"]>,
+      backend: NetworkEndpoint["backend"],
+    ) {
+      const routes = toHttpRoutes(routeId, join, backend);
+      const ownKeys = new Set(routes.map(routeKey));
+      const current = yield* Ref.get(shared);
+      if (current === undefined) {
+        yield* Ref.update(pendingJoins, (existing) => [
+          ...existing.filter((route) => !ownKeys.has(routeKey(route))),
+          ...routes,
+        ]);
+        return;
+      }
+      const next = [...current.routes.filter((route) => !ownKeys.has(routeKey(route))), ...routes];
+      yield* current.proxy.setRoutes(next);
+      yield* Ref.set(shared, { ...current, routes: next });
+    });
 
     const register = Effect.fn("Network.register")(function* ({
       id,
@@ -95,12 +143,6 @@ const makeNetwork = (options: {
       readonly id: string;
       readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
     }) {
-      const names = Object.keys(endpoints);
-      const duplicate = yield* Ref.modify(namespaces, (current) => [
-        current.has(id),
-        current.has(id) ? current : new Map(current).set(id, names),
-      ]);
-      if (duplicate) return yield* errorFor("register", `Duplicate instance ${id}`);
       const bound = yield* Ref.make<Map<string, NetworkBinding>>(new Map());
       const scopes = yield* Ref.make<Map<string, Scope.Closeable>>(new Map());
       const closed = yield* Ref.make(false);
@@ -166,23 +208,19 @@ const makeNetwork = (options: {
                   );
                   if (endpoint.shared !== undefined && result.listener.proxy !== undefined) {
                     const previous = yield* Ref.get(shared);
+                    let seeded: ReadonlyArray<HttpRoute> = [];
+                    if (previous === undefined) seeded = yield* Ref.get(pendingJoins);
                     const current = previous ?? {
                       claim: result.port,
                       proxy: result.listener.proxy,
-                      routes: [],
+                      routes: seeded,
                       scope: endpointScope,
                     };
                     if (previous !== undefined) yield* Scope.close(endpointScope, Exit.void);
+                    else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
                     const routes = [
                       ...current.routes,
-                      ...endpoint.shared.map((route) => ({
-                        id,
-                        prefix: route.prefix,
-                        upstreamPrefix: route.upstreamPrefix,
-                        upstreamHost: route.upstreamHost,
-                        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
-                        target: endpoint.backend,
-                      })),
+                      ...toHttpRoutes(id, endpoint.shared, endpoint.backend),
                     ];
                     yield* current.proxy.setRoutes(routes);
                     yield* Ref.set(shared, { ...current, routes });
@@ -191,6 +229,8 @@ const makeNetwork = (options: {
                       new Map(current).set(name, endpointScope),
                     );
                   }
+                  if (endpoint.join !== undefined)
+                    yield* installJoin(id, endpoint.join, endpoint.backend);
                   yield* Ref.update(bound, (current) =>
                     new Map(current).set(name, {
                       name,
@@ -212,6 +252,9 @@ const makeNetwork = (options: {
           Effect.gen(function* () {
             if (yield* Ref.get(closed)) return;
             for (const endpoint of Object.values(endpoints)) if (yield* endpoint.enabled) return;
+
+            // Drop this namespace's queued join routes so a later listener never resurrects them.
+            yield* Ref.update(pendingJoins, (routes) => routes.filter((route) => route.id !== id));
 
             const current = yield* Ref.get(shared);
             let remainingRoutes = current?.routes ?? [];
@@ -249,18 +292,13 @@ const makeNetwork = (options: {
                     "Stop the instance before releasing its endpoints",
                   );
               yield* Ref.set(closed, true);
-              for (const name of names) {
+              for (const name of Object.keys(endpoints)) {
                 const endpoint = endpoints[name];
                 if (endpoint?.shared === undefined)
                   yield* ports
                     .release(options.stackId, `${id}:${name}`)
                     .pipe(Effect.mapError((cause) => errorFor("release", cause)));
               }
-              yield* Ref.update(namespaces, (current) => {
-                const next = new Map(current);
-                next.delete(id);
-                return next;
-              });
             }),
           ),
         ),
@@ -295,13 +333,9 @@ const makeNetwork = (options: {
 
     const release = Effect.fn("Network.releaseNamespace")(() =>
       gate.withPermits(1)(
-        Effect.gen(function* () {
-          if ((yield* Ref.get(namespaces)).size !== 0)
-            return yield* errorFor("release", "Destroy instances before releasing the namespace");
-          yield* ports
-            .release(options.stackId, "api")
-            .pipe(Effect.mapError((cause) => errorFor("release", cause)));
-        }),
+        ports
+          .release(options.stackId, "api")
+          .pipe(Effect.mapError((cause) => errorFor("release", cause))),
       ),
     );
     return { register, release: release() } satisfies Interface;

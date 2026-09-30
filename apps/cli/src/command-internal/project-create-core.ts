@@ -140,7 +140,7 @@ export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCrea
   }
 
   const created = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-  yield* creating?.clear() ?? Effect.void;
+  yield* creating?.clear ?? Effect.void;
 
   const id = readProjectField(created, "id");
 

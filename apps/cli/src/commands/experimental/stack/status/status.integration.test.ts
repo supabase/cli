@@ -1,8 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Redacted, Schema, Stream } from "effect";
 import {
   type Observation,
+  type PlannedInstance,
   type ServiceCreation,
   type StackCredentials,
   StackError,
@@ -48,7 +49,26 @@ const database: ServiceCreation = {
 };
 const rest: ServiceCreation = {
   service: "rest",
-  config: { databaseUrl: "postgresql://placeholder" },
+  config: {},
+  endpoints: { http: { port: 54321 } },
+};
+const auth: ServiceCreation = {
+  service: "auth",
+  config: { jwtSecret },
+  endpoints: { http: { port: 54321 } },
+};
+const studio: ServiceCreation = {
+  service: "studio",
+  config: {},
+  endpoints: { http: { port: 54323 } },
+};
+const functions: ServiceCreation = {
+  service: "functions",
+  config: {
+    functionsRoot: "/project/supabase/functions",
+    bootstrap: "export default {};",
+    verifyJwt: true,
+  },
   endpoints: { http: { port: 54321 } },
 };
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
@@ -119,6 +139,8 @@ const makeStack = (
   services: ReadonlyArray<StackInstance>,
   members: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>,
   credentials: StackCredentials = savedCredentials,
+  planned: ReadonlyArray<PlannedInstance> = [],
+  credentialsUnavailable = false,
 ): OpenedStack => ({
   id: stackId,
   services: {
@@ -126,8 +148,13 @@ const makeStack = (
     get: (_id) => Effect.die("unused"),
     list: Effect.succeed([...services]),
   },
-  credentials: { get: Effect.succeed(credentials) },
+  credentials: {
+    get: credentialsUnavailable
+      ? Effect.fail(new StackError({ operation: "credentials", message: "owner unreachable" }))
+      : Effect.succeed(credentials),
+  },
   composition: {
+    plan: () => Effect.succeed(planned),
     supabase: (_services, _options) => Effect.die("unused"),
     configure: (_config) => Effect.die("unused"),
     describe: Effect.succeed({ members: [...members], dependencies: [] }),
@@ -137,7 +164,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
-  tools: {
+  commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },
 });
@@ -147,8 +174,10 @@ const runStatus = (input: {
   readonly members?: ReadonlyArray<{ readonly id: string; readonly activation: "eager" | "lazy" }>;
   readonly reachable?: boolean;
   readonly outputFormat?: StatusOutputFormat;
-  readonly config?: "missing" | "invalid" | "explicit";
+  readonly config?: "missing" | "invalid" | "explicit" | "multiline-functions-env";
   readonly stackCredentials?: StackCredentials;
+  readonly credentialsUnavailable?: boolean;
+  readonly planned?: ReadonlyArray<PlannedInstance>;
   readonly flags?: StackStatusFlags;
 }) =>
   Effect.gen(function* () {
@@ -165,11 +194,24 @@ const runStatus = (input: {
         'project_id = "status-test"\n[db]\nport = 54322\n',
       );
     }
+    if (input.config === "multiline-functions-env") {
+      yield* fs.makeDirectory(`${root}/supabase/functions`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "status-test"\n[edge_runtime]\nenabled = true\n',
+      );
+      yield* fs.writeFileString(
+        `${root}/supabase/functions/.env`,
+        'PRIVATE_KEY="-----BEGIN KEY-----\nsecret\n-----END KEY-----"\n',
+      );
+    }
     const projectRoot = root;
     const stack = makeStack(
       input.services,
       input.members ?? input.services.map(({ id }) => ({ id, activation: "lazy" as const })),
       input.stackCredentials,
+      input.planned,
+      input.credentialsUnavailable ?? false,
     );
     const definition = {
       id: stackId,
@@ -184,27 +226,14 @@ const runStatus = (input: {
         creation: service === "database" ? database : rest,
       })),
       composition: { members: input.members ?? [], dependencies: [] },
+      lifetime: "detached" as const,
       ports: [],
     };
     const api = Layer.succeed(StackApi, {
       create: () => Effect.die("create must not run"),
       open: () => Effect.succeed(stack),
-      discover: () =>
-        Effect.succeed([
-          {
-            definition,
-            host:
-              input.reachable === false
-                ? undefined
-                : {
-                    stackId,
-                    identity: definition.identity,
-                    pid: 123,
-                    port: 4567,
-                  },
-          },
-        ]),
-      resolveIdentity: () => Effect.succeed(definition.identity),
+      discover: () => Effect.die("discover must not run"),
+      find: () => Effect.die("find must not run"),
     });
     const resolver = Layer.succeed(StackTargetResolver, {
       resolve: (target) =>
@@ -212,6 +241,8 @@ const runStatus = (input: {
           projectRoot: target.projectRoot,
           id: stackId,
           runtime: "native" as const,
+          definition,
+          hostRunning: input.reachable !== false,
         }),
     });
     const out = mockOutput({ format: input.outputFormat ?? "text" });
@@ -229,16 +260,11 @@ const runStatus = (input: {
     return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
 
-it.live("reports observed lifecycle and health without requesting credentials", () =>
+it.live("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {
     const databaseCalls = { value: 0 };
     const restCalls = { value: 0 };
     const authCalls = { value: 0 };
-    const auth: ServiceCreation = {
-      service: "auth",
-      config: { databaseUrl: "postgresql://placeholder", jwtSecret },
-      endpoints: { http: { port: 54325 } },
-    };
     const services = [
       makeService({
         id: "database-id",
@@ -269,14 +295,27 @@ it.live("reports observed lifecycle and health without requesting credentials", 
         }),
       }),
     ];
-    const run = yield* runStatus({ services, reachable: true });
+    const run = yield* runStatus({
+      services,
+      members: [
+        { id: "database-id", activation: "eager" },
+        { id: "rest-id", activation: "lazy" },
+        { id: "auth-id", activation: "lazy" },
+      ],
+      reachable: true,
+    });
     yield* run.effect;
-    expect(run.out.stdoutText).toContain("Owner: reachable");
-    expect(run.out.stdoutText).toContain("database (database-id): running");
-    expect(run.out.stdoutText).toContain("rest (rest-id): sleeping");
-    expect(run.out.stdoutText).toContain("auth (auth-id): unhealthy");
-    expect(run.out.stdoutText).toContain("health=unhealthy");
-    expect(run.out.stdoutText).toContain("Readiness: unhealthy");
+    const text = run.out.stdoutText;
+    expect(text).toMatch(/^Stack status-stack · unhealthy · native · /u);
+    expect(text).toMatch(/Project URL │ http:\/\/127\.0\.0\.1:54321 +│/u);
+    expect(text).toContain("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+    expect(text).toMatch(/Publishable │ saved-publishable-key +│/u);
+    expect(text).toMatch(/database +│ running · healthy · eager +│/u);
+    expect(text).toMatch(/rest +│ sleeping · starts on first request +│/u);
+    expect(text).toMatch(/auth +│ unhealthy · lazy +│/u);
+    expect(text).toContain("Project configuration matches the saved composition members.");
+    expect(text).not.toContain("database-id");
+    expect(text).not.toContain(stackId);
     expect(databaseCalls.value).toBe(1);
     expect(restCalls.value).toBe(1);
     expect(authCalls.value).toBe(1);
@@ -379,56 +418,198 @@ it.live("reports stopped readiness without treating unbound endpoints as drift",
   }),
 );
 
-it.live("does not report port drift when a stopped service has no live binding", () =>
+it.live("reports the planned differences of composition members as drift", () =>
   Effect.gen(function* () {
-    const run = yield* runStatus({
-      services: [
+    const drifted = (outputFormat: StatusOutputFormat) =>
+      runStatus({
+        services: [
+          makeService({
+            id: "database-id",
+            creation: database,
+            statusCalls: { value: 0 },
+            observation: makeObservation("database-id", database, {
+              lifecycle: "stopped",
+              wakeEnabled: false,
+            }),
+          }),
+        ],
+        members: [{ id: "database-id", activation: "eager" }],
+        planned: [
+          {
+            id: "database-id",
+            service: "database",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.sql.port"],
+          },
+          {
+            id: "standalone-rest",
+            service: "rest",
+            member: false,
+            change: "changed",
+            paths: ["config.maxRows"],
+          },
+        ],
+        config: "explicit",
+        reachable: false,
+        outputFormat,
+      });
+    const json = yield* drifted("json");
+    yield* json.effect;
+    expect(json.out.messages.find((message) => message.type === "success")?.data).toMatchObject({
+      config_drift: { status: "changed", paths: ["services.database.endpoints.sql.port"] },
+    });
+    const text = yield* drifted("text");
+    yield* text.effect;
+    expect(text.out.stdoutText).toContain(
+      "1 configured service value differs from the saved stack.\n  services.database.endpoints.sql.port\nRun supabase stack stop, then supabase stack start to apply the changes.\n",
+    );
+  }),
+);
+
+it.live(
+  "reports the gateway-served MCP endpoint at the API URL, with no synthetic endpoint entry",
+  () =>
+    Effect.gen(function* () {
+      const services = [
         makeService({
           id: "database-id",
           creation: database,
           statusCalls: { value: 0 },
           observation: makeObservation("database-id", database, {
-            lifecycle: "stopped",
+            lifecycle: "running",
+            health: "healthy",
             wakeEnabled: false,
+            endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
           }),
         }),
-      ],
-      config: "explicit",
-      reachable: true,
-      outputFormat: "json",
-    });
-    yield* run.effect;
-    const result = run.out.messages.find((message) => message.type === "success")?.data;
-    expect(result).toMatchObject({ config_drift: { status: "unchanged" } });
+        makeService({
+          id: "auth-id",
+          creation: auth,
+          statusCalls: { value: 0 },
+          observation: makeObservation("auth-id", auth, {
+            endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+          }),
+        }),
+        makeService({
+          id: "studio-id",
+          creation: studio,
+          statusCalls: { value: 0 },
+          observation: makeObservation("studio-id", studio, {
+            endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54323 }],
+          }),
+        }),
+      ];
+      const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
+      yield* report.effect;
+      const result = report.out.messages.find((message) => message.type === "success")?.data as {
+        endpoints: Readonly<Record<string, unknown>>;
+        env: Readonly<Record<string, string>>;
+      };
+      expect(result).toMatchObject({
+        endpoints: { "studio.http": { url: "http://127.0.0.1:54323" } },
+        env: { MCP_URL: "http://127.0.0.1:54321/mcp" },
+      });
+      expect(result.endpoints).not.toHaveProperty("studio.mcp");
+      const env = yield* runStatus({ services, reachable: true, flags: flags({ env: true }) });
+      yield* env.effect;
+      expect(env.out.stdoutText).toContain("MCP_URL='http://127.0.0.1:54321/mcp'");
+      expect(env.out.stdoutText).toContain("STUDIO_URL='http://127.0.0.1:54323'");
+      expect(env.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
+    }),
+);
+
+it.live("omits MCP_URL when no member exposes the shared API listener", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          wakeEnabled: false,
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+      }),
+      makeService({
+        id: "studio-id",
+        creation: studio,
+        statusCalls: { value: 0 },
+        observation: makeObservation("studio-id", studio, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54323 }],
+        }),
+      }),
+    ];
+    const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
+    yield* report.effect;
+    const result = report.out.messages.find((message) => message.type === "success")?.data as {
+      env: Readonly<Record<string, string>>;
+    };
+    expect(result.env).not.toHaveProperty("MCP_URL");
   }),
 );
 
-it.live("reports changed explicit ports even while a service is stopped", () =>
+it.live("omits MCP_URL when Studio is not a composition member", () =>
   Effect.gen(function* () {
-    const changed = { ...database, endpoints: { sql: { port: 54329 } } };
-    const run = yield* runStatus({
-      services: [
-        makeService({
-          id: "database-id",
-          creation: changed,
-          statusCalls: { value: 0 },
-          observation: makeObservation("database-id", changed, {
-            lifecycle: "stopped",
-            wakeEnabled: false,
-          }),
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          wakeEnabled: false,
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
         }),
-      ],
-      config: "explicit",
-      reachable: true,
-      outputFormat: "json",
-    });
-    yield* run.effect;
-    const result = run.out.messages.find((message) => message.type === "success")?.data;
-    expect(result).toMatchObject({
-      config_drift: { status: "changed", paths: ["services.database.endpoints.sql"] },
-    });
+      }),
+      makeService({
+        id: "auth-id",
+        creation: auth,
+        statusCalls: { value: 0 },
+        observation: makeObservation("auth-id", auth, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+        }),
+      }),
+    ];
+    const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
+    yield* report.effect;
+    const result = report.out.messages.find((message) => message.type === "success")?.data as {
+      env: Readonly<Record<string, string>>;
+    };
+    expect(result.env).not.toHaveProperty("MCP_URL");
   }),
 );
+
+for (const { functionsMember, status } of [
+  { functionsMember: false, status: "unchanged" },
+  { functionsMember: true, status: "unavailable" },
+] as const)
+  it.live(
+    `reports ${status} drift for a multiline Functions dotenv when Functions is ${functionsMember ? "" : "not "}a member`,
+    () =>
+      Effect.gen(function* () {
+        const services = [
+          makeService({ id: "database-id", creation: database, statusCalls: { value: 0 } }),
+          makeService({ id: "functions-id", creation: functions, statusCalls: { value: 0 } }),
+        ];
+        const run = yield* runStatus({
+          services,
+          members: [
+            { id: "database-id", activation: "eager" },
+            ...(functionsMember ? [{ id: "functions-id", activation: "eager" as const }] : []),
+          ],
+          config: "multiline-functions-env",
+          reachable: false,
+          outputFormat: "json",
+        });
+        yield* run.effect;
+        const result = run.out.messages.find((message) => message.type === "success")?.data;
+        expect(result).toMatchObject({ config_drift: { status } });
+      }),
+  );
 
 it.live("reports unavailable owner and does not query service status", () =>
   Effect.gen(function* () {
@@ -442,9 +623,9 @@ it.live("reports unavailable owner and does not query service status", () =>
     ];
     const run = yield* runStatus({ services, reachable: false });
     yield* run.effect;
-    expect(run.out.stdoutText).toContain("Owner: unavailable");
-    expect(run.out.stdoutText).toContain("Lifecycle: unavailable");
-    expect(run.out.stdoutText).toContain("database (database-id): unavailable");
+    expect(run.out.stdoutText).toMatch(/^Stack status-stack · unavailable · /u);
+    expect(run.out.stdoutText).toContain("The stack owner is not running.");
+    expect(run.out.stdoutText).toMatch(/database +│ unavailable · lazy +│/u);
     expect(statusCalls.value).toBe(0);
   }),
 );
@@ -502,13 +683,119 @@ it.live("exports saved credentials only for a running database", () =>
     });
     yield* run.effect;
     expect(run.out.stdoutText).toContain(
-      "DB_URL='postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres?connect_timeout=10'",
+      "DB_URL='postgresql://postgres:postgres@127.0.0.1:54322/postgres'",
     );
     expect(run.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
     expect(run.out.stdoutText).toContain("ANON_KEY='saved-anon-token'");
     expect(run.out.stdoutText).toContain("SERVICE_ROLE_KEY='saved-service-token'");
     expect(run.out.stdoutText).toContain("PUBLISHABLE_KEY='saved-publishable-key'");
     expect(run.out.stdoutText).toContain("SECRET_KEY='saved-secret-key'");
+  }),
+);
+
+it.live("derives DB_URL using the postgres role and a non-default saved password", () =>
+  Effect.gen(function* () {
+    const password = "p@ss w/ord!";
+    const customDatabase: ServiceCreation = {
+      service: "database",
+      config: {
+        version: "17",
+        databasePassword: Redacted.make(password),
+        jwtSecret: Redacted.make(jwtSecret),
+        jwtExpiry: 3600,
+      },
+      endpoints: { sql: { port: 54322 } },
+    };
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: customDatabase,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", customDatabase, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+      }),
+    ];
+    const run = yield* runStatus({ services, reachable: true, flags: flags({ env: true }) });
+    yield* run.effect;
+    expect(run.out.stdoutText).toContain(
+      `DB_URL='postgresql://postgres:${encodeURIComponent(password)}@127.0.0.1:54322/postgres'`,
+    );
+  }),
+);
+
+it.live("the status JSON env map equals the status --env export for the same stack", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+      }),
+      makeService({
+        id: "rest-id",
+        creation: rest,
+        statusCalls: { value: 0 },
+        observation: makeObservation("rest-id", rest, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+        }),
+      }),
+    ];
+    const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
+    yield* report.effect;
+    const result = report.out.messages.find((message) => message.type === "success")?.data as {
+      env: Readonly<Record<string, string>>;
+    };
+    const exported = yield* runStatus({
+      services,
+      reachable: true,
+      outputFormat: "json",
+      flags: flags({ env: true }),
+    });
+    yield* exported.effect;
+    const exportedValues = yield* Schema.decodeEffect(
+      Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)),
+    )(exported.out.stdoutText);
+    expect(result.env).toEqual(exportedValues);
+    expect(result.env.REST_URL).toBe("http://127.0.0.1:54321/rest/v1");
+  }),
+);
+
+it.live("status JSON env degrades to what's available when credentials are unreachable", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+      }),
+    ];
+    const run = yield* runStatus({
+      services,
+      reachable: true,
+      outputFormat: "json",
+      credentialsUnavailable: true,
+    });
+    yield* run.effect;
+    const result = run.out.messages.find((message) => message.type === "success")?.data as {
+      env: Readonly<Record<string, string>>;
+    };
+    expect(result.env).not.toHaveProperty("PUBLISHABLE_KEY");
+    expect(result.env.DB_URL).toContain("127.0.0.1:54322");
   }),
 );
 

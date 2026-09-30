@@ -52,6 +52,7 @@ import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
 import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
+import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../command-internal/go-proxy.layer.ts";
@@ -75,19 +76,69 @@ import {
   YesFlag,
 } from "../command-internal/global-flags.ts";
 
-const stackStartAliasCommand = stackStartCommand.pipe(
+// The stack backend's `start`/`status`/`stop` are the same commands as `stack
+// start`/`stack status`/`stack stop`, aliased to the top level — their help text
+// is rewritten below so `--help` refers to `supabase start` etc., not `stack start`.
+export const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
   Command.provide(stackRuntimeLayer),
   Command.provide(stackStartRuntimeLayer),
+  Command.withShortDescription("Start the local Supabase stack"),
+  Command.withExamples([
+    {
+      command: "supabase start",
+      description: "Start the current project stack",
+    },
+    {
+      command: "supabase start --stack feature-a --runtime docker",
+      description: "Start a named Docker stack",
+    },
+  ]),
 );
 export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),
   Command.provide(stackRuntimeLayer),
+  Command.withShortDescription("Stop the local Supabase stack"),
+  Command.withExamples([
+    {
+      command: "supabase stop --stack feature-a",
+      description: "Stop the existing feature-a stack",
+    },
+  ]),
 );
-const stackStatusAliasCommand = stackStatusCommand.pipe(
+export const stackStatusAliasCommand = stackStatusCommand.pipe(
   Command.provide(commandRuntimeLayer(["status"])),
   Command.provide(stackRuntimeLayer),
+  Command.withShortDescription("Show the local Supabase stack status"),
+  Command.withExamples([
+    {
+      command: "supabase status",
+      description: "Show the current project stack",
+    },
+    {
+      command: "supabase status --stack feature-a",
+      description: "Show a named stack",
+    },
+    {
+      command: "supabase status --env --output-format text > .env.local",
+      description: "Export connection variables as dotenv",
+    },
+  ]),
 );
+
+/** Stable builds carry no label; other builds say what they are so help output never claims stability it lacks. */
+export function rootDescription(version: string): string {
+  switch (cliBuildChannel(version)) {
+    case "stable":
+      return "Supabase CLI.";
+    case "beta":
+      return "Supabase CLI (beta channel).";
+    case "preview":
+      return "Supabase CLI (preview build).";
+    case "development":
+      return "Supabase CLI (development build).";
+  }
+}
 
 export const rootCommandForFeatures = (
   options: {
@@ -96,7 +147,7 @@ export const rootCommandForFeatures = (
   } = {},
 ): CliRootCommand =>
   Command.make("supabase").pipe(
-    Command.withDescription("Supabase CLI (stable channel)."),
+    Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
       backupsCommand,
       bootstrapCommand,

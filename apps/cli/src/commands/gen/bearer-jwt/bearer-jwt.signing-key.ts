@@ -45,7 +45,7 @@ const consolePromptText = Effect.fnUntraced(function* (label: string) {
   const line = yield* stdin.readLine(
     tty.stdinIsTty ? GO_CONSOLE_TTY_TIMEOUT_MILLIS : GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS,
   );
-  const input = Option.getOrElse(line, () => "");
+  const input = Option.getOrElse(line, () => "").trim();
   if (!tty.stdinIsTty) {
     yield* output.raw(`${input}\n`, "stderr");
   }

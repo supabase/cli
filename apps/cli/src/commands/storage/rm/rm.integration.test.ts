@@ -207,7 +207,7 @@ describe("storage rm", () => {
     });
   });
 
-  it.live("falls back to the default (no) on an unparseable piped answer", () => {
+  it.live("declines on an unparseable piped answer", () => {
     const { layer, requests } = setupStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,

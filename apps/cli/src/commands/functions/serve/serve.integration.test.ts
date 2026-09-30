@@ -50,6 +50,7 @@ import {
 } from "../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -349,6 +350,8 @@ function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
 function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
   let index = 0;
+  let liveHandles = 0;
+  let maxLiveHandles = 0;
 
   return {
     layer: Layer.succeed(
@@ -364,6 +367,16 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
             args: [...command.args],
           };
           spawned.push(record);
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              liveHandles += 1;
+              maxLiveHandles = Math.max(maxLiveHandles, liveHandles);
+            }),
+            () =>
+              Effect.sync(() => {
+                liveHandles -= 1;
+              }),
+          );
           const behavior = behaviors[Math.min(index, behaviors.length - 1)] ?? {};
           index += 1;
           if (behavior.onSpawn !== undefined) yield* behavior.onSpawn();
@@ -395,6 +408,9 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
     ),
     get spawned() {
       return spawned;
+    },
+    get maxLiveHandles() {
+      return maxLiveHandles;
     },
   };
 }
@@ -1016,7 +1032,7 @@ describe("functions serve integration", () => {
       }
 
       expect(dockerRun.args).toContain(
-        yield* getRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
+        yield* getRegistryImageUrl(dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)),
       );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
@@ -2629,6 +2645,7 @@ describe("functions serve integration", () => {
             expect(error.message).toContain("supabase_edge_runtime_test-project");
             expect(error.message).toContain("5 times");
           }
+          expect(childSpawner.maxLiveHandles).toBe(1);
         });
       },
     );

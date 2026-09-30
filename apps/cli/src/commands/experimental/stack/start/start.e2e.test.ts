@@ -92,6 +92,7 @@ const FollowEventSchema = Schema.Struct({
 
 const VariablesSchema = Schema.Record(Schema.String, Schema.String);
 const StartResultSchema = Schema.Struct({ id: Schema.String });
+const StackListSchema = Schema.Struct({ stacks: Schema.Array(Schema.Unknown) });
 
 const minimalConfig = `project_id = "compiled-stack-start-e2e"
 
@@ -424,11 +425,9 @@ describe("stack start (compiled e2e)", () => {
             exitTimeoutMs: CLEANUP_TIMEOUT_MS,
           });
           expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
-          expect(status.stdout).toContain(`(${idText})`);
-          expect(status.stdout).toContain("Owner: reachable");
-          expect(status.stdout).toContain("Lifecycle: running");
-          expect(status.stdout).toContain("Readiness: ready");
-          expect(status.stdout).toMatch(/Config drift: (changed|unchanged)/u);
+          expect(status.stdout).toContain(" · ready · native · ");
+          expect(status.stdout).toMatch(/database +│ running · healthy · eager +│/u);
+          expect(status.stdout).not.toContain(idText);
 
           const topLevelStatus = yield* runSupabaseEffect(["status", "--stack-id", idText], {
             cwd: projectRoot,
@@ -440,9 +439,7 @@ describe("stack start (compiled e2e)", () => {
             topLevelStatus.exitCode,
             `stdout:\n${topLevelStatus.stdout}\nstderr:\n${topLevelStatus.stderr}`,
           ).toBe(0);
-          expect(topLevelStatus.stdout).toContain(`(${idText})`);
-          expect(topLevelStatus.stdout).toContain("Owner: reachable");
-          expect(topLevelStatus.stdout).toContain("Lifecycle: running");
+          expect(topLevelStatus.stdout).toContain(" · ready · native · ");
 
           const env = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText, "--output-format", "json"],
@@ -453,16 +450,15 @@ describe("stack start (compiled e2e)", () => {
             env.stdout,
           );
           expect(Object.keys(variables)).toEqual([
+            "API_URL",
+            "REST_URL",
             "DB_URL",
-            "ANON_KEY",
-            "SERVICE_ROLE_KEY",
             "PUBLISHABLE_KEY",
             "SECRET_KEY",
-            "API_URL",
+            "ANON_KEY",
+            "SERVICE_ROLE_KEY",
           ]);
-          expect(variables.DB_URL).toMatch(
-            /^postgresql:\/\/supabase_admin:.+@.+:\d+\/postgres(?:\?.*)?$/u,
-          );
+          expect(variables.DB_URL).toMatch(/^postgresql:\/\/postgres:.+@.+:\d+\/postgres$/u);
           expect(variables.PUBLISHABLE_KEY).toMatch(/^sb_publishable_.+$/u);
           expect(variables.SECRET_KEY).toMatch(/^sb_secret_.+$/u);
 
@@ -507,9 +503,8 @@ describe("stack start (compiled e2e)", () => {
             stoppedStatus.exitCode,
             `stdout:\n${stoppedStatus.stdout}\nstderr:\n${stoppedStatus.stderr}`,
           ).toBe(0);
-          expect(stoppedStatus.stdout).toContain("Owner: unavailable");
-          expect(stoppedStatus.stdout).toContain("Lifecycle: unavailable");
-          expect(stoppedStatus.stdout).toContain("Readiness: unavailable");
+          expect(stoppedStatus.stdout).toContain(" · unavailable · native · ");
+          expect(stoppedStatus.stdout).toContain("The stack owner is not running.");
 
           const stoppedEnv = yield* runSupabaseEffect(
             ["stack", "status", "--env", "--stack-id", idText],
@@ -556,6 +551,52 @@ describe("stack start (compiled e2e)", () => {
 
           const destroyed = yield* Effect.exit(access(join(homeDir.dir, "stacks", idText)));
           expect(Exit.isFailure(destroyed)).toBe(true);
+        }),
+      ),
+  );
+
+  test(
+    "removes a stack registration that fails to start because Docker is unreachable",
+    { timeout: CLEANUP_TIMEOUT_MS },
+    () =>
+      runNode(
+        Effect.gen(function* () {
+          home = makeTempHome();
+          projectDir = yield* makeTempDirectory("/tmp/supabase-stack-start-docker-down-e2e-");
+          yield* makeDirectory(join(projectDir, "supabase"), { recursive: true });
+          yield* writeText(join(projectDir, "supabase", "config.toml"), minimalConfig);
+          // A `docker` first on PATH that reports an unreachable daemon, as the real CLI does.
+          const binDir = join(projectDir, "bin");
+          yield* makeDirectory(binDir);
+          yield* writeText(
+            join(binDir, "docker"),
+            "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+          );
+          yield* withFs((fs) => fs.chmod(join(binDir, "docker"), 0o755));
+
+          const result = yield* runSupabaseEffect(["stack", "start", "--runtime", "docker"], {
+            cwd: projectDir,
+            home: home.dir,
+            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the CLI subprocess resolves `docker` from PATH.
+            env: { PATH: `${binDir}:${process.env.PATH ?? ""}` },
+            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+          });
+          expect(result.exitCode, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`).not.toBe(
+            0,
+          );
+          expect(result.stderr).toContain("Cannot connect to the Docker daemon");
+          expect(result.stderr).not.toContain("Failed to stop stack host");
+
+          const list = yield* runSupabaseEffect(["stack", "list", "--output-format", "json"], {
+            home: home.dir,
+            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+          });
+          expect(list.exitCode, `stdout:\n${list.stdout}\nstderr:\n${list.stderr}`).toBe(0);
+          const listed = yield* Schema.decodeEffect(Schema.fromJsonString(StackListSchema))(
+            list.stdout.trim(),
+          );
+          expect(listed.stacks).toEqual([]);
         }),
       ),
   );

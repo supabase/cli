@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { DateTime, Effect, type FileSystem, type Path } from "effect";
 
 import { bold, yellow } from "../../../command-internal/colors.ts";
 import { listLocalMigrations } from "../../../command-internal/migration-list.ts";
@@ -21,7 +21,7 @@ export interface DebugBundle {
 
 /** The debug-bundle id layout `20060102-150405` (UTC). */
 export function formatDebugId(millis: number): string {
-  const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+  const digits = DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
   return `${digits.slice(0, 8)}-${digits.slice(8)}`;
 }
 

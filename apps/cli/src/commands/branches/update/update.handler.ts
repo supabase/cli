@@ -83,7 +83,7 @@ export const branchesUpdate = Effect.fn("branches.update")(function* (flags: Bra
           ),
         ),
       );
-    yield* patching?.clear() ?? Effect.void;
+    yield* patching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

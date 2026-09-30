@@ -60,6 +60,7 @@ declare const EdgeRuntime: EdgeRuntimeApi;
 import { STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
   createWorkerServicePathResolver,
+  isDenoConfigPath,
   packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
@@ -350,6 +351,20 @@ const functionConfig = (slug: string): Effect.Effect<FunctionConfig | undefined>
     overrides: configured,
     fs: denoFileSystem,
   });
+const warnedPlainDenoConfigs = new Set<string>();
+// Edge Runtime has no user-worker option to load a Deno config from an arbitrary path.
+const warnPlainDenoConfig = (slug: string, config: FunctionConfig): Effect.Effect<void> =>
+  config.importMapDiscoveredByRuntime ||
+  !isDenoConfigPath(config.importMapPath) ||
+  warnedPlainDenoConfigs.has(slug)
+    ? Effect.void
+    : Effect.sync(() => warnedPlainDenoConfigs.add(slug)).pipe(
+        Effect.andThen(
+          Console.warn(
+            `[functions] ${slug}: ${config.importMapPath} is not the nearest Deno config of ${config.entrypointPath}, so Edge Runtime loads it as a plain import map without comments or jsr:/npm: subpath imports. Move it next to the entrypoint or into a parent directory without a closer deno.json(c).`,
+          ),
+        ),
+      );
 const workerServicePath = createWorkerServicePathResolver(() =>
   Deno.makeTempDirSync({ prefix: "supabase-worker-" }),
 );
@@ -363,12 +378,31 @@ const shouldUsePackageJsonDiscovery = (config: FunctionConfig): Effect.Effect<bo
         fs: denoFileSystem,
       });
 
-export function prepareUserRequest(request: Request): Request {
+interface RequestBodyReader {
+  read(): Promise<{ done: true; value?: undefined } | { done: false; value: Uint8Array }>;
+}
+const requestBodyChunks = (body: RequestBodyReader) =>
+  Stream.fromEffectRepeat(
+    foreign(() => body.read()).pipe(
+      Effect.flatMap((chunk) => (chunk.done ? Cause.done() : Effect.succeed(chunk.value))),
+    ),
+  );
+const drainRequestBody = (body: RequestBodyReader | undefined) =>
+  body === undefined ? Effect.void : Stream.runDrain(requestBodyChunks(body)).pipe(Effect.ignore);
+
+export function prepareUserRequest(request: Request, body: RequestBodyReader | undefined): Request {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) url.hostname = forwardedHost;
-  // Cloning tees the body, so an unread branch can stall early worker responses.
-  const forwarded = new Request(url.href, request);
+  // The runtime closes a connection whose request body is unread, which gateways report as 502, so
+  // the worker gets its own stream and cancelling it leaves the body for `drainRequestBody`.
+  const forwarded = new Request(url.href, {
+    method: request.method,
+    headers: request.headers,
+    body: body === undefined ? null : Stream.toReadableStream(requestBodyChunks(body)),
+    signal: request.signal,
+    duplex: "half",
+  });
   forwarded.headers.delete("sb-api-key");
   EdgeRuntime.applySupabaseTag(request, forwarded);
   return forwarded;
@@ -378,6 +412,12 @@ Deno.serve({
   handler: (request: Request) =>
     Effect.runPromiseExit(
       Effect.gen(function* () {
+        // `worker.fetch` settles its body pipe before resolving, so the drain only reads what the
+        // worker abandoned.
+        const body = yield* Effect.acquireRelease(
+          Effect.sync(() => request.body?.getReader()),
+          (body) => Effect.interruptible(drainRequestBody(body)),
+        );
         const { pathname } = new URL(request.url);
         if (pathname === "/_internal/health") return getResponse({ message: "ok" }, STATUS_CODE.OK);
         if (pathname === "/_internal/metric")
@@ -386,6 +426,7 @@ Deno.serve({
         if (!functionName) return getResponse("Function not found", STATUS_CODE.NotFound);
         const config = yield* functionConfig(functionName);
         if (!config) return getResponse("Function not found", STATUS_CODE.NotFound);
+        yield* warnPlainDenoConfig(functionName, config);
         if (request.method !== "OPTIONS" && config.verifyJWT) {
           const token = getAuthToken(request);
           if (typeof token !== "string") return getAuthErrorResponse(token);
@@ -430,12 +471,14 @@ Deno.serve({
               maybeEntrypoint: toFileUrl(config.entrypointPath).href,
               context: {
                 useReadSyncFileAPI: true,
-                ...(config.importMapPath === "" ? {} : { importMapPath: config.importMapPath }),
+                ...(config.importMapPath === "" || config.importMapDiscoveredByRuntime
+                  ? {}
+                  : { importMapPath: config.importMapPath }),
               },
               staticPatterns: config.staticFiles,
             }),
           );
-          return yield* foreign(() => worker.fetch(prepareUserRequest(request)));
+          return yield* foreign(() => worker.fetch(prepareUserRequest(request, body)));
         });
         return yield* workerRequest.pipe(
           Effect.retry({
@@ -450,7 +493,7 @@ Deno.serve({
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped),
       { signal: request.signal },
     ).then((exit) => {
       if (Exit.isSuccess(exit)) return exit.value;

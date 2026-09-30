@@ -1,5 +1,9 @@
 import { schemaToCsvField } from "../../../../command-internal/schema-flags.ts";
 import {
+  shellQuoteArgument,
+  type ShellPlatform,
+} from "../../../../command-internal/shell-quote.ts";
+import {
   declaredSqlExtensions,
   maskSqlComments,
 } from "../../shared/pgdelta-declarative-shadow-prep.ts";
@@ -226,19 +230,10 @@ export function classifyDeclarativeLoadCompatibility(opts: {
 export const extensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
-/**
- * Shell family the recovery commands are rendered for: POSIX gets `rm -rf`/`mv` with `&&` and
- * backslash continuations; Windows gets single-line PowerShell (`Remove-Item`/`Move-Item` with
- * `;`), since the staged-upgrade recipe must be runnable exactly as printed.
- */
-export type ShellPlatform = "posix" | "windows";
-
-export const currentShellPlatform = (): ShellPlatform =>
-  process.platform === "win32" ? "windows" : "posix";
-
 export interface StagedExportContext {
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
+  /** POSIX gets `rm -rf`/`mv` chains; Windows gets single-line PowerShell, runnable as printed. */
   readonly platform: ShellPlatform;
 }
 
@@ -263,17 +258,6 @@ export const resolveStagedDeclarativeDir = (declarativeDir: string): string => {
   const trimmed = declarativeDir.slice(0, end);
   return `${trimmed === "" ? declarativeDir : trimmed}-next`;
 };
-
-const BARE_SAFE_ARGUMENT = /^[a-zA-Z0-9_./:@%+=,-]+$/;
-
-function shellQuoteArgument(value: string, platform: ShellPlatform): string {
-  if (BARE_SAFE_ARGUMENT.test(value)) return value;
-  // PowerShell single-quoted strings escape a quote by doubling it; POSIX
-  // shells need the classic '"'"' dance.
-  return platform === "windows"
-    ? `'${value.replaceAll("'", "''")}'`
-    : `'${value.replaceAll("'", `'"'"'`)}'`;
-}
 
 function schemaArguments(schema: ReadonlyArray<string>, platform: ShellPlatform): string {
   return schema

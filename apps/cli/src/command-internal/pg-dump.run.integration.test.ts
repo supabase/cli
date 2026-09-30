@@ -12,7 +12,7 @@ import { mockOutput } from "../../tests/helpers/mocks.ts";
 const stackFixture = (output: string) => {
   const calls: Array<{ readonly args: ReadonlyArray<string>; readonly command: string }> = [];
   const stack = {
-    tools: {
+    commands: {
       run: (
         _tool: { readonly command: string },
         options: {

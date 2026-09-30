@@ -31,5 +31,5 @@ export function shadowBaselineCacheDir(
   env: Readonly<Record<string, string | undefined>> = process.env,
   homeDir: string = homedir(),
 ): string {
-  return path.join(resolveSupabaseHome(env, homeDir), "cache", "shadow-baseline");
+  return path.join(resolveSupabaseHome(path, env, homeDir), "cache", "shadow-baseline");
 }

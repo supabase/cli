@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -1459,7 +1460,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
-          commandRuntimeLayer(["link"]),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", VALID_REF]),
           }),
@@ -1489,7 +1490,7 @@ describe("link integration", () => {
             cliSettings,
             analytics,
           }),
-          commandRuntimeLayer(["link"]),
+          commandRuntimeLayer(["link"]).pipe(Layer.provide(BunCrypto.layer)),
           Stdio.layerTest({
             args: Effect.succeed(["link", "--project-ref", "my-branch"]),
           }),

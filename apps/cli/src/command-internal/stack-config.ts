@@ -8,11 +8,11 @@ import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
+import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
 
-declare const SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 import {
   decryptAuthSecret,
   resolveJwtSecret,
@@ -78,7 +78,7 @@ interface StackStartConfig {
   readonly projectEnvValues: Readonly<Record<string, string>>;
   readonly document?: Record<string, unknown>;
   readonly remoteJwks: Effect.Effect<string | undefined, StackConfigError>;
-  readonly identity: Effect.Effect<
+  readonly keys: Effect.Effect<
     {
       readonly publishableKey?: string;
       readonly secretKey?: string;
@@ -375,14 +375,7 @@ const resolveEffectiveCliConfig = (
   const mail = config.local_smtp;
   const pooler = db.pooler;
   const edge = config.edge_runtime;
-  const experimental = {
-    ...config.experimental,
-    orioledb_version: envOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      env,
-    ),
-  };
+  const experimental = config.experimental;
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
   const imageDocument = section(section(document, "storage"), "image_transformation");
@@ -666,6 +659,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
+      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
@@ -731,7 +725,7 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "experimental.orioledb_version", active: (_config: CliConfig) => true },
+  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -896,7 +890,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             message: cause instanceof Error ? cause.message : String(cause),
           }),
       });
-      const localIdentity = Effect.try({
+      const localKeys = Effect.try({
         try: () => {
           const configured = (value: string | undefined) =>
             value === undefined || value === ""
@@ -955,8 +949,8 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ),
             );
       });
-      const identity = Effect.gen(function* () {
-        const configuredKeys = yield* localIdentity;
+      const keys = Effect.gen(function* () {
+        const configuredKeys = yield* localKeys;
         const refreshedRemoteJwks = yield* remoteJwks;
         return {
           ...configuredKeys,
@@ -1133,29 +1127,15 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
       const storagePath = `${projectRoot}/supabase/.temp/stack-uploads`;
+      const pgmetaCreation: ServiceCreationType = {
+        service: "pgmeta",
+        config: {},
+        endpoints: { http: endpoint(undefined) },
+      };
       const createCreations = (
         stackId: string,
       ): Effect.Effect<ReadonlyArray<ServiceCreationType>, StackConfigError> =>
-        Effect.gen(function* () {
-          const bootstrap = validatedConfig.edge_runtime.enabled
-            ? yield* typeof SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-                ? Effect.succeed(SUPABASE_STACK_FUNCTIONS_SERVE_MAIN_TEMPLATE)
-                : Effect.tryPromise({
-                    try: () => import("./stack-functions-bundler.ts"),
-                    catch: (cause) =>
-                      new StackConfigError({
-                        message: `Unable to load Functions bundler: ${String(cause)}`,
-                      }),
-                  }).pipe(
-                    Effect.flatMap(({ bundleStackFunctionsServeMainTemplate }) =>
-                      bundleStackFunctionsServeMainTemplate().pipe(
-                        Effect.mapError(
-                          (cause) => new StackConfigError({ message: cause.message }),
-                        ),
-                      ),
-                    ),
-                  )
-            : undefined;
+        Effect.sync(() => {
           return [
             {
               service: "database",
@@ -1174,7 +1154,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "analytics" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       backend: "postgres" as const,
                       apiKey: "api-key",
                     },
@@ -1187,7 +1166,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "pooler" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       poolMode,
                       tenant: "pooler-dev",
@@ -1198,21 +1176,12 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.studio.enabled
-              ? [
-                  {
-                    service: "pgmeta" as const,
-                    config: { databaseUrl: "postgresql://placeholder" },
-                    endpoints: { http: endpoint(undefined) },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
+            ...(validatedConfig.studio.enabled ? [pgmetaCreation] : []),
             ...(validatedConfig.api.enabled
               ? [
                   {
                     service: "rest" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       schemas: validatedConfig.api.schemas.join(","),
                       extraSearchPath: validatedConfig.api.extra_search_path.join(","),
                       maxRows: validatedConfig.api.max_rows,
@@ -1242,7 +1211,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "realtime" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ipVersion:
                         validatedConfig.realtime.ip_version === "IPv6"
@@ -1262,7 +1230,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "storage" as const,
                     config: {
-                      databaseUrl: "postgresql://placeholder",
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
@@ -1279,7 +1246,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               ? [
                   {
                     service: "vector" as const,
-                    config: { analyticsUrl: "http://analytics", apiKey: "api-key" },
+                    config: { apiKey: "api-key" },
                     endpoints: {
                       http: endpoint(
                         envPortOrConfigured(
@@ -1304,7 +1271,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.edge_runtime.enabled && bootstrap !== undefined
+            ...(validatedConfig.edge_runtime.enabled
               ? [
                   {
                     service: "functions" as const,
@@ -1313,7 +1280,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       filesRoot: projectRoot,
                       functions,
                       env: functionsEnv,
-                      bootstrap,
                       policy: validatedConfig.edge_runtime.policy,
                       verifyJwt: true,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
@@ -1339,6 +1305,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   {
                     service: "studio" as const,
                     config: {
+                      snippetsRoot: `${projectRoot}/supabase/snippets`,
+                      apiSchemas: validatedConfig.api.schemas.join(","),
+                      apiExtraSearchPath: validatedConfig.api.extra_search_path.join(","),
+                      apiMaxRows: validatedConfig.api.max_rows,
+                      cliVersion: CLI_VERSION,
                       ...(jwtSecret === undefined ? {} : { jwtSecret: Redacted.value(jwtSecret) }),
                       ...(validatedConfig.studio.openai_api_key === undefined
                         ? {}
@@ -1371,7 +1342,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         source: validatedConfig,
         projectEnvValues: context.projectEnvValues,
         remoteJwks,
-        identity,
+        keys,
         ...(context.loaded?.document === undefined ? {} : { document: context.loaded.document }),
       };
     }),

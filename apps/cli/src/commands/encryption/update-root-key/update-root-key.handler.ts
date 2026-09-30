@@ -47,7 +47,7 @@ export const encryptionUpdateRootKey = Effect.fn("encryption.update-root-key")(f
       Effect.tapError(() => updating?.fail() ?? Effect.void),
       Effect.catch(mapUpdateError),
     );
-    yield* updating?.clear() ?? Effect.void;
+    yield* updating?.clear ?? Effect.void;
 
     if (output.format !== "text") {
       yield* output.success("", { root_key: response.root_key });

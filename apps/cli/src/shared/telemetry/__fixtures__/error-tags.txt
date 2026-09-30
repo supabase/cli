@@ -292,6 +292,8 @@ GenTypesMissingProjectConfigError
 GenTypesNetworkError
 GenTypesNetworkIdUnsupportedError
 GenTypesParseConfigError
+GenTypesToolFailedError
+GenTypesToolNotInstalledError
 GenTypesUnexpectedStatusError
 GenTypesWorkdirError
 GoChildExitError
@@ -300,7 +302,6 @@ HealthCheckTimeoutError
 HostPostgresClientError
 ImagePrepullError
 InitConfigExistsError
-InitExperimentalRequiredError
 InitParseSettingsError
 InspectCsvqError
 InspectMutuallyExclusiveFlagsError
@@ -524,10 +525,10 @@ SsoUpdateUnexpectedStatusError
 StackBootstrapError
 StackCatalogSetupError
 StackConfigError
-StackFunctionsBundleError
 StackFunctionsEnvError
 StackNativeEngineError
 StackRoutingError
+StackRuntimeSelectionError
 StackRuntimeUnavailableError
 StackStorageCapabilityError
 StackStorageUnavailableError

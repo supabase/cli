@@ -1,8 +1,10 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Crypto, Effect, FileSystem, Path, Stream } from "effect";
+import { volumeNameFor } from "../src/storage/DockerDatabaseStorage.ts";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
 
-const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
+/** Runs a Docker CLI command and returns its combined output and exit code. */
+export const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -47,7 +49,7 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
             Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
           ),
         );
-      const volume = `supabase-db-${stateDigest.slice(0, 32)}`;
+      const volume = volumeNameFor(stateDigest);
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           const inspected = yield* runDocker([
@@ -67,7 +69,14 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
           const removed = yield* runDocker(["volume", "rm", volume]);
           if (removed.code !== 0 && !/no such volume|not found/iu.test(removed.output))
             return yield* Effect.die(`Docker volume cleanup failed: ${removed.output}`);
-        }).pipe(Effect.andThen(cleanupDockerRoot(root)), Effect.catchCause(Effect.die)),
+        }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              if (yield* fs.exists(root)) yield* cleanupDockerRoot(root);
+            }),
+          ),
+          Effect.catchCause(Effect.die),
+        ),
       );
       return root;
     }),

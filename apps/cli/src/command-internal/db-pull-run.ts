@@ -46,7 +46,11 @@ import {
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
 import { type DumpOptions, buildSchemaDumpEnv } from "./pg-dump.env.ts";
-import { streamPgDumpWithClient } from "./pg-dump.run.ts";
+import { dumpNetworkMode, streamPgDumpWithClient } from "./pg-dump.run.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "./postgres-client.run.ts";
 import {
   emitPoolerFallbackWarning,
   isDirectLinkedHost,
@@ -492,6 +496,24 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
               message: `failed to open dump file: ${cause.message}`,
               fileOpen: true,
             });
+          const stackBackend = (yield* currentStackBackend).kind === "stack";
+          const seedNetwork = dumpNetworkMode(
+            Option.getOrUndefined(networkIdFlag),
+            stackBackend,
+            projectEnv,
+          );
+          const seedUsesHostNetwork =
+            seedNetwork._tag === "host" || toolContainerUsesHostNetwork(seedNetwork.name);
+          const seedDumpConn = (target: PgConnInput): PgConnInput =>
+            stackBackend || !seedUsesHostNetwork
+              ? {
+                  ...target,
+                  host: rewriteDumpHostForToolContainer(target.host, {
+                    platform: runtimeInfo.platform,
+                    usesHostNetwork: seedUsesHostNetwork,
+                  }),
+                }
+              : target;
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes.
           const runSchemaDump = (target: PgConnInput) => {
@@ -513,9 +535,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                       return yield* streamPgDumpWithClient({
                         image,
                         script: dumpSchemaScript,
-                        env: buildSchemaDumpEnv(target, dumpEnvOpt),
+                        env: buildSchemaDumpEnv(seedDumpConn(target), dumpEnvOpt),
                         projectEnvValues: projectEnv,
                         client: { kind: "container" },
+                        forceHostNetwork: stackBackend,
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(
@@ -782,8 +805,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         }
 
         // Prompt to update the remote migration history table. Returns the default
-        // (`true`) on `--yes`, on a non-interactive stdin, or on any prompt error — it
-        // never fails the command.
+        // (`true`) on `--yes`, on an empty non-interactive stdin, or on any prompt error —
+        // it never fails the command.
         let remoteHistoryUpdated = false;
         const updateHistoryTitle = "Update remote migration history table?";
         // `invoke?.assumeYes` overrides this resolution entirely for an in-process

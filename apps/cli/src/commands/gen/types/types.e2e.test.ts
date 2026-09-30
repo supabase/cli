@@ -1,3 +1,4 @@
+import { languages } from "@supabase/typegen";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Clock, Config, Data, Effect, FileSystem, Option, Path, Schedule } from "effect";
@@ -8,6 +9,7 @@ import {
   withTempHome,
 } from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import {
   RESOLVE_BUDGET_MS,
@@ -15,10 +17,11 @@ import {
   resolveDeadline,
 } from "../../../../tests/helpers/docker-image.ts";
 
-const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
-type TypegenLang = (typeof TYPEGEN_LANGS)[number];
+const TYPEGEN_LANGS: ReadonlyArray<string> = languages
+  .filter((language) => language.inProcess)
+  .map((language) => language.name);
+type TypegenLang = string;
 
-const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 // Image resolution runs inside the test body, so its timeout must add on top of the
@@ -211,8 +214,9 @@ const startLocalPostgres = Effect.fnUntraced(function* (input: {
 }) {
   const containerName = localDbContainerId(input.projectId);
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
+  const localPostgresImage = dockerfileServiceImage("pg", yield* slimImagesEnabled);
   const postgresImage = yield* Effect.tryPromise({
-    try: () => ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS),
+    try: () => ensureImage(localPostgresImage, imageDeadline - RESOLVE_BUDGET_MS),
     catch: (cause) => new TypegenE2eSetupError({ message: "failed to ensure Docker image", cause }),
   });
 
@@ -297,6 +301,8 @@ function expectLanguageShape(lang: TypegenLang, stdout: string) {
     case "python":
       expect(stdout).toContain("from __future__ import annotations");
       break;
+    default:
+      throw new Error(`no shape assertion for the registry language ${lang}`);
   }
 }
 

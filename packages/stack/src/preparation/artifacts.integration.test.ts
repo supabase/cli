@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Crypto,
+  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -11,6 +12,7 @@ import {
   Layer,
   Option,
   PlatformError,
+  Schema,
 } from "effect";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
@@ -90,6 +92,30 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "restricts cache directories to their owner while keeping a traverse-only grant",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-traverse-",
+          });
+          yield* (yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() })).prepare(
+            request,
+          );
+          yield* fs.chmod(root, 0o755);
+          yield* fs.chmod(`${root}/database`, 0o755);
+
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          expect((yield* store.prepare(request)).outcome).toBe("cached");
+
+          expect((yield* fs.stat(root)).mode & 0o777).toBe(0o701);
+          expect((yield* fs.stat(`${root}/database`)).mode & 0o777).toBe(0o701);
+        }),
+      ),
+  );
+
   it.live("returns a verified cache hit without invoking the source again", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -122,38 +148,57 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("re-downloads when required runtime paths expand on the same key", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-paths-expand-",
-        });
-        let checksumCalls = 0;
-        let materializeCalls = 0;
-        const source: ArtifactSource = {
-          checksum: () =>
-            Effect.sync(() => {
-              checksumCalls += 1;
-              return archiveSha256;
-            }),
-          materialize: (entry, destination) =>
-            Effect.sync(() => {
-              materializeCalls += 1;
-              return entry;
-            }).pipe(Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256))),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
-        const first = yield* store.prepare(narrow);
-        const second = yield* store.prepare(request);
-        expect(first.outcome).toBe("downloaded");
-        expect(second.outcome).toBe("downloaded");
-        expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
-        expect(checksumCalls).toBe(2);
-        expect(materializeCalls).toBe(2);
-      }),
-    ),
+  it.live(
+    "keeps the published tree and reuses it when required runtime paths expand on the same key",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-paths-expand-",
+          });
+          let checksumCalls = 0;
+          let materializeCalls = 0;
+          const source: ArtifactSource = {
+            checksum: () =>
+              Effect.sync(() => {
+                checksumCalls += 1;
+                return archiveSha256;
+              }),
+            materialize: (entry, destination) =>
+              Effect.sync(() => {
+                materializeCalls += 1;
+                return entry;
+              }).pipe(
+                Effect.andThen(sourceWriting().materialize(entry, destination, archiveSha256)),
+              ),
+          };
+          const store = yield* makeArtifactStore({ cacheRoot: root, source });
+          const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
+          const first = yield* store.prepare(narrow);
+          const publishedIno = (yield* fs.stat(first.path)).ino;
+          const second = yield* store.prepare(request);
+          const stillPublishedIno = (yield* fs.stat(second.path)).ino;
+          expect(first.outcome).toBe("downloaded");
+          expect(second.outcome).toBe("cached");
+          expect(second.path).toBe(first.path);
+          expect(stillPublishedIno).toEqual(publishedIno);
+          expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
+          expect(checksumCalls).toBe(1);
+          expect(materializeCalls).toBe(1);
+          expect(yield* fs.readFileString(`${second.path}/bin/postgres`)).toBe("native postgres");
+          const metadata = yield* Schema.decodeEffect(
+            Schema.fromJsonString(
+              Schema.Struct({
+                requiredRuntimePaths: Schema.Array(Schema.String),
+                requiredRuntimeKinds: Schema.Record(Schema.String, Schema.String),
+              }),
+            ),
+          )(yield* fs.readFileString(`${second.path}/.artifact.json`));
+          expect(metadata.requiredRuntimePaths).toContain("etc/postgres.conf");
+          expect(metadata.requiredRuntimeKinds["etc/postgres.conf"]).toBe("file");
+        }),
+      ),
   );
 
   it.live("replaces a cached tree with unknown artifact metadata", () =>
@@ -334,6 +379,33 @@ describe("verified native artifact preparation", () => {
         const exit = yield* store.prepare(request).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+      }),
+    ),
+  );
+
+  it.live("rejects a cache hit whose newly required path is missing from the published tree", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-path-missing-",
+        });
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
+        const published = yield* store.prepare(narrow);
+        const publishedIno = (yield* fs.stat(published.path)).ino;
+
+        const wider: ArtifactRequest = {
+          ...request,
+          requiredRuntimePaths: ["bin/postgres", "share/missing"],
+        };
+        const exit = yield* store.prepare(wider).pipe(Effect.exit);
+
+        const error = errorOf(exit);
+        expect(error).toBeInstanceOf(ArtifactIntegrityError);
+        expect(error?.message).toContain(`remove ${published.path} to download it again`);
+        expect(yield* fs.exists(published.path)).toBe(true);
+        expect((yield* fs.stat(published.path)).ino).toEqual(publishedIno);
       }),
     ),
   );
@@ -584,6 +656,57 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
+  it.live("rejects an escaping symlink nested in a newly required directory on a cache hit", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-nested-link-escape-",
+        });
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-cache-new-nested-link-outside-",
+        });
+        const outsideConfig = `${outside}/config`;
+        yield* fs.writeFileString(outsideConfig, "outside");
+        const directoryRequest: ArtifactRequest = {
+          ...request,
+          key: "database/postgres-cache-new-nested-link",
+          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
+        };
+        const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
+          materialize: (_entry, destination) =>
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
+              return;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new PreparationError({
+                    message: `materialization failed: ${cause.message}`,
+                    cause,
+                  }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const narrow: ArtifactRequest = {
+          ...directoryRequest,
+          requiredRuntimePaths: ["bin/postgres"],
+        };
+        const published = yield* store.prepare(narrow);
+
+        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
+
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(yield* fs.exists(published.path)).toBe(true);
+      }),
+    ),
+  );
+
   it.live("cancels caller-owned preparation when the caller is interrupted", () =>
     withPlatform(
       Effect.gen(function* () {
@@ -720,6 +843,114 @@ describe("verified native artifact preparation", () => {
         expect(errorOf(exit)).toBeInstanceOf(PreparationError);
         expect(called).toBe(false);
         expect(yield* fs.exists(`${outside}/postgres`)).toBe(false);
+      }),
+    ),
+  );
+});
+
+describe("orphaned temp/quarantine sweep", () => {
+  it.live("removes a prepared key's old leftovers and keeps fresh and unrelated ones", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-sweep-",
+        });
+        const now = yield* DateTime.now;
+        const old = DateTime.toDate(DateTime.subtract(now, { hours: 25 }));
+        const recent = DateTime.toDate(DateTime.subtract(now, { hours: 1 }));
+        const parent = `${root}/database`;
+        const oldTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000001.tmp`;
+        const oldQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000002.invalid`;
+        const freshTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000003.tmp`;
+        const freshQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000004.invalid`;
+        const unrelated = `${parent}/nested/.x.tmp`;
+        const leftovers = [oldTemp, oldQuarantine, freshTemp, freshQuarantine, unrelated];
+        for (const leftover of leftovers) {
+          yield* fs.makeDirectory(leftover, { recursive: true });
+          yield* fs.writeFileString(`${leftover}/marker`, "leftover");
+        }
+        for (const leftover of [oldTemp, oldQuarantine, unrelated])
+          yield* fs.utimes(leftover, old, old);
+        for (const leftover of [freshTemp, freshQuarantine])
+          yield* fs.utimes(leftover, recent, recent);
+
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        expect(yield* fs.exists(oldTemp), "construction leaves the cache alone").toBe(true);
+        expect((yield* store.prepare(request)).outcome).toBe("downloaded");
+
+        expect(yield* fs.exists(oldTemp)).toBe(false);
+        expect(yield* fs.exists(oldQuarantine)).toBe(false);
+        expect(yield* fs.exists(freshTemp)).toBe(true);
+        expect(yield* fs.exists(freshQuarantine)).toBe(true);
+        expect(yield* fs.exists(unrelated)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live("never reaps an in-progress extraction whose source backdated its own destination", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-reaper-race-",
+        });
+        const backdated = yield* Deferred.make<void>();
+        const secondReachedMaterialize = yield* Deferred.make<void>();
+        let materializeCalls = 0;
+        const source: ArtifactSource = {
+          checksum: () => Effect.succeed(archiveSha256),
+          materialize: (_entry, destination, expectedSha256) =>
+            Effect.gen(function* () {
+              materializeCalls += 1;
+              if (materializeCalls > 1) {
+                // The second preparation arrives here after running the reaper; it fails instead
+                // of racing the first to publish, which keeps the interleaving deterministic.
+                yield* Deferred.succeed(secondReachedMaterialize, undefined);
+                return yield* new PreparationError({
+                  message: "the second preparation stops before publishing",
+                });
+              }
+              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
+              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
+              yield* verifySha256(archive, expectedSha256).pipe(
+                Effect.provideService(Crypto.Crypto, crypto),
+              );
+              // GNU tar sets an extraction destination's own mtime from the archive's `./`
+              // entry; the slim-services archives carry epoch mtimes there.
+              yield* fs.utimes(destination, 0, 0);
+              yield* Deferred.succeed(backdated, undefined);
+              yield* Deferred.await(secondReachedMaterialize);
+            }).pipe(
+              Effect.mapError((cause) =>
+                cause instanceof PreparationError || cause instanceof ArtifactIntegrityError
+                  ? cause
+                  : new PreparationError({
+                      message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+                      cause,
+                    }),
+              ),
+            ),
+        };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+
+        const first = yield* Effect.forkChild(store.prepare(request));
+        yield* Deferred.await(backdated);
+
+        // Runs the same leftover reaper the first operation's staging directory is exposed to;
+        // it refuses its own materialization once it gets there, so it can never win a race to
+        // publish and mask a reap that already happened.
+        const second = yield* store.prepare(request).pipe(Effect.exit);
+        expect(Exit.isFailure(second)).toBe(true);
+
+        const published = yield* Fiber.join(first);
+        expect(published.outcome).toBe("downloaded");
+        expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
+        expect(yield* fs.readFileString(`${published.path}/bin/postgres`)).toBe("native postgres");
+        expect(yield* fs.readFileString(`${published.path}/etc/postgres.conf`)).toBe("config");
       }),
     ),
   );

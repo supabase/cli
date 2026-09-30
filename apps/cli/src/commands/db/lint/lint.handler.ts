@@ -111,21 +111,17 @@ const runLint = Effect.fnUntraced(function* (
   // not `--local`'s default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new DbLintMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new DbLintMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const level = Option.getOrElse(flags.level, () => "warning");
@@ -201,7 +197,7 @@ const runLint = Effect.fnUntraced(function* (
     if (failed) {
       const message = `fail-on is set to ${LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
       if (output.format === "text") {
-        return yield* Effect.fail(new DbLintFailOnError({ message }));
+        return yield* new DbLintFailOnError({ message });
       }
       // json / stream-json already emitted the result payload above; signal the
       // non-zero exit without a second stdout write that would corrupt it.

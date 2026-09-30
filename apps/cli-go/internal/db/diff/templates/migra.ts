@@ -1,4 +1,4 @@
-import { createClient, sql } from "npm:@pgkit/client";
+import { createClient } from "npm:@pgkit/client";
 import { Migration } from "npm:@pgkit/migra";
 
 // Avoids error on self-signed certificate
@@ -30,9 +30,38 @@ if (sslDebug) {
   );
 }
 
-const clientBase = createClient(source);
+type PoolClient = {
+  query: (stmt: string) => Promise<unknown>;
+  on: (event: "error", listener: () => void) => void;
+  off: (event: "error", listener: () => void) => void;
+};
+// Step down from login role to postgres and force schema qualified references for
+// pg_get_expr on every pooled connection, including one reopened after an idle timeout
+const verify = (stmt: string) => (client: PoolClient, done: (err?: Error) => void) => {
+  // pg-pool drops its error listener during verify, so a socket error must reject, not throw
+  const ignore = () => {};
+  client.on("error", ignore);
+  client
+    .query(stmt)
+    .finally(() => client.off("error", ignore))
+    .then(
+      () => done(),
+      (err: Error) => {
+        err.message = `${stmt}: ${err.message}`;
+        done(err);
+      },
+    );
+};
+const clientBase = createClient(source, {
+  pgpOptions: { connect: { verify: verify("set search_path = ''") } },
+});
 const clientHead = createClient(target, {
-  pgpOptions: { connect: { ssl: ca && { ca } } },
+  pgpOptions: {
+    connect: {
+      ssl: ca && { ca },
+      verify: verify("set role postgres; set search_path = ''"),
+    },
+  },
 });
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS")?.split(",") ?? [];
 const excludedSchemas = Deno.env.get("EXCLUDED_SCHEMAS")?.split(",") ?? [];
@@ -47,11 +76,6 @@ const extensionSchemas = [
 ];
 
 try {
-  // Step down from login role to postgres
-  await clientHead.query(sql`set role postgres`);
-  // Force schema qualified references for pg_get_expr
-  await clientHead.query(sql`set search_path = ''`);
-  await clientBase.query(sql`set search_path = ''`);
   const result: string[] = [];
   for (const schema of includedSchemas) {
     const m = await Migration.create(clientBase, clientHead, {

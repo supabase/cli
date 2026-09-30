@@ -1,18 +1,23 @@
 import { endpointReports } from "../stack-endpoints.format.ts";
-import { Effect, Option, Path, Redacted } from "effect";
-import type {
-  Observation,
-  ServiceCreation,
-  ServiceCreationInput,
-  Stack,
-} from "@supabase/stack/effect";
-import type { StackError } from "@supabase/stack/effect";
+import { Effect, Option, Path } from "effect";
+import type { Observation, PlannedInstance, ServiceCreation, Stack } from "@supabase/stack/effect";
+import type { StackCredentials, StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
-import { toPostgresURL } from "../../../../command-internal/postgres-url.ts";
+import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
+import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
+import {
+  connectionEnv,
+  renderStackSummary,
+  serviceState,
+  stackConnections,
+  type StackServiceState,
+  stackEndpoints,
+  summaryCredentials,
+} from "../stack-summary.ts";
 import {
   StackApi,
   StackTargetError,
@@ -34,15 +39,7 @@ type EndpointReport = {
 type ServiceReport = {
   readonly id: string;
   readonly service: ServiceCreation["service"];
-  readonly state:
-    | "unavailable"
-    | "sleeping"
-    | "starting"
-    | "running"
-    | "stopping"
-    | "stopped"
-    | "unhealthy"
-    | "exited";
+  readonly state: StackServiceState;
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly health: Observation["health"] | null;
   readonly endpoints: Readonly<Record<string, EndpointReport>>;
@@ -81,6 +78,8 @@ type StackReport = {
     readonly message: string;
     readonly paths?: ReadonlyArray<string>;
   };
+  /** The `status --env` connection map, degrading to what's available when credentials or the owner are unreachable. */
+  readonly env: Readonly<Record<string, string>>;
 };
 
 const mapTargetError = (error: StackTargetError) =>
@@ -96,30 +95,18 @@ const mapStackError = (error: StackError) =>
     reason:
       error.operation === "open" ||
       error.operation === "discover" ||
-      error.operation === "definition" ||
-      error.operation === "getComposition"
+      error.operation === "definition"
         ? "invalid-config"
         : "runtime",
     message: error.message,
     suggestion:
       error.operation === "open" ||
       error.operation === "discover" ||
-      error.operation === "definition" ||
-      error.operation === "getComposition"
+      error.operation === "definition"
         ? "Inspect the saved stack state under $SUPABASE_HOME/stacks."
         : "Retry the command and use --debug if the stack remains unavailable.",
     cause: error,
   });
-
-const serviceState = (observation: Observation | undefined): ServiceReport["state"] => {
-  if (observation === undefined) return "unavailable";
-  if (observation.health === "unhealthy") return "unhealthy";
-  if (observation.lifecycle === "stopped") {
-    if (observation.error?.operation === "exit") return "exited";
-    return observation.wakeEnabled ? "sleeping" : "stopped";
-  }
-  return observation.lifecycle;
-};
 
 const serviceReport = ({ instance, observation, error }: ObservedService): ServiceReport => ({
   id: instance.id,
@@ -161,18 +148,6 @@ const aggregateReadiness = (
     : "starting";
 };
 
-const endpointFor = (
-  services: ReadonlyArray<ServiceReport>,
-  members: ReadonlyArray<{ readonly id: string }>,
-  service: ServiceCreation["service"],
-  endpoint: string,
-) => {
-  const memberIds = new Set(members.map(({ id }) => id));
-  return services.find((entry) => memberIds.has(entry.id) && entry.service === service)?.endpoints[
-    endpoint
-  ];
-};
-
 const reportFor = (
   definition: {
     readonly id: string;
@@ -187,15 +162,11 @@ const reportFor = (
   observed: ReadonlyArray<ObservedService>,
   members: ReadonlyArray<{ readonly id: string; readonly activation: string }>,
   configDrift: StackReport["config_drift"],
+  env: StackReport["env"],
 ): StackReport => {
   const services = observed.map(serviceReport);
-  const endpoints = Object.fromEntries(
-    services.flatMap((service) =>
-      Object.entries(service.endpoints).map(([name, endpoint]) => [
-        `${service.service}.${name}`,
-        endpoint,
-      ]),
-    ),
+  const endpoints = stackEndpoints(
+    observed.map(({ instance, observation }) => ({ service: instance.service, observation })),
   );
   return {
     identity: {
@@ -224,35 +195,59 @@ const reportFor = (
     services,
     endpoints,
     config_drift: configDrift,
+    env,
   };
 };
 
-const render = (report: StackReport): string => {
-  const lines = [
-    `Stack ${report.identity.name} (${report.identity.id})`,
-    `Project: ${report.identity.project_root}`,
-    `Branch: ${report.identity.branch_context}`,
-    `Runtime: ${report.runtime}`,
-    `Owner: ${report.owner}`,
-    `Lifecycle: ${report.lifecycle ?? "unavailable"}`,
-    `Readiness: ${report.readiness}`,
-    "Services:",
-  ];
-  const members = new Map(report.composition.members.map((member) => [member.id, member]));
-  for (const service of report.services) {
-    const details = [service.state, `lifecycle=${service.lifecycle ?? "unavailable"}`];
-    const member = members.get(service.id);
-    details.push(member === undefined ? "standalone" : `activation=${member.activation}`);
-    if (service.health !== null) details.push(`health=${service.health}`);
-    lines.push(`  ${service.service} (${service.id}): ${details.join(", ")}`);
-    for (const [name, endpoint] of Object.entries(service.endpoints))
-      lines.push(`    ${name}: ${endpoint.url}`);
-    if (service.error !== undefined) lines.push(`    error: ${service.error}`);
+const readinessColor = (readiness: StackReport["readiness"]) => {
+  switch (readiness) {
+    case "ready":
+      return green(readiness, process.stdout);
+    case "starting":
+      return yellow(readiness, process.stdout);
+    case "unhealthy":
+      return red(readiness, process.stdout);
+    case "sleeping":
+    case "stopped":
+    case "unavailable":
+      return gray(readiness, process.stdout);
   }
-  lines.push(`Config drift: ${report.config_drift.status}`);
-  lines.push(`  ${report.config_drift.message}`);
-  for (const path of report.config_drift.paths ?? []) lines.push(`  ${path}`);
-  return `${lines.join("\n")}\n`;
+};
+
+const renderDrift = (drift: StackReport["config_drift"]): ReadonlyArray<string> =>
+  drift.status === "changed"
+    ? [
+        yellow(drift.message, process.stdout),
+        ...(drift.paths ?? []).map((path) => `  ${path}`),
+        gray(
+          "Run supabase stack stop, then supabase stack start to apply the changes.",
+          process.stdout,
+        ),
+      ]
+    : [gray(drift.message, process.stdout)];
+
+const render = (
+  report: StackReport,
+  observed: ReadonlyArray<ObservedService>,
+  members: ReadonlyArray<{ readonly id: string; readonly activation: string }>,
+  credentials: StackCredentials | undefined,
+): string => {
+  const activation = new Map(members.map((member) => [member.id, member.activation]));
+  const header = `${bold(`Stack ${report.identity.name}`, process.stdout)} · ${readinessColor(report.readiness)} · ${report.runtime} · ${gray(report.identity.project_root, process.stdout)}`;
+  const owner =
+    report.owner === "unavailable"
+      ? [gray("The stack owner is not running. Run supabase stack start.", process.stdout)]
+      : [];
+  const summary = renderStackSummary(
+    observed.map(({ instance, observation, error }) => ({
+      service: instance.service,
+      observation,
+      activation: activation.get(instance.id),
+      error: error?.message ?? observation?.error?.message,
+    })),
+    credentials,
+  );
+  return `${[header, ...owner].join("\n")}\n\n${summary}\n${renderDrift(report.config_drift).join("\n")}\n`;
 };
 
 const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
@@ -260,10 +255,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
   name: string | undefined,
   id: string | undefined,
 ) {
-  const settings = yield* CommandSettings;
-  const path = yield* Path.Path;
   const resolver = yield* StackTargetResolver;
-  const api = yield* StackApi;
   const target = yield* resolver
     .resolve({
       projectRoot,
@@ -272,27 +264,17 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       runtime: "auto",
     })
     .pipe(Effect.mapError(mapTargetError));
-  if (target.id === undefined)
+  if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
       message: "No managed stack exists for the selected project.",
       suggestion: "Run supabase stack start first.",
     });
-  const discovered = yield* api
-    .discover({ stateRoot: path.join(settings.supabaseHome, "stacks") })
-    .pipe(Effect.mapError(mapStackError));
-  const found = discovered.find(({ definition }) => definition.id === target.id);
-  if (found === undefined)
-    return yield* new StackCommandStatusError({
-      reason: "not-found",
-      message: `Stack ${target.id} was not found.`,
-      suggestion: "Choose an existing --stack-id, or run supabase stack start first.",
-    });
   return {
     ...target,
     id: target.id,
-    definition: found.definition,
-    owner: found.host === undefined ? ("unavailable" as const) : ("reachable" as const),
+    definition: target.definition,
+    owner: target.hostRunning ? ("reachable" as const) : ("unavailable" as const),
   };
 });
 
@@ -313,94 +295,53 @@ const observe = (stack: Stack, owner: StackReport["owner"]) =>
     return { observed, members: composition.members };
   });
 
-const compareConfig = (
-  creations: ReadonlyArray<ServiceCreationInput>,
-  observed: ReadonlyArray<ObservedService>,
-  members: ReadonlyArray<{ readonly id: string }>,
-): StackReport["config_drift"] => {
-  const paths: string[] = [];
-  const memberIds = new Set(members.map(({ id }) => id));
-  for (const creation of creations) {
-    const service = observed.find(
-      ({ instance }) => memberIds.has(instance.id) && instance.service === creation.service,
-    );
-    if (service === undefined) continue;
-    if (service.observation === undefined) {
-      if (service?.error !== undefined)
-        return {
-          status: "unavailable",
-          message: `Configuration could not be compared because ${creation.service} status failed: ${service.error.message}`,
-        };
-      paths.push(`services.${creation.service}`);
-      continue;
-    }
-    if (
-      creation.service === "database" &&
-      service.observation.config.service === "database" &&
-      creation.config.version !== service.observation.config.config.version
-    )
-      paths.push(`services.database.config.version`);
-    if (creation.endpoints === undefined) continue;
-    for (const name of Object.keys(creation.endpoints)) {
-      const endpoint = Reflect.get(creation.endpoints, name);
-      if (
-        typeof endpoint !== "object" ||
-        endpoint === null ||
-        !("port" in endpoint) ||
-        typeof endpoint.port !== "number"
-      )
-        continue;
-      const savedEndpoints = service.observation.config.endpoints;
-      const actual = savedEndpoints === undefined ? undefined : Reflect.get(savedEndpoints, name);
-      if (
-        typeof actual !== "object" ||
-        actual === null ||
-        !("port" in actual) ||
-        actual.port !== endpoint.port
-      )
-        paths.push(`services.${creation.service}.endpoints.${name}`);
-    }
-  }
+const driftFrom = (planned: ReadonlyArray<PlannedInstance>): StackReport["config_drift"] => {
+  const paths = planned.flatMap((entry) =>
+    !entry.member || entry.change === "unchanged"
+      ? []
+      : entry.paths.map((path) => `services.${entry.service}.${path}`),
+  );
   return paths.length === 0
     ? {
         status: "unchanged",
-        message:
-          "Configured database version and explicit endpoint ports match existing composition members.",
+        message: "Project configuration matches the saved composition members.",
       }
     : {
         status: "changed",
-        message: `${paths.length} configured service value${paths.length === 1 ? "" : "s"} differ from the saved stack.`,
+        message: `${paths.length} configured service ${paths.length === 1 ? "value differs" : "values differ"} from the saved stack.`,
         paths,
       };
 };
 
-const configDrift = (
-  projectRoot: string,
-  stackId: string,
-  observed: ReadonlyArray<ObservedService>,
-  members: ReadonlyArray<{ readonly id: string }>,
-) =>
+const unavailableDrift = (message: string): StackReport["config_drift"] => ({
+  status: "unavailable",
+  message,
+});
+
+const configDrift = (stack: Stack, projectRoot: string, functionsIsMember: boolean) =>
   Effect.gen(function* () {
-    const memberIds = new Set(members.map(({ id }) => id));
-    const database = observed.find(
-      ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
-    );
-    const databaseObservation = database?.observation;
-    if (databaseObservation?.config.service !== "database")
-      return {
-        status: "unavailable" as const,
-        message: "Configuration could not be compared without the saved database observation.",
-      };
     const loaded = yield* loadStackConfig(projectRoot);
-    const creations = yield* loaded.creations(stackId);
-    return compareConfig(creations, observed, members);
+    const creations = yield* loaded.creations(stack.id);
+    // Drift ignores non-members, so a Functions dotenv only matters when Functions is a member.
+    const requested = functionsIsMember
+      ? yield* Effect.forEach(creations, withProjectFunctionsEnv)
+      : creations;
+    return driftFrom(yield* stack.composition.plan(requested));
   }).pipe(
-    Effect.catchTag("StackConfigError", (error) =>
-      Effect.succeed({
-        status: "unavailable" as const,
-        message: `Project configuration could not be compared: ${error.message}`,
-      }),
-    ),
+    Effect.catchTags({
+      StackConfigError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+        ),
+      StackFunctionsEnvError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Project configuration could not be compared: ${error.message}`),
+        ),
+      StackError: (error) =>
+        Effect.succeed(
+          unavailableDrift(`Saved configuration could not be compared: ${error.message}`),
+        ),
+    }),
   );
 
 export const stackStatus = Effect.fn("experimental.stack.status")(function* (
@@ -447,8 +388,11 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
       .open({ ...locations, id: target.id })
       .pipe(Effect.mapError(mapStackError));
     const observed = yield* observe(stack, target.owner);
+    const memberIds = new Set(observed.members.map(({ id }) => id));
+    const members = observed.observed.flatMap(({ instance, observation }) =>
+      memberIds.has(instance.id) ? [{ service: instance.service, observation }] : [],
+    );
     if (flags.env) {
-      const memberIds = new Set(observed.members.map(({ id }) => id));
       const database = observed.observed.find(
         ({ instance }) => memberIds.has(instance.id) && instance.service === "database",
       );
@@ -464,8 +408,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The stack owner or primary database is unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      const databaseConfig = databaseObservation.config;
-      if (databaseConfig.service !== "database")
+      if (databaseObservation.config.service !== "database")
         return yield* new StackCommandStatusError({
           reason: "lifecycle",
           message: "The primary database configuration is unavailable for environment export.",
@@ -478,52 +421,31 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
           message: "The stack's active credentials are unavailable for environment export.",
           suggestion: "Run supabase stack start first.",
         });
-      const sql = databaseObservation.endpoints.find(({ name }) => name === "sql");
-      const databaseUrl =
-        sql === undefined
-          ? undefined
-          : toPostgresURL({
-              host: sql.host,
-              port: sql.port,
-              user: "supabase_admin",
-              password: Redacted.value(databaseConfig.config.databasePassword),
-              database: "postgres",
-            });
-      const services = observed.observed.map(serviceReport);
-      const endpoints = {
-        ...(endpointFor(services, observed.members, "rest", "http") === undefined
-          ? {}
-          : { api: endpointFor(services, observed.members, "rest", "http") }),
-        ...(endpointFor(services, observed.members, "studio", "http") === undefined
-          ? {}
-          : { studio: endpointFor(services, observed.members, "studio", "http") }),
-        ...(endpointFor(services, observed.members, "mail", "http") === undefined
-          ? {}
-          : { mailUi: endpointFor(services, observed.members, "mail", "http") }),
-      };
-      const values = stackEnvValues(
-        { endpoints, credentials: identity },
-        databaseUrl === undefined ? {} : { databaseUrl },
-        envNames,
-      );
+      const connections = stackConnections(members);
+      const values = stackEnvValues(connections, identity, envNames);
       if (output.format === "text") yield* output.raw(yield* encodeStackEnv(values));
       else yield* output.result(values);
       return;
     }
     const config = yield* configDrift(
+      stack,
       target.definition.identity.projectRoot,
-      target.definition.id,
-      observed.observed,
-      observed.members,
+      observed.observed.some(
+        ({ instance }) => memberIds.has(instance.id) && instance.service === "functions",
+      ),
     );
+    const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
+    const connections = stackConnections(members);
     const report = reportFor(
       target.definition,
       target.owner,
       observed.observed,
       observed.members,
       config,
+      connectionEnv(connections, credentials),
     );
-    if (output.format === "text") yield* output.raw(render(report));
+    if (output.format === "text")
+      yield* output.raw(render(report, observed.observed, observed.members, credentials));
     else yield* output.success("", report);
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

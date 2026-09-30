@@ -2,15 +2,12 @@ import { BunPath } from "@effect/platform-bun";
 import { Effect, Path } from "effect";
 import { it } from "@effect/vitest";
 
-import { afterEach, describe, expect, vi } from "vitest";
+import { describe, expect } from "vitest";
 
 import { buildLogflareContainerSpec, type LogflareContainerSpecInput } from "./logflare.service.ts";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
 const base: LogflareContainerSpecInput = {
+  slim: false,
   image: "supabase/logflare:1.0.0",
   projectId: "proj",
   networkId: "supabase_network_proj",
@@ -172,10 +169,10 @@ describe("buildLogflareContainerSpec", () => {
     () => {
       return Effect.gen(function* () {
         const path = yield* Path.Path;
-        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
         const spec = buildLogflareContainerSpec(
           {
             ...base,
+            slim: true,
             image: "ghcr.io/supabase/cli/analytics:v1.50.6",
             backend: "bigquery",
             gcpProjectId: "my-project",
@@ -195,15 +192,15 @@ describe("buildLogflareContainerSpec", () => {
   it.effect("overrides the entrypoint and uses wget on a slim analytics image", () => {
     return Effect.gen(function* () {
       const path = yield* Path.Path;
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
       const slim = buildLogflareContainerSpec(
         {
           ...base,
+          slim: true,
           image: "ghcr.io/supabase/cli/analytics:v1.50.6",
         },
         path,
       );
-      const dockerIo = buildLogflareContainerSpec(base, path);
+      const dockerIo = buildLogflareContainerSpec({ ...base, slim: true }, path);
       expect(slim.entrypoint).toBe(dockerIo.entrypoint);
       expect(slim.cmd).toEqual(dockerIo.cmd);
       expect(slim.healthcheck?.test).toEqual([

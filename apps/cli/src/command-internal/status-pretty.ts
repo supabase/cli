@@ -1,4 +1,4 @@
-import { aqua, bold, green, yellow } from "./colors.ts";
+import { aqua, bold, gray, green, red, yellow } from "./colors.ts";
 import type { StatusOutputNames } from "./status-values.ts";
 
 /**
@@ -10,7 +10,7 @@ import type { StatusOutputNames } from "./status-values.ts";
  * `process.stderr` and would check the wrong stream's TTY status.
  */
 
-type OutputKind = "text" | "link" | "key";
+type OutputKind = "text" | "link" | "key" | "good" | "pending" | "bad" | "muted";
 
 interface OutputItem {
   readonly label: string;
@@ -18,7 +18,8 @@ interface OutputItem {
   readonly kind: OutputKind;
 }
 
-interface OutputGroup {
+/** One rounded-border table: a title row above label/value rows. */
+export interface StatusGroup {
   readonly name: string;
   readonly items: ReadonlyArray<OutputItem>;
 }
@@ -29,10 +30,10 @@ const COLUMN_0_MAX_WIDTH = 16;
  * Builds the 5 fixed display groups, looking up each label's value by its resolved output
  * key — `--override-name` remaps the key but never the group layout.
  */
-function buildGroups(
+export function statusGroups(
   values: Readonly<Record<string, string>>,
   names: StatusOutputNames,
-): ReadonlyArray<OutputGroup> {
+): ReadonlyArray<StatusGroup> {
   const at = (key: string) => values[key] ?? "";
   return [
     {
@@ -77,7 +78,7 @@ function buildGroups(
 
 /**
  * Display width for this command's inputs: URLs/keys/labels are always plain ASCII, so every
- * rune is width 1. The 5 fixed group-title emoji are the only non-ASCII runes ever rendered,
+ * rune is width 1. The fixed group-title emoji are the only non-ASCII runes ever rendered,
  * and their widths are hardcoded in {@link HEADER_DISPLAY_WIDTH} instead of computed
  * generically.
  */
@@ -92,11 +93,12 @@ const HEADER_DISPLAY_WIDTH: Readonly<Record<string, number>> = {
   "⛁ Database": 10,
   "🔑 Authentication Keys": 22,
   "📦 Storage (S3)": 15,
+  "🧩 Services": 11,
 };
 
 /**
  * Exported only for direct unit coverage of the fallback branch — every call site in this
- * file passes one of the 5 fixed titles in {@link HEADER_DISPLAY_WIDTH}.
+ * file passes one of the fixed titles in {@link HEADER_DISPLAY_WIDTH}.
  */
 export function statusHeaderWidth(name: string): number {
   return HEADER_DISPLAY_WIDTH[name] ?? displayWidth(name);
@@ -125,13 +127,19 @@ export function wrapStatusLabel(text: string, width: number): ReadonlyArray<stri
   return lines.length > 0 ? lines : [text];
 }
 
-/** Value coloring: `link` → aqua, `key` → yellow, `text` → unstyled. */
 function colorValue(kind: OutputKind, value: string): string {
   switch (kind) {
     case "link":
       return aqua(value, process.stdout);
     case "key":
+    case "pending":
       return yellow(value, process.stdout);
+    case "good":
+      return green(value, process.stdout);
+    case "bad":
+      return red(value, process.stdout);
+    case "muted":
+      return gray(value, process.stdout);
     case "text":
       return value;
   }
@@ -173,7 +181,7 @@ export function statusColumnLayout(
   return { col0Padded, col1Padded, targetInner };
 }
 
-function renderGroupTable(group: OutputGroup): string | undefined {
+function renderGroupTable(group: StatusGroup): string | undefined {
   const rows = group.items.filter((item) => item.value.length > 0);
   if (rows.length === 0) return undefined;
 
@@ -229,7 +237,11 @@ export function renderStatusPretty(
   values: Readonly<Record<string, string>>,
   names: StatusOutputNames,
 ): string {
-  const groups = buildGroups(values, names);
+  return renderStatusGroups(statusGroups(values, names));
+}
+
+/** Renders groups as rounded-border tables, followed by one blank line per group. */
+export function renderStatusGroups(groups: ReadonlyArray<StatusGroup>): string {
   const lines: string[] = [];
   for (const group of groups) {
     const table = renderGroupTable(group);

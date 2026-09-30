@@ -13,11 +13,11 @@ import { LoadPgDeltaSqlFiles, ReadPgDeltaExportManifest } from "../../shared/pgd
 import { DeclarativeCompatibilityError, DeclarativeDiffError } from "./declarative.errors.ts";
 import {
   classifyDeclarativeLoadCompatibility,
-  currentShellPlatform,
   formatDeclarativeUpgradeGate,
   type DeclarativeLoadCompatibilityFinding,
   type DeclarativeUpgradeGateText,
 } from "./declarative.flow.ts";
+import { currentShellPlatform } from "../../../../command-internal/shell-quote.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
 export interface DeclarativeRunContext {
@@ -80,10 +80,8 @@ export const diffDeclarativeToMigrations = Effect.fnUntraced(function* (
   const engine = yield* PgDeltaEngine;
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return yield* Effect.fail(
-      declarativeError(
-        "No declarative schema directory found. Run supabase db schema declarative generate first.",
-      ),
+    return yield* declarativeError(
+      "No declarative schema directory found. Run supabase db schema declarative generate first.",
     );
   }
   const files = yield* LoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(

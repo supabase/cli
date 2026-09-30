@@ -10,7 +10,7 @@ export interface OutputTask {
   readonly fail: (message?: string) => Effect.Effect<void>;
   readonly info: (message?: string) => Effect.Effect<void>;
   readonly cancel: (message?: string) => Effect.Effect<void>;
-  readonly clear: () => Effect.Effect<void>;
+  readonly clear: Effect.Effect<void>;
 }
 
 interface OutputSelectOption {

@@ -1,21 +1,20 @@
-import { stat } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { Effect, FileSystem, Option, Path } from "effect";
 
-export async function findGitRootPath(startPath: string) {
-  let current = resolve(startPath);
+export const findGitRootPath = Effect.fnUntraced(function* (startPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  let current = path.resolve(startPath);
 
-  for (;;) {
-    try {
-      await stat(resolve(current, ".git"));
-      return current;
-    } catch {
-      // Keep walking until we hit the filesystem root.
+  while (true) {
+    // A failed stat means no `.git` here: keep walking until we hit the filesystem root.
+    if (Option.isSome(yield* fs.stat(path.resolve(current, ".git")).pipe(Effect.option))) {
+      return Option.some(current);
     }
 
-    const parent = dirname(current);
+    const parent = path.dirname(current);
     if (parent === current) {
-      return undefined;
+      return Option.none<string>();
     }
     current = parent;
   }
-}
+});

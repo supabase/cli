@@ -7,7 +7,7 @@ import {
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
-import { detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -23,6 +23,10 @@ import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
@@ -162,22 +166,18 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     if (Option.isSome(flags.usePgSchema)) engineSet.push("use-pg-schema");
     if (Option.isSome(flags.usePgDelta)) engineSet.push("use-pg-delta");
     if (engineSet.length > 1) {
-      return yield* Effect.fail(
-        new DbDiffEngineConflictError({
-          message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbDiffEngineConflictError({
+        message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
+      });
     }
     const targetSet: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
     if (Option.isSome(flags.linked)) targetSet.push("linked");
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbDiffTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
+      });
     }
     if (
       Option.isSome(flags.useMigra) ||
@@ -205,11 +205,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const toSet = to.length > 0;
     if (fromSet || toSet) {
       if (!fromSet || !toSet) {
-        return yield* Effect.fail(
-          new DbDiffExplicitFlagsError({
-            message: "must set both --from and --to when using explicit diff mode",
-          }),
-        );
+        return yield* new DbDiffExplicitFlagsError({
+          message: "must set both --from and --to when using explicit diff mode",
+        });
       }
       // `--project-ref` never implies `--linked` and must not be silently discarded (see
       // push.handler.ts's identical guard). Two exceptions in explicit mode: `--from`/`--to
@@ -222,12 +220,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         classifyExplicitRef(from) !== "linked" &&
         classifyExplicitRef(to) !== "linked"
       ) {
-        return yield* Effect.fail(
-          new DbDiffTargetFlagsError({
-            message:
-              "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-          }),
-        );
+        return yield* new DbDiffTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
+        });
       }
       // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or cascade) so the
       // config read below and a later `migrations` catalog export merge the matching
@@ -293,11 +289,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 } satisfies PgDeltaDatabaseEndpoint;
               }
               if (Option.isNone(stackApi)) {
-                return yield* Effect.fail(
-                  new DbDiffDbNotRunningError({
-                    message: "The local stack is not running.",
-                  }),
-                );
+                return yield* new DbDiffDbNotRunningError({
+                  message: "The local stack is not running.",
+                });
               }
               const connection = yield* stackLocalDatabaseConn.pipe(
                 Effect.provideService(CommandSettings, cliSettings),
@@ -356,9 +350,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies PgDeltaDatabaseEndpoint;
             default:
-              return yield* Effect.fail(
-                new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) }),
-              );
+              return yield* new DbDiffUnknownTargetError({ message: unknownTargetMessage(ref) });
           }
         });
       const source = yield* resolveRef(from);
@@ -426,11 +418,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     // `--project-ref`, so forwarding it would silently drop the flag and diff the workdir's own
     // linked ref instead. Fail up front rather than risk the wrong project.
     if (usePgSchema && Option.isSome(flags.projectRef)) {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message: "--project-ref is not supported with --use-pg-schema",
-        }),
-      );
+      return yield* new DbDiffTargetFlagsError({
+        message: "--project-ref is not supported with --use-pg-schema",
+      });
     }
     if (usePgSchema) {
       // TS-only deprecation notice, printed before delegating (diagnostics stay stderr-only in
@@ -469,12 +459,10 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     // `--project-ref` never implies `--linked` and must not be silently discarded on a
     // non-linked target (see push.handler.ts's identical guard; explicit mode has its own).
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbDiffTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbDiffTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // The ref is resolved and config read here, before `resolver.resolve()` below, so the
@@ -609,11 +597,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         ),
       );
       if (!running) {
-        return yield* Effect.fail(
-          new DbDiffDbNotRunningError({
-            message: `${aqua("supabase start")} is not running.`,
-          }),
-        );
+        return yield* new DbDiffDbNotRunningError({
+          message: `${aqua("supabase start")} is not running.`,
+        });
       }
       yield* emitStatus("Creating shadow database...");
       const shadowBase = yield* resolveShadowRunInput();
@@ -643,13 +629,20 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               setup: shadowBase.setup,
             });
             yield* emitStatus("Diffing local database with current migrations...");
+            const differHost = (host: string) =>
+              toolContainerUsesHostNetwork(shadowBase.networkId)
+                ? host
+                : rewriteDumpHostForToolContainer(host, {
+                    platform: runtimeInfo.platform,
+                    usesHostNetwork: false,
+                  });
             return yield* diffSchemaPgAdmin({
               // `source`/`target` are inverted relative to the migra/pg-delta path below:
               // `source` is the user's db, `target` is the shadow.
-              source: targetUrl,
+              source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
               // Hardcoded, not built via `toPostgresURL`: this ignores
               // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
-              target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
+              target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
               schema: flags.schema,
               projectEnvValues: cfg.projectEnv,
               projectId: shadowBase.projectId,
@@ -748,9 +741,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Detect the branch from the resolved workdir, not the caller's CWD, so
       // `supabase --workdir … db diff` reports the project's branch, not the
       // directory the command was invoked from.
-      const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
+      const branch = yield* detectGitBranch(cliSettings.workdir);
       yield* output.raw(
-        `Finished ${aqua("supabase db diff")} on branch ${aqua(branch)}.\n\n`,
+        `Finished ${aqua("supabase db diff")}${branchClause(branch, aqua)}.\n\n`,
         "stderr",
       );
     }

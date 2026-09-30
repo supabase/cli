@@ -25,6 +25,6 @@ export function dockerfileServiceImageRaw(alias: string): string {
  * point for default service images; use `dockerfileServiceImageRaw` where the
  * docker.io identity itself is the contract (user-facing short names).
  */
-export function dockerfileServiceImage(alias: string): string {
-  return slimImageForAlias(alias, dockerfileServiceImageRaw(alias));
+export function dockerfileServiceImage(alias: string, slim: boolean): string {
+  return slimImageForAlias(alias, dockerfileServiceImageRaw(alias), slim);
 }

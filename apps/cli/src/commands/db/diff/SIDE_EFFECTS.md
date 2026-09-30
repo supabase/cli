@@ -10,7 +10,9 @@ pending port.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
-then destroys its namespace when the Effect scope closes. Stack shadows use the stack baseline
+then destroys its namespace when the Effect scope closes. If its container engine is unreachable
+then, the namespace is still removed and stderr lists the commands that remove its engine
+resources. Stack shadows use the stack baseline
 cache described below. Native artifacts
 are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
 find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
@@ -55,7 +57,10 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## Docker
 
-- Edge-runtime container (migra engine only).
+- Edge-runtime container (migra engine only). It and the `supabase/migra` fallback get
+  loopback `SOURCE`/`TARGET` hosts rewritten to `host.docker.internal` when `--network-id`
+  puts them on a named network, or when a stack-backend URL is used outside Linux host
+  networking.
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
   in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
@@ -75,7 +80,8 @@ it, and JSON `null` disables formatting without disabling safe compaction.
   (`dockerfileServiceImage("differ")`). One `docker run --rm` when no `--schema` is given; one
   run per `--schema` value, in flag order. Runs on the project's Docker network (`--network-id`
   or the generated `supabase_network_<projectId>` — never the host network, unlike the migra
-  bash fallback), with `--add-host host.docker.internal:host-gateway` on Linux only, and both
+  bash fallback), so loopback source and shadow hosts become `host.docker.internal` unless
+  `--network-id host` is set, with `--add-host host.docker.internal:host-gateway` on Linux only, and both
   `com.supabase.cli.project`/`com.docker.compose.project` labels — no env vars, bind mounts, or
   working-directory override.
 

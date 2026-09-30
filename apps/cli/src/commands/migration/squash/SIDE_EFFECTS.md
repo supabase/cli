@@ -9,7 +9,9 @@ migration-history table to match.
 
 When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
 unique temporary stack namespace. The command applies the catalog and project migrations as needed,
-then destroys its namespace when the Effect scope closes. Stack shadows use the stack baseline
+then destroys its namespace when the Effect scope closes. If its container engine is unreachable
+then, the namespace is still removed and stderr lists the commands that remove its engine
+resources. Stack shadows use the stack baseline
 cache described below. Native artifacts
 are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
 find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
@@ -156,7 +158,8 @@ code or the rest of the payload.
   baseline to target the surviving **older** version, not the original squash target.
 - A failed full-schema dump leaves the target migration truncated (not recoverable — the
   file was already truncated before the dump began).
-- A declined "Update remote migration history table?" prompt is a **success** path (exit 0,
+- A declined "Update remote migration history table?" prompt (`n`, or any unrecognised
+  answer) is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
 - **Atomicity note:** the old Go CLI sent the baseline `DELETE`/`INSERT` via a batched pipeline
