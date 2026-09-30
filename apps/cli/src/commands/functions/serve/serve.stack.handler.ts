@@ -44,34 +44,25 @@ const follow = Effect.fn("functions.serve.follow")(function* (
   launch: Effect.Effect<void, { readonly message: string }, Scope.Scope>,
 ) {
   const output = yield* Output;
-  const logs = yield* instance.logs.pipe(
-    Stream.groupByKey((entry) => entry.stream),
-    Stream.flatMap(
-      ([channel, entries]) =>
-        entries.pipe(
-          Stream.map(({ bytes }) => bytes),
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.map((line) => ({ channel, line })),
-        ),
-      { concurrency: 2 },
-    ),
-    Stream.runForEach(
-      Effect.fn(function* ({ channel, line }) {
-        const timestamp = DateTime.formatIso(yield* DateTime.now);
-        yield* output.format === "stream-json"
-          ? output.event({
-              type: "log-entry",
-              timestamp,
-              source: "live",
-              service: "functions",
-              instance_id: instance.id,
-              stream: channel,
-              line,
-            })
-          : output.raw(`${line}\n`, channel);
-      }),
-    ),
+  // The owner may pin a follow's start after the launch begins; a time bound taken before launch
+  // keeps its first output.
+  const since = DateTime.formatIso(yield* DateTime.now);
+  const logs = yield* instance.readLogs({ follow: true, since }).pipe(
+    Stream.runForEach(({ kind, timestamp, text }) => {
+      if (kind !== "stdout" && kind !== "stderr") return Effect.void;
+      const line = text ?? "";
+      return output.format === "stream-json"
+        ? output.event({
+            type: "log-entry",
+            timestamp,
+            source: "live",
+            service: "functions",
+            instance_id: instance.id,
+            stream: kind,
+            line,
+          })
+        : output.raw(`${line}\n`, kind);
+    }),
     Effect.forkScoped({ startImmediately: true }),
   );
   yield* launch;

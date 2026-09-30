@@ -77,3 +77,18 @@ export function green(text: string, stream: ColorStream = process.stderr): strin
 export function gray(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("gray", text, { validateStream: false }) : text;
 }
+
+/** Renders in bright magenta. */
+export function magenta(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("magenta", text, { validateStream: false }) : text;
+}
+
+/** Renders in bright blue. */
+export function blue(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("blue", text, { validateStream: false }) : text;
+}
+
+/** Renders dimmed. */
+export function dim(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("dim", text, { validateStream: false }) : text;
+}

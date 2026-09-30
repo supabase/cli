@@ -4,7 +4,7 @@ import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
@@ -22,7 +22,7 @@ const dockerOptions = (root: string) => ({
 
 describe("service catalog", () => {
   it.live(
-    "serves Analytics, Vector, and Imgproxy with their real endpoints",
+    "serves Analytics and Imgproxy with their real endpoints",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -65,41 +65,12 @@ describe("service catalog", () => {
           yield* analytics.start;
           yield* analytics.ready;
           const analyticsEndpoint = yield* analyticsRecipe.endpoint("http");
-          const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
           const analyticsResponse = yield* client.execute(
             HttpClientRequest.get(
               `http://${analyticsEndpoint.host}:${analyticsEndpoint.port}/health`,
             ),
           );
           expect(analyticsResponse.status).toBe(200);
-
-          const vectorRecipe = yield* makeServiceRecipe(
-            {
-              service: "vector",
-              config: {
-                analyticsUrl: `http://${analyticsRelay.host}:${analyticsRelay.port}`,
-                apiKey: "catalog-analytics",
-                configPath: `${root}/vector.yaml`,
-              },
-            },
-            dockerOptions(root),
-          );
-          yield* fs.writeFileString(
-            `${root}/vector.yaml`,
-            "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
-              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
-          );
-          const vector = yield* makeService(vectorRecipe.definition, {
-            id: "vector",
-            config: vectorRecipe.creation,
-          });
-          yield* vector.start;
-          yield* vector.ready;
-          const vectorEndpoint = yield* vectorRecipe.endpoint("http");
-          const vectorResponse = yield* client.execute(
-            HttpClientRequest.get(`http://${vectorEndpoint.host}:${vectorEndpoint.port}/health`),
-          );
-          expect(vectorResponse.status).toBe(200);
 
           const imageRoot = `${root}/images`;
           yield* fs.makeDirectory(imageRoot, { recursive: true });
@@ -122,7 +93,6 @@ describe("service catalog", () => {
           expect(imgproxyResponse.status).toBe(200);
 
           yield* imgproxy.stop;
-          yield* vector.stop;
           yield* analytics.stop;
           yield* database.stop;
         }),

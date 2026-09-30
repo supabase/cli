@@ -29,6 +29,7 @@ export type {
   OpenOptions,
   PgProveOptions,
   PlannedInstance,
+  ReadLogsOptions,
   ReadStackLogsOptions,
   SavedStack,
   StackLogRecord,

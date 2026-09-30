@@ -171,8 +171,6 @@ const withoutInstance = (current: SavedStack, id: string): SavedStack =>
 
 const drainingBlocks: ReadonlyArray<ServiceAdmission> = ["start", "arm", "restart", "storage"];
 
-const encoder = new TextEncoder();
-
 const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const services = yield* Effect.context<
     | FileSystem.FileSystem
@@ -672,16 +670,11 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             ),
           ),
       ).pipe(Stream.mapError((cause) => stackError("followStatus", cause))),
-    logs: ({ id }) =>
-      Stream.unwrap(logStore.tail(id)).pipe(
-        Stream.map(({ stream, text }) => ({ stream, bytes: encoder.encode(`${text}\n`) })),
-        Stream.mapError((cause) => stackError("logs", cause)),
-      ),
-    readLogs: ({ id, since, tail, follow }) =>
+    readLogs: ({ id, from, since, tail, follow }) =>
       Stream.unwrap(
         Effect.gen(function* () {
           return yield* logStore.read(id, {
-            from: "oldest",
+            from: from ?? "oldest",
             follow,
             ...(since === undefined ? {} : { since: yield* LogStore.sinceMillis(since) }),
             ...(tail === undefined ? {} : { tail }),

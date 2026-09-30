@@ -7,7 +7,6 @@ import {
   Exit,
   FileSystem,
   Layer,
-  Option,
   Path,
   Queue,
   Redacted,
@@ -147,10 +146,10 @@ describe("owner persisted logs", () => {
     ).pipe(Effect.provide(services)),
   );
 
-  it.live("keeps the logs RPC to new output lines of the tailed instance", () =>
+  it.live("resumes a follow at a record position without replaying earlier records", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const owner = yield* openOwner("owner-logs-tail-", "native");
+        const owner = yield* openOwner("owner-logs-resume-", "native");
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
@@ -158,33 +157,25 @@ describe("owner persisted logs", () => {
         });
         yield* owner.rpc.startService({ id: mail.id });
         yield* owner.rpc.readyService({ id: mail.id });
-        const before = Array.from(
+        const history = Array.from(
           yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
-        ).filter(isOutput).length;
-        const received = yield* Queue.unbounded<{
-          readonly stream: "stdout" | "stderr";
-          readonly bytes: Uint8Array;
-        }>();
-        yield* owner.rpc.logs({ id: mail.id }).pipe(
-          Stream.runForEach((entry) => Queue.offer(received, entry)),
+        );
+        const last = history.at(-1);
+        if (last?.position === undefined) return yield* Effect.die("mail wrote no records");
+        const resumed = yield* Queue.unbounded<LogRecord>();
+        yield* owner.rpc.readLogs({ id: mail.id, from: last.position, follow: true }).pipe(
+          Stream.runForEach((record) => Queue.offer(resumed, record)),
           Effect.forkScoped,
         );
 
-        // Each restart writes new output; repeat until the tail has subscribed and seen some.
-        const tailed = yield* Effect.gen(function* () {
-          yield* owner.rpc.restartService({ id: mail.id });
-          yield* owner.rpc.readyService({ id: mail.id });
-          return yield* Queue.poll(received);
-        }).pipe(Effect.repeat({ until: Option.isSome }));
+        yield* owner.rpc.restartService({ id: mail.id });
+        const first = yield* Queue.take(resumed);
+        const relaunched = yield* Queue.take(resumed).pipe(
+          Effect.repeat({ until: (record) => record.kind === "launch" }),
+        );
 
-        if (Option.isNone(tailed)) return yield* Effect.die("logs RPC emitted nothing");
-        const text = new TextDecoder().decode(tailed.value.bytes);
-        expect(text.endsWith("\n")).toBe(true);
-        expect(text.slice(0, -1)).not.toContain("\n");
-        const history = Array.from(
-          yield* owner.rpc.readLogs({ id: mail.id, follow: false }).pipe(Stream.runCollect),
-        ).filter(isOutput);
-        expect(history.slice(before).map((record) => `${record.text}\n`)).toContain(text);
+        expect(first).toEqual(last);
+        expect(relaunched).toMatchObject({ kind: "launch", launchId: 2 });
       }),
     ).pipe(Effect.provide(services)),
   );

@@ -260,7 +260,7 @@ describe("service catalog", () => {
             },
           );
           const logs = yield* Ref.make("");
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
             ),
@@ -332,7 +332,7 @@ describe("service catalog", () => {
           );
           const logs = yield* Ref.make("");
           const warned = yield* Deferred.make<void>();
-          yield* recipe.logs.pipe(
+          yield* Stream.fromSubscription(yield* recipe.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.updateAndGet(logs, (text) => text + new TextDecoder().decode(bytes)).pipe(
                 Effect.flatMap((text) =>
@@ -534,7 +534,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         },
       };
       const recipe = yield* Functions.makeRecipe(
-        creation,
         {
           stackId: "e".repeat(64),
           instanceId: "windows",
@@ -553,7 +552,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       );
       const scope = yield* Scope.make();
       yield* recipe.definition
-        .launch({ id: "windows", config: creation, scope })
+        .launch({ id: "windows", config: creation, scope, launchId: 1 })
         .pipe(Effect.flip, Effect.ensuring(Scope.close(scope, Exit.void)));
 
       const spec = yield* Ref.get(launched);

@@ -22,6 +22,8 @@ modified. A preparation failure still runs cleanup for every acquired temporary 
 
 - A managed stack descriptor/state record when the target does not exist. Existing records are
   updated while temporary instances and their instance directories are created and removed.
+  Starting the owner of a target saved with a Vector instance removes that instance from the
+  record, as described for `stack start`.
 - Runtime artifacts through the selected native or container runtime's package-owned cache.
 - Telemetry state after success or failure once the handler starts.
 

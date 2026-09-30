@@ -17,7 +17,6 @@ import { homedir, tmpdir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
-import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
 
@@ -35,7 +34,6 @@ export const serviceNames = [
   "pgmeta",
   "mail",
   "analytics",
-  "vector",
   "pooler",
 ] as const;
 
@@ -62,10 +60,10 @@ const watchServiceLogs = Effect.fn("WholeStack.watchServiceLogs")(
       services,
       (instance) =>
         Effect.forkScoped(
-          instance.logs.pipe(
-            Stream.runForEach(({ bytes }) =>
+          instance.readLogs({ follow: true }).pipe(
+            Stream.runForEach((record) =>
               Ref.update(logTails, (tails) => {
-                const text = new TextDecoder().decode(bytes);
+                const text = record.text === undefined ? "" : `${record.text}\n`;
                 const existing = tails.find(([name]) => name === instance.service)?.[1] ?? "";
                 const updated = `${existing}${text}`.slice(-8192);
                 const without = tails.filter(([name]) => name !== instance.service);
@@ -119,7 +117,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     });
     const functionsRoot = `${root}/functions`;
     const storageRoot = `${root}/storage`;
-    const vectorConfigPath = `${root}/vector.yaml`;
     yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
     yield* fs.makeDirectory(storageRoot, { recursive: true });
     yield* fs.writeFileString(
@@ -138,7 +135,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       runtime,
       name: `whole-${runtime}`,
     });
-    yield* fs.writeFileString(vectorConfigPath, vectorAnalyticsConfig(`vector-${stack.id}`));
     const owner = yield* Ref.make<Option.Option<Stack>>(Option.some(stack));
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -208,14 +204,6 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
         {
           service: "analytics",
           config: { backend: "postgres", apiKey: secret },
-          endpoints: { http: endpoint("auto") },
-        },
-        {
-          service: "vector",
-          config: {
-            apiKey: secret,
-            configPath: vectorConfigPath,
-          },
           endpoints: { http: endpoint("auto") },
         },
         {

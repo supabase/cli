@@ -415,30 +415,6 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the live tail flowing while appends fail", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const base = yield* tempRoot("log-store-unwritable-");
-      const root = path.join(base, "not-a-directory");
-      yield* fs.writeFileString(root, "");
-      const { store } = yield* openStore(root);
-      const instance = yield* fakeInstance("unwritable");
-      yield* store.attach(instance);
-      const lines = yield* Queue.unbounded<string>();
-      yield* (yield* store.tail("unwritable")).pipe(
-        Stream.runForEach(({ text }) => Queue.offer(lines, text)),
-        Effect.forkScoped,
-      );
-
-      yield* instance.publish(instance.chunk(1, "first live line\n"));
-      yield* instance.publish(instance.chunk(1, "second live line\n"));
-      const received = yield* takeExactly(lines, 2);
-
-      expect(Array.from(received)).toEqual(["first live line", "second live line"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("tails with since past a newer segment that holds an older flushed line", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-late-flush-");
@@ -467,26 +443,6 @@ describe("LogStore", () => {
 
       expect(texts(offline)).toEqual(["later line"]);
       expect(texts(live)).toEqual(["later line"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("delivers one batch larger than any buffer to a waiting live tail", () =>
-    Effect.gen(function* () {
-      const root = yield* tempRoot("log-store-live-batch-");
-      const { store } = yield* openStore(root);
-      const instance = yield* fakeInstance("live-batch");
-      yield* store.attach(instance);
-      const lines = yield* Queue.unbounded<string>();
-      yield* (yield* store.tail("live-batch")).pipe(
-        Stream.runForEach(({ text }) => Queue.offer(lines, text)),
-        Effect.forkScoped,
-      );
-      const expected = Array.from({ length: 2_000 }, (_, index) => `burst line ${index}`);
-
-      yield* instance.publish(instance.chunk(1, `${expected.join("\n")}\n`));
-      const received = yield* takeExactly(lines, expected.length);
-
-      expect(received).toEqual(expected);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -625,7 +581,11 @@ describe("LogStore", () => {
       const all = yield* LogStore.readStackLogs({ root });
       const tailed = yield* LogStore.readStackLogs({ root, tail: 2 });
       const recent = yield* LogStore.readStackLogs({ root, since: 2_000, instances: ["rest-1"] });
+      const streamed = yield* LogStore.streamStackLogs({ root, instances: ["rest-1"] }).pipe(
+        Stream.runCollect,
+      );
 
+      expect(Array.from(streamed)).toEqual(all.filter(({ service }) => service === "rest"));
       expect(all.map(({ service, kind }) => `${service}:${kind}`)).toEqual([
         "rest:launch",
         "rest:stdout",
@@ -681,6 +641,21 @@ describe("LogStore", () => {
       const [record] = yield* reader.take(1);
 
       expect(record).toMatchObject({ kind: "stdout", text: "new" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a tailed read that also sets a start position", () =>
+    Effect.gen(function* () {
+      const root = yield* tempRoot("log-store-tail-from-");
+      const { store } = yield* openStore(root);
+      yield* store.attach(yield* fakeInstance("tail-from"));
+
+      const error = yield* store
+        .read("tail-from", { from: { generation: 1, byteOffset: 0 }, tail: 5, follow: false })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(LogStore.LogStoreError);
+      expect(error.message).toContain("cannot also set a start position");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

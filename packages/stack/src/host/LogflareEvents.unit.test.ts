@@ -33,6 +33,24 @@ it("splits PostgREST's timestamp prefix from the message and converts its zone o
   });
 });
 
+it("parses a PostgREST request line into request metadata stamped with the request time", () => {
+  const line =
+    '172.18.0.1 - anon [28/Sep/2026:12:30:15 +0200] "GET /items?select=id HTTP/1.1" 200 2 "" "curl/8.7.1"';
+  expect(logflareEvent("rest", received, line)).toEqual({
+    project: "default",
+    appname: "rest",
+    event_message: line,
+    timestamp: "2026-09-28T10:30:15.000Z",
+    metadata: {
+      host: "default",
+      method: "GET",
+      path: "/items?select=id",
+      protocol: "HTTP/1.1",
+      status: 200,
+    },
+  });
+});
+
 it("keeps a PostgREST line whose prefix is not a timestamp", () => {
   const event = logflareEvent("rest", received, "Config: schema cache loaded");
   expect(event.event_message).toBe("Config: schema cache loaded");

@@ -23,7 +23,7 @@ forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio s
 S3 protocol/vector controls are forwarded to their services. Storage receives the local S3 access
 keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
 resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
-but unused: the stack composes no Vector service.
+and ignored: the stack runs no Vector service.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
@@ -40,6 +40,11 @@ use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project dir
 The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
 the stack deletes those logs; stopping the stack and resetting database data keep them.
+PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string included, is
+persisted and shipped to Analytics.
+When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
+members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
+under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each

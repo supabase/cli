@@ -522,17 +522,6 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
-    ...(analytics.vector_port === undefined &&
-    envOverride("SUPABASE_ANALYTICS_VECTOR_PORT", undefined, env) === undefined
-      ? {}
-      : {
-          vector_port: resolvedPort(
-            "SUPABASE_ANALYTICS_VECTOR_PORT",
-            analytics.vector_port ?? 0,
-            "analytics.vector_port",
-            env,
-          ),
-        }),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(

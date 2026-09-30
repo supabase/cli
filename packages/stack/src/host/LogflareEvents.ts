@@ -75,6 +75,9 @@ const parsePostgrestTime = (text: string): string | undefined => {
   );
 };
 
+/** The time and request of PostgREST's Apache combined request line. */
+const postgrestRequest = /^\S+ \S+ \S+ \[([^\]]+)\] "([A-Z]+) (\S+) ([^"\s]+)" (\d{3}) /u;
+
 const withoutProject = ({ project: _project, ...event }: LogflareEvent): LogflareEvent => event;
 
 const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = {
@@ -85,6 +88,21 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
       : { ...event, metadata: { ...event.metadata, timestamp: parsed.time, ...parsed } };
   },
   rest: (event) => {
+    const request = postgrestRequest.exec(event.event_message);
+    const requestTime = request === null ? undefined : parsePostgrestTime(request[1] ?? "");
+    if (request !== null && requestTime !== undefined)
+      return {
+        ...event,
+        timestamp: requestTime,
+        metadata: {
+          ...event.metadata,
+          host: event.project,
+          method: request[2],
+          path: request[3],
+          protocol: request[4],
+          status: Number(request[5]),
+        },
+      };
     const match = /^(.*): (.*)$/u.exec(event.event_message);
     const timestamp = match === null ? undefined : parsePostgrestTime(match[1] ?? "");
     return match === null || timestamp === undefined

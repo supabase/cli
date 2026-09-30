@@ -437,6 +437,8 @@ export const runStackHost = Effect.fn("StackHost.run")(
               ),
             ),
           );
+          // After the sweep, so no leftover Vector container still mounts the files it removes.
+          yield* state.migrate(id);
           const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(
             Layer.merge(

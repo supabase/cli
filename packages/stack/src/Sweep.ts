@@ -47,9 +47,10 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
       const saved = yield* state.read(id);
       if (saved === undefined) return true;
       const dataRoot = path.join(yield* fs.realPath(options.stateRoot), id, "data");
+      yield* Owner.sweepContainers(saved, dataRoot);
+      yield* state.migrate(id);
       if (saved.lifetime === "session")
         yield* destroyStack(state, saved, dataRoot, options.cacheRoot);
-      else yield* Owner.sweepContainers(saved, dataRoot);
       return true;
     }),
   ).pipe(Effect.timeout(sweepTimeout));

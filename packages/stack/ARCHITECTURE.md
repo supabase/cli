@@ -217,7 +217,7 @@ Namespace stop also cancels and settles attached jobs before StackHost shutdown;
 
 For example, REST binds to the primary database; a shadow database has no relationship to it unless the caller asks to copy its initialization profile. Functions may run without PostgreSQL or Auth. An API URL in configuration is not automatically a hard lifecycle dependency.
 
-For example, Studio and pg-meta are separate service instances. Each has its own ID, configuration, lifecycle and health. Composition declares the relevant edges explicitly. Storage and imgproxy, or Logflare and Vector, follow the same rule when selected; there is no parent handle that starts private children or computes combined health.
+For example, Studio and pg-meta are separate service instances. Each has its own ID, configuration, lifecycle and health. Composition declares the relevant edges explicitly. Storage and imgproxy follow the same rule when selected; there is no parent handle that starts private children or computes combined health.
 
 ```mermaid
 flowchart LR
@@ -446,15 +446,15 @@ Definition changes (service creation and destruction, composition configuration 
 
 ### Proposed RPC surface
 
-| Area                 | Methods                                                                                                                | Responsibility                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Host                 | `host.describe`, `host.stop`, `host.destroy`                                                                           | Inspect the stack; stop or destroy everything it owns         |
-| Registry             | `services.create`, `services.get`, `services.list`                                                                     | Create and locate instances                                   |
-| Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                               | Operate one instance                                          |
-| Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.logs`, `service.followLogs`, `service.credentials` | Read state, await health and inspect outputs                  |
-| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                  |
-| Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart`        | Define and operate the application selection and dependencies |
-| Commands             | `runCommand`, `commandInput`                                                                                           | Execute an attached command with streamed input/output        |
+| Area                 | Methods                                                                                                         | Responsibility                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Host                 | `host.describe`, `host.stop`, `host.destroy`                                                                    | Inspect the stack; stop or destroy everything it owns         |
+| Registry             | `services.create`, `services.get`, `services.list`                                                              | Create and locate instances                                   |
+| Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                        | Operate one instance                                          |
+| Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.readLogs`, `service.credentials`            | Read state, await health and inspect outputs                  |
+| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                             | Database-specific managed storage operations                  |
+| Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart` | Define and operate the application selection and dependencies |
+| Commands             | `runCommand`, `commandInput`                                                                                    | Execute an attached command with streamed input/output        |
 
 These are proposed wire names. Public `shadow.start()` maps to `service.start({ id })`; `stack.stop()` maps to `host.stop`. Public `stack.composition.stop()` leaves the host and independent instances available. `composition.configure` sends validated declarative membership, edges and input wiring, not executable callbacks. Configuration changes use the same graph and lifecycle admission rules as other mutations.
 
@@ -651,11 +651,10 @@ of their first byte. Line state is kept per launch, process and stream; chunk se
 a launch's processes, so a process whose output was all dropped still shows as `lost`. A late
 partial line of an ended launch waits for its newline for two seconds of quiet, or until the store
 closes. Lines are cut at 32 KiB; chunks the in-memory output buffer dropped, that failed to write,
-or that were still queued when a bounded drain at close ran out are recorded as `lost`. The legacy
-`logs` tail reads split lines from memory, so it keeps flowing while appends fail. Every reader,
-live or offline, reads segments by position, so history and following share one path; a reader that
-finds its segment deleted reports a `lost` gap marker, which carries `resumeAt` instead of a record
-position. Destroying an instance deletes its segments, and an owner start removes directories of
+or that were still queued when a bounded drain at close ran out are recorded as `lost`. Every
+reader, live or offline, reads segments by position, so history and following share one path; a
+follow can resume at a record position, and a reader that finds its segment deleted reports a
+`lost` gap marker, which carries `resumeAt` instead of a record position. Destroying an instance deletes its segments, and an owner start removes directories of
 instances no longer saved, so a failed deletion is retried; destroying the stack removes `logs/`;
 resetting database data keeps them.
 

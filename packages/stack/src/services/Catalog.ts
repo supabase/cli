@@ -21,7 +21,6 @@ import * as Realtime from "./Realtime.ts";
 import * as Rest from "./Rest.ts";
 import * as Storage from "./Storage.ts";
 import * as Studio from "./Studio.ts";
-import * as Vector from "./Vector.ts";
 import {
   CatalogError,
   serviceCreation,
@@ -47,7 +46,6 @@ const endpointSchemas = [
   ["pgmeta", Pgmeta.Endpoints],
   ["mail", Mail.Endpoints],
   ["analytics", Analytics.Endpoints],
-  ["vector", Vector.Endpoints],
   ["pooler", Pooler.Endpoints],
 ] as const;
 
@@ -87,7 +85,6 @@ export const ServiceCreation = Schema.Union([
   Pgmeta.Creation,
   Mail.Creation,
   Analytics.Creation,
-  Vector.Creation,
   Pooler.Creation,
 ]);
 export type ServiceCreation = Schema.Schema.Type<typeof ServiceCreation>;
@@ -101,7 +98,6 @@ const requiredInputs: { readonly [K in ServiceKind]?: ReadonlyArray<string> } = 
   pgmeta: ["databaseUrl"],
   analytics: ["databaseUrl"],
   pooler: ["databaseUrl"],
-  vector: ["analyticsUrl"],
 };
 
 /** Rejects a creation that lacks a required input before any lifecycle change. */
@@ -137,7 +133,6 @@ export const ServiceCreationInput = Schema.Union([
   Pgmeta.Creation,
   Mail.Creation,
   Analytics.Creation,
-  Vector.Creation,
   Pooler.Creation,
 ]);
 export type ServiceCreationInput = Schema.Schema.Type<typeof ServiceCreationInput>;
@@ -153,7 +148,6 @@ export const serviceSchemas = {
   pgmeta: Pgmeta.Config,
   mail: Mail.Config,
   analytics: Analytics.Config,
-  vector: Vector.Config,
   pooler: Pooler.Config,
 } as const;
 
@@ -407,12 +401,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
             creation,
             yield* makeProcessRecipe(options, deps, Analytics.makeSpec()),
             Schema.is(Analytics.Creation),
-          );
-        case "vector":
-          return catalogRecipe(
-            creation,
-            yield* Vector.makeRecipe(options, deps),
-            Schema.is(Vector.Creation),
           );
         case "pooler":
           return catalogRecipe(

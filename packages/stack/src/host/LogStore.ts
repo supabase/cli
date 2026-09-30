@@ -10,7 +10,6 @@ import {
   Path,
   PubSub,
   Ref,
-  Result,
   Schema,
   Scope,
   Semaphore,
@@ -39,8 +38,6 @@ export class LogStoreError extends Schema.TaggedError<LogStoreError>()("LogStore
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
 
-// Holds a whole pulled batch for a waiting subscriber while bounding a stalled one.
-const liveTailCapacity = 16_384;
 const storeError = (operation: string) => (cause: unknown) =>
   new LogStoreError({ operation, message: failureMessage(cause), cause });
 
@@ -69,7 +66,7 @@ export interface ReadOptions {
   readonly from: "oldest" | "end" | LogPosition;
   /** Epoch milliseconds; older records are skipped. */
   readonly since?: number;
-  /** Returns only the last records of the history before following. */
+  /** Returns only the last records of the history before following; requires `from: "oldest"`. */
   readonly tail?: number;
   readonly follow: boolean;
 }
@@ -92,14 +89,6 @@ export interface Interface {
   ) => Effect.Effect<Stream.Stream<LogRecord, LogStoreError>, LogStoreError, Scope.Scope>;
   /** The directory holding an attached instance's segments and its forwarding cursor. */
   readonly directory: (instanceId: string) => Effect.Effect<string, LogStoreError>;
-  /** Streams output lines as they are split, whether or not their append succeeds. */
-  readonly tail: (
-    instanceId: string,
-  ) => Effect.Effect<
-    Stream.Stream<{ readonly stream: "stdout" | "stderr"; readonly text: string }>,
-    LogStoreError,
-    Scope.Scope
-  >;
   /** Stops the instance's writer and readers, then deletes its segments. */
   readonly remove: (instance: {
     readonly service: string;
@@ -405,7 +394,6 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     const listed = yield* generations(directory);
     const tail = options.tail;
     if (tail !== undefined) {
-      if (cursor.generation !== 0) return { records: [], cursor, listed };
       if (tail === 0)
         return {
           records: [],
@@ -473,6 +461,11 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     options: ReadOptions,
     live: Live | undefined,
   ) {
+    if (options.tail !== undefined && options.from !== "oldest")
+      return yield* new LogStoreError({
+        operation: "read",
+        message: "A tailed read starts at the oldest record and cannot also set a start position",
+      });
     const wake =
       options.follow && live !== undefined ? yield* PubSub.subscribe(live.wake) : undefined;
     const start =
@@ -506,7 +499,17 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     );
   });
 
-  return { read, history, segments, generations };
+  /** Streams a directory's records in file order without an owner. */
+  const records = (directory: string, options: Pick<ReadOptions, "since">) =>
+    follow(
+      directory,
+      { cursor: { generation: 0, byteOffset: 0 }, listed: undefined },
+      { ...options, follow: false },
+      undefined,
+      undefined,
+    );
+
+  return { read, history, records, segments, generations };
 };
 
 /** Creates the owner's log store; closing its scope flushes and closes every writer. */
@@ -524,11 +527,6 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     readonly service: string;
     readonly instanceId: string;
     readonly directory: string;
-    /**
-     * Records as they are split, independent of whether their append succeeds. Unbounded so the
-     * recipe's sliding output buffer stays the only place output is dropped.
-     */
-    readonly live: PubSub.PubSub<LogEntry>;
     readonly closed: Deferred.Deferred<void>;
     readonly scope: Scope.Closeable;
   }
@@ -582,7 +580,6 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         byteOffset: latest?.size ?? 0,
       }),
       wake: yield* PubSub.sliding<void>(1),
-      live: yield* PubSub.sliding<LogEntry>(liveTailCapacity),
       closed: yield* Deferred.make<void>(),
     };
     const splitter = makeSplitter();
@@ -719,14 +716,13 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     };
 
     /**
-     * Publishes records to live tails, then appends them. After a failure, appends are skipped
-     * with backoff and their chunks are reported as `lost` once writing works again.
+     * Appends records. After a failure, appends are skipped with backoff and their chunks are
+     * reported as `lost` once writing works again.
      */
     const persist = Effect.fnUntraced(function* (
       entries: ReadonlyArray<LogEntry>,
       chunks: ReadonlyArray<LaunchOutput>,
     ) {
-      if (entries.length > 0) yield* PubSub.publishAll(handle.live, entries);
       const now = yield* Clock.currentTimeMillis;
       if (broken !== undefined && now < broken.retryAt) return countDropped(chunks);
       if (entries.length === 0 && dropped.size === 0) return;
@@ -845,19 +841,6 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     return records.pipe(Stream.interruptWhen(Deferred.await(instance.closed)));
   });
 
-  const tail = Effect.fn("LogStore.tail")(function* (instanceId: string) {
-    const instance = yield* attached(instanceId);
-    const subscription = yield* PubSub.subscribe(instance.live);
-    return Stream.fromSubscription(subscription).pipe(
-      Stream.filterMap((entry) =>
-        entry.kind === "stdout" || entry.kind === "stderr"
-          ? Result.succeed({ stream: entry.kind, text: entry.text })
-          : Result.failVoid,
-      ),
-      Stream.interruptWhen(Deferred.await(instance.closed)),
-    );
-  });
-
   const remove = Effect.fn("LogStore.remove")(function* (target: {
     readonly service: string;
     readonly instanceId: string;
@@ -905,12 +888,48 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     attach,
     read,
     directory: (instanceId) => Effect.map(attached(instanceId), (instance) => instance.directory),
-    tail,
     remove,
     removeOrphans: removeOrphans(),
     close,
   } satisfies Interface;
 });
+
+/** Lists the instance directories of a stack's logs, limited to `instances` when given. */
+const persistedInstances = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+  instances: ReadonlyArray<string> | undefined,
+) {
+  const selected: Array<{ readonly service: string; readonly instanceId: string }> = [];
+  for (const service of yield* listDirectories(fs, path, root))
+    for (const instanceId of yield* listDirectories(fs, path, path.join(root, service)))
+      if (instances === undefined || instances.includes(instanceId))
+        selected.push({ service, instanceId });
+  return selected;
+});
+
+/** Streams persisted records of a stack's instances, one instance after another in file order. */
+export const streamStackLogs = (options: {
+  readonly root: string;
+  readonly instances?: ReadonlyArray<string>;
+  readonly since?: number;
+}): Stream.Stream<StackLogRecord, LogStoreError, FileSystem.FileSystem | Path.Path> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const reader = makeReader(fs, path);
+      const selected = yield* persistedInstances(fs, path, options.root, options.instances);
+      return Stream.fromIterable(selected).pipe(
+        Stream.flatMap(({ service, instanceId }) =>
+          reader
+            .records(path.join(options.root, service, instanceId), options)
+            .pipe(Stream.map((record): StackLogRecord => ({ ...record, service, instanceId }))),
+        ),
+      );
+    }),
+  );
 
 /** Reads persisted records of a stack's instances, merged by time, service, instance and position. */
 export const readStackLogs = Effect.fn("LogStore.readStackLogs")(function* (options: {
@@ -922,12 +941,7 @@ export const readStackLogs = Effect.fn("LogStore.readStackLogs")(function* (opti
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const reader = makeReader(fs, path);
-  const list = (directory: string) => listDirectories(fs, path, directory);
-  const selected: Array<{ readonly service: string; readonly instanceId: string }> = [];
-  for (const service of yield* list(options.root))
-    for (const instanceId of yield* list(path.join(options.root, service)))
-      if (options.instances === undefined || options.instances.includes(instanceId))
-        selected.push({ service, instanceId });
+  const selected = yield* persistedInstances(fs, path, options.root, options.instances);
   const perInstance = yield* Effect.forEach(
     selected,
     ({ service, instanceId }) =>

@@ -104,7 +104,8 @@ Long-running raw log / error output only; there is no final success payload obje
 ### `--output-format stream-json`
 
 The legacy backend emits long-running raw log / error events with no terminal `result` event.
-Stack mode emits a readiness `result` containing the instance ID and URL, then live log events.
+Stack mode emits a readiness `result` containing the instance ID and URL, then live log events
+for Functions output persisted since the command started, stamped with the owner's record time.
 
 ## Notes
 

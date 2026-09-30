@@ -128,7 +128,13 @@ export class StateError extends Data.TaggedError("StateError")<{
 }> {}
 
 export interface Interface {
+  /** Omits saved Vector instances and their composition entries without rewriting the file. */
   readonly read: (id: string) => Effect.Effect<SavedStack | undefined, StateError>;
+  /**
+   * Persists the removal of saved Vector instances and deletes their stack-owned files. Call while
+   * holding the stack's lease, before any of its services run.
+   */
+  readonly migrate: (id: string) => Effect.Effect<void, StateError>;
   /** Skips each stack entry that stays unreadable after transient retries, reporting it to `onInvalidState`. */
   readonly list: Effect.Effect<ReadonlyArray<SavedStack>, StateError>;
   /** Decodes only each stack's port claims and silently skips entries that cannot provide them. */
@@ -171,12 +177,68 @@ const checkId = (id: string): Effect.Effect<void, StateError> =>
     ? Effect.void
     : Effect.fail(stateError("identity", `Invalid state id: ${id}`));
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const retainedEntries = (
+  entries: unknown,
+  retired: (entry: Readonly<Record<string, unknown>>) => boolean,
+): unknown =>
+  Array.isArray(entries)
+    ? entries.filter((entry: unknown) => !(isRecord(entry) && retired(entry)))
+    : entries;
+
+/**
+ * Drops saved Vector instances, which the stack no longer runs, with every composition member,
+ * dependency and port claim that references them.
+ */
+const withoutVectorInstances = (
+  document: unknown,
+): { readonly document: unknown; readonly removed: ReadonlyArray<string> } => {
+  if (!isRecord(document) || !Array.isArray(document.instances)) return { document, removed: [] };
+  const removed = document.instances.flatMap((instance: unknown) =>
+    isRecord(instance) &&
+    typeof instance.id === "string" &&
+    isRecord(instance.creation) &&
+    instance.creation.service === "vector"
+      ? [instance.id]
+      : [],
+  );
+  if (removed.length === 0) return { document, removed };
+  const ids: ReadonlySet<unknown> = new Set(removed);
+  const { composition } = document;
+  return {
+    removed,
+    document: {
+      ...document,
+      instances: retainedEntries(document.instances, (instance) => ids.has(instance.id)),
+      composition: isRecord(composition)
+        ? {
+            ...composition,
+            members: retainedEntries(composition.members, (member) => ids.has(member.id)),
+            dependencies: retainedEntries(
+              composition.dependencies,
+              (dependency) => ids.has(dependency.from) || ids.has(dependency.to),
+            ),
+          }
+        : composition,
+      ports: retainedEntries(
+        document.ports,
+        ({ key }) => typeof key === "string" && removed.some((id) => key.startsWith(`${id}:`)),
+      ),
+    },
+  };
+};
+
 const decodeState = (
   text: string,
   id: string,
   target: string,
 ): Effect.Effect<SavedStack, StateError> =>
-  Schema.decodeEffect(Schema.fromJsonString(SavedStack))(text).pipe(
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
+    Effect.flatMap((document) =>
+      Schema.decodeUnknownEffect(SavedStack)(withoutVectorInstances(document).document),
+    ),
     Effect.mapError(
       (cause) =>
         new StateError({
@@ -598,8 +660,55 @@ const makeState = (
         .remove(ownerPath(id), { force: true })
         .pipe(Effect.mapError((cause) => stateError("remove", cause)));
     });
+    // A caller's Vector configPath may live under the instance root, so only recipe files and
+    // empty directories go.
+    const removeVectorData = (id: string, instanceId: string) =>
+      Effect.gen(function* () {
+        const instanceRoot = path.join(stackRoot(id), "data", instanceId);
+        const configRoot = path.join(instanceRoot, "runtime", "vector");
+        if (!(yield* fs.exists(configRoot))) return;
+        for (const entry of yield* fs.readDirectory(configRoot))
+          if (
+            entry === "vector.yaml" ||
+            entry === "vector-api.yaml" ||
+            entry.startsWith(".vector-write-")
+          )
+            yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
+        for (const directory of [configRoot, path.dirname(configRoot), instanceRoot])
+          yield* removeEmptyDirectory(directory);
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(`Unable to remove the files of Vector instance ${instanceId}`, cause),
+        ),
+      );
+    const migrate = Effect.fn("State.migrate")(function* (id: string) {
+      yield* checkId(id);
+      const removed = yield* withLock(
+        Effect.gen(function* () {
+          const target = statePath(id);
+          if (!(yield* fs.exists(target).pipe(retryTransientRead))) return [];
+          const text = yield* fs.readFileString(target).pipe(retryTransientRead);
+          const { removed } = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+            text,
+          ).pipe(
+            Effect.map(withoutVectorInstances),
+            Effect.orElseSucceed(() => ({ removed: [] })),
+          );
+          if (removed.length === 0) return removed;
+          const state = yield* decodeState(text, id, target);
+          if (state.id !== id)
+            return yield* stateError("identity", "State document identity does not match its path");
+          yield* save(state);
+          return removed;
+        }),
+      );
+      yield* Effect.forEach(removed, (instanceId) => removeVectorData(id, instanceId), {
+        discard: true,
+      });
+    });
     return {
       read,
+      migrate,
       list: list(),
       claims: claims(),
       save,

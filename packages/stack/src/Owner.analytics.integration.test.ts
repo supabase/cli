@@ -189,12 +189,18 @@ it.live(
             timestamp: expect.any(String),
           },
         ]);
-        yield* client.get(`${rest.url}/`);
-        const restRows = yield* awaitStored(
-          "postgREST.logs.prod",
-          "body->'metadata'->>'host' = 'default'",
-        );
-        expect(restRows.length).toBeGreaterThan(0);
+        const restPath = `/${stackId}-probe`;
+        yield* client.get(`${rest.url}${restPath}`);
+        expect(
+          yield* awaitStored("postgREST.logs.prod", `body->'metadata'->>'path' = '${restPath}'`),
+        ).toEqual([
+          {
+            message: expect.stringContaining(`"GET ${restPath} HTTP/1.1" 404`),
+            severity: null,
+            host: "default",
+            timestamp: expect.any(String),
+          },
+        ]);
 
         yield* Fiber.interrupt(keeper);
         const noise = yield* Effect.forkScoped(

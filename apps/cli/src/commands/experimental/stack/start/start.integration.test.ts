@@ -119,7 +119,7 @@ const instance = (
     prepare: Effect.void,
     status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
@@ -174,8 +174,6 @@ const instance = (
       return { ...base, service: "mail" };
     case "analytics":
       return { ...base, service: "analytics" };
-    case "vector":
-      return { ...base, service: "vector" };
     case "pooler":
       return { ...base, service: "pooler" };
   }

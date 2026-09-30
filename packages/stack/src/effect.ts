@@ -45,7 +45,12 @@ import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
-import { readStackLogs as readPersistedLogs, sinceMillis } from "./host/LogStore.ts";
+import {
+  readStackLogs as readPersistedLogs,
+  sinceMillis,
+  streamStackLogs as streamPersistedLogs,
+} from "./host/LogStore.ts";
+import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
@@ -78,7 +83,7 @@ export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./State.ts";
 export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
-export type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
+export type { LogPosition, LogRecord, StackLogRecord };
 export type {
   Command,
   InitializationCommand,
@@ -154,13 +159,22 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly prepare: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;
-  readonly logs: Stream.Stream<
-    { readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array },
-    StackError
-  >;
+  /** Streams the instance's persisted records through its live owner, which it never launches. */
+  readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
   readonly credentials: (options?: {
     readonly from?: "host" | "runtime";
   }) => Effect.Effect<Readonly<Record<string, string>>, StackError>;
+}
+/** Selects the records {@link ServiceInstance.readLogs} streams. */
+export interface ReadLogsOptions {
+  /** Starts at this record instead of the oldest retained one; the read fails with `tail`. */
+  readonly from?: LogPosition;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+  /** Starts with only this many of the latest records; the read fails with `from`. */
+  readonly tail?: number;
+  /** Keeps streaming new records until interrupted; `false` by default. */
+  readonly follow?: boolean;
 }
 /** Snapshot placement; `cache` is the default. */
 export interface DatabaseSnapshotOptions {
@@ -647,7 +661,16 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
-    logs: stream("logs", (rpc) => rpc.logs({ id })),
+    readLogs: (options) =>
+      stream("readLogs", (rpc) =>
+        rpc.readLogs({
+          id,
+          follow: options?.follow ?? false,
+          ...(options?.from === undefined ? {} : { from: options.from }),
+          ...(options?.since === undefined ? {} : { since: options.since }),
+          ...(options?.tail === undefined ? {} : { tail: options.tail }),
+        }),
+      ),
     credentials: (options) =>
       call("credentials", (rpc) => rpc.credentials({ id, from: options?.from ?? "host" })),
   });
@@ -689,8 +712,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return common(id, "mail");
       case "analytics":
         return common(id, "analytics");
-      case "vector":
-        return common(id, "vector");
       case "pooler":
         return common(id, "pooler");
     }
@@ -1042,3 +1063,19 @@ export const readStackLogs = Effect.fn("Stack.readStackLogs")(
   },
   Effect.mapError((cause) => failure("readStackLogs", cause)),
 );
+
+/** Streams a stack's persisted records one instance after another, each in file order. */
+export const streamStackLogs = (
+  options: Omit<ReadStackLogsOptions, "tail">,
+): Stream.Stream<StackLogRecord, StackError, FileSystem.FileSystem | Path.Path> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const root = yield* State.stackLogsRoot(path, options.stateRoot, options.stackId);
+      return streamPersistedLogs({
+        root,
+        ...(options.instances === undefined ? {} : { instances: options.instances }),
+        ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
+      });
+    }),
+  ).pipe(Stream.mapError((cause) => failure("streamStackLogs", cause)));
