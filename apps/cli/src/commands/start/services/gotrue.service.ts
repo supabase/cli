@@ -553,6 +553,8 @@ export function buildGotrueEnv(input: BuildGotrueEnvInput): Record<string, strin
 }
 
 export interface GotrueContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** The already-resolved `config.auth.image`. Not part of the decoded `@supabase/config` schema; resolution is the caller's responsibility. */
   readonly image: string;
   /** The sanitized project id, used to derive this container's own name/the `db` container's own name via {@link serviceContainerName}. */
@@ -581,7 +583,7 @@ export function buildGotrueContainerSpec(input: GotrueContainerSpecInput): Start
     env,
     binds: [],
     exposedPorts: [{ containerPort: GOTRUE_PORT }],
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck(`http://127.0.0.1:${GOTRUE_PORT}/health`)
       : {
           test: [

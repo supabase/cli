@@ -105,7 +105,9 @@ shell inherits the suppressing variables and is missed.
 - **Stack backend host rewrite.** Stack dumps always use catalog `pg_dump` (native
   artifact or a one-shot of the same image). `--local` native rewrites loopback to
   `127.0.0.1`. Native `--linked` / `--db-url` keep
-  the resolved host. Container dumps use `isLocal` (config host+port match), not a
-  `connType` of local: a `--db-url` that matches `config.toml` is rewritten like a published
-  stack target (`host.docker.internal` / host network) and does not require a
-  project stack. Engine/runtime selection still uses `connType`.
+  the resolved host. Managed `--local` dumps run through the stack's own command runtime
+  against its endpoint without a rewrite. Other container dumps rewrite any loopback host
+  (whatever its port) to `host.docker.internal` unless the tool container shares the Linux
+  host network, and always run on the host network unless `--network-id` is set. Legacy
+  container dumps rewrite loopback only when `--network-id` / `SUPABASE_NETWORK_ID` puts
+  pg_dump on a named network. Engine/runtime selection still uses `connType`.

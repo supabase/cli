@@ -50,6 +50,7 @@ import {
 } from "../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import {
@@ -1031,7 +1032,7 @@ describe("functions serve integration", () => {
       }
 
       expect(dockerRun.args).toContain(
-        yield* getRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
+        yield* getRegistryImageUrl(dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)),
       );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");

@@ -34,6 +34,7 @@ import {
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
@@ -1457,7 +1458,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const outputPath = join(outputDir, "output.eszip");
     // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
     // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
-    const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
     const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
       bitbucketCloneDirDefined,
       onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),

@@ -16,10 +16,12 @@ export function resolvePinnedImage(
   alias: string,
   localServiceName: LocalServiceVersionName,
   serviceVersions: LocalServiceVersionOverrides,
+  slim: boolean,
 ): string {
   return slimImageForCurrentPin(
     alias,
     dockerfileServiceImageRaw(alias),
     serviceVersions[localServiceName],
+    slim,
   );
 }

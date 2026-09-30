@@ -76,18 +76,54 @@ import {
   YesFlag,
 } from "../command-internal/global-flags.ts";
 
-const stackStartAliasCommand = stackStartCommand.pipe(
+// The stack backend's `start`/`status`/`stop` are the same commands as `stack
+// start`/`stack status`/`stack stop`, aliased to the top level — their help text
+// is rewritten below so `--help` refers to `supabase start` etc., not `stack start`.
+export const stackStartAliasCommand = stackStartCommand.pipe(
   Command.provide(commandRuntimeLayer(["start"])),
   Command.provide(stackRuntimeLayer),
   Command.provide(stackStartRuntimeLayer),
+  Command.withShortDescription("Start the local Supabase stack"),
+  Command.withExamples([
+    {
+      command: "supabase start",
+      description: "Start the current project stack",
+    },
+    {
+      command: "supabase start --stack feature-a --runtime docker",
+      description: "Start a named Docker stack",
+    },
+  ]),
 );
 export const stackStopAliasCommand = stackStopCommand.pipe(
   Command.provide(commandRuntimeLayer(["stop"])),
   Command.provide(stackRuntimeLayer),
+  Command.withShortDescription("Stop the local Supabase stack"),
+  Command.withExamples([
+    {
+      command: "supabase stop --stack feature-a",
+      description: "Stop the existing feature-a stack",
+    },
+  ]),
 );
-const stackStatusAliasCommand = stackStatusCommand.pipe(
+export const stackStatusAliasCommand = stackStatusCommand.pipe(
   Command.provide(commandRuntimeLayer(["status"])),
   Command.provide(stackRuntimeLayer),
+  Command.withShortDescription("Show the local Supabase stack status"),
+  Command.withExamples([
+    {
+      command: "supabase status",
+      description: "Show the current project stack",
+    },
+    {
+      command: "supabase status --stack feature-a",
+      description: "Show a named stack",
+    },
+    {
+      command: "supabase status --env --output-format text > .env.local",
+      description: "Export connection variables as dotenv",
+    },
+  ]),
 );
 
 /** Stable builds carry no label; other builds say what they are so help output never claims stability it lacks. */

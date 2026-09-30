@@ -56,6 +56,8 @@ export function buildSupavisorStartCmd(): ReadonlyArray<string> {
 }
 
 export interface SupavisorContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** The already-resolved `config.db.pooler.image`; resolution is the caller's responsibility. */
   readonly image: string;
   /** The project id, used to derive this container's own name via {@link serviceContainerName}. */
@@ -130,7 +132,7 @@ export function buildSupavisorContainerSpec(
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
     // Slim pooler ships wget, not curl.
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/health")
       : {
           test: [
