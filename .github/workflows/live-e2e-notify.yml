@@ -80,6 +80,7 @@ jobs:
           SHA: ${{ github.event.workflow_run.head_sha }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           SOURCE_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+          NOTIFY_WORKFLOW_REF: ${{ github.workflow_ref }}
           CURRENT_SUITE: ${{ needs.classify.outputs.suite }}
           STARTUP_FAILURE: ${{ needs.classify.outputs.startup_failure }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
@@ -141,11 +142,23 @@ jobs:
             fi
           else
             new_state=failing
-            if [[ "$recorded_state" == failing ]]; then
+            # The lock group replaces a pending notifier when another arrives, and the
+            # replaced run is cancelled; a pass dropped that way would have re-armed this alert.
+            dropped=false
+            if [[ "$recorded_state" == failing && -n "$recorded_at" ]]; then
+              notify_workflow="${NOTIFY_WORKFLOW_REF%@*}"
+              if ! cancelled="$(gh api -X GET "/repos/${REPOSITORY}/actions/workflows/${notify_workflow##*/}/runs" -f status=cancelled -f "created=>=${recorded_at}" -F per_page=1 --jq '.total_count')" \
+                || [[ "$cancelled" != 0 ]]; then
+                dropped=true
+              fi
+            fi
+            if [[ "$recorded_state" == failing && "$dropped" == false ]]; then
               echo "Action: recorded ${BRANCH} as failing (failure already reported)"
             else
               if [[ "$recorded_state" == unknown ]]; then
                 echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
+              elif [[ "$dropped" == true ]]; then
+                echo "::warning::A notifier run may have been dropped since the recorded failure; posting the failure in case the suite recovered in between."
               fi
               if [[ "$STARTUP_FAILURE" == true ]]; then
                 header="❌ Live E2E failed to start"
