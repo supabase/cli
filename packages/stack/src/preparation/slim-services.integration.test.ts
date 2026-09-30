@@ -17,12 +17,7 @@ import {
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
 import { FetchHttpClient } from "effect/unstable/http";
-import {
-  catalogPins,
-  PLACEHOLDER_PINS,
-  prepareNativeArtifact,
-  resolveArtifact,
-} from "../Artifacts.ts";
+import { catalogPins, prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
 import {
@@ -867,11 +862,11 @@ describe("native artifact catalog", () => {
     ),
   );
 
-  it.fails("catalog has no placeholder pins", () => {
+  it("catalog has no placeholder pins", () => {
     const digests = catalogPins().flatMap(({ pin }) => [
       pin.image.slice(pin.image.lastIndexOf(":") + 1),
       ...Object.values(pin.natives).flatMap((native) => [native.archive, native.manifest]),
     ]);
-    expect(digests).not.toContain(PLACEHOLDER_PINS);
+    expect(digests).not.toContain("0".repeat(64));
   });
 });
