@@ -5,6 +5,7 @@ import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
+import { accepts } from "./Ports.ts";
 import * as State from "./State.ts";
 
 const makeTestState = (root: string) =>
@@ -75,6 +76,22 @@ const endpoint = (target: { host: string; port: number }, enabled: Effect.Effect
   port: "auto" as const,
   backend: Effect.succeed(target),
   enabled,
+});
+
+/** A dedicated HTTP endpoint that additionally joins the shared API listener, like Studio's `http`. */
+const joinEndpoint = (target: { host: string; port: number }, enabled: Effect.Effect<boolean>) => ({
+  ...endpoint(target, enabled),
+  join: [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }],
+});
+
+const claimant = (
+  id: string,
+  target: { host: string; port: number },
+  enabled: Effect.Effect<boolean>,
+  port: number | "auto" = "auto",
+) => ({
+  id,
+  endpoints: { api: { ...endpoint(target, enabled), port, shared: [{ prefix: "/rest" }] } },
 });
 
 it.live("retains dedicated assignments across network reopen", () =>
@@ -318,6 +335,224 @@ it.live("releases dedicated HTTP activity after the response while keep-alive st
       });
       expect(socket.destroyed).toBe(false);
       yield* Deferred.await(released).pipe(Effect.timeout("2 seconds"));
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "queues a joined route before any claimant binds, then serves it on the claimant's own port",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-fixed-port-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(stack("stack", "auto"));
+        const target = yield* backend;
+        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const studio = yield* network.register({
+          id: "studio",
+          endpoints: { http: joinEndpoint(target, Effect.succeed(true)) },
+        });
+        yield* studio.bind;
+        // The join route is queued, not installed: it never claims or asserts the shared "api"
+        // port, so no shared listener or claim exists yet, whatever port a later claimant picks.
+        const beforeClaimant = yield* state.read("stack");
+        expect(beforeClaimant?.ports.some((claim) => claim.key === "api")).toBe(false);
+        const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+        yield* rest.bind;
+        const address = yield* rest.address("api", "host");
+        expect(yield* request(address.host, address.port, "/mcp?read_only=true")).toBe(
+          "backend:/api/mcp?read_only=true",
+        );
+        expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("drops a queued join route when its namespace closes before any claimant binds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-cancel-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: joinEndpoint(target, Effect.succeed(false)) },
+      });
+      yield* studio.bind;
+      yield* studio.close;
+      const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+      yield* rest.bind;
+      const address = yield* rest.address("api", "host");
+      const response = yield* HttpClient.HttpClient.pipe(
+        Effect.flatMap((client) => client.get(`http://${address.host}:${address.port}/mcp`)),
+        Effect.provide(NodeHttpClient.layerNodeHttp),
+      );
+      expect(response.status).toBe(404);
+      expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("stays idempotent across repeated binds of the joining namespace", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-idempotent-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+      yield* rest.bind;
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: joinEndpoint(target, Effect.succeed(true)) },
+      });
+      yield* studio.bind;
+      yield* studio.bind;
+      yield* studio.bind;
+      const address = yield* rest.address("api", "host");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("re-adds a joined route after its namespace closes and rebinds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-rebind-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const enabled = yield* Ref.make(true);
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+      yield* rest.bind;
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: joinEndpoint(target, Ref.get(enabled)) },
+      });
+      yield* studio.bind;
+      const address = yield* rest.address("api", "host");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+      yield* Ref.set(enabled, false);
+      yield* studio.close;
+      const closedResponse = yield* HttpClient.HttpClient.pipe(
+        Effect.flatMap((client) => client.get(`http://${address.host}:${address.port}/mcp`)),
+        Effect.provide(NodeHttpClient.layerNodeHttp),
+      );
+      expect(closedResponse.status).toBe(404);
+      yield* Ref.set(enabled, true);
+      yield* studio.bind;
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("never restores a joined route once its namespace is released", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-release-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const enabled = yield* Ref.make(true);
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+      yield* rest.bind;
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: { http: joinEndpoint(target, Ref.get(enabled)) },
+      });
+      yield* studio.bind;
+      const address = yield* rest.address("api", "host");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+      yield* Ref.set(enabled, false);
+      yield* studio.release;
+      const failure = yield* studio.bind.pipe(Effect.flip);
+      expect(failure.operation).toBe("bind");
+      const releasedResponse = yield* HttpClient.HttpClient.pipe(
+        Effect.flatMap((client) => client.get(`http://${address.host}:${address.port}/mcp`)),
+        Effect.provide(NodeHttpClient.layerNodeHttp),
+      );
+      expect(releasedResponse.status).toBe(404);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "keeps a joined route working after the last claimant closes and closes the listener once it is gone too",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-last-close-" });
+        const state = yield* makeTestState(root);
+        yield* state.save(stack("stack", "auto"));
+        const target = yield* backend;
+        const restEnabled = yield* Ref.make(true);
+        const studioEnabled = yield* Ref.make(true);
+        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const rest = yield* network.register(claimant("rest", target, Ref.get(restEnabled)));
+        yield* rest.bind;
+        const studio = yield* network.register({
+          id: "studio",
+          endpoints: { http: joinEndpoint(target, Ref.get(studioEnabled)) },
+        });
+        yield* studio.bind;
+        const address = yield* rest.address("api", "host");
+        expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+        yield* Ref.set(restEnabled, false);
+        yield* rest.close;
+        expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+        expect(
+          (yield* HttpClient.HttpClient.pipe(
+            Effect.flatMap((client) => client.get(`http://${address.host}:${address.port}/rest`)),
+            Effect.provide(NodeHttpClient.layerNodeHttp),
+          )).status,
+        ).toBe(404);
+        yield* Ref.set(studioEnabled, false);
+        yield* studio.close;
+        expect(yield* accepts(address.host, address.port)).toBe(false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("wakes a sleeping backend when a request reaches its joined route", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-wake-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const woken = yield* Deferred.make<void>();
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
+      yield* rest.bind;
+      const studio = yield* network.register({
+        id: "studio",
+        endpoints: {
+          http: {
+            ...joinEndpoint(target, Effect.succeed(true)),
+            // Mirrors the orchestrator's acquire-then-resolve path: the target effect itself wakes
+            // the instance on demand instead of pointing at an already-running backend.
+            backend: Deferred.succeed(woken, undefined).pipe(Effect.as(target)),
+          },
+        },
+      });
+      yield* studio.bind;
+      expect(yield* Deferred.isDone(woken)).toBe(false);
+      const address = yield* rest.address("api", "host");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+      yield* Deferred.await(woken).pipe(Effect.timeout("2 seconds"));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
