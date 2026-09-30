@@ -106,6 +106,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             Effect.succeed(
               endpoint.kind === "unix" ? { path: `${endpoint.path}/.s.PGSQL.5432` } : endpoint,
             ),
+            "database:sql",
           ).pipe(Effect.forkScoped);
           const runner = yield* makeTestCommandRunner({ root, cacheRoot, stackId, runtime });
           const env = {
@@ -252,6 +253,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               Effect.succeed(
                 endpoint.kind === "unix" ? { path: `${endpoint.path}/.s.PGSQL.5432` } : endpoint,
               ),
+              "database:sql",
             ).pipe(Effect.forkScoped);
             const runner = yield* makeTestCommandRunner({ root, cacheRoot, stackId, runtime });
             const env = {

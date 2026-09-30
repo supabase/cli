@@ -21,7 +21,7 @@ export const makeDockerTcpRelay = Effect.fn("DockerRelay.makeTcp")(
       const listener = yield* bindTcp("0.0.0.0", 0);
       if (!Predicate.isTagged(listener.address, "TcpAddress"))
         return yield* Effect.die("Expected TCP relay listener");
-      yield* serveTcp(listener, address(endpoint)).pipe(Effect.forkScoped);
+      yield* serveTcp(listener, address(endpoint), "docker-relay").pipe(Effect.forkScoped);
       return { host: "host.docker.internal", port: listener.address.port };
     }),
 );
