@@ -198,24 +198,87 @@ export const textOutputLayer = Layer.effect(
         return value;
       });
 
+    // Writes pause the shown task spinner so they never share its row; the task's final
+    // line waits for the last in-flight write.
+    interface ShownSpinner {
+      handle: ReturnType<typeof spinner>;
+      message: string;
+      pauses: number;
+      settle?: () => void;
+    }
+    let activeSpinner: ShownSpinner | undefined;
+
+    const pauseSpinner = (): ShownSpinner | undefined => {
+      if (activeSpinner === undefined) return undefined;
+      if (activeSpinner.pauses === 0) activeSpinner.handle.clear();
+      activeSpinner.pauses += 1;
+      return activeSpinner;
+    };
+
+    // Without the guide, a resume adds no extra `│` line.
+    const resumeSpinner = (paused: ShownSpinner | undefined) => {
+      if (paused === undefined || paused.pauses === 0) return;
+      paused.pauses -= 1;
+      if (paused.pauses > 0) return;
+      paused.handle = spinner({ withGuide: false });
+      paused.handle.start(formatTaskMessage(paused.message));
+      paused.settle?.();
+    };
+
+    const logAround = (
+      emit: (message: string, opts?: { spacing?: number }) => void,
+      message: string,
+    ) => {
+      const paused = pauseSpinner();
+      if (paused === undefined) emit(message);
+      else emit(message, { spacing: 0 });
+      resumeSpinner(paused);
+    };
+
+    // A spinner due to appear during an unpaused write waits until such writes finish.
+    let unpausedWrites = 0;
+    let showWhenIdle: (() => void) | undefined;
+
+    const withSpinnerPaused = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      Effect.suspend(() => {
+        const paused = pauseSpinner();
+        if (paused !== undefined)
+          return effect.pipe(Effect.ensuring(Effect.sync(() => resumeSpinner(paused))));
+        unpausedWrites += 1;
+        return effect.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              unpausedWrites -= 1;
+              if (unpausedWrites > 0 || showWhenIdle === undefined) return;
+              const show = showWhenIdle;
+              showWhenIdle = undefined;
+              show();
+            }),
+          ),
+        );
+      });
+
     return Output.of({
       format: "text" as const,
       interactive: tty.stdoutIsTty,
       intro: (title: string) => Effect.sync(() => intro(title)),
       outro: (message: string) => Effect.sync(() => outro(message)),
-      info: (message: string) => Effect.sync(() => log.info(message)),
-      warn: (message: string) => Effect.sync(() => log.warn(message)),
-      error: (message: string) => Effect.sync(() => log.error(message)),
+      info: (message: string) => Effect.sync(() => logAround(log.info, message)),
+      warn: (message: string) => Effect.sync(() => logAround(log.warn, message)),
+      error: (message: string) => Effect.sync(() => logAround(log.error, message)),
       event: (event: StreamEvent) =>
-        event.type === "log-entry"
-          ? Effect.sync(() => log.info(`[${event.service}] ${event.line}`))
-          : Effect.sync(() => log.info(JSON.stringify(event))),
+        Effect.sync(() =>
+          logAround(
+            log.info,
+            event.type === "log-entry" ? `[${event.service}] ${event.line}` : JSON.stringify(event),
+          ),
+        ),
       task: (message: string) =>
         Effect.sync(() => {
           let shown = false;
           let settled = false;
           let currentMessage = message;
-          let task: ReturnType<typeof spinner> | undefined;
+          let shownSpinner: ShownSpinner | undefined;
           let timeout: ReturnType<typeof setTimeout> | undefined;
 
           const cancelPendingStart = () => {
@@ -228,25 +291,36 @@ export const textOutputLayer = Layer.effect(
           const finish = (render: () => void) => {
             settled = true;
             cancelPendingStart();
-            render();
+            const settle = () => {
+              render();
+              if (activeSpinner === shownSpinner) activeSpinner = undefined;
+            };
+            if (shownSpinner !== undefined && shownSpinner.pauses > 0) shownSpinner.settle = settle;
+            else settle();
           };
 
           // clack's spinner writes cursor/animation escape codes, so non-TTY stdout
           // gets plain progress lines instead.
           let logged = false;
-          timeout = setTimeout(() => {
+          const show = () => {
             if (settled) {
               return;
             }
-            timeout = undefined;
             if (!tty.stdoutIsTty) {
               logged = true;
               log.step(currentMessage);
               return;
             }
-            task = spinner();
+            shownSpinner = { handle: spinner(), message: currentMessage, pauses: 0 };
             shown = true;
-            task.start(currentMessage);
+            shownSpinner.handle.start(currentMessage);
+            activeSpinner = shownSpinner;
+          };
+
+          timeout = setTimeout(() => {
+            timeout = undefined;
+            if (unpausedWrites > 0) showWhenIdle = show;
+            else show();
           }, TASK_SPINNER_DELAY_MS);
 
           return {
@@ -256,8 +330,10 @@ export const textOutputLayer = Layer.effect(
                   return;
                 }
                 currentMessage = nextMessage;
-                if (shown) {
-                  task?.message(formatTaskMessage(nextMessage));
+                if (shownSpinner !== undefined) {
+                  shownSpinner.message = nextMessage;
+                  if (shownSpinner.pauses === 0)
+                    shownSpinner.handle.message(formatTaskMessage(nextMessage));
                 } else if (logged) {
                   log.step(nextMessage);
                 }
@@ -266,7 +342,7 @@ export const textOutputLayer = Layer.effect(
               Effect.sync(() =>
                 finish(() => {
                   if (shown) {
-                    task?.stop(formatTaskMessage(nextMessage));
+                    shownSpinner?.handle.stop(formatTaskMessage(nextMessage));
                     return;
                   }
                   if (nextMessage !== undefined) {
@@ -278,7 +354,7 @@ export const textOutputLayer = Layer.effect(
               Effect.sync(() =>
                 finish(() => {
                   if (shown) {
-                    task?.error(formatTaskMessage(nextMessage));
+                    shownSpinner?.handle.error(formatTaskMessage(nextMessage));
                     return;
                   }
                   if (nextMessage !== undefined) {
@@ -290,7 +366,7 @@ export const textOutputLayer = Layer.effect(
               Effect.sync(() =>
                 finish(() => {
                   if (shown) {
-                    task?.clear();
+                    shownSpinner?.handle.clear();
                   }
                   if (nextMessage !== undefined) {
                     log.info(nextMessage);
@@ -301,7 +377,7 @@ export const textOutputLayer = Layer.effect(
               Effect.sync(() =>
                 finish(() => {
                   if (shown) {
-                    task?.cancel(formatTaskMessage(nextMessage));
+                    shownSpinner?.handle.cancel(formatTaskMessage(nextMessage));
                     return;
                   }
                   if (nextMessage !== undefined) {
@@ -313,7 +389,7 @@ export const textOutputLayer = Layer.effect(
               Effect.sync(() =>
                 finish(() => {
                   if (shown) {
-                    task?.clear();
+                    shownSpinner?.handle.clear();
                   }
                 }),
               ),
@@ -375,9 +451,15 @@ export const textOutputLayer = Layer.effect(
           };
         }),
       result: () => Effect.void,
-      success: (message: string) => Effect.sync(() => log.success(message)),
+      success: (message: string) => Effect.sync(() => logAround(log.success, message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
+          // A command failure is terminal, so a still-shown task spinner is dropped.
+          if (activeSpinner !== undefined) {
+            activeSpinner.handle.clear();
+            activeSpinner.pauses = 0;
+            activeSpinner = undefined;
+          }
           // Bypasses clack's `log.error` framing (`│` guide + `■` icon): a
           // red-styled message on stderr, optionally followed by a suggestion.
           process.stderr.write(styleText("red", err.message) + "\n");
@@ -397,8 +479,10 @@ export const textOutputLayer = Layer.effect(
             );
           }
         }),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        withSpinnerPaused(write(text, stream)),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        withSpinnerPaused(write(bytes, stream)),
     });
   }),
 );

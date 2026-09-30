@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import {
   Config,
@@ -1724,7 +1725,7 @@ describe("functions download", () => {
           analytics,
         }),
         proxy.layer,
-        commandRuntimeLayer(["functions", "download"]),
+        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
         Stdio.layerTest({
           args: Effect.succeed([
             "functions",

@@ -33,17 +33,27 @@ loading failure or unreadable saved state keeps the saved stack report available
 saved standalone instances; composition members identify the services used for
 primary database, environment export, and drift comparisons.
 
-Text output includes identity, runtime, owner, lifecycle, readiness, services,
-endpoints, and config drift. JSON nests only identity fields under `identity`;
-runtime, lifecycle, readiness, composition, services, endpoints, and config
-drift remain top-level fields. Stack identity, endpoints, and credentials are
-never telemetry properties.
+Text output starts with one line naming the stack, its readiness, runtime, and
+project directory, noting when the owner is unavailable. It then prints the
+connection summary shared with `stack start`: the API, REST, Functions,
+Studio, MCP, Mailpit, and database URLs that the composition members expose, the
+saved publishable and secret keys, and a services table with each service's
+state, health, and activation; sleeping lazy services are marked as starting on
+first request. Service errors follow the tables, and config drift ends the
+output as one muted line unless the configuration drifted. Stack and service IDs appear only
+in JSON. JSON nests only identity fields under `identity`; runtime, lifecycle,
+readiness, composition, services, endpoints, and config drift remain top-level
+fields. `endpoints` also carries `studio.mcp`, Studio's MCP URL, when Studio is
+present. Stack identity, endpoints, and credentials are never telemetry
+properties.
 
 ## Exporting environment variables (`--env`)
 
 `--env` is the explicit environment-export operation. It requires a reachable
 owner and a running primary database, then derives the database URL from the
-observed SQL endpoint and saved database credentials, using the `supabase_admin` role. It does not request live
+observed SQL endpoint and saved database credentials, using the `supabase_admin` role.
+`API_URL` is the shared API listener of any member routed through it, and
+`MCP_URL` is Studio's MCP endpoint. It does not request live
 credentials or launch an owner, and it does not load or compare project
 configuration. Text output emits dotenv assignments;
 JSON and stream-JSON output emit a plain variable map under a successful result.

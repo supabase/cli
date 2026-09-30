@@ -47,7 +47,7 @@ describe("stack environment overrides", () => {
       const names = yield* stackEnvOverrides([]);
       const values = stackEnvValues(
         {
-          endpoints: {},
+          urls: {},
           credentials: {
             publishableKey: "sb_publishable_saved",
             secretKey: "sb_secret_saved",
@@ -71,9 +71,9 @@ describe("stack environment overrides", () => {
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
       expect(names.get("API_URL")).toBe("NEXT_PUBLIC_API_URL");
-      expect(
-        stackEnvValues({ endpoints: { api: { url: "http://127.0.0.1:54321" } } }, {}, names),
-      ).toEqual({ NEXT_PUBLIC_API_URL: "http://127.0.0.1:54321" });
+      expect(stackEnvValues({ urls: { api: "http://127.0.0.1:54321" } }, {}, names)).toEqual({
+        NEXT_PUBLIC_API_URL: "http://127.0.0.1:54321",
+      });
 
       for (const entries of [
         ["UNKNOWN=value"],

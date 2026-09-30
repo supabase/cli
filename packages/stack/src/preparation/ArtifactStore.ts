@@ -511,31 +511,22 @@ const ensureExecutableFile = (
   );
 };
 
-const metadataMatchesRequest = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean => {
-  const samePaths =
-    metadata.requiredRuntimePaths.length === request.requiredRuntimePaths.length &&
-    metadata.requiredRuntimePaths.every(
-      (entry, index) => entry === request.requiredRuntimePaths[index],
-    );
-  const kindEntries = Object.keys(metadata.requiredRuntimeKinds);
-  const sameKinds =
-    kindEntries.length === request.requiredRuntimePaths.length &&
-    request.requiredRuntimePaths.every(
-      (entry) => metadata.requiredRuntimeKinds[entry] !== undefined,
-    );
-  return (
-    metadata.key === request.key &&
-    samePaths &&
-    sameKinds &&
-    metadata.executablePath === request.executablePath
-  );
-};
+const identityMismatch = (request: ArtifactRequest, metadata: ArtifactMetadata): boolean =>
+  metadata.key !== request.key || metadata.executablePath !== request.executablePath;
 
-const verifyMetadata = (
+const unrecordedRequiredPaths = (
   request: ArtifactRequest,
   metadata: ArtifactMetadata,
-): Effect.Effect<string, ArtifactIntegrityError> => {
-  const sha256 = validateSha256(metadata.sha256).pipe(
+): ReadonlyArray<string> =>
+  request.requiredRuntimePaths.filter(
+    (relative) => metadata.requiredRuntimeKinds[relative] === undefined,
+  );
+
+const sha256Of = (
+  request: ArtifactRequest,
+  metadata: ArtifactMetadata,
+): Effect.Effect<string, ArtifactIntegrityError> =>
+  validateSha256(metadata.sha256).pipe(
     Effect.mapError((cause) =>
       metadataError("Cached artifact metadata contains an invalid SHA-256", {
         key: request.key,
@@ -543,12 +534,6 @@ const verifyMetadata = (
       }),
     ),
   );
-  if (!metadataMatchesRequest(request, metadata))
-    return Effect.fail(
-      metadataError("Cached artifact metadata does not match the request", { key: request.key }),
-    );
-  return sha256;
-};
 
 const writeBytesSync = (
   fs: FileSystem.FileSystem,
@@ -599,6 +584,33 @@ const cleanup = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, P
         artifactError(`Unable to clean artifact temporary path: ${cause.message}`, { path, cause }),
       ),
     );
+
+const updateMetadataAtomic = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  metadataPath: string,
+  metadata: ArtifactMetadata,
+): Effect.Effect<void, PreparationError> =>
+  Effect.gen(function* () {
+    const token = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError((cause) =>
+        artifactError(`Unable to allocate artifact metadata temporary name: ${cause.message}`, {
+          path: metadataPath,
+          cause,
+        }),
+      ),
+    );
+    const temporary = path.join(path.dirname(metadataPath), `${METADATA_NAME}.${token}.tmp`);
+    yield* Effect.gen(function* () {
+      yield* writeMetadataSync(fs, temporary, metadata);
+      yield* mapFs(
+        metadataPath,
+        "update cached artifact metadata",
+        fs.rename(temporary, metadataPath),
+      );
+    }).pipe(Effect.onExit(() => cleanup(fs, temporary)));
+  });
 
 const orphanMaxAgeMillis = 24 * 60 * 60 * 1000;
 
@@ -669,7 +681,7 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
     const metadataPath = path.join(target, METADATA_NAME);
     const checkCached: Effect.Effect<
       Option.Option<PreparedArtifact>,
-      ArtifactIntegrityError
+      ArtifactStoreError
     > = Effect.gen(function* () {
       const realRoot = yield* ensureSafeRoot(fs, path, target, cacheRoot).pipe(
         Effect.map(Option.some),
@@ -681,20 +693,59 @@ const makeArtifactOperation = Effect.fn("ArtifactStore.operation")(function* (
       const cachedMetadata = yield* readMetadata(fs, metadataPath);
       if (Option.isNone(cachedMetadata)) return Option.none();
       const metadata = cachedMetadata.value;
-      // Same version/target key with an expanded required-path list is a miss, not corruption.
-      if (!metadataMatchesRequest(request, metadata)) return Option.none();
-      const sha256 = yield* verifyMetadata(request, metadata);
+      // A key names immutable content and sources unpack whole archives, so only a different key
+      // or executable is a miss; paths beyond the recorded ones are checked in the published tree.
+      if (identityMismatch(request, metadata)) return Option.none();
+      const sha256 = yield* sha256Of(request, metadata);
+      const newPaths = unrecordedRequiredPaths(request, metadata);
+      const newPathSet = new Set(newPaths);
+      const recordedPaths = request.requiredRuntimePaths.filter(
+        (relative) => !newPathSet.has(relative),
+      );
       // Published content is not rehashed on cache hits: metadata and cheap structural checks
       // protect the cache boundary; content tampering may execute or fail later when the
       // workload starts.
-      const safePaths = yield* ensureSafePaths(
+      const recordedSafePaths = yield* ensureSafePaths(
         fs,
         path,
         target,
         realRoot.value,
         metadata,
-        request.requiredRuntimePaths,
+        recordedPaths,
       );
+      // A path the recorded metadata has not seen yet gets the same containment and safety
+      // validation a fresh publish applies, before its kind is trusted and recorded.
+      const newSafePaths =
+        newPaths.length > 0
+          ? yield* validateFreshRuntimePaths(fs, path, target, realRoot.value, newPaths).pipe(
+              Effect.mapError((cause) =>
+                metadataError(
+                  `Cached artifact ${request.key} cannot serve newly required runtime paths (${cause.message}); remove ${target} to download it again`,
+                  { key: request.key, path: target, cause },
+                ),
+              ),
+            )
+          : {};
+      const safePaths = { ...recordedSafePaths, ...newSafePaths };
+      if (newPaths.length > 0) {
+        const newKinds = Object.fromEntries(
+          Object.entries(newSafePaths).map(([relative, inspected]) => [relative, inspected.kind]),
+        );
+        const appendedPaths = newPaths.filter(
+          (relative) => !metadata.requiredRuntimePaths.includes(relative),
+        );
+        // The paths above are already validated; a failed write only loses the recording, so
+        // it must not fail preparation. A later request re-validates and retries the write.
+        yield* updateMetadataAtomic(fs, path, crypto, metadataPath, {
+          ...metadata,
+          requiredRuntimePaths: [...metadata.requiredRuntimePaths, ...appendedPaths],
+          requiredRuntimeKinds: { ...metadata.requiredRuntimeKinds, ...newKinds },
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Unable to record newly validated artifact runtime paths", cause),
+          ),
+        );
+      }
       if (request.executablePath !== undefined) {
         const executable = safePaths[request.executablePath];
         if (executable === undefined)

@@ -121,7 +121,15 @@ It remains available after the CLI exits. Preparation downloads native artifacts
 images. Catalog setup and project SQL connect to the primary database. Bucket seeding uses the local
 Storage HTTP endpoint. The CLI does not remove caller-owned Storage files during cleanup.
 
-Text output reports progress and `Stack is ready.`. JSON output returns the stack `id`, assigned `endpoints` keyed by service and endpoint name
-(for example `database.sql`), and an empty message. Endpoints contain protocol, address, port,
-and URL, matching `stack status`; use status for service observations. Failures retain typed command
-errors and package diagnostics. Telemetry state is flushed after success or failure.
+Text output reports progress and `Stack is ready.`, then prints the connection summary shared with
+`stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
+members that expose them, the publishable and secret keys, a services table, the runtime, and a
+pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
+and warnings written while the spinner is shown appear on their own rows.
+
+JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
+name (protocol, address, port, and URL, matching `stack status`, plus `studio.mcp` when Studio has
+an HTTP endpoint), `lazy_services` listing members that start on their first request (empty with
+`--eager`), and an empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md)
+for an example. Credentials are not part of the JSON result. Failures retain typed command errors
+and package diagnostics. Telemetry state is flushed after success or failure.

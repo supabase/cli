@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { StackCredentials } from "@supabase/stack/effect";
+import type { StackConnections } from "../stack-summary.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
@@ -11,6 +12,7 @@ const variableNames = [
   "SECRET_KEY",
   "STUDIO_URL",
   "INBUCKET_URL",
+  "MCP_URL",
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
@@ -53,11 +55,7 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
 
 export const stackEnvValues = (
   status: {
-    readonly endpoints: Readonly<{
-      readonly api?: { readonly url: string };
-      readonly studio?: { readonly url: string };
-      readonly mailUi?: { readonly url: string };
-    }>;
+    readonly urls: Pick<StackConnections, "api" | "studio" | "mailpit" | "mcp">;
     readonly credentials?: Pick<
       StackCredentials,
       "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey"
@@ -74,9 +72,10 @@ export const stackEnvValues = (
     values.PUBLISHABLE_KEY = status.credentials.publishableKey;
     values.SECRET_KEY = status.credentials.secretKey;
   }
-  if (status.endpoints.api !== undefined) values.API_URL = status.endpoints.api.url;
-  if (status.endpoints.studio !== undefined) values.STUDIO_URL = status.endpoints.studio.url;
-  if (status.endpoints.mailUi !== undefined) values.INBUCKET_URL = status.endpoints.mailUi.url;
+  if (status.urls.api !== undefined) values.API_URL = status.urls.api;
+  if (status.urls.studio !== undefined) values.STUDIO_URL = status.urls.studio;
+  if (status.urls.mcp !== undefined) values.MCP_URL = status.urls.mcp;
+  if (status.urls.mailpit !== undefined) values.INBUCKET_URL = status.urls.mailpit;
   return Object.fromEntries(
     Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
   );
