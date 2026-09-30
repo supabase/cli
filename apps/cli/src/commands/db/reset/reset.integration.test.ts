@@ -28,6 +28,7 @@ import {
 import {
   VALID_REF,
   jsonResponse,
+  withConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -1917,9 +1918,8 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return withEnvVar(
-        "GITHUB_HEAD_REF",
-        "feature-x",
+      return withConfigEnv(
+        { GITHUB_HEAD_REF: "feature-x" },
         Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("on branch ");
@@ -2983,9 +2983,48 @@ describe("db reset", () => {
       },
     );
 
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    // Windows ignores POSIX modes and root bypasses them; both get an injected failure instead.
+    const posixModesEnforced = process.platform !== "win32" && process.getuid?.() !== 0;
 
-    it.live.skipIf(isRoot)(
+    /** Denies `method` on `target` for the enclosing scope and returns the FileSystem to run with. */
+    const denyAccess = Effect.fnUntraced(function* (
+      target: string,
+      method: "readFileString" | "readDirectory",
+      restoreMode: number,
+    ) {
+      const fs = yield* FileSystem.FileSystem;
+      if (posixModesEnforced) {
+        yield* Effect.acquireRelease(fs.chmod(target, 0o000), () =>
+          fs.chmod(target, restoreMode).pipe(Effect.orDie),
+        );
+        return fs;
+      }
+      const denied = (p: string) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method,
+            pathOrDescriptor: p,
+            description: "permission denied",
+          }),
+        );
+      const overridden: FileSystem.FileSystem =
+        method === "readFileString"
+          ? {
+              ...fs,
+              readFileString: (p, encoding) =>
+                p === target ? denied(p) : fs.readFileString(p, encoding),
+            }
+          : {
+              ...fs,
+              readDirectory: (p, options) =>
+                p === target ? denied(p) : fs.readDirectory(p, options),
+            };
+      return overridden;
+    });
+
+    it.live(
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
         const { layer, conn } = setup(tmp.current, {
@@ -2999,35 +3038,31 @@ describe("db reset", () => {
           const schemaFile = path.join(tmp.current, "supabase", "schemas", "01_users.sql");
           yield* fs.makeDirectory(path.dirname(schemaFile), { recursive: true });
           yield* fs.writeFileString(schemaFile, "create table schema_users ();");
-          yield* Effect.acquireUseRelease(
-            fs.chmod(schemaFile, 0o000),
-            () =>
-              Effect.gen(function* () {
-                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-                  Effect.provide(layer),
-                  Effect.exit,
-                );
-                expect(Exit.isFailure(exit)).toBe(true);
-                if (Exit.isFailure(exit)) {
-                  const causeText = Cause.pretty(exit.cause);
-                  expect(causeText).not.toContain("See schema file");
-                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
-                    Option.some(
-                      expect.objectContaining({
-                        suggestion: expect.stringContaining("See schema file"),
-                      }),
-                    ),
-                  );
-                }
-                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-              }),
-            () => fs.chmod(schemaFile, 0o644),
+          const deniedFs = yield* denyAccess(schemaFile, "readFileString", 0o644);
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
+            Effect.provide(layer),
+            Effect.exit,
           );
-        }).pipe(Effect.provide(BunServices.layer));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to open migration file");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
+          }
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
-    it.live.skipIf(isRoot)(
+    it.live(
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
         const { layer, conn } = setup(tmp.current, {
@@ -3044,33 +3079,28 @@ describe("db reset", () => {
             path.join(schemasDir, "01_users.sql"),
             "create table schema_users ();",
           );
-          yield* Effect.acquireUseRelease(
-            fs.chmod(schemasDir, 0o000),
-            () =>
-              Effect.gen(function* () {
-                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-                  Effect.provide(layer),
-                  Effect.exit,
-                );
-                expect(Exit.isFailure(exit)).toBe(true);
-                if (Exit.isFailure(exit)) {
-                  const causeText = Cause.pretty(exit.cause);
-                  expect(causeText).toContain("failed to walk matched directory");
-                  expect(causeText).not.toContain("See schema file");
-                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
-                    Option.some(
-                      expect.objectContaining({
-                        suggestion: expect.stringContaining("See schema file"),
-                      }),
-                    ),
-                  );
-                }
-                expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-              }),
-            () => fs.chmod(schemasDir, 0o755),
+          const deniedFs = yield* denyAccess(schemasDir, "readDirectory", 0o755);
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
+            Effect.provide(layer),
+            Effect.exit,
           );
-        }).pipe(Effect.provide(BunServices.layer));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to walk matched directory");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
+          }
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
@@ -3304,7 +3334,10 @@ describe("db reset", () => {
           linked: true,
           sqlPaths: [absSeed],
         }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain(`Seeding data from ${absSeed}...`);
+        // Seed paths are reported forward-slashed on every platform, drive letter included.
+        expect(out.stderrText).toContain(
+          `Seeding data from ${absSeed.replaceAll(path.sep, "/")}...`,
+        );
       }).pipe(Effect.provide(BunServices.layer));
     });
 

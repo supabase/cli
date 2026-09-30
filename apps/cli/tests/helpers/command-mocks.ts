@@ -4,7 +4,17 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Predicate, Redacted, Sink, Stream } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Predicate,
+  Redacted,
+  Sink,
+  Stream,
+} from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import type { ChildProcess } from "effect/unstable/process";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -766,6 +776,28 @@ export const withEnvVar = <A, E, R>(
         if (previous === undefined) delete process.env[name];
         else process.env[name] = previous;
       }),
+  );
+
+/**
+ * Pins `values` for the `Config` reads inside `body`, ahead of the ambient provider. Use it
+ * instead of {@link withEnvVar} for code that reads through `Config`: without a provided
+ * `ConfigProvider`, Effect's default one snapshots `process.env` on first use, so later
+ * `process.env` edits are invisible. Pin an empty string to shadow an ambient value. A layer
+ * inside `body` that installs its own `ConfigProvider` (`processEnvLayer`,
+ * `isolatedHomeLayer`) replaces the pin, so provide such a layer around the
+ * `withConfigEnv(...)` call instead.
+ */
+export const withConfigEnv = <A, E, R>(
+  values: Readonly<Record<string, string>>,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  body.pipe(
+    Effect.provide(
+      ConfigProvider.layerAdd(
+        ConfigProvider.fromEnvRecord(values, { preserveEmptyStrings: true }),
+        { asPrimary: true },
+      ),
+    ),
   );
 
 /**
