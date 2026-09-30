@@ -52,8 +52,8 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
       // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
-      // stdin scans one piped line (100ms) before falling back to Yes — `echo n | supabase
-      // branches create` cancels.
+      // stdin scans one piped line (100ms): empty or EOF takes Yes, anything but y/yes
+      // declines — `echo n | supabase branches create` cancels.
       const yes = yield* resolveYes;
       const confirmed = yield* promptYesNo(
         output,
