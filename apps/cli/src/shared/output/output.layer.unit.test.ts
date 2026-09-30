@@ -741,12 +741,13 @@ describe("Output", () => {
       Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: false }), mockStdio().layer)),
     );
 
-    it.effect("task logs plain progress lines instead of starting the spinner", () =>
+    it.effect("task logs each distinct progress message as a plain line instead of a spinner", () =>
       Effect.gen(function* () {
         vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
         vi.advanceTimersByTime(200);
+        yield* task.message("Loading projects...");
         yield* task.message("Loading projects...");
         yield* task.succeed("Loaded organizations.");
 
