@@ -495,6 +495,7 @@ describe("src/internal.ts export surface", () => {
         "decodeCliConfigDocumentForValidationEffect",
         "dualScopeProjectConfigPaths",
         "loadCliConfig",
+        "normalizeDeprecatedOrioleDBVersion",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "remoteNameForProjectRef",
