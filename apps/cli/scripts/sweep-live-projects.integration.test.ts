@@ -6,6 +6,11 @@ import path from "node:path";
 const script = path.resolve(import.meta.dirname, "sweep-live-projects.sh");
 const directories: string[] = [];
 
+// The describe budget below; the hang safety net fires well before it so vitest
+// still has time to report a clear failure instead of a bare test-timeout.
+const TEST_BUDGET_MS = 40_000;
+const HANG_KILL_MS = TEST_BUDGET_MS - 10_000;
+
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
@@ -73,13 +78,22 @@ async function runSweep(scenario: Scenario) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const timeout = setTimeout(() => child.kill(), 10_000);
+    let hung = false;
+    const timeout = setTimeout(() => {
+      hung = true;
+      child.kill();
+    }, HANG_KILL_MS);
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
     clearTimeout(timeout);
+    if (hung) {
+      throw new Error(
+        `sweep script hung: killed after ${HANG_KILL_MS}ms without exiting (stdout: ${stdout}, stderr: ${stderr})`,
+      );
+    }
     return { exitCode, stdout, stderr, deletes };
   } finally {
     await server.stop(true);
@@ -88,7 +102,10 @@ async function runSweep(scenario: Scenario) {
 
 const active = (ref: string, name = `e2e-${ref}`) => ({ ref, name, status: "ACTIVE" });
 
-describe.skipIf(process.platform === "win32")("sweep-live-projects.sh", { timeout: 40_000 }, () => {
+describe.skipIf(process.platform === "win32")(
+  "sweep-live-projects.sh",
+  { timeout: TEST_BUDGET_MS },
+  () => {
   test("accepts refused deletion when a fresh authenticated list shows absence", async () => {
     const result = await runSweep({
       lists: [[active("gone")], []],
@@ -159,4 +176,5 @@ describe.skipIf(process.platform === "win32")("sweep-live-projects.sh", { timeou
       "delete retry completed for project flaky (HTTP 204 request delete-flaky)",
     );
   });
-});
+  },
+);

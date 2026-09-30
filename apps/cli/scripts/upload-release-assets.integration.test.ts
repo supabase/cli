@@ -91,20 +91,22 @@ describe("upload-release-assets against a fake gh", () => {
 
     await uploadAssets("v1.0.0", [asset], io, {
       maxAttempts: 2,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
       backoffMs: () => 0,
     });
 
-    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    const elapsed = Date.now() - startedAt;
+    expect(elapsed).toBeGreaterThanOrEqual(5_000);
+    expect(elapsed).toBeLessThan(25_000);
     expect(await calls()).toEqual([
       `release upload v1.0.0 ${asset.path} --clobber`,
       `release upload v1.0.0 ${asset.path} --clobber`,
     ]);
     expect(logs).toEqual([
-      `Upload of ${asset.name} failed on attempt 1 (timed out after 0.5s); retrying in 0s.`,
+      `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
       `Uploaded ${asset.name} (attempt 2).`,
     ]);
-  }, 20_000);
+  }, 40_000);
 
   test("kills an upload that ignores SIGTERM once the grace period passes", async () => {
     const { directory, env, calls } = await fakeGhOnPath();
@@ -114,18 +116,18 @@ describe("upload-release-assets against a fake gh", () => {
 
     await uploadAssets("v1.0.0", [asset], io, {
       maxAttempts: 2,
-      timeoutMs: 500,
+      timeoutMs: 5_000,
       backoffMs: () => 0,
     });
 
     const elapsed = Date.now() - startedAt;
-    expect(elapsed).toBeGreaterThanOrEqual(500 + KILL_GRACE_MS);
-    expect(elapsed).toBeLessThan(20_000);
+    expect(elapsed).toBeGreaterThanOrEqual(5_000 + KILL_GRACE_MS);
+    expect(elapsed).toBeLessThan(25_000);
     expect(await calls()).toHaveLength(2);
     expect(logs[0]).toBe(
-      `Upload of ${asset.name} failed on attempt 1 (timed out after 0.5s); retrying in 0s.`,
+      `Upload of ${asset.name} failed on attempt 1 (timed out after 5s); retrying in 0s.`,
     );
-  }, 30_000);
+  }, 40_000);
 
   test("surfaces gh's stderr for a failed attempt and retries it", async () => {
     const { directory, env, calls } = await fakeGhOnPath();

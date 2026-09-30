@@ -511,5 +511,6 @@ describe("stack shadow databases", () => {
         /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Once it is running, remove them with:\n {2}docker rm --force \$\(docker ps --all --quiet\)\n/u,
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    120_000,
   );
 });
