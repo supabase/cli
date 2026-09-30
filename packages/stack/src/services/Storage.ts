@@ -1,4 +1,4 @@
-import { Cause, Effect, Ref, Schema, Stream } from "effect";
+import { Cause, Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
 import { resolveArtifact } from "../Artifacts.ts";
 import type { ContainerMount, ContainerRuntime } from "../runtime/Container.ts";
 import { mapToServiceError } from "../runtime/Session.ts";
@@ -49,8 +49,14 @@ export type UploadsMount = (mount: {
 
 const xattrProbe = `import("/slim-runtime/app/node_modules/fs-xattr/index.js").then(({ setAttributeSync }) => {
   const fs = require("node:fs");
-  const file = "/probe/.supabase-xattr-probe-" + require("node:crypto").randomUUID();
-  fs.writeFileSync(file, "");
+  const file = "/probe/" + process.env.PROBE_FILE;
+  try {
+    fs.writeFileSync(file, "");
+  } catch (error) {
+    if (!["EROFS", "EACCES", "EPERM"].includes(error.code)) throw error;
+    console.log("read-only");
+    return;
+  }
   try {
     setAttributeSync(file, "user.supabase.probe", "1");
     console.log("supported");
@@ -65,7 +71,8 @@ const xattrProbe = `import("/slim-runtime/app/node_modules/fs-xattr/index.js").t
 /**
  * Mounts a stack-volume keyed by `filePath` once one exists or when the engine's file sharing
  * drops the extended attributes Storage writes as object metadata, as Docker Desktop's does, and
- * otherwise bind-mounts `filePath`. Each `filePath` is decided once per resolver.
+ * otherwise bind-mounts `filePath`, including when it is not writable. Each `filePath` is decided
+ * once per resolver.
  */
 export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* (options: {
   readonly container: ContainerRuntime | undefined;
@@ -73,8 +80,11 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
   readonly instanceId: string;
   readonly project?: string;
 }) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const answers = yield* Ref.make<ReadonlyMap<string, boolean>>(new Map());
-  const keepsAttributes = Effect.fn("Storage.probeUploadsDirectory")(function* (
+  const keepsBindMount = Effect.fn("Storage.probeUploadsDirectory")(function* (
     container: ContainerRuntime,
     filePath: string,
     version: string | undefined,
@@ -84,6 +94,7 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
       ...(version === undefined ? {} : { version }),
     });
     yield* container.prepare(image);
+    const probeFile = `.supabase-xattr-probe-${yield* crypto.randomUUIDv4}`;
     const [stdout, stderr, code] = yield* Effect.scoped(
       container
         .launchCommand({
@@ -92,7 +103,7 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
           instanceId: options.instanceId,
           service: "storage",
           ...(options.project === undefined ? {} : { project: options.project }),
-          env: {},
+          env: { PROBE_FILE: probeFile },
           entrypoint: "/slim-runtime/node/bin/node",
           args: ["-e", xattrProbe],
           mounts: [{ source: filePath, target: "/probe", readOnly: false }],
@@ -110,6 +121,9 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
           ),
         ),
     ).pipe(
+      Effect.ensuring(
+        fs.remove(path.join(filePath, probeFile), { force: true }).pipe(Effect.ignore),
+      ),
       Effect.timeout("1 minute"),
       Effect.mapError((cause) =>
         Cause.isTimeoutError(cause)
@@ -121,8 +135,8 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
       ),
     );
     const answer = stdout.trim();
-    if (code === 0 && (answer === "supported" || answer === "unsupported"))
-      return answer === "supported";
+    if (code === 0 && (answer === "supported" || answer === "read-only")) return true;
+    if (code === 0 && answer === "unsupported") return false;
     return yield* new ServiceError({
       operation: "launch",
       message: `Unable to check whether the Storage uploads directory ${filePath} keeps extended attributes: ${stderr.trim() || `probe exited with ${code}`}`,
@@ -140,7 +154,7 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
       const bind =
         known ??
         (!(yield* container.stackVolumeExists({ stackId: options.stackId, source: filePath })) &&
-          (yield* keepsAttributes(container, filePath, version)));
+          (yield* keepsBindMount(container, filePath, version)));
       if (known === undefined)
         yield* Ref.update(answers, (current) => new Map(current).set(filePath, bind));
       const mount: ContainerMount = bind

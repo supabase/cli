@@ -22,7 +22,7 @@ export type StackDestroyFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const stackDestroyCommand = Command.make("destroy", config).pipe(
   Command.withDescription(
-    "Permanently destroy a managed local stack and its owned data, preserving Storage upload files.",
+    "Permanently destroy a managed local stack and its owned data, including uploads kept in Storage volumes; upload directories in the project are preserved.",
   ),
   Command.withShortDescription("Destroy a managed local stack"),
   Command.withExamples([

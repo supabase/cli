@@ -1,8 +1,12 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Crypto, Effect, FileSystem, Stream } from "effect";
+import { Crypto, Effect, FileSystem, Sink, Stream } from "effect";
 import { resolveArtifact, slimImageMirrors } from "../Artifacts.ts";
-import { makeContainerRuntime, type ContainerRuntime } from "../runtime/Container.ts";
+import {
+  makeContainerRuntime,
+  type ContainerMount,
+  type ContainerRuntime,
+} from "../runtime/Container.ts";
 import { cleanupStackVolumes } from "../../tests/docker-fixture.ts";
 import { makeUploadsMount } from "./Storage.ts";
 
@@ -11,6 +15,78 @@ const writeMetadata = `import("/slim-runtime/app/node_modules/fs-xattr/index.js"
   setAttributeSync("/mnt/object", "user.supabase.etag", "etag");
   console.log(getAttributeSync("/mnt/object", "user.supabase.etag").toString());
 })`;
+
+/** A runtime without a stack-volume whose probe container prints `answer`. */
+const probingRuntime = (answer: string): ContainerRuntime => ({
+  prepare: () => Effect.void,
+  prepareImage: (image) => Effect.succeed(image),
+  launch: () => Effect.die("launched a service"),
+  launchCommand: () =>
+    Effect.succeed({
+      id: "probe",
+      ports: {},
+      stdout: Stream.make(new TextEncoder().encode(`${answer}\n`)),
+      stderr: Stream.empty,
+      exitCode: Effect.succeed(0),
+      stdin: Sink.drain,
+      stop: Effect.void,
+      discard: Effect.void,
+      kill: Effect.void,
+      remove: Effect.void,
+    }),
+  stackVolumeExists: () => Effect.succeed(false),
+});
+
+const resolveWith = (container: ContainerRuntime, readOnly: boolean) =>
+  makeUploadsMount({ container, stackId: "stack", instanceId: "storage" }).pipe(
+    Effect.flatMap((resolve) => resolve({ filePath: "/uploads", readOnly })),
+    Effect.provide(NodeServices.layer),
+  );
+
+const liveStack = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-uploads-" });
+  const uploads = `${root}/uploads`;
+  yield* fs.makeDirectory(uploads);
+  const stackId = (yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4)).replaceAll("-", "");
+  yield* cleanupStackVolumes(stackId, root);
+  const container = yield* makeContainerRuntime({
+    engine: "docker",
+    root,
+    imageMirrors: slimImageMirrors,
+  });
+  return { uploads, stackId, container };
+});
+
+const writeWithStorageImage = (
+  container: ContainerRuntime,
+  stackId: string,
+  mount: ContainerMount,
+) =>
+  Effect.gen(function* () {
+    const { image } = yield* resolveArtifact({ service: "storage" });
+    yield* container.prepare(image);
+    return yield* Effect.scoped(
+      container
+        .launchCommand({
+          image,
+          stackId,
+          instanceId: "storage",
+          env: {},
+          entrypoint: "/slim-runtime/node/bin/node",
+          args: ["-e", writeMetadata],
+          mounts: [mount],
+        })
+        .pipe(
+          Effect.flatMap((process) =>
+            Effect.all(
+              [process.stdout.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
+              { concurrency: "unbounded" },
+            ),
+          ),
+        ),
+    );
+  });
 
 // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
 describe("Storage uploads mount", () => {
@@ -23,14 +99,40 @@ describe("Storage uploads mount", () => {
         launchCommand: () => Effect.die("launched a probe"),
         stackVolumeExists: () => Effect.succeed(true),
       };
-      const resolve = yield* makeUploadsMount({
-        container,
-        stackId: "stack",
-        instanceId: "storage",
-      });
 
-      expect(yield* resolve({ filePath: "/uploads", readOnly: true })).toEqual({
+      expect(yield* resolveWith(container, true)).toEqual({
         type: "stack-volume",
+        source: "/uploads",
+        target: "/mnt",
+        readOnly: true,
+      });
+    }),
+  );
+
+  it.effect("bind-mounts a directory whose file sharing keeps extended attributes", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveWith(probingRuntime("supported"), false)).toEqual({
+        source: "/uploads",
+        target: "/mnt",
+        readOnly: false,
+      });
+    }),
+  );
+
+  it.effect("uses a new stack-volume when file sharing drops extended attributes", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveWith(probingRuntime("unsupported"), false)).toEqual({
+        type: "stack-volume",
+        source: "/uploads",
+        target: "/mnt",
+        readOnly: false,
+      });
+    }),
+  );
+
+  it.effect("keeps a read-only bind mount for a directory the probe cannot write", () =>
+    Effect.gen(function* () {
+      expect(yield* resolveWith(probingRuntime("read-only"), true)).toEqual({
         source: "/uploads",
         target: "/mnt",
         readOnly: true,
@@ -43,47 +145,34 @@ describe("Storage uploads mount", () => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-uploads-" });
-        const uploads = `${root}/uploads`;
-        yield* fs.makeDirectory(uploads);
-        const stackId = (yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4)).replaceAll(
-          "-",
-          "",
-        );
-        yield* cleanupStackVolumes(stackId, root);
-        const container = yield* makeContainerRuntime({
-          engine: "docker",
-          root,
-          imageMirrors: slimImageMirrors,
-        });
+        const { uploads, stackId, container } = yield* liveStack;
         const resolve = yield* makeUploadsMount({ container, stackId, instanceId: "storage" });
 
         const mount = yield* resolve({ filePath: uploads, readOnly: false });
         expect(yield* fs.readDirectory(uploads)).toEqual([]);
 
-        const { image } = yield* resolveArtifact({ service: "storage" });
-        const output = yield* Effect.scoped(
-          container
-            .launchCommand({
-              image,
-              stackId,
-              instanceId: "storage",
-              env: {},
-              entrypoint: "/slim-runtime/node/bin/node",
-              args: ["-e", writeMetadata],
-              mounts: [mount],
-            })
-            .pipe(
-              Effect.flatMap((process) =>
-                Effect.all(
-                  [process.stdout.pipe(Stream.decodeText, Stream.mkString), process.exitCode],
-                  { concurrency: "unbounded" },
-                ),
-              ),
-            ),
-        );
-        expect(output).toEqual(["etag\n", 0]);
+        expect(yield* writeWithStorageImage(container, stackId, mount)).toEqual(["etag\n", 0]);
         expect(yield* fs.exists(`${uploads}/object`)).toBe(mount.type !== "stack-volume");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "lets the Storage image write object metadata into a fresh stack-volume",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { uploads, stackId, container } = yield* liveStack;
+
+        const output = yield* writeWithStorageImage(container, stackId, {
+          type: "stack-volume",
+          source: uploads,
+          target: "/mnt",
+          readOnly: false,
+        });
+
+        expect(output).toEqual(["etag\n", 0]);
+        expect(yield* fs.readDirectory(uploads)).toEqual([]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
