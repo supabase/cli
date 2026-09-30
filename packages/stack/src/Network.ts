@@ -97,29 +97,40 @@ const makeNetwork = (options: {
           ? "host.docker.internal"
           : "host.containers.internal";
 
-    /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
-    const installJoin = Effect.fn("Network.installJoin")(function* (
-      routeId: string,
-      join: NonNullable<NetworkEndpoint["join"]>,
+    const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
+
+    /** Maps one endpoint's route contributions to the shared listener's `HttpRoute` shape. */
+    const toHttpRoutes = (
+      id: string,
+      contributions: ReadonlyArray<RouteContribution>,
       backend: NetworkEndpoint["backend"],
-    ) {
-      const routes = join.map((route) => ({
-        id: routeId,
+    ): ReadonlyArray<HttpRoute> =>
+      contributions.map((route) => ({
+        id,
         prefix: route.prefix,
         upstreamPrefix: route.upstreamPrefix,
         upstreamHost: route.upstreamHost,
         ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
         target: backend,
       }));
+
+    /** Installs a namespace's joined routes onto the shared listener, or queues them if it does not exist yet. */
+    const installJoin = Effect.fn("Network.installJoin")(function* (
+      routeId: string,
+      join: NonNullable<NetworkEndpoint["join"]>,
+      backend: NetworkEndpoint["backend"],
+    ) {
+      const routes = toHttpRoutes(routeId, join, backend);
+      const ownKeys = new Set(routes.map(routeKey));
       const current = yield* Ref.get(shared);
       if (current === undefined) {
         yield* Ref.update(pendingJoins, (existing) => [
-          ...existing.filter((route) => route.id !== routeId),
+          ...existing.filter((route) => !ownKeys.has(routeKey(route))),
           ...routes,
         ]);
         return;
       }
-      const next = [...current.routes.filter((route) => route.id !== routeId), ...routes];
+      const next = [...current.routes.filter((route) => !ownKeys.has(routeKey(route))), ...routes];
       yield* current.proxy.setRoutes(next);
       yield* Ref.set(shared, { ...current, routes: next });
     });
@@ -196,7 +207,6 @@ const makeNetwork = (options: {
                   );
                   if (endpoint.shared !== undefined && result.listener.proxy !== undefined) {
                     const previous = yield* Ref.get(shared);
-                    // A brand-new listener adopts any join routes queued while it did not exist.
                     let seeded: ReadonlyArray<HttpRoute> = [];
                     if (previous === undefined) seeded = yield* Ref.get(pendingJoins);
                     const current = previous ?? {
@@ -209,14 +219,7 @@ const makeNetwork = (options: {
                     else if (seeded.length > 0) yield* Ref.set(pendingJoins, []);
                     const routes = [
                       ...current.routes,
-                      ...endpoint.shared.map((route) => ({
-                        id,
-                        prefix: route.prefix,
-                        upstreamPrefix: route.upstreamPrefix,
-                        upstreamHost: route.upstreamHost,
-                        ...(route.keyRewrite === undefined ? {} : { keyRewrite: route.keyRewrite }),
-                        target: endpoint.backend,
-                      })),
+                      ...toHttpRoutes(id, endpoint.shared, endpoint.backend),
                     ];
                     yield* current.proxy.setRoutes(routes);
                     yield* Ref.set(shared, { ...current, routes });

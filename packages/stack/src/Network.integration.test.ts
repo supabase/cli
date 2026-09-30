@@ -1,11 +1,10 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Data, Deferred, Effect, FileSystem, Layer, Path, Ref } from "effect";
+import { Context, Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
-import { accepts } from "./Ports.ts";
 import * as State from "./State.ts";
 
 const makeTestState = (root: string) =>
@@ -422,6 +421,35 @@ it.live("stays idempotent across repeated binds of the joining namespace", () =>
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("keeps a namespace's own shared route when its join endpoint also binds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "network-join-shares-namespace-",
+      });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const combo = yield* network.register({
+        id: "combo",
+        endpoints: {
+          api: { ...endpoint(target, Effect.succeed(true)), shared: [{ prefix: "/rest" }] },
+          http: joinEndpoint(target, Effect.succeed(true)),
+        },
+      });
+      yield* combo.bind;
+      const address = yield* combo.address("api", "host");
+      expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+      yield* combo.bind;
+      expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
+      expect(yield* request(address.host, address.port, "/mcp")).toBe("backend:/api/mcp");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("re-adds a joined route after its namespace closes and rebinds", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -518,9 +546,23 @@ it.live(
             Effect.provide(NodeHttpClient.layerNodeHttp),
           )).status,
         ).toBe(404);
+        // Owns a raw connection to the shared listener so its closure can be observed directly,
+        // instead of reprobing the port afterward.
+        const probe = yield* Effect.callback<Net.Socket, FixtureError>((resume) => {
+          const connection = Net.createConnection({ host: address.host, port: address.port });
+          connection.once("connect", () => resume(Effect.succeed(connection)));
+          connection.on("error", (cause) =>
+            resume(Effect.fail(new FixtureError({ message: cause.message }))),
+          );
+          return Effect.sync(() => connection.destroy());
+        });
+        const probeClosed = yield* Effect.callback<void, never>((resume) => {
+          probe.once("close", () => resume(Effect.void));
+          return Effect.sync(() => probe.destroy());
+        }).pipe(Effect.forkChild);
         yield* Ref.set(studioEnabled, false);
         yield* studio.close;
-        expect(yield* accepts(address.host, address.port)).toBe(false);
+        yield* Fiber.join(probeClosed).pipe(Effect.timeout("2 seconds"));
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
