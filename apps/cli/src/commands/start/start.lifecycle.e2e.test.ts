@@ -338,4 +338,58 @@ describe("supabase start (e2e)", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
   );
+
+  // Regression coverage for the legacy (non-slim) `timberio/vector:0.58.0-alpine` image, which
+  // ships no `/etc/vector` — `buildVectorEntrypointScript` used to write its config straight into
+  // that nonexistent directory and crash-loop the container (start.go's own health wait then
+  // fails `start` itself). Only Postgres, Logflare, and Vector run; both are excludable in every
+  // other scenario here, so this is the only place that exercises them together.
+  it.live(
+    "starts Vector against a real Logflare and reaches healthy (CLI-2512: Vector 0.58 ships no /etc/vector)",
+    () =>
+      Effect.gen(function* () {
+        const projectDir = yield* makeProject("sb-start-e2e-vector-");
+        const path = yield* Path.Path;
+        const projectId = sanitizeProjectId(path.basename(projectDir));
+        const vectorContainer = serviceContainerName("vector", projectId);
+
+        const init = yield* runSupabaseEffect(["init"], {
+          cwd: projectDir,
+          exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
+        });
+        requireCliSuccess(init, "init setup");
+        yield* overridePorts(projectDir);
+
+        const excludeArgs = SERVICE_CATALOG.flatMap((entry) =>
+          entry.excludeKey === undefined ||
+          entry.excludeKey === "logflare" ||
+          entry.excludeKey === "vector"
+            ? []
+            : ["--exclude", entry.excludeKey],
+        );
+        const start = yield* runSupabaseEffect(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+        });
+
+        if (start.exitCode !== 0) {
+          const logs = yield* runDockerEffect(["logs", vectorContainer]).pipe(
+            Effect.map(({ stdout, stderr }) => `${stdout}${stderr}`.trim() || "<empty>"),
+            Effect.catch((error) => Effect.succeed(`<unavailable: ${error.message}>`)),
+          );
+          throw new Error(
+            `start failed (exit ${start.exitCode})\nstdout:\n${start.stdout}\nstderr:\n${start.stderr}\n${vectorContainer} logs:\n${logs}`,
+          );
+        }
+
+        const health = yield* runDockerEffect([
+          "inspect",
+          vectorContainer,
+          "--format",
+          "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
+        ]);
+        expect(health.stdout.trim()).toBe("healthy");
+      }).pipe(Effect.provide(BunServices.layer)),
+    START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS + CLEANUP_TIMEOUT_MS,
+  );
 });

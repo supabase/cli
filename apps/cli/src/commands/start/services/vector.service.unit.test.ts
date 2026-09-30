@@ -208,7 +208,7 @@ describe("resolveVectorDockerSocketPlan", () => {
 describe("buildVectorEntrypointScript", () => {
   test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector (start.go:449-454)", () => {
     expect(buildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
-      "cat <<'EOF' > /etc/vector/vector.yaml\n" +
+      "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
         "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
         "supabase_analytics_proj" +
