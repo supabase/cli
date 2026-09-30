@@ -341,7 +341,7 @@ const withNotebookTask =
       return yield* Effect.acquireUseRelease(
         output.task(`${sanitizeInlineName(subject)}...`),
         () => self,
-        (task, exit) => (Exit.isFailure(exit) ? task.fail() : task.clear()),
+        (task, exit) => (Exit.isFailure(exit) ? task.fail() : task.clear),
       );
     });
 

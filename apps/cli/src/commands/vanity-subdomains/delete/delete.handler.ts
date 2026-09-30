@@ -40,7 +40,7 @@ export const vanitySubdomainsDelete = Effect.fn("vanity-subdomains.delete")(func
         Effect.tapError(() => deleting?.fail() ?? Effect.void),
         Effect.catch(mapDeleteError),
       );
-      yield* deleting?.clear() ?? Effect.void;
+      yield* deleting?.clear ?? Effect.void;
 
       // `--output` is ignored entirely (stderr-only success). We still read
       // the legacy flag so that an explicit --output suppresses the TS json/stream-json

@@ -19,6 +19,7 @@
     "!apps/cli/src/shared/git/**",
     "!apps/cli/src/shared/init/**",
     "!apps/cli/src/shared/issue/**",
+    "!apps/cli/src/shared/output/**",
     "!apps/cli/src/shared/runtime/**",
     "!apps/cli/src/shared/services/**",
     "!apps/cli/src/shared/telemetry/**",

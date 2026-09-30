@@ -37,7 +37,7 @@ function captureOutput() {
           fail: () => Effect.void,
           info: () => Effect.void,
           cancel: () => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
       promptText: () => Effect.die("unexpected promptText"),
       promptPassword: () => Effect.die("unexpected promptPassword"),

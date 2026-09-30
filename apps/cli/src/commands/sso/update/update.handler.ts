@@ -484,7 +484,7 @@ export const ssoUpdate = Effect.fn("sso.update")(function* (flags: SsoUpdateFlag
       }
 
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 

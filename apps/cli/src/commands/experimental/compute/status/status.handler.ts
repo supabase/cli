@@ -60,7 +60,7 @@ export const computeStatus = Effect.fn("compute.status")(function* (flags: Compu
     const found = yield* getCompute(api, projectRef, name).pipe(
       Effect.tapError(() => fetching.fail()),
     );
-    yield* fetching.clear();
+    yield* fetching.clear;
 
     if (Option.isNone(found)) {
       return yield* new ComputeNotDeployedError({

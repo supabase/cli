@@ -285,7 +285,7 @@ export function mockOutput(
                   messages.push({ type: "warn", message: nextMessage });
                 }
               }),
-            clear: () => Effect.void,
+            clear: Effect.void,
           };
         }),
       event: (event) =>
