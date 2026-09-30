@@ -451,6 +451,7 @@ describe("stack start (compiled e2e)", () => {
           );
           expect(Object.keys(variables)).toEqual([
             "API_URL",
+            "REST_URL",
             "DB_URL",
             "PUBLISHABLE_KEY",
             "SECRET_KEY",
