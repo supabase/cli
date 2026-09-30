@@ -9,8 +9,8 @@ import {
   planSlimUpdates,
   planUpdatesForService,
   refreshCatalogPin,
-  runPlanUpdates,
   validateSlimReleasePublishedPayload,
+  waitForExpectedRelease,
   type RevisionIo,
 } from "./sync-artifacts-catalog.ts";
 
@@ -72,33 +72,54 @@ async function formatWithOxfmt(source: string): Promise<string> {
   }
 }
 
+/**
+ * A resolved `ArtifactPin` literal, for fixtures that exercise refreshing an already-resolved
+ * catalog entry to a new revision (design B: a committed catalog is never an unresolved
+ * placeholder). `seed` keys a real, distinct digest via the module's `digest` helper.
+ */
+function resolvedPinLiteral(
+  service: string,
+  version: string,
+  revision: number,
+  seed: string,
+): string {
+  return `{ upstreamVersion: "${version}", revision: ${revision}, image: "ghcr.io/supabase/cli/${service}:${version}-r${revision}@${digest(seed)}", natives: {} }`;
+}
+
+const postgres17Pin = resolvedPinLiteral("postgres", "17.6.1.168", 0, "postgres-17");
+/**
+ * The default pin's `image` field, quoted. A formatter may move a long property value onto its
+ * own line, but never breaks a string literal's contents — so this survives real formatting the
+ * way asserting the whole (potentially re-wrapped) `postgres17Pin` literal would not.
+ */
+const postgres17Image = `"ghcr.io/supabase/cli/postgres:17.6.1.168-r0@${digest("postgres-17")}"`;
+
 const fixture = `const workloadCatalog = {
   database: definition(
     "postgres",
-    placeholderPin("postgres", "17.6.1.168"),
+    ${postgres17Pin},
     "bin/supabase-postgres-start",
     ["bin/supabase-postgres-start"],
-    { "15.14.1.168": placeholderPin("postgres", "15.14.1.168") },
+    { "15.14.1.168": ${resolvedPinLiteral("postgres", "15.14.1.168", 0, "postgres-15")} },
   ),
-  rest: definition("postgrest", placeholderPin("postgrest", "v16.2"), "bin/postgrest"),
-  storage: definition("storage", placeholderPin("storage", "v1.73.0"), "bin/storage", ["bin/storage"]),
+  rest: definition("postgrest", ${resolvedPinLiteral("postgrest", "v16.2", 0, "postgrest")}, "bin/postgrest"),
+  storage: definition("storage", ${resolvedPinLiteral("storage", "v1.73.0", 0, "storage")}, "bin/storage", ["bin/storage"]),
   analytics: definition(
     "analytics",
-    placeholderPin("analytics", "v1.50.9"),
+    ${resolvedPinLiteral("analytics", "v1.50.9", 0, "analytics")},
     "bin/logflare",
   ),
 };
 `;
 
 const vectorFixture = `const workloadCatalog = {
-  vector: definition("vector", placeholderPin("vector", "0.53.0"), "bin/vector"),
+  vector: definition("vector", ${resolvedPinLiteral("vector", "0.53.0", 0, "vector")}, "bin/vector"),
 };
 `;
 
 /**
- * Fully resolved (not `placeholderPin`) fixtures for `planSlimUpdates`: a committed catalog
- * always carries resolved pins (see the design doc's one-time alignment), so these give every
- * pin a real revision instead of the `-1` an unresolved placeholder would carry.
+ * Fixtures for `planSlimUpdates`: a committed catalog always carries resolved pins, so these
+ * give every pin a real revision.
  */
 const plannerFixture = `const workloadCatalog = {
   rest: definition(
@@ -159,6 +180,25 @@ describe("validateSlimReleasePublishedPayload", () => {
         release_version: "15.14.1.168\nrevision=999\ninjected=yes-r0",
       }),
     ).toThrow(InvalidPayloadError);
+  });
+
+  test("a newline-bearing service value produces a single-line error", () => {
+    let caught: unknown;
+    try {
+      validateSlimReleasePublishedPayload({
+        service: "postgres\n::error ::injected",
+        upstream_version: "15.14.1.168",
+        revision: "0",
+        release_version: "15.14.1.168-r0",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(InvalidPayloadError);
+    const message = (caught as InvalidPayloadError).message;
+    expect(message.split("\n")).toHaveLength(1);
+    expect(message).toContain(JSON.stringify("postgres\n::error ::injected"));
   });
 
   test("accepts a Studio-style calendar-versioned upstream", () => {
@@ -516,50 +556,189 @@ describe("planUpdatesForService (the plan-updates transport's IO seam)", () => {
   });
 });
 
+describe("waitForExpectedRelease (item A's eventual-consistency wait, call counts a subprocess can't assert)", () => {
+  test("visible on the first listing: returns immediately without waiting", async () => {
+    let calls = 0;
+    const waits: number[] = [];
+    const result = await waitForExpectedRelease(
+      "postgrest",
+      "v16.4-r1",
+      {
+        listReleaseTags: async () => {
+          calls += 1;
+          return ["postgrest-v16.4-r1"];
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+      },
+      6,
+      10_000,
+    );
+
+    expect(result).toEqual({ visible: true, tags: ["postgrest-v16.4-r1"] });
+    expect(calls).toBe(1);
+    expect(waits).toEqual([]);
+  });
+
+  test("visible on a later listing: re-lists and waits between attempts until it appears", async () => {
+    let calls = 0;
+    const waits: number[] = [];
+    const result = await waitForExpectedRelease(
+      "postgrest",
+      "v16.4-r1",
+      {
+        listReleaseTags: async () => {
+          calls += 1;
+          return calls < 3 ? ["postgrest-v16.4-r0"] : ["postgrest-v16.4-r0", "postgrest-v16.4-r1"];
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+      },
+      6,
+      10_000,
+    );
+
+    expect(result).toEqual({ visible: true, tags: ["postgrest-v16.4-r0", "postgrest-v16.4-r1"] });
+    expect(calls).toBe(3);
+    expect(waits).toEqual([10_000, 10_000]);
+  });
+
+  test("never visible: exhausts every bounded attempt, waiting between but not after the last", async () => {
+    let calls = 0;
+    const waits: number[] = [];
+    const result = await waitForExpectedRelease(
+      "postgrest",
+      "v16.4-r1",
+      {
+        listReleaseTags: async () => {
+          calls += 1;
+          return ["postgrest-v16.4-r0"];
+        },
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+      },
+      3,
+      10,
+    );
+
+    expect(result).toEqual({ visible: false, tags: ["postgrest-v16.4-r0"] });
+    expect(calls).toBe(3);
+    expect(waits).toEqual([10, 10]);
+  });
+});
+
 describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure planner)", () => {
-  test("an ignored tag plus a valid update: --output gets exactly the valid record, and the warning reaches stdout", async () => {
-    // Real catalog, real "auth" pin — `io.listReleaseTags` is the seam this CLI mode injects, so
-    // this exercises its own file/stdout wiring (P1) without a network call.
+  test("an ignored tag, a valid upgrade, and the expected dispatched release: --output gets exactly the valid record, the warning reaches stdout, and the process exits 0", async () => {
+    // Real catalog, real "postgrest" pin — a local fixture server stands in for the releases API
+    // (`SLIM_SERVICES_RELEASES_API`), so this exercises the real subprocess: the CLI's argv
+    // parsing, `--expect-release`'s visibility wait, the network lister, and the file/stdout
+    // wiring together, not just the pure planner or an in-process stub.
     const catalog = await Bun.file(CATALOG_PATH).text();
     const pinMatch =
-      /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)",\s*revision:\s*(\d+)/.exec(
+      /definition\(\s*"postgrest",\s*\{\s*upstreamVersion:\s*"([^"]+)",\s*revision:\s*(\d+)/.exec(
         catalog,
       );
-    if (pinMatch === null) throw new Error("auth pin not found in the real catalog");
+    if (pinMatch === null) throw new Error("postgrest pin not found in the real catalog");
     const pinnedUpstream = pinMatch[1] as string;
     const pinnedRevision = Number(pinMatch[2]);
-    const hotfixRelease = `${pinnedUpstream}-r${pinnedRevision + 1}`;
+    // Higher than any real pinned postgrest version, so it always plans as an upgrade.
+    const dispatchedRelease = "v999.0-r0";
 
-    const dir = await mkdtemp(join(tmpdir(), "plan-updates-cli-"));
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json([
+          { tag_name: `postgrest-${pinnedUpstream}-orioledb-r0`, draft: false }, // ignored
+          { tag_name: `postgrest-${dispatchedRelease}`, draft: false }, // the valid upgrade
+        ]),
+    });
+    const dir = await mkdtemp(join(tmpdir(), "plan-updates-subprocess-"));
     const outputPath = join(dir, "slim-updates.tsv");
-    const logs: string[] = [];
-    const originalLog = console.log;
-    let content: string;
     try {
-      console.log = (...args: unknown[]) => {
-        logs.push(args.map(String).join(" "));
-      };
-      // No exception reaching past this call is this mode's own success condition — `main()`'s
-      // wrapper only calls `process.exit(1)` when `runPlanUpdates` rejects, so resolving here is
-      // the in-process analogue of "the exit status is 0".
-      await runPlanUpdates(["--service", "auth", "--format", "lines", "--output", outputPath], {
-        listReleaseTags: async () => [
-          `auth-${hotfixRelease}`,
-          `auth-${pinnedUpstream}-orioledb-r0`, // ignored: not a comparable version
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ".github/scripts/sync-artifacts-catalog.ts",
+          "plan-updates",
+          "--service",
+          "postgrest",
+          "--format",
+          "lines",
+          "--expect-release",
+          dispatchedRelease,
+          "--output",
+          outputPath,
         ],
-      });
-      content = await readFile(outputPath, "utf8");
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...globalThis.process.env,
+            SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}`,
+          },
+        },
+      );
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(
+        `::warning ::postgrest ${pinnedUpstream}-orioledb is not a comparable version; ignoring.`,
+      );
+      const content = await readFile(outputPath, "utf8");
+      expect(content).toBe(
+        `upgrade\x1fslim-bump/postgrest\x1fchore(stack): bump postgrest to ${dispatchedRelease}\x1f${dispatchedRelease}\x1f${pinnedUpstream}-r${pinnedRevision}\n`,
+      );
     } finally {
-      console.log = originalLog;
+      await server.stop(true);
       await rm(dir, { recursive: true, force: true });
     }
+  });
 
-    expect(logs).toEqual([
-      `::warning ::auth ${pinnedUpstream}-orioledb is not a comparable version; ignoring.`,
-    ]);
-    expect(content).toBe(
-      `hotfix\x1fslim-hotfix/auth\x1fchore(stack): pin auth ${hotfixRelease}\x1f${hotfixRelease}\x1f${pinnedUpstream}-r${pinnedRevision}\n`,
-    );
+  test("the expected dispatched release never becomes visible: the process exits non-zero with an actionable error, and writes no output file", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => Response.json([{ tag_name: "postgrest-v16.4-r0", draft: false }]),
+    });
+    const dir = await mkdtemp(join(tmpdir(), "plan-updates-subprocess-never-"));
+    const outputPath = join(dir, "slim-updates.tsv");
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ".github/scripts/sync-artifacts-catalog.ts",
+          "plan-updates",
+          "--service",
+          "postgrest",
+          "--format",
+          "lines",
+          "--expect-release",
+          "v999.0-r0",
+          "--output",
+          outputPath,
+        ],
+        {
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...globalThis.process.env,
+            SLIM_SERVICES_RELEASES_API: `http://127.0.0.1:${server.port}`,
+            SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: "5",
+          },
+        },
+      );
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain("::error ::");
+      expect(stdout).toContain("postgrest-v999.0-r0 is not visible yet");
+      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
+    } finally {
+      await server.stop(true);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("a missing --output exits non-zero before any network call", async () => {
@@ -668,7 +847,7 @@ describe("refreshCatalogPin", () => {
       target: "additional",
     });
     // The default (17.x) postgres line is untouched.
-    expect(written.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+    expect(written.source).toContain(postgres17Image);
 
     const formatted = await formatWithOxfmt(written.source);
     const nextDigests = nativeDigests("o");
@@ -693,7 +872,7 @@ describe("refreshCatalogPin", () => {
       previousVersion: "15.14.1.168",
       target: "additional",
     });
-    expect(refreshed.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+    expect(refreshed.source).toContain(postgres17Image);
     expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
   });
 
@@ -723,7 +902,7 @@ describe("refreshCatalogPin", () => {
     expect(written.source).not.toContain('"15.14.1.168"');
     expect(written.source).toContain('"15.19.0.002": { upstreamVersion: "15.19.0.002"');
     // The default (17.x) postgres line is untouched.
-    expect(written.source).toContain('placeholderPin("postgres", "17.6.1.168")');
+    expect(written.source).toContain(postgres17Image);
 
     // The renamed key resolves the entry again after real formatting, e.g. for a later hotfix.
     const formatted = await formatWithOxfmt(written.source);

@@ -60,7 +60,9 @@ jobs:
       # field — including `upstream_version` and `release_version`, not just `service` and
       # `revision` — is checked against an anchored charset before it is ever written to
       # `$GITHUB_OUTPUT`, a branch name, or a PR title. A value that fails validation makes the
-      # script exit non-zero without printing anything.
+      # script exit non-zero and print a single `::error ::…` line to stdout (the rejected value
+      # is JSON-escaped in that message, so it can never smuggle in a newline or workflow command),
+      # which this step re-echoes so it still surfaces as an annotation.
       - name: Validate payload
         id: validate
         env:
@@ -83,15 +85,21 @@ jobs:
       # field-separated with `\x1f` (see `updateLine`), which a later step reads directly. Any
       # `::warning ::…` the planner emits (an ignored tag, say) prints to this step's own stdout
       # instead, so it can never be mistaken for a malformed record.
+      #
+      # `--expect-release` guards against the releases API lagging behind this very dispatch: it
+      # requires `<service>-<release_version>` to be a listed tag before planning runs at all,
+      # re-listing a bounded number of times first (`waitForExpectedRelease`). Without it, a slow
+      # API would make this run plan without the release that triggered it, and pass quietly.
       - name: Plan updates
         id: plan
         env:
           SERVICE: ${{ steps.validate.outputs.service }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service "$SERVICE" --format lines \
-            --output "${RUNNER_TEMP}/slim-updates.tsv"
+            --expect-release "$RELEASE_VERSION" --output "${RUNNER_TEMP}/slim-updates.tsv"
           count="$(wc -l < "${RUNNER_TEMP}/slim-updates.tsv" | tr -d ' ')"
           echo "count=${count}" >>"$GITHUB_OUTPUT"
 

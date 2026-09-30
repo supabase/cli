@@ -25,7 +25,11 @@
  * another when a caller redirects stdout separately from the records file.
  *
  *   bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service <service> \
- *     --output <path> [--format lines]
+ *     --output <path> [--format lines] [--expect-release <U>-r<N>]
+ *
+ * `--expect-release` handles the releases API lagging behind the dispatch that triggered this
+ * run: before planning, the listed committed tags must include `<service>-<release_version>`, or
+ * this mode re-lists a bounded number of times before giving up (`waitForExpectedRelease`).
  *
  * Validate-payload mode (used by the same workflow, before anything else):
  * checks an untrusted `slim-release-published` dispatch payload against
@@ -54,8 +58,18 @@ const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 const NATIVE_TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
 type NativeTargetName = (typeof NATIVE_TARGETS)[number];
 
-const RELEASES_API = "https://api.github.com/repos/supabase/slim-services/releases";
+/** Overridable so an integration test can point at a local fixture server instead of GitHub. */
+const RELEASES_API =
+  process.env.SLIM_SERVICES_RELEASES_API ??
+  "https://api.github.com/repos/supabase/slim-services/releases";
 const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/releases/download";
+
+/** Bounded retry for `waitForExpectedRelease`: 6 attempts, 10s apart, by default. */
+const EXPECT_RELEASE_ATTEMPTS = 6;
+/** Overridable so an integration test can shrink the real delay between attempts. */
+const EXPECT_RELEASE_INTERVAL_MS = Number(
+  process.env.SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ?? 10_000,
+);
 
 /** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
 function releaseLine(version: string): string {
@@ -138,7 +152,7 @@ export type RevisionResolution =
 /**
  * Network ports the resolver needs: the release list (for revision allocation), a release's
  * `SHA256SUMS` body, the GHCR manifest digest, and a byte source's sha256. Tests stub these
- * directly, the same way the previous `publication` callback was stubbed.
+ * directly.
  */
 export interface RevisionIo {
   /** Tags of every published, non-draft release — a draft is not yet a committed revision. */
@@ -179,7 +193,7 @@ function desiredImage(service: string, releaseVersion: string, digest: string): 
 /**
  * Resolves `service`'s committed `<upstream>-r<N>` revision, pinned by content: the GHCR
  * manifest digest, and every native target's archive and manifest sha256, cross-checked against
- * the S3 mirror copy. See module docs for the five-step protocol.
+ * the S3 mirror copy.
  *
  * With `requiredRevision` given, that exact revision must already be committed — this is what
  * pins exactly a planned release (`--release`), never "highest at apply time". Without it, the
@@ -324,7 +338,9 @@ const IMAGE_REFERENCE_PATTERN =
 /** Validates a normalized `upstreamImage` before it's ever written to `Artifacts.ts`. */
 function validateUpstreamImage(image: string, context: string): string {
   if (!IMAGE_REFERENCE_PATTERN.test(image)) {
-    throw new InvalidPayloadError(`${context} has an invalid upstreamImage '${image}'.`);
+    throw new InvalidPayloadError(
+      `${context} has an invalid upstreamImage ${JSON.stringify(image)}.`,
+    );
   }
   return image;
 }
@@ -384,7 +400,10 @@ async function resolveUpstreamImage(
   }
   if (values.size !== 1) {
     throw new InvalidPayloadError(
-      `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values].sort().join(", ")}.`,
+      `${service}-${releaseVersion} manifests disagree on the upstream image: ${[...values]
+        .sort()
+        .map((value) => JSON.stringify(value))
+        .join(", ")}.`,
     );
   }
   return validateUpstreamImage([...values][0] as string, `${service}-${releaseVersion}`);
@@ -445,29 +464,18 @@ function scanBalanced(source: string, openIndex: number, open: string, close: st
   throw new InvalidPayloadError(`unterminated '${open}' while parsing ${CATALOG_PATH}`);
 }
 
-const PLACEHOLDER_PREFIX = /placeholderPin\s*\(/y;
-/** Loosely finds `placeholderPin`'s second (version) argument anywhere inside its call text. */
-const PLACEHOLDER_VERSION = /"[a-z0-9-]+"\s*,\s*"([^"]+)"/;
 /** Loosely finds `upstreamVersion` anywhere inside a resolved pin literal's text. */
 const PIN_UPSTREAM_VERSION = /upstreamVersion:\s*"([^"]+)"/;
-/** Loosely finds `revision` anywhere inside a resolved pin literal's text. Absent for a `placeholderPin`. */
+/** Loosely finds `revision` anywhere inside a resolved pin literal's text. */
 const PIN_REVISION = /revision:\s*(\d+)/;
 
 /**
- * Matches a pin expression (B1's `placeholderPin(...)` call, or a resolved `ArtifactPin` object
- * literal) starting exactly at `index`. The span is found by bracket balance, then the version is
- * pulled out with a loose field search — so a formatter's whitespace, line breaks, trailing
- * commas, or property order never break matching, only the two literal shapes themselves would.
+ * Matches a resolved `ArtifactPin` object literal starting exactly at `index`. The span is found
+ * by bracket balance, then the version is pulled out with a loose field search — so a formatter's
+ * whitespace, line breaks, trailing commas, or property order never break matching, only the
+ * literal shape itself would.
  */
 function matchPinAt(source: string, index: number): PinSpan | undefined {
-  PLACEHOLDER_PREFIX.lastIndex = index;
-  const placeholderPrefix = PLACEHOLDER_PREFIX.exec(source);
-  if (placeholderPrefix !== null) {
-    const openParen = index + placeholderPrefix[0].length - 1;
-    const end = scanBalanced(source, openParen, "(", ")");
-    const version = PLACEHOLDER_VERSION.exec(source.slice(index, end))?.[1];
-    return version === undefined ? undefined : { start: index, end, version };
-  }
   if (source[index] === "{") {
     const end = scanBalanced(source, index, "{", "}");
     const version = PIN_UPSTREAM_VERSION.exec(source.slice(index, end))?.[1];
@@ -582,22 +590,26 @@ export function validateSlimReleasePublishedPayload(input: {
   readonly release_version: string;
 }): SlimReleasePublishedPayload {
   if (!SERVICE_NAME_PATTERN.test(input.service)) {
-    throw new InvalidPayloadError(`invalid service: '${input.service}'`);
+    throw new InvalidPayloadError(`invalid service: ${JSON.stringify(input.service)}`);
   }
   if (!UPSTREAM_VERSION_PATTERN.test(input.upstream_version)) {
-    throw new InvalidPayloadError(`invalid upstream_version: '${input.upstream_version}'`);
+    throw new InvalidPayloadError(
+      `invalid upstream_version: ${JSON.stringify(input.upstream_version)}`,
+    );
   }
   if (!/^(0|[1-9][0-9]*)$/.test(input.revision)) {
-    throw new InvalidPayloadError(`invalid revision: '${input.revision}'`);
+    throw new InvalidPayloadError(`invalid revision: ${JSON.stringify(input.revision)}`);
   }
   if (!RELEASE_VERSION_PATTERN.test(input.release_version)) {
-    throw new InvalidPayloadError(`invalid release_version: '${input.release_version}'`);
+    throw new InvalidPayloadError(
+      `invalid release_version: ${JSON.stringify(input.release_version)}`,
+    );
   }
   const revision = Number(input.revision);
   const expected = `${input.upstream_version}-r${revision}`;
   if (input.release_version !== expected) {
     throw new InvalidPayloadError(
-      `release_version '${input.release_version}' does not match derived '${expected}'`,
+      `release_version ${JSON.stringify(input.release_version)} does not match derived ${JSON.stringify(expected)}`,
     );
   }
   return {
@@ -672,17 +684,16 @@ function buildUpdate(
   toRevision: number,
 ): SlimUpdate {
   if (!SERVICE_NAME_PATTERN.test(service)) {
-    throw new InvalidPayloadError(`invalid service: '${service}'`);
+    throw new InvalidPayloadError(`invalid service: ${JSON.stringify(service)}`);
   }
   if (!UPSTREAM_VERSION_PATTERN.test(toUpstream)) {
-    throw new InvalidPayloadError(`invalid upstream version: '${toUpstream}'`);
+    throw new InvalidPayloadError(`invalid upstream version: ${JSON.stringify(toUpstream)}`);
   }
   const toRelease = `${toUpstream}-r${toRevision}`;
   if (!RELEASE_VERSION_PATTERN.test(toRelease)) {
-    throw new InvalidPayloadError(`invalid release version: '${toRelease}'`);
+    throw new InvalidPayloadError(`invalid release version: ${JSON.stringify(toRelease)}`);
   }
-  const fromRelease =
-    pinned.revision < 0 ? pinned.upstream : `${pinned.upstream}-r${pinned.revision}`;
+  const fromRelease = `${pinned.upstream}-r${pinned.revision}`;
   const suffix = hasLines ? `-${line}` : "";
   const branch =
     kind === "hotfix" ? `slim-hotfix/${service}${suffix}` : `slim-bump/${service}${suffix}`;
@@ -751,8 +762,12 @@ export function planSlimUpdates(
     const line = hasLines ? releaseLine(span.version) : SINGLE_LINE_KEY;
     const text = catalog.slice(span.start, span.end);
     const revisionMatch = PIN_REVISION.exec(text);
-    const revision = revisionMatch === null ? -1 : Number(revisionMatch[1]);
-    pinnedByLine.set(line, { upstream: span.version, revision });
+    if (revisionMatch === null) {
+      throw new InvalidPayloadError(
+        `${CATALOG_PATH} has no revision for ${service} ${span.version}; a committed catalog always pins a resolved revision.`,
+      );
+    }
+    pinnedByLine.set(line, { upstream: span.version, revision: Number(revisionMatch[1]) });
   }
 
   const tagPattern = releaseTagPattern(service);
@@ -836,6 +851,40 @@ export async function planUpdatesForService(input: {
 }): Promise<PlanSlimUpdatesResult> {
   const releaseTags = await input.listReleaseTags();
   return planSlimUpdates(input.catalog, input.service, releaseTags);
+}
+
+export interface WaitForExpectedReleaseResult {
+  readonly visible: boolean;
+  /** The last listing `listReleaseTags` returned, whichever attempt it came from. */
+  readonly tags: ReadonlyArray<string>;
+}
+
+/**
+ * Eventual-consistency handling of the releases API lagging behind the `slim-release-published`
+ * dispatch that triggered this run: re-lists up to `attempts` times, `io.wait`-ing between
+ * attempts, until `<service>-<releaseVersion>` appears. Not a test retry — a real, bounded wait
+ * for an external API to catch up. `io.wait` is the seam a unit test overrides to skip the real
+ * delay; an integration test instead shrinks `EXPECT_RELEASE_INTERVAL_MS` via
+ * `SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS`, since a subprocess can't be handed a function.
+ */
+export async function waitForExpectedRelease(
+  service: string,
+  releaseVersion: string,
+  io: {
+    readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
+    readonly wait: (ms: number) => Promise<void>;
+  },
+  attempts: number = EXPECT_RELEASE_ATTEMPTS,
+  intervalMs: number = EXPECT_RELEASE_INTERVAL_MS,
+): Promise<WaitForExpectedReleaseResult> {
+  const expectedTag = `${service}-${releaseVersion}`;
+  let tags: ReadonlyArray<string> = [];
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    tags = await io.listReleaseTags();
+    if (tags.includes(expectedTag)) return { visible: true, tags };
+    if (attempt < attempts - 1) await io.wait(intervalMs);
+  }
+  return { visible: false, tags };
 }
 
 export interface CatalogRefreshResult {
@@ -1093,6 +1142,11 @@ function updateLine(update: SlimUpdate): string {
   );
 }
 
+/** Real delay, for `runPlanUpdates`' default `io.wait`. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * `plan-updates`' records go only into `--output <path>`, never stdout: a caller (the workflow)
  * reads warnings from stdout as `::warning ::…` lines, and would otherwise mistake one for a
@@ -1100,32 +1154,60 @@ function updateLine(update: SlimUpdate): string {
  *
  * `io.listReleaseTags` defaults to the real network lister but is overridable — the minimal seam
  * a test uses to exercise this CLI mode's own file/stdout wiring (not just the pure planner)
- * without a network call, the same pattern `RevisionIo` already uses. The `--service`/`--output`
- * usage check runs before either the catalog read or the lister, so a test can also assert this
- * mode fails fast on a missing flag without touching the network.
+ * without a network call, the same pattern `RevisionIo` already uses. `io.wait` likewise defaults
+ * to a real delay but is overridable, the seam `waitForExpectedRelease`'s own unit tests use. The
+ * `--service`/`--output` usage check runs before either the catalog read or the lister, so a test
+ * can also assert this mode fails fast on a missing flag without touching the network.
+ *
+ * With `--expect-release <U>-r<N>` given, `<service>-<U>-r<N>` must be among the listed tags
+ * before planning runs at all — otherwise this dispatch's own release could be missing from a
+ * releases API that hasn't caught up yet, and the run would plan and pass quietly without it
+ * (`waitForExpectedRelease` handles the resulting eventual-consistency wait). Still missing after
+ * the bounded retries: this mode throws instead of planning, so `main()`'s handler reports an
+ * actionable `::error ::` and exits non-zero, and no `--output` file is written.
  */
 export async function runPlanUpdates(
   argv: ReadonlyArray<string>,
-  io: { readonly listReleaseTags: () => Promise<ReadonlyArray<string>> } = { listReleaseTags },
+  io: {
+    readonly listReleaseTags: () => Promise<ReadonlyArray<string>>;
+    readonly wait?: (ms: number) => Promise<void>;
+  } = { listReleaseTags },
 ): Promise<void> {
   const flags = parseFlags(argv);
   const service = flags.get("service");
   const output = flags.get("output");
+  const expectRelease = flags.get("expect-release");
   if (service === undefined || output === undefined) {
     throw new InvalidPayloadError(
-      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path> [--format lines]",
+      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path> " +
+        "[--format lines] [--expect-release <U>-r<N>]",
     );
   }
   const format = flags.get("format") ?? "json";
   if (format !== "json" && format !== "lines") {
     throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
   }
+  if (expectRelease !== undefined && !RELEASE_VERSION_PATTERN.test(expectRelease)) {
+    throw new InvalidPayloadError(`invalid --expect-release ${JSON.stringify(expectRelease)}`);
+  }
+
+  let listReleaseTags = io.listReleaseTags;
+  if (expectRelease !== undefined) {
+    const waited = await waitForExpectedRelease(service, expectRelease, {
+      listReleaseTags: io.listReleaseTags,
+      wait: io.wait ?? sleep,
+    });
+    if (!waited.visible) {
+      throw new InvalidPayloadError(
+        `${service}-${expectRelease} is not visible yet from the slim-services releases API; re-run this workflow once it has propagated.`,
+      );
+    }
+    // Reuses the listing the successful attempt already fetched, instead of listing again.
+    listReleaseTags = async () => waited.tags;
+  }
+
   const catalog = await Bun.file(CATALOG_PATH).text();
-  const { updates, warnings } = await planUpdatesForService({
-    catalog,
-    service,
-    listReleaseTags: io.listReleaseTags,
-  });
+  const { updates, warnings } = await planUpdatesForService({ catalog, service, listReleaseTags });
   for (const warning of warnings) console.log(warning);
   const content =
     format === "lines"
