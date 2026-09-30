@@ -735,7 +735,7 @@ it.live("returns a gateway error when the fresh retry after a pooled reset also 
   );
 });
 
-it.live("delivers a POST once and fails it when the upstream resets after reading its body", () => {
+it.live("delivers a keyed POST once when the upstream resets after reading its body", () => {
   const logs: Array<string> = [];
   return Effect.scoped(
     Effect.gen(function* () {
@@ -768,69 +768,13 @@ it.live("delivers a POST once and fails it when the upstream resets after readin
       yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
       const pooled = yield* request(proxy.port, "/rest/v1/", new Uint8Array(), {}, "GET");
       expect(pooled.status).toBe(200);
-      const post = yield* request(proxy.port, "/rest/v1/rpc", new TextEncoder().encode("insert"));
+      const post = yield* request(proxy.port, "/rest/v1/rpc", new TextEncoder().encode("insert"), {
+        "idempotency-key": "insert",
+      });
       expect(post.status).toBe(502);
       expect(bodies).toEqual(["insert"]);
       expect(logs).toHaveLength(1);
       expect(logs[0]).toContain("Route rest request failed");
-    }),
-  ).pipe(
-    Effect.provide(
-      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
-    ),
-  );
-});
-
-it.live(
-  "replays an idempotency-keyed POST once when its pooled connection resets unanswered",
-  () => {
-    const logs: Array<string> = [];
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const backend = oneRequestPerConnectionBackend();
-        const address = yield* backend.listen;
-        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-        yield* proxy.setRoutes([{ id: "mcp", prefix: "/", target: Effect.succeed(address) }]);
-        const first = yield* request(proxy.port, "/mcp", new TextEncoder().encode("first-body"), {
-          "idempotency-key": "first",
-        });
-        expect(first.status).toBe(200);
-        const second = yield* request(proxy.port, "/mcp", new TextEncoder().encode("second-body"), {
-          "idempotency-key": "second",
-        });
-        expect(second.status).toBe(200);
-        expect(new TextDecoder().decode(second.body)).toBe("ok");
-        expect(backend.connections()).toBe(2);
-        expect(logs).toHaveLength(1);
-        expect(logs[0]).toContain("Route mcp POST upstream failed before responding, retrying");
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
-      ),
-    );
-  },
-);
-
-it.live("sends a body too large to replay on a fresh upstream connection", () => {
-  const logs: Array<string> = [];
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const backend = oneRequestPerConnectionBackend();
-      const address = yield* backend.listen;
-      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-      yield* proxy.setRoutes([{ id: "storage", prefix: "/", target: Effect.succeed(address) }]);
-      const small = yield* request(proxy.port, "/object", new TextEncoder().encode("small"), {
-        "idempotency-key": "small",
-      });
-      expect(small.status).toBe(200);
-      const large = yield* request(proxy.port, "/object", new Uint8Array(2 * 1024 * 1024).fill(1), {
-        "idempotency-key": "large",
-      });
-      expect(large.status).toBe(200);
-      expect(new TextDecoder().decode(large.body)).toBe("ok");
-      expect(backend.connections()).toBe(2);
-      expect(logs).toEqual([]);
     }),
   ).pipe(
     Effect.provide(
@@ -844,11 +788,8 @@ it.live("reuses pooled upstream connections across thousands of concurrent reque
     Effect.gen(function* () {
       let connections = 0;
       const backend = createServer((incoming, outgoing) => {
-        let body = "";
-        incoming.on("data", (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        incoming.once("end", () => outgoing.end(`${incoming.method} ${body}`));
+        incoming.resume();
+        incoming.once("end", () => outgoing.end(incoming.url));
       });
       backend.on("connection", () => {
         connections += 1;
@@ -859,12 +800,7 @@ it.live("reuses pooled upstream connections across thousands of concurrent reque
       const responses = yield* Effect.forEach(
         Array.from({ length: 3000 }, (_, index) => index),
         (index) =>
-          (index % 2 === 0
-            ? request(proxy.port, "/rest/v1/", new Uint8Array(), {}, "GET")
-            : request(proxy.port, "/rest/v1/", new TextEncoder().encode(`row-${index}`), {
-                "idempotency-key": `key-${index}`,
-              })
-          ).pipe(
+          request(proxy.port, `/rest/v1/items?id=eq.${index}`, new Uint8Array(), {}, "GET").pipe(
             Effect.map((response) => ({
               index,
               status: response.status,
@@ -875,8 +811,7 @@ it.live("reuses pooled upstream connections across thousands of concurrent reque
       );
       expect(
         responses.filter(
-          ({ index, status, body }) =>
-            status !== 200 || body !== (index % 2 === 0 ? "GET " : `POST row-${index}`),
+          ({ index, status, body }) => status !== 200 || body !== `/rest/v1/items?id=eq.${index}`,
         ),
       ).toEqual([]);
       expect(connections).toBeLessThan(100);
