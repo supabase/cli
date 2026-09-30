@@ -132,27 +132,22 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # Kept as its own step, before the loop, so the loop body below can be exercised against a
-      # local bare remote in a dry run (point `origin` there instead of running this step).
-      - name: Point origin at the authenticated remote
-        if: steps.plan.outputs.count != '0'
-        env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
       # One branch per planned item, built fresh from the base commit recorded above (the default
       # branch's head at the start of this run) — never from wherever a previous loop iteration
       # left HEAD. Pins exactly the planned release (`--release`, never "highest at apply time"),
       # so plan and pin agree by construction: a revision minted a second later arrives with its
       # own dispatch, not by racing this one.
+      #
+      # The app token (contents + pull-requests write) never reaches third-party code or disk:
+      # `git push` takes it only as part of an explicit URL, computed once as `push_url`
+      # (overridable via `PUSH_REMOTE_URL`, the seam a dry run uses to target a local bare repo
+      # instead), and `gh` gets it inline per call. Every `bun`/`pnpm` command below — the sync
+      # script, the Dockerfile generator, the formatter — runs under `env -u APP_TOKEN` so a
+      # compromised transitive dependency of any of them (they import `effect`) can't read it.
       - name: Apply planned updates
         if: steps.plan.outputs.count != '0'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ github.token }}
           SERVICE: ${{ steps.validate.outputs.service }}
           RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
@@ -160,6 +155,9 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          push_url="${PUSH_REMOTE_URL:-https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
           manual_prefix="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --release"
 
           # Read the records on fd 3, not stdin: every command the loop body runs (`bun`, `gh`,
@@ -173,9 +171,9 @@ jobs:
 
             git checkout -B "$branch" "$BASE_SHA"
 
-            bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
-            bun x oxfmt@0.65.0 --config .oxfmtrc.json packages/stack/src/Artifacts.ts
-            bun apps/cli/scripts/render-service-dockerfile.ts
+            env -u APP_TOKEN bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
+            env -u APP_TOKEN -u GITHUB_TOKEN pnpm exec oxfmt --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+            env -u APP_TOKEN -u GITHUB_TOKEN bun apps/cli/scripts/render-service-dockerfile.ts
 
             generated_files=(
               packages/stack/src/Artifacts.ts
@@ -190,7 +188,7 @@ jobs:
             git add -- "${generated_files[@]}"
             git commit -m "$title"
 
-            if ! git push --force origin "HEAD:refs/heads/${branch}"; then
+            if ! git push --force "$push_url" "HEAD:refs/heads/${branch}"; then
               echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
               exit 1
             fi
@@ -207,13 +205,15 @@ jobs:
             body="$(printf 'This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
               "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
 
-            existing="$(gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number --jq '.[0].number // empty')"
+            # `--head` matches by branch name only and ignores the owner, so a fork PR with the
+            # same head branch name would otherwise match too; `isCrossRepository` excludes it.
+            existing="$(GH_TOKEN="$APP_TOKEN" gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number,isCrossRepository --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty')"
             if [ -n "$existing" ]; then
-              if ! gh pr edit "$existing" --title "$title" --body "$body"; then
+              if ! GH_TOKEN="$APP_TOKEN" gh pr edit "$existing" --title "$title" --body "$body"; then
                 echo "::error ::Pushed ${branch} but failed to edit pull request #${existing}. Run manually: ${manual_prefix} ${release}, then edit the pull request from ${branch} by hand."
                 exit 1
               fi
-            elif ! gh pr create \
+            elif ! GH_TOKEN="$APP_TOKEN" gh pr create \
               --title "$title" \
               --body "$body" \
               --assignee jgoux \
