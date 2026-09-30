@@ -131,8 +131,9 @@ pointer to `supabase status --env` that repeats an explicit `--workdir` and any 
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
-name (protocol, address, port, and URL, matching `stack status`, plus `studio.mcp` when Studio has
-an HTTP endpoint), `lazy_services` listing members that start on their first request (empty with
-`--eager`), and an empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md)
-for an example. Credentials are not part of the JSON result. Failures retain typed command errors
-and package diagnostics. Telemetry state is flushed after success or failure.
+name (protocol, address, port, and URL, matching `stack status`, with no synthetic entries),
+`lazy_services` listing members that start on their first request (empty with `--eager`), `env`
+(the same connection map `stack status --env` exports, present on every success path), and an
+empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
+example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
+after success or failure.

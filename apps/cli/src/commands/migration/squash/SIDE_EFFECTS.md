@@ -158,7 +158,8 @@ code or the rest of the payload.
   baseline to target the surviving **older** version, not the original squash target.
 - A failed full-schema dump leaves the target migration truncated (not recoverable — the
   file was already truncated before the dump began).
-- A declined "Update remote migration history table?" prompt is a **success** path (exit 0,
+- A declined "Update remote migration history table?" prompt (`n`, or any unrecognised
+  answer) is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
 - **Atomicity note:** the old Go CLI sent the baseline `DELETE`/`INSERT` via a batched pipeline

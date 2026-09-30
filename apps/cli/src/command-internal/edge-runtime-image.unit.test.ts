@@ -10,7 +10,7 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../shared/services/slim-images.ts";
+import { slimImagesEnabled, toSlimImage } from "../shared/services/slim-images.ts";
 import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
 
 const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");
@@ -26,10 +26,10 @@ const resolve = (workdir: string, denoVersion: number) =>
 describe("resolveEdgeRuntimeImage", () => {
   it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () => {
     const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-    return resolve(dir, 2).pipe(
-      Effect.tap((image) =>
+    return Effect.zip(resolve(dir, 2), slimImagesEnabled).pipe(
+      Effect.tap(([image, slim]) =>
         Effect.sync(() => {
-          expect(image).toBe(dockerfileServiceImage("edgeruntime"));
+          expect(image).toBe(dockerfileServiceImage("edgeruntime", slim));
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

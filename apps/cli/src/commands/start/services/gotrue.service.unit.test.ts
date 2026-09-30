@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   buildGotrueContainerSpec,
@@ -10,10 +10,6 @@ import {
   type GotrueSigningKey,
   type GotrueWebauthnInput,
 } from "./gotrue.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 // Every field not asserted by a specific subtest below reflects the
 // default config's own values.
@@ -674,6 +670,7 @@ describe("buildGotrueEnv", () => {
 describe("buildGotrueContainerSpec", () => {
   test("assembles the full container spec, deriving dbHost/dbPassword from projectId/dbUrl", () => {
     const spec = buildGotrueContainerSpec({
+      slim: false,
       image: "supabase/gotrue:v2.180.0",
       projectId: "proj",
       networkId: "supabase_network_proj",
@@ -710,8 +707,8 @@ describe("buildGotrueContainerSpec", () => {
   });
 
   test("uses BusyBox wget flags on a slim auth image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildGotrueContainerSpec({
+      slim: true,
       image: "ghcr.io/supabase/cli/auth:v2.196.0",
       projectId: "proj",
       networkId: "supabase_network_proj",

@@ -13,7 +13,8 @@ const NON_TTY_TIMEOUT_MILLIS = 100;
  * general `promptYesNo`: it writes the label to stderr and reads one stdin line
  * regardless of `--output` format (rather than auto-defaulting in json/stream-json),
  * and on a real TTY it reads a raw stdin line with a 10-minute timeout instead of a
- * clack confirm UI. `--yes` short-circuits to `true`, echoing `<label> y`.
+ * clack confirm UI. `--yes` short-circuits to `true`, echoing `<label> y`. A parsed
+ * answer wins; an empty line, EOF, or timeout takes the default; any other line declines.
  */
 export const migrationConfirm = (
   title: string,
@@ -33,6 +34,7 @@ export const migrationConfirm = (
     yield* output.raw(label, "stderr");
     const line = yield* stdin.readLine(stdin.isTTY ? TTY_TIMEOUT_MILLIS : NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
-    if (!stdin.isTTY) yield* output.raw(`${input}\n`, "stderr");
-    return parseYesNo(input) ?? options.defaultValue;
+    if (!stdin.isTTY) yield* output.raw(`${input.trim()}\n`, "stderr");
+    // An unrecognised answer is never consent.
+    return parseYesNo(input) ?? (input.length > 0 ? false : options.defaultValue);
   });

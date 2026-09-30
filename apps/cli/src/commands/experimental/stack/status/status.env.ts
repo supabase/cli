@@ -1,23 +1,29 @@
 import { Effect } from "effect";
 import type { StackCredentials } from "@supabase/stack/effect";
-import type { StackConnections } from "../stack-summary.ts";
+import { connectionEnv, type StackConnections } from "../stack-summary.ts";
 import { StackCommandStatusError } from "./status.errors.ts";
 
 const variableNames = [
   "API_URL",
+  "REST_URL",
+  "FUNCTIONS_URL",
   "DB_URL",
-  "ANON_KEY",
-  "SERVICE_ROLE_KEY",
+  "STUDIO_URL",
+  "MCP_URL",
+  "MAILPIT_URL",
+  "INBUCKET_URL",
   "PUBLISHABLE_KEY",
   "SECRET_KEY",
-  "STUDIO_URL",
-  "INBUCKET_URL",
-  "MCP_URL",
+  "ANON_KEY",
+  "SERVICE_ROLE_KEY",
+  "STORAGE_S3_URL",
   "S3_PROTOCOL_ACCESS_KEY_ID",
   "S3_PROTOCOL_ACCESS_KEY_SECRET",
   "S3_PROTOCOL_REGION",
-  "STORAGE_S3_URL",
 ] as const;
+
+/** Names the stack backend used to export, since removed; still worth naming in errors. */
+const removedVariableNames = new Set(["S3_PROTOCOL_URL"]);
 
 export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
   Effect.gen(function* () {
@@ -27,15 +33,20 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
       const [source, target, extra] = entry.split("=");
       if (
         source === undefined ||
-        !names.has(source) ||
         target === undefined ||
         extra !== undefined ||
         !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(target)
       )
         return yield* new StackCommandStatusError({
           reason: "flags",
-          message:
-            "--override-name must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.",
+          message: `--override-name entry "${entry}" must be EXPORTED_VARIABLE=VALID_ENV_NAME; for example API_URL=NEXT_PUBLIC_SUPABASE_URL.`,
+        });
+      if (!names.has(source))
+        return yield* new StackCommandStatusError({
+          reason: "flags",
+          message: removedVariableNames.has(source)
+            ? `--override-name entry "${entry}" refers to ${source}, which is not exported by the stack backend.`
+            : `--override-name entry "${entry}" refers to ${source}, which is not an exported variable; valid variables are ${variableNames.join(", ")}.`,
         });
       if (sources.has(source))
         return yield* new StackCommandStatusError({
@@ -53,39 +64,20 @@ export const stackEnvOverrides = (entries: ReadonlyArray<string>) =>
     return names;
   });
 
+/** The `status --env` variable map, with `--override-name` remapping applied. */
 export const stackEnvValues = (
-  status: {
-    readonly urls: Pick<StackConnections, "api" | "studio" | "mailpit" | "mcp" | "s3">;
-    readonly credentials?: Pick<
-      StackCredentials,
-      "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey"
-    >;
-  },
-  credentials: Readonly<Record<string, string>>,
+  connections: StackConnections,
+  credentials:
+    | Pick<StackCredentials, "publishableKey" | "secretKey" | "anonKey" | "serviceRoleKey">
+    | undefined,
   names: ReadonlyMap<string, string>,
-): Readonly<Record<string, string>> => {
-  const values: Record<string, string> = {};
-  if (credentials.databaseUrl !== undefined) values.DB_URL = credentials.databaseUrl;
-  if (status.credentials !== undefined) {
-    values.ANON_KEY = status.credentials.anonKey;
-    values.SERVICE_ROLE_KEY = status.credentials.serviceRoleKey;
-    values.PUBLISHABLE_KEY = status.credentials.publishableKey;
-    values.SECRET_KEY = status.credentials.secretKey;
-  }
-  if (status.urls.api !== undefined) values.API_URL = status.urls.api;
-  if (status.urls.studio !== undefined) values.STUDIO_URL = status.urls.studio;
-  if (status.urls.mcp !== undefined) values.MCP_URL = status.urls.mcp;
-  if (status.urls.mailpit !== undefined) values.INBUCKET_URL = status.urls.mailpit;
-  if (status.urls.s3 !== undefined) {
-    values.STORAGE_S3_URL = status.urls.s3.url;
-    values.S3_PROTOCOL_ACCESS_KEY_ID = status.urls.s3.accessKeyId;
-    values.S3_PROTOCOL_ACCESS_KEY_SECRET = status.urls.s3.secretAccessKey;
-    values.S3_PROTOCOL_REGION = status.urls.s3.region;
-  }
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [names.get(key) ?? key, value]),
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    Object.entries(connectionEnv(connections, credentials)).map(([key, value]) => [
+      names.get(key) ?? key,
+      value,
+    ]),
   );
-};
 
 const dotenvQuote = (value: string): string | undefined => {
   if (!value.includes("'")) return "'";

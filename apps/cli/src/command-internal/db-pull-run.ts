@@ -805,8 +805,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         }
 
         // Prompt to update the remote migration history table. Returns the default
-        // (`true`) on `--yes`, on a non-interactive stdin, or on any prompt error — it
-        // never fails the command.
+        // (`true`) on `--yes`, on an empty non-interactive stdin, or on any prompt error —
+        // it never fails the command.
         let remoteHistoryUpdated = false;
         const updateHistoryTitle = "Update remote migration history table?";
         // `invoke?.assumeYes` overrides this resolution entirely for an in-process

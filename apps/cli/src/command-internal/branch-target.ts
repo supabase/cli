@@ -127,7 +127,7 @@ export const findBranchName = Effect.fnUntraced(function* (
         : undefined;
     return yield* api.v1
       .listAllBranches({ ref: parentRef })
-      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear() ?? Effect.void));
+      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear ?? Effect.void));
   }).pipe(
     Effect.timeout(BRANCH_LOOKUP_TIMEOUT),
     // Any failure or the timeout above degrades to `None`; this helper never fails on a

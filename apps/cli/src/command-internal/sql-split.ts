@@ -40,6 +40,9 @@ function endsWithKeyword(data: string, keyword: string): boolean {
 
 const isSqlWhitespace = (rune: string): boolean => " \t\n\r\f\v".includes(rune);
 
+// scan.l `newline`: a `--` comment ends at either.
+const isNewline = (rune: string): boolean => rune === "\n" || rune === "\r";
+
 function isBeginAtomic(data: string): boolean {
   if (!endsWithKeyword(data, BEGIN_ATOMIC)) return false;
   let end = data.length - BEGIN_ATOMIC.length;
@@ -53,9 +56,9 @@ function isCommentsAndWhitespace(text: string): boolean {
     if (isSqlWhitespace(text[i]!)) {
       i += 1;
     } else if (text.startsWith("--", i)) {
-      const newline = text.indexOf("\n", i + 2);
+      const newline = text.slice(i + 2).search(/[\n\r]/u);
       if (newline === -1) return true;
-      i = newline + 1;
+      i += newline + 3;
     } else if (text.startsWith("/*", i)) {
       // Match `BlockState`'s sliding-window scan so both agree on overlapping delimiters.
       let depth = 1;
@@ -85,8 +88,12 @@ class ReadyState implements State {
         return new TagState(offset);
       }
       case "'":
+        // `E'…'` is an escape string constant only when the `E` starts a token (scan.l
+        // `xestart`); in `type'…'` it ends an identifier. A digit or `$` before the `E`
+        // counts as one too, unlike PostgreSQL; valid SQL never has that.
+        return new QuoteState(rune, endsWithKeyword(data.slice(0, -1), "E"));
       case '"':
-        return new QuoteState(rune);
+        return new QuoteState(rune, false);
       case "-":
         return new CommentState();
       case "/":
@@ -109,9 +116,14 @@ class ReadyState implements State {
 
 class CommentState implements State {
   next(rune: string, data: string): State | null {
-    // A line comment escapes nothing until the newline — same shape as a dollar quote.
-    if (rune === "-") return new DollarState("\n");
+    if (rune === "-") return new LineCommentState();
     return new ReadyState().next(rune, data);
+  }
+}
+
+class LineCommentState implements State {
+  next(rune: string): State {
+    return isNewline(rune) ? new ReadyState() : this;
   }
 }
 
@@ -134,7 +146,11 @@ class BlockState implements State {
 
 class QuoteState implements State {
   private escape = false;
-  constructor(private readonly delimiter: string) {}
+  private backslash = false;
+  constructor(
+    private readonly delimiter: string,
+    private readonly backslashEscapes: boolean,
+  ) {}
   next(rune: string, data: string): State | null {
     if (this.escape) {
       // Preserve a doubled quote ('' or "").
@@ -142,10 +158,48 @@ class QuoteState implements State {
         this.escape = false;
         return this;
       }
+      if (this.backslashEscapes) return new QuoteContinueState().next(rune, data);
       return new ReadyState().next(rune, data);
+    }
+    if (this.backslash) {
+      // Preserve the rune after a backslash (\' or \\).
+      this.backslash = false;
+      return this;
+    }
+    if (this.backslashEscapes && rune === "\\") {
+      this.backslash = true;
+      return this;
     }
     if (rune === this.delimiter) this.escape = true;
     return this;
+  }
+}
+
+// After an escape string's closing quote, whitespace holding a newline and then a quote
+// continues the same literal (scan.l `quotecontinue`); `--` comments count as whitespace.
+class QuoteContinueState implements State {
+  private newline = false;
+  private dashes = 0;
+  next(rune: string, data: string): State | null {
+    if (this.dashes === 2) {
+      if (isNewline(rune)) {
+        this.dashes = 0;
+        this.newline = true;
+      }
+      return this;
+    }
+    if (rune === "-") {
+      this.dashes += 1;
+      return this;
+    }
+    if (this.dashes === 0) {
+      if (isSqlWhitespace(rune)) {
+        this.newline ||= isNewline(rune);
+        return this;
+      }
+      if (this.newline && rune === "'") return new QuoteState(rune, true);
+    }
+    return new ReadyState().next(rune, data);
   }
 }
 

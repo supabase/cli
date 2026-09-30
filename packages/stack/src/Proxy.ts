@@ -59,6 +59,7 @@ export const serveTcp = Effect.fn("Proxy.serveTcp")(
   (
     listener: SocketServer.SocketServer["Service"],
     target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>,
+    label: string,
   ) =>
     listener.run(() =>
       Effect.scoped(
@@ -86,8 +87,14 @@ export const serveTcp = Effect.fn("Proxy.serveTcp")(
             });
           });
           yield* Effect.gen(function* () {
-            const address = yield* target;
-            const backend = yield* connect(address);
+            const backend = yield* Effect.gen(function* () {
+              const address = yield* target;
+              return yield* connect(address);
+            }).pipe(
+              Effect.tapError((cause) =>
+                Effect.logError(`Endpoint ${label} failed: ${cause.message}`),
+              ),
+            );
             yield* Effect.all([copy(incoming, backend), copy(backend, incoming)], {
               concurrency: "unbounded",
               discard: true,

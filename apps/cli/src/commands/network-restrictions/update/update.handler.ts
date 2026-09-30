@@ -84,7 +84,7 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
+        yield* updating?.clear ?? Effect.void;
         // The PATCH response always renders as `&[]`/`&[...]`, never `<nil>`; partition
         // returns concrete arrays to match, even when a type has no items.
         const partitioned = partitionPatchedCidrs(response.config.dbAllowedCidrs);
@@ -103,7 +103,7 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
+        yield* updating?.clear ?? Effect.void;
         // POST /apply prints the response field directly; an omitted array renders as `<nil>`.
         v4Out = response.config.dbAllowedCidrs;
         v6Out = response.config.dbAllowedCidrsV6;

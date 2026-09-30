@@ -155,6 +155,7 @@ function setup(
     files?: Readonly<Record<string, string>>;
     format?: OutputFormat;
     confirm?: ReadonlyArray<boolean>;
+    piped?: string;
     args?: ReadonlyArray<string>;
     yes?: boolean;
     isLocal?: boolean;
@@ -233,10 +234,9 @@ function setup(
     }),
     BunServices.layer,
     // Prompts are answered through mockOutput's `promptConfirmResponses` (the
-    // TTY/clack path); Stdin is only used by promptYesNo's non-TTY branch (unreached
-    // here).
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true),
+    // TTY/clack path) unless `piped` feeds promptYesNo's non-TTY branch.
+    mockTty({ stdinIsTty: opts.piped === undefined }),
+    mockStdin(opts.piped === undefined, opts.piped),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(DnsResolverFlag, "native"),
@@ -375,6 +375,37 @@ describe("db push", () => {
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
+
+  it.live.each(["u", "yess", "nope", "   ", "n", "no"])(
+    "applies nothing when the piped answer is %j",
+    (answer) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped: `${answer}\n`,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    },
+  );
+
+  it.live.each(["y\n", "yes\n", "\n", ""])(
+    "applies migrations when the piped answer is %j",
+    (piped) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped,
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs).toContain("BEGIN");
+      });
+    },
+  );
 
   it.live("prints the plan without applying in dry-run mode", () => {
     const { layer, out, conn } = setup(tmp.current, {

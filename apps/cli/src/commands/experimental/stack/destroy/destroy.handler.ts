@@ -100,7 +100,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const result = yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? destroying.clear()
+          ? destroying.clear
           : Cause.hasInterruptsOnly(exit.cause)
             ? destroying.cancel()
             : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),

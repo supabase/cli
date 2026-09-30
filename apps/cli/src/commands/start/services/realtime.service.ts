@@ -16,6 +16,8 @@ import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { startInternalDbPassword } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
 
 export interface RealtimeContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** The sanitized project id. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
@@ -51,7 +53,7 @@ export function buildRealtimeContainerSpec(input: RealtimeContainerSpecInput): S
     env,
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
           header: `Host:${REALTIME_TENANT_ID}`,
         })

@@ -6,8 +6,8 @@ resolution, fetch, and classification, `../diff/`). Prompts for confirmation bef
 interactive TTY, unless `--yes` is set; `--output-format json|stream-json` never prompts at all and
 returns the confirmation's default value without reading anything. A non-interactive TEXT run (no
 TTY on stdin) still prints the confirmation to stderr and reads a single line from piped stdin,
-honoring an explicit `y`/`n` answer and falling back to the default otherwise. Never writes on
-`--dry-run`, on a declined prompt, or on any error.
+honoring an explicit `y`/`yes`/`n`/`no` answer, falling back to the default on an empty line, and
+declining any other answer. Never writes on `--dry-run`, on a declined prompt, or on any error.
 
 ## Files Read
 

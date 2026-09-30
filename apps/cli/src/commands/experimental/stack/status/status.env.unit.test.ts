@@ -46,16 +46,13 @@ describe("stack environment overrides", () => {
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides([]);
       const values = stackEnvValues(
-        {
-          urls: {},
-          credentials: {
-            publishableKey: "sb_publishable_saved",
-            secretKey: "sb_secret_saved",
-            anonKey: "asymmetric-anon-token",
-            serviceRoleKey: "asymmetric-service-token",
-          },
-        },
         {},
+        {
+          publishableKey: "sb_publishable_saved",
+          secretKey: "sb_secret_saved",
+          anonKey: "asymmetric-anon-token",
+          serviceRoleKey: "asymmetric-service-token",
+        },
         names,
       );
       expect(values).toEqual({
@@ -67,11 +64,21 @@ describe("stack environment overrides", () => {
     }),
   );
 
+  it.effect("emits INBUCKET_URL as a deprecated alias of MAILPIT_URL", () =>
+    Effect.gen(function* () {
+      const names = yield* stackEnvOverrides([]);
+      expect(stackEnvValues({ mailpit: "http://127.0.0.1:54324" }, undefined, names)).toEqual({
+        MAILPIT_URL: "http://127.0.0.1:54324",
+        INBUCKET_URL: "http://127.0.0.1:54324",
+      });
+    }),
+  );
+
   it.effect("accepts renames and rejects malformed or colliding destinations", () =>
     Effect.gen(function* () {
       const names = yield* stackEnvOverrides(["API_URL=NEXT_PUBLIC_API_URL"]);
       expect(names.get("API_URL")).toBe("NEXT_PUBLIC_API_URL");
-      expect(stackEnvValues({ urls: { api: "http://127.0.0.1:54321" } }, {}, names)).toEqual({
+      expect(stackEnvValues({ api: "http://127.0.0.1:54321" }, undefined, names)).toEqual({
         NEXT_PUBLIC_API_URL: "http://127.0.0.1:54321",
       });
 
@@ -85,6 +92,53 @@ describe("stack environment overrides", () => {
         const error = yield* stackEnvOverrides(entries).pipe(Effect.flip);
         expect(error.reason).toBe("flags");
       }
+    }),
+  );
+
+  it.effect("accepts every current variable name and rejects removed ones", () =>
+    Effect.gen(function* () {
+      for (const name of [
+        "API_URL",
+        "REST_URL",
+        "FUNCTIONS_URL",
+        "DB_URL",
+        "STUDIO_URL",
+        "MCP_URL",
+        "MAILPIT_URL",
+        "INBUCKET_URL",
+        "PUBLISHABLE_KEY",
+        "SECRET_KEY",
+        "ANON_KEY",
+        "SERVICE_ROLE_KEY",
+        "STORAGE_S3_URL",
+        "S3_PROTOCOL_ACCESS_KEY_ID",
+        "S3_PROTOCOL_ACCESS_KEY_SECRET",
+        "S3_PROTOCOL_REGION",
+      ]) {
+        const names = yield* stackEnvOverrides([`${name}=RENAMED_${name}`]);
+        expect(names.get(name)).toBe(`RENAMED_${name}`);
+      }
+      for (const removed of ["S3_PROTOCOL_URL", "JWT_SECRET"]) {
+        const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);
+        expect(error.reason).toBe("flags");
+      }
+    }),
+  );
+
+  it.effect("names the offending entry in --override-name error messages", () =>
+    Effect.gen(function* () {
+      const malformed = yield* stackEnvOverrides(["API_URL="]).pipe(Effect.flip);
+      expect(malformed.message).toContain('"API_URL="');
+
+      const removed = yield* stackEnvOverrides(["S3_PROTOCOL_URL=RENAMED"]).pipe(Effect.flip);
+      expect(removed.message).toContain("S3_PROTOCOL_URL");
+      expect(removed.message).toContain("not exported by the stack backend");
+
+      const unknown = yield* stackEnvOverrides(["UNKNOWN=RENAMED"]).pipe(Effect.flip);
+      expect(unknown.message).toContain("UNKNOWN");
+      expect(unknown.message).toContain("API_URL");
+      expect(unknown.message).toContain("REST_URL");
+      expect(unknown.message).toContain("FUNCTIONS_URL");
     }),
   );
 });
