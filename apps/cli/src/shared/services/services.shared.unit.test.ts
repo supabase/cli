@@ -18,9 +18,10 @@ import {
 // `v2.197.0-r0`, with a realistic (non-placeholder) fixture digest built to the real
 // `ArtifactPin`/`NativePin` shape from `@supabase/stack/internal/artifacts`. Every other service
 // is deliberately absent, so `toSlimImage` falls through to the upstream image for them — the
-// expected state until Dependabot catches the Dockerfile up. `vi.mock` factories are hoisted
-// above every other top-level statement, so the fixture is inlined rather than referencing an
-// outer const.
+// permanent state for a non-slim-capable alias (kong, `pg14`, the job images): the Dockerfile's
+// slim-capable lines are generated from the catalog now, so they never disagree with it.
+// `vi.mock` factories are hoisted above every other top-level statement, so the fixture is
+// inlined rather than referencing an outer const.
 vi.mock("@supabase/stack/internal/artifacts", () => {
   const digest = "260e94edb8d402555791146fcf70b8e90efdc6a81877a04e5aa26f0f416a5dd7";
   const nativePin = { archive: digest, manifest: digest };

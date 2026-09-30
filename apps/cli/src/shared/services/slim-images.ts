@@ -118,9 +118,10 @@ function catalogImageFor(service: SlimServiceName, upstreamVersion: string): str
  * This owns tag normalization (`v`-prefixing, `tagPrefix`, vector's `-alpine`
  * strip) via {@link slimCatalogPin}, so pins that differ only in prefix
  * between the two registries (`supavisor`, `logflare`) still match. Returns
- * `undefined` when no catalog entry's `upstreamVersion` matches — including
- * when Dependabot has bumped the Dockerfile ahead of the catalog — so callers
- * keep the upstream (non-slim) image instead of guessing a slim tag.
+ * `undefined` when no catalog entry's `upstreamVersion` matches — the catalog is the single
+ * version table now, so this only happens for an alias with no slim build (kong, `pg14`, the
+ * one-shot job images) — so callers keep the upstream (non-slim) image instead of guessing a
+ * slim tag.
  */
 export function toSlimImage(alias: string, image: string): string | undefined {
   const pin = slimCatalogPin(alias, image);
