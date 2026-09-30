@@ -100,8 +100,9 @@ and manifest and hashes them against those same release sums. This exists becaus
 `publish-release` does not wait for the ECR/S3 mirror to finish, so a freshly committed
 revision's S3 copy can briefly lag. A missing object is waited for, bounded; an object that
 exists with the wrong bytes fails the sync immediately — that's corruption, not lag, and means
-"run the mirror backfill", not "the CLI is broken". Hosts that reach GitHub are unaffected — GitHub is the primary mirror — but a host that
-can only reach S3 would otherwise fail verification with no fallback.
+"run the mirror backfill", not "the CLI is broken". Hosts that reach GitHub are unaffected —
+GitHub is the primary mirror — but a host that can only reach S3 would otherwise fail
+verification with no fallback.
 
 ### Hotfix and upgrade pickup
 
@@ -131,6 +132,12 @@ revisits it because the pin has moved past that upstream. The planner instead em
 `::warning ::…` naming the skipped release and the manual `--release` invocation that pins it
 alone. Different lines stay independent, so one run can still plan both kinds: postgres can
 upgrade its 17 line while hotfixing its 15 line.
+
+The skip lasts as long as the upgrade is available: while its PR stays open, or if it is
+declined, every run skips the line's hotfix again, and only the manual `--release` invocation
+pins it. A hotfix PR opened before the upgrade appeared is left as is. Merge it before the
+upgrade and the upgrade PR conflicts until the next run for that service rewrites it; merge the
+upgrade first and the hotfix PR is superseded and must be closed by hand.
 
 A service with a single pin has a single line, which accepts any comparable newer upstream: a
 Studio year rollover or a postgrest major bump moves that line forward. Only a service with

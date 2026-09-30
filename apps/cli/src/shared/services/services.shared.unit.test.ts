@@ -18,10 +18,16 @@ import {
 // `catalogPins` defaults to an auth-only fixture; the real-catalog tests swap in the original.
 const { mockCatalogPins } = vi.hoisted(() => ({ mockCatalogPins: vi.fn() }));
 
-vi.mock("@supabase/stack/internal/artifacts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@supabase/stack/internal/artifacts")>();
-  return { ...actual, catalogPins: mockCatalogPins };
-});
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => ({
+    ...actual,
+    catalogPins: mockCatalogPins,
+  })),
+);
+
+const { catalogPins: actualCatalogPins } = await vi.importActual<
+  typeof import("@supabase/stack/internal/artifacts")
+>("@supabase/stack/internal/artifacts");
 
 const FIXTURE_DIGEST = "260e94edb8d402555791146fcf70b8e90efdc6a81877a04e5aa26f0f416a5dd7";
 const FIXTURE_NATIVE_PIN = { archive: FIXTURE_DIGEST, manifest: FIXTURE_DIGEST };
@@ -121,14 +127,7 @@ describe("services shared", () => {
   });
 
   describe("against the real slim-services catalog", () => {
-    let actualCatalogPins: (typeof import("@supabase/stack/internal/artifacts"))["catalogPins"];
-
-    beforeEach(async () => {
-      actualCatalogPins = (
-        await vi.importActual<typeof import("@supabase/stack/internal/artifacts")>(
-          "@supabase/stack/internal/artifacts",
-        )
-      ).catalogPins;
+    beforeEach(() => {
       mockCatalogPins.mockImplementation(actualCatalogPins);
     });
 
