@@ -80,6 +80,16 @@ function isLocalDatabase(
   return host === localHost && (port === dbPort || port === shadowPort);
 }
 
+/** Stack databases listen on loopback, so only loopback or services-hostname URLs can match one. */
+function mayBeStackDatabaseHost(host: string, localHost: string): boolean {
+  return (
+    host === localHost ||
+    host === "localhost" ||
+    host === "::1" ||
+    (net.isIPv4(host) && host.startsWith("127."))
+  );
+}
+
 /** Best-effort TCP reachability probe with a 5s timeout. */
 const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
   Effect.callback<boolean>((resume) => {
@@ -510,7 +520,8 @@ export const dbConfigResolverLayer = Layer.effect(
           // The stack backend publishes its database on a runtime-assigned port rather than
           // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
           const stackConn =
-            !legacyLocal && (yield* currentStackBackend).kind === "stack"
+            (yield* currentStackBackend).kind === "stack" &&
+            mayBeStackDatabaseHost(conn.host, localHost)
               ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
               : undefined;
           const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;

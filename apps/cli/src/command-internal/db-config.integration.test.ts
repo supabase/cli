@@ -408,7 +408,9 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
   const stackUrl = (port: number) =>
     `postgresql://supabase_admin:postgres@127.0.0.1:${port}/postgres?connect_timeout=10`;
 
-  const runningStackApi = (root: string, registered = true) => {
+  type StackState = "running" | "stopped" | "unregistered";
+
+  const projectStackApi = (root: string, state: StackState) => {
     const unused = Effect.die("unused by the resolver");
     const database: DatabaseInstance = {
       id: "database-primary",
@@ -421,7 +423,10 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       prepare: unused,
       status: Effect.succeed({
         id: "database-primary",
-        endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }],
+        endpoints:
+          state === "running"
+            ? [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }]
+            : [],
         config: {
           service: "database",
           config: {
@@ -432,15 +437,15 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
           },
           endpoints: {},
         },
-        lifecycle: "running",
-        health: "healthy",
+        lifecycle: state === "running" ? "running" : "stopped",
+        health: state === "running" ? "healthy" : undefined,
         error: undefined,
         cleanupError: undefined,
         exit: undefined,
         currentOperation: undefined,
         launchId: undefined,
         intentRevision: 0,
-        wakeEnabled: true,
+        wakeEnabled: state === "running",
         registered: true,
       }),
       followStatus: Stream.empty,
@@ -476,7 +481,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       discover: () => unused,
       find: () =>
         Effect.succeed(
-          registered
+          state !== "unregistered"
             ? Option.some({
                 definition: {
                   id: stack.id,
@@ -494,8 +499,12 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     });
   };
 
-  const resolveOnStack = (dir: string, url: string, registered = true) =>
-    resolve(dir, dbUrlFlags(url), { stackApi: runningStackApi(dir, registered) }).pipe(
+  const resolveOnStack = (
+    dir: string,
+    url: string,
+    stackApi: Layer.Layer<StackApi> = projectStackApi(dir, "running"),
+  ) =>
+    resolve(dir, dbUrlFlags(url), { stackApi }).pipe(
       Effect.provide(stackBackendLayer("stack")),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
@@ -526,9 +535,47 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     }),
   );
 
-  it.effect("resolves a url as remote when no project stack is registered", () =>
+  it.effect("fills from the stack's credentials when the stack port is also [db].port", () =>
     Effect.gen(function* () {
-      const resolved = yield* resolveOnStack(withWorkdir(), stackUrl(STACK_SQL_PORT), false);
+      const dir = withWorkdir(
+        ["[db]", `port = ${STACK_SQL_PORT}`, 'password = "config-password"', ""].join("\n"),
+      );
+      const resolved = yield* resolveOnStack(
+        dir,
+        `postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`,
+      );
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }),
+  );
+
+  for (const state of ["unregistered", "stopped"] as const) {
+    it.effect(`resolves the stack url as remote when the project stack is ${state}`, () =>
+      Effect.gen(function* () {
+        const dir = withWorkdir();
+        const resolved = yield* resolveOnStack(
+          dir,
+          stackUrl(STACK_SQL_PORT),
+          projectStackApi(dir, state),
+        );
+        expect(resolved.isLocal).toBe(false);
+      }),
+    );
+  }
+
+  it.effect("does not consult the stack for a non-loopback host", () =>
+    Effect.gen(function* () {
+      const untouchedStackApi = Layer.succeed(StackApi, {
+        create: () => Effect.die("unexpected stack create"),
+        open: () => Effect.die("unexpected stack open"),
+        discover: () => Effect.die("unexpected stack discover"),
+        find: () => Effect.die("unexpected stack lookup"),
+      });
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@db.example.com:${STACK_SQL_PORT}/postgres`,
+        untouchedStackApi,
+      );
       expect(resolved.isLocal).toBe(false);
     }),
   );
