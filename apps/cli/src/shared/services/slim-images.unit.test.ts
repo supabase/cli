@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect } from "effect";
+import { vi } from "vitest";
 
 import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
@@ -181,36 +183,59 @@ describe("imageTag", () => {
 });
 
 describe("slimImagesEnabled", () => {
-  it.each([
-    ["true", true],
-    ["1", true],
-    ["false", false],
-    ["0", false],
-    ["yes", false],
-    ["TRUE", false],
-    ["", false],
-  ])("reads %j as %s", (value, expected) => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", value);
-    expect(slimImagesEnabled()).toBe(expected);
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
+
+  it.effect.each([
+    { value: "true", expected: true },
+    { value: "1", expected: true },
+    { value: "false", expected: false },
+    { value: "0", expected: false },
+    { value: "yes", expected: false },
+    { value: "TRUE", expected: false },
+    { value: "", expected: false },
+    { value: undefined, expected: false },
+  ])("reads $value as $expected", ({ value, expected }) =>
+    Effect.gen(function* () {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", value);
+      expect(yield* slimImagesEnabled).toBe(expected);
+    }),
+  );
+
+  it.effect("reads the process environment, not the active ConfigProvider", () =>
+    Effect.gen(function* () {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+      const pinned = ConfigProvider.fromEnvRecord({ SUPABASE_USE_SLIM_IMAGES: "true" });
+      const failing = ConfigProvider.make(() =>
+        Effect.fail(new ConfigProvider.SourceError({ message: "injected" })),
+      );
+      for (const provider of [pinned, failing]) {
+        expect(
+          yield* slimImagesEnabled.pipe(
+            Effect.provideService(ConfigProvider.ConfigProvider, provider),
+          ),
+        ).toBe(false);
+      }
+    }),
+  );
 });
 
 describe("slimImageForAlias", () => {
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
-    expect(slimImageForAlias("gotrue", "supabase/gotrue:v2.197.0")).toBe(
+    expect(slimImageForAlias("gotrue", "supabase/gotrue:v2.197.0", false)).toBe(
       "supabase/gotrue:v2.197.0",
     );
   });
 
   it("translates when the flag is on and the tag matches the catalog", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(slimImageForAlias("gotrue", "supabase/gotrue:v2.197.0")).toBe(AUTH_FIXTURE_PIN_IMAGE);
+    expect(slimImageForAlias("gotrue", "supabase/gotrue:v2.197.0", true)).toBe(
+      AUTH_FIXTURE_PIN_IMAGE,
+    );
   });
 
   it("keeps the upstream image when the flag is on but the tag isn't in the catalog", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165")).toBe(
+    expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165", true)).toBe(
       "supabase/postgres:17.6.1.165",
     );
   });
@@ -218,14 +243,12 @@ describe("slimImageForAlias", () => {
 
 describe("usesSlimImageRuntime", () => {
   it("is false while the flag is off even for a ghcr ref", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
-    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165")).toBe(false);
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165", false)).toBe(false);
   });
 
   it("is true only when the flag is on and the ref is slim", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0")).toBe(true);
-    expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0")).toBe(false);
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0", true)).toBe(true);
+    expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0", true)).toBe(false);
   });
 });
 
@@ -242,24 +265,29 @@ describe("pinMatchesCurrentImage", () => {
 
 describe("slimImageForCurrentPin", () => {
   it("slim-translates the current pin using the catalog's pinned digest", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const current = "supabase/gotrue:v2.197.0";
-    expect(slimImageForCurrentPin("gotrue", current)).toBe(AUTH_FIXTURE_PIN_IMAGE);
-    expect(slimImageForCurrentPin("gotrue", current, "v2.197.0")).toBe(AUTH_FIXTURE_PIN_IMAGE);
-    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0")).toBe("supabase/gotrue:v1.67.0");
+    expect(slimImageForCurrentPin("gotrue", current, undefined, true)).toBe(AUTH_FIXTURE_PIN_IMAGE);
+    expect(slimImageForCurrentPin("gotrue", current, "v2.197.0", true)).toBe(
+      AUTH_FIXTURE_PIN_IMAGE,
+    );
+    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0", true)).toBe(
+      "supabase/gotrue:v1.67.0",
+    );
   });
 
   it("is a no-op while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "");
     const current = "supabase/gotrue:v2.197.0";
-    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0")).toBe("supabase/gotrue:v1.67.0");
+    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0", false)).toBe(
+      "supabase/gotrue:v1.67.0",
+    );
   });
 
   it("falls back to the upstream image on the linked-pin fallback path (a hosted version that doesn't match the pin)", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const current = "supabase/gotrue:v2.197.0";
     // The linked project's hosted version (v1.67.0) differs from the catalog's pinned
     // upstream version (v2.197.0): stay on the upstream (non-slim) image instead of guessing.
-    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0")).toBe("supabase/gotrue:v1.67.0");
+    expect(slimImageForCurrentPin("gotrue", current, "v1.67.0", true)).toBe(
+      "supabase/gotrue:v1.67.0",
+    );
   });
 });

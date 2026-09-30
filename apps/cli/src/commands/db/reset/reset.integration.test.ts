@@ -1064,31 +1064,36 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Resetting local database...");
-        expect(out.stderrText).toContain("Recreating database...\n");
-        expect(removedContainers(child.spawned)).toContain(DB_ID);
-        expect(removedVolumes(child.spawned)).toContain(DB_ID);
-        expect(createArgs(child.spawned)).not.toBeUndefined();
-        // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(out.stderrText).toContain("Restarting containers...\n");
-        // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
-        expect(restartedContainers(child.spawned)).toEqual(
-          expect.arrayContaining([
-            "supabase_storage_test",
-            "supabase_auth_test",
-            "supabase_realtime_test",
-            "supabase_pooler_test",
-          ]),
-        );
-        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
-        expect(out.stderrText).toContain("Finished ");
-        expect(out.stderrText).toContain("on branch ");
-        // Confirms the single `Effect.ensuring` finalizer still fires exactly once.
-        expect(telemetry.flushCount).toBe(1);
-      });
+      return withEnvVar(
+        "GITHUB_HEAD_REF",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Resetting local database...");
+          expect(out.stderrText).toContain("Recreating database...\n");
+          expect(removedContainers(child.spawned)).toContain(DB_ID);
+          expect(removedVolumes(child.spawned)).toContain(DB_ID);
+          expect(createArgs(child.spawned)).not.toBeUndefined();
+          // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+          expect(out.stderrText).toContain("Restarting containers...\n");
+          // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
+          expect(restartedContainers(child.spawned)).toEqual(
+            expect.arrayContaining([
+              "supabase_storage_test",
+              "supabase_auth_test",
+              "supabase_realtime_test",
+              "supabase_pooler_test",
+            ]),
+          );
+          expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+          // The temp workdir sits outside any git checkout, so the branch is unknown and
+          // the "Finished" line omits the clause instead of falsely claiming "main".
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+          // Confirms the single `Effect.ensuring` finalizer still fires exactly once.
+          expect(telemetry.flushCount).toBe(1);
+        }),
+      );
     });
 
     it.live(
@@ -2983,9 +2988,48 @@ describe("db reset", () => {
       },
     );
 
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    // Windows ignores POSIX modes and root bypasses them; both get an injected failure instead.
+    const posixModesEnforced = process.platform !== "win32" && process.getuid?.() !== 0;
 
-    it.live.skipIf(isRoot)(
+    /** Denies `method` on `target` for the enclosing scope and returns the FileSystem to run with. */
+    const denyAccess = Effect.fnUntraced(function* (
+      target: string,
+      method: "readFileString" | "readDirectory",
+      restoreMode: number,
+    ) {
+      const fs = yield* FileSystem.FileSystem;
+      if (posixModesEnforced) {
+        yield* Effect.acquireRelease(fs.chmod(target, 0o000), () =>
+          fs.chmod(target, restoreMode).pipe(Effect.orDie),
+        );
+        return fs;
+      }
+      const denied = (p: string) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method,
+            pathOrDescriptor: p,
+            description: "permission denied",
+          }),
+        );
+      const overridden: FileSystem.FileSystem =
+        method === "readFileString"
+          ? {
+              ...fs,
+              readFileString: (p, encoding) =>
+                p === target ? denied(p) : fs.readFileString(p, encoding),
+            }
+          : {
+              ...fs,
+              readDirectory: (p, options) =>
+                p === target ? denied(p) : fs.readDirectory(p, options),
+            };
+      return overridden;
+    });
+
+    it.live(
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
         const { layer, conn } = setup(tmp.current, {
@@ -2999,35 +3043,31 @@ describe("db reset", () => {
           const schemaFile = path.join(tmp.current, "supabase", "schemas", "01_users.sql");
           yield* fs.makeDirectory(path.dirname(schemaFile), { recursive: true });
           yield* fs.writeFileString(schemaFile, "create table schema_users ();");
-          yield* Effect.acquireUseRelease(
-            fs.chmod(schemaFile, 0o000),
-            () =>
-              Effect.gen(function* () {
-                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-                  Effect.provide(layer),
-                  Effect.exit,
-                );
-                expect(Exit.isFailure(exit)).toBe(true);
-                if (Exit.isFailure(exit)) {
-                  const causeText = Cause.pretty(exit.cause);
-                  expect(causeText).not.toContain("See schema file");
-                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
-                    Option.some(
-                      expect.objectContaining({
-                        suggestion: expect.stringContaining("See schema file"),
-                      }),
-                    ),
-                  );
-                }
-                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-              }),
-            () => fs.chmod(schemaFile, 0o644),
+          const deniedFs = yield* denyAccess(schemaFile, "readFileString", 0o644);
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
+            Effect.provide(layer),
+            Effect.exit,
           );
-        }).pipe(Effect.provide(BunServices.layer));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to open migration file");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
+          }
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
-    it.live.skipIf(isRoot)(
+    it.live(
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
         const { layer, conn } = setup(tmp.current, {
@@ -3044,33 +3084,28 @@ describe("db reset", () => {
             path.join(schemasDir, "01_users.sql"),
             "create table schema_users ();",
           );
-          yield* Effect.acquireUseRelease(
-            fs.chmod(schemasDir, 0o000),
-            () =>
-              Effect.gen(function* () {
-                const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-                  Effect.provide(layer),
-                  Effect.exit,
-                );
-                expect(Exit.isFailure(exit)).toBe(true);
-                if (Exit.isFailure(exit)) {
-                  const causeText = Cause.pretty(exit.cause);
-                  expect(causeText).toContain("failed to walk matched directory");
-                  expect(causeText).not.toContain("See schema file");
-                  expect(Cause.findErrorOption(exit.cause)).not.toEqual(
-                    Option.some(
-                      expect.objectContaining({
-                        suggestion: expect.stringContaining("See schema file"),
-                      }),
-                    ),
-                  );
-                }
-                expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-                expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-              }),
-            () => fs.chmod(schemasDir, 0o755),
+          const deniedFs = yield* denyAccess(schemasDir, "readDirectory", 0o755);
+          const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
+            Effect.provide(layer),
+            Effect.exit,
           );
-        }).pipe(Effect.provide(BunServices.layer));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to walk matched directory");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
+          }
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
@@ -3304,7 +3339,10 @@ describe("db reset", () => {
           linked: true,
           sqlPaths: [absSeed],
         }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain(`Seeding data from ${absSeed}...`);
+        // Seed paths are reported forward-slashed on every platform, drive letter included.
+        expect(out.stderrText).toContain(
+          `Seeding data from ${absSeed.replaceAll(path.sep, "/")}...`,
+        );
       }).pipe(Effect.provide(BunServices.layer));
     });
 

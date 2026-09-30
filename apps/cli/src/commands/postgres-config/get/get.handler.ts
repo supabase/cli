@@ -27,7 +27,7 @@ export const postgresConfigGet = Effect.fn("postgres-config.get")(function* (
       const config = yield* fetchCurrentPostgresConfig(ref).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(config);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

@@ -14,7 +14,7 @@ import {
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
-import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { DateTime, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
@@ -23,6 +23,13 @@ import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
 const TASK_SPINNER_DELAY_MS = 200;
+
+const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJson = (value: unknown) =>
+  encodeJsonString(value).pipe(
+    Effect.mapError((error) => new TypeError(error.message, { cause: error })),
+    Effect.orDie,
+  );
 
 // Reads the opt-in `MachineErrorContext` cell, if any command in this run
 // provided it — see that service's doc comment for the envelope contract.
@@ -64,6 +71,7 @@ export const textOutputLayer = Layer.effect(
   Effect.gen(function* () {
     const tty = yield* Tty;
     const write = stdioWriter(yield* Stdio.Stdio);
+    const scope = yield* Effect.scope;
 
     const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
     const buildSelectOptions = (
@@ -267,40 +275,27 @@ export const textOutputLayer = Layer.effect(
       warn: (message: string) => Effect.sync(() => logAround(log.warn, message)),
       error: (message: string) => Effect.sync(() => logAround(log.error, message)),
       event: (event: StreamEvent) =>
-        Effect.sync(() =>
-          logAround(
-            log.info,
-            event.type === "log-entry" ? `[${event.service}] ${event.line}` : JSON.stringify(event),
-          ),
-        ),
+        (event.type === "log-entry"
+          ? Effect.succeed(`[${event.service}] ${event.line}`)
+          : encodeJson(event)
+        ).pipe(Effect.flatMap((message) => Effect.sync(() => logAround(log.info, message)))),
       task: (message: string) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           let shown = false;
           let settled = false;
           let currentMessage = message;
           let shownSpinner: ShownSpinner | undefined;
-          let timeout: ReturnType<typeof setTimeout> | undefined;
 
-          const cancelPendingStart = () => {
-            if (timeout !== undefined) {
-              clearTimeout(timeout);
-              timeout = undefined;
-            }
-          };
-
-          const finish = (render: () => void) => {
-            settled = true;
-            cancelPendingStart();
-            const settle = () => {
-              render();
-              if (activeSpinner === shownSpinner) activeSpinner = undefined;
-            };
-            if (shownSpinner !== undefined && shownSpinner.pauses > 0) shownSpinner.settle = settle;
-            else settle();
-          };
-
+          // clack's spinner writes cursor/animation escape codes, so non-TTY stdout
+          // gets plain progress lines instead.
+          let lastLogged: string | undefined;
           const show = () => {
             if (settled) {
+              return;
+            }
+            if (!tty.stdoutIsTty) {
+              lastLogged = currentMessage;
+              log.step(currentMessage);
               return;
             }
             shownSpinner = { handle: spinner(), message: currentMessage, pauses: 0 };
@@ -309,11 +304,25 @@ export const textOutputLayer = Layer.effect(
             activeSpinner = shownSpinner;
           };
 
-          timeout = setTimeout(() => {
-            timeout = undefined;
+          const pendingStart = yield* Effect.sync(() => {
             if (unpausedWrites > 0) showWhenIdle = show;
             else show();
-          }, TASK_SPINNER_DELAY_MS);
+          }).pipe(
+            Effect.delay(TASK_SPINNER_DELAY_MS),
+            Effect.forkIn(scope, { startImmediately: true }),
+          );
+
+          const finish = (render: () => void) =>
+            Effect.sync(() => {
+              settled = true;
+              const settle = () => {
+                render();
+                if (activeSpinner === shownSpinner) activeSpinner = undefined;
+              };
+              if (shownSpinner !== undefined && shownSpinner.pauses > 0)
+                shownSpinner.settle = settle;
+              else settle();
+            }).pipe(Effect.andThen(Fiber.interrupt(pendingStart)));
 
           return {
             message: (nextMessage: string) =>
@@ -326,63 +335,56 @@ export const textOutputLayer = Layer.effect(
                   shownSpinner.message = nextMessage;
                   if (shownSpinner.pauses === 0)
                     shownSpinner.handle.message(formatTaskMessage(nextMessage));
+                } else if (lastLogged !== undefined && lastLogged !== nextMessage) {
+                  // Polling tasks repeat the same message; log only changes.
+                  lastLogged = nextMessage;
+                  log.step(nextMessage);
                 }
               }),
             succeed: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    shownSpinner?.handle.stop(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    log.success(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  shownSpinner?.handle.stop(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  log.success(nextMessage);
+                }
+              }),
             fail: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    shownSpinner?.handle.error(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    log.error(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  shownSpinner?.handle.error(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  log.error(nextMessage);
+                }
+              }),
             info: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    shownSpinner?.handle.clear();
-                  }
-                  if (nextMessage !== undefined) {
-                    log.info(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  shownSpinner?.handle.clear();
+                }
+                if (nextMessage !== undefined) {
+                  log.info(nextMessage);
+                }
+              }),
             cancel: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    shownSpinner?.handle.cancel(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    cancel(nextMessage);
-                  }
-                }),
-              ),
-            clear: () =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    shownSpinner?.handle.clear();
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  shownSpinner?.handle.cancel(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  cancel(nextMessage);
+                }
+              }),
+            clear: finish(() => {
+              if (shown) {
+                shownSpinner?.handle.clear();
+              }
+            }),
           };
         }),
       promptText: (
@@ -502,7 +504,8 @@ export const jsonOutputLayer = Layer.effect(
       info: (message: string) => writeStderr(`${message}\n`),
       warn: (message: string) => writeStderr(`${message}\n`),
       error: (message: string) => writeStderr(`${message}\n`),
-      event: (event: StreamEvent) => writeStderr(`${JSON.stringify(event)}\n`),
+      event: (event: StreamEvent) =>
+        encodeJson(event).pipe(Effect.flatMap((json) => writeStderr(`${json}\n`))),
       task: (message: string) =>
         Effect.sync(() => ({
           message: (nextMessage: string) => writeStderr(`[task] ${nextMessage}\n`),
@@ -514,7 +517,7 @@ export const jsonOutputLayer = Layer.effect(
             nextMessage ? writeStderr(`${nextMessage}\n`) : Effect.void,
           cancel: (nextMessage?: string) =>
             nextMessage ? writeStderr(`[task] cancelled: ${nextMessage}\n`) : Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         })).pipe(Effect.tap(() => writeStderr(`[task] start: ${message}\n`))),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
@@ -541,7 +544,8 @@ export const jsonOutputLayer = Layer.effect(
           const extra = yield* readMachineErrorContext();
           // `extra` spreads first so the envelope's own `_tag`/`error` can't
           // be clobbered by a same-named context field.
-          yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
+          const json = yield* encodeJson({ ...extra, _tag: "Error", error: err });
+          yield* writeStdout(json + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
@@ -555,15 +559,13 @@ export const streamJsonOutputLayer = Layer.effect(
   Effect.gen(function* () {
     const write = stdioWriter(yield* Stdio.Stdio);
     const writeStdout = (s: string) => write(s, "stdout");
-    const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
-      const event: StreamEvent = {
-        type: "log",
-        level,
-        message,
-        timestamp: new Date().toISOString(),
-      };
-      return writeStdout(JSON.stringify(event) + "\n");
-    };
+    const emitEvent = (event: (timestamp: string) => StreamEvent, extra: object = {}) =>
+      DateTime.now.pipe(
+        Effect.flatMap((now) => encodeJson({ ...extra, ...event(DateTime.formatIso(now)) })),
+        Effect.flatMap((json) => writeStdout(json + "\n")),
+      );
+    const emitLog = (level: "info" | "warn" | "success" | "error", message: string) =>
+      emitEvent((timestamp) => ({ type: "log", level, message, timestamp }));
 
     const nonInteractive = (action: string) =>
       Effect.fail(
@@ -572,14 +574,8 @@ export const streamJsonOutputLayer = Layer.effect(
           suggestion: "Provide all required values via flags",
         }),
       );
-    const result = (data: unknown) => {
-      const event: StreamEvent = {
-        type: "result",
-        data,
-        timestamp: new Date().toISOString(),
-      };
-      return writeStdout(`${JSON.stringify(event)}\n`);
-    };
+    const result = (data: unknown) =>
+      emitEvent((timestamp) => ({ type: "result", data, timestamp }));
 
     return Output.of({
       format: "stream-json" as const,
@@ -589,7 +585,8 @@ export const streamJsonOutputLayer = Layer.effect(
       info: (message: string) => emitLog("info", message),
       warn: (message: string) => emitLog("warn", message),
       error: (message: string) => emitLog("error", message),
-      event: (event: StreamEvent) => writeStdout(JSON.stringify(event) + "\n"),
+      event: (event: StreamEvent) =>
+        encodeJson(event).pipe(Effect.flatMap((json) => writeStdout(json + "\n"))),
       task: (message: string) =>
         Effect.sync(() => ({
           message: (nextMessage: string) => emitLog("info", nextMessage),
@@ -597,7 +594,7 @@ export const streamJsonOutputLayer = Layer.effect(
           fail: (nextMessage?: string) => emitLog("error", nextMessage ?? "Task failed."),
           info: (nextMessage?: string) => emitLog("info", nextMessage ?? "Task completed."),
           cancel: (nextMessage?: string) => emitLog("warn", nextMessage ?? "Task cancelled."),
-          clear: () => Effect.void,
+          clear: Effect.void,
         })).pipe(Effect.tap(() => emitLog("info", message))),
       promptText: () => nonInteractive("prompt for input"),
       promptPassword: () => nonInteractive("prompt for password"),
@@ -608,15 +605,15 @@ export const streamJsonOutputLayer = Layer.effect(
         Effect.sync(() => {
           let current = 0;
           const emit = (status: "start" | "active" | "done", message: string) => {
-            const event: StreamEvent = {
+            const at = current;
+            return emitEvent((timestamp) => ({
               type: "progress",
               status,
-              current,
+              current: at,
               max: opts.max,
               message,
-              timestamp: new Date().toISOString(),
-            };
-            return writeStdout(JSON.stringify(event) + "\n");
+              timestamp,
+            }));
           };
 
           return {
@@ -634,14 +631,9 @@ export const streamJsonOutputLayer = Layer.effect(
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
-          const event: StreamEvent = {
-            type: "error",
-            error: err,
-            timestamp: new Date().toISOString(),
-          };
           // `extra` spreads first so the event's own `type`/`error`/`timestamp`
           // can't be clobbered by a same-named context field.
-          yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
+          yield* emitEvent((timestamp) => ({ type: "error", error: err, timestamp }), extra);
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),

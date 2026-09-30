@@ -87,7 +87,7 @@ export const vanitySubdomainsActivate = Effect.fn("vanity-subdomains.activate")(
             }),
           ),
         );
-      yield* activating?.clear() ?? Effect.void;
+      yield* activating?.clear ?? Effect.void;
 
       const goOutput = Option.getOrUndefined(outputFlag);
 

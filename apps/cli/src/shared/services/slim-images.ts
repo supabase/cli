@@ -1,4 +1,5 @@
 import { catalogPins } from "@supabase/stack/internal/artifacts";
+import { Config, ConfigProvider, Effect, Option } from "effect";
 
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
 const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
@@ -45,11 +46,13 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
   "pooler",
 ]);
 
-/** Reads the ambient slim-image flag for callers without an explicit project value. */
-export function slimImagesEnabled(): boolean {
-  const value = process.env[SLIM_IMAGES_ENV];
-  return value === "true" || value === "1";
-}
+/**
+ * Reads the ambient slim-image flag for callers without an explicit project value: always the
+ * process environment, never the active `ConfigProvider`. That lookup cannot fail.
+ */
+export const slimImagesEnabled = Effect.suspend(() =>
+  Config.option(Config.string(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
+).pipe(Effect.map(Option.exists((value) => value === "true" || value === "1")), Effect.orDie);
 
 /**
  * Catalog-normalized slim tag under `ghcr.io/supabase/cli/<service>`. The
@@ -134,8 +137,8 @@ export function toSlimImage(alias: string, image: string): string | undefined {
 }
 
 /** `toSlimImage` behind the feature flag; a no-op while the flag is off. */
-export function slimImageForAlias(alias: string, image: string): string {
-  return slimImagesEnabled() ? (toSlimImage(alias, image) ?? image) : image;
+export function slimImageForAlias(alias: string, image: string, enabled: boolean): string {
+  return enabled ? (toSlimImage(alias, image) ?? image) : image;
 }
 
 /** The tag portion of `image`, ignoring any `@sha256:…` digest suffix. */
@@ -192,8 +195,8 @@ export function pinMatchesCurrentImage(
 export function slimImageForCurrentPin(
   alias: string,
   currentRawImage: string,
-  pin?: string,
-  enabled = slimImagesEnabled(),
+  pin: string | undefined,
+  enabled: boolean,
 ): string {
   const trimmed = pin?.trim() ?? "";
   const tagged = trimmed.length > 0 ? replaceImageTag(currentRawImage, trimmed) : currentRawImage;
@@ -216,6 +219,6 @@ export function isSlimImageRef(image: string): boolean {
  * one-shot jobs use this so a ghcr-shaped override with the flag off stays on
  * the docker.io contract.
  */
-export function usesSlimImageRuntime(image: string): boolean {
-  return slimImagesEnabled() && isSlimImageRef(image);
+export function usesSlimImageRuntime(image: string, enabled: boolean): boolean {
+  return enabled && isSlimImageRef(image);
 }

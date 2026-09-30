@@ -136,7 +136,7 @@ const makeStdin = Effect.fnUntraced(function* (stdin: Stream.Stream<Uint8Array, 
       // Outer `None` = timed out; inner `None` = EOF / read error; either way the
       // prompt takes its default.
       const line = yield* take.pipe(Effect.timeoutOption(Duration.millis(timeoutMillis)));
-      return Option.map(Option.flatten(line), (value) => value.trim());
+      return Option.flatten(line);
     });
 
   // Streams piped stdin without collecting it. Unlike `readPipedBytes`, read errors PROPAGATE

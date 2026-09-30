@@ -118,7 +118,7 @@ export const computeList = Effect.fn("compute.list")(function* (flags: ComputeLi
     const deployed = yield* listCompute(api, projectRef).pipe(
       Effect.tapError(() => fetching.fail()),
     );
-    yield* fetching.clear();
+    yield* fetching.clear;
 
     const byName = new Map(deployed.map((compute) => [compute.name, compute]));
     const configuredNames = Object.keys(project.section.compute);

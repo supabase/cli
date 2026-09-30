@@ -208,6 +208,10 @@ const writeTempFile = Effect.fnUntraced(function* (workdir: string, name: string
   yield* fs.writeFileString(path.join(tempDir, name), content);
 });
 
+// `postgresImageForDbMajorVersion` always returns the raw docker.io reference (slim translation
+// is a downstream concern); its tag is the Dockerfile-generated one, which always matches the
+// catalog's pinned upstream version, so this is the same version the CLI reports whether or not
+// the slim flag is on.
 function postgresVersionForDbMajorVersion(majorVersion: number): string {
   const image = postgresImageForDbMajorVersion(majorVersion);
   if (image === undefined) {

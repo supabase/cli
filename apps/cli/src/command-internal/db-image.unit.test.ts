@@ -61,7 +61,7 @@ describe("resolveDbImage", () => {
         configImage: pg15Image,
       });
       expect(yield* resolve(dir, 17)).toEqual({
-        image: dockerfileServiceImage("pg"),
+        image: dockerfileServiceImage("pg", false),
         configImage: currentPostgres,
       });
       rmSync(dir, { recursive: true, force: true });

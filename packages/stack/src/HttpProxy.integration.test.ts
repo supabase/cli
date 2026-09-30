@@ -1,11 +1,12 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
+import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -35,14 +36,6 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
-
-const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
-  Logger.layer([
-    Logger.make(({ logLevel, message }) => {
-      if (levels.some((level) => level === logLevel))
-        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
-    }),
-  ]);
 
 const captureErrors = captureLogs(["Error"]);
 
@@ -154,6 +147,75 @@ it.live("keeps the retained listener and remaining route after one route is remo
         Effect.provide(NodeHttpClient.layerNodeHttp),
       );
       expect(removed.status).toBe(404);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("rewrites an exact-prefix request to the upstream prefix verbatim", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((request, response) => response.end(request.url));
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const route = (id: string, prefix: string, upstreamPrefix: string): HttpRoute => ({
+        id,
+        prefix,
+        upstreamPrefix,
+        target: Effect.succeed(backendAddress),
+      });
+      yield* proxy.setRoutes([
+        route("mcp", "/mcp", "/api/mcp"),
+        route("storage-s3", "/storage/v1/s3", "/s3"),
+        route("realtime-api", "/realtime/v1/api", "/api"),
+      ]);
+      const send = (path: string) =>
+        request(proxy.port, path, new Uint8Array()).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+        );
+      expect(new TextDecoder().decode((yield* send("/mcp")).body)).toBe("/api/mcp");
+      expect(new TextDecoder().decode((yield* send("/mcp?read_only=true")).body)).toBe(
+        "/api/mcp?read_only=true",
+      );
+      expect(new TextDecoder().decode((yield* send("/mcp/x")).body)).toBe("/api/mcp/x");
+      expect((yield* send("/mcpx")).status).toBe(404);
+      expect(new TextDecoder().decode((yield* send("/storage/v1/s3")).body)).toBe("/s3");
+      expect(new TextDecoder().decode((yield* send("/realtime/v1/api")).body)).toBe("/api");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("streams a joined MCP route's request and response through the exact upstream path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let seenUrl: string | undefined;
+      let seenBody = "";
+      const backend = createServer((request, response) => {
+        seenUrl = request.url;
+        request.on("data", (chunk: Buffer) => (seenBody += chunk.toString()));
+        request.on("end", () => {
+          response.writeHead(200, { "content-type": "text/plain" });
+          response.write("chunk-1");
+          response.end("chunk-2");
+        });
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "mcp",
+          prefix: "/mcp",
+          upstreamPrefix: "/api/mcp",
+          target: Effect.succeed(backendAddress),
+        },
+      ]);
+      const response = yield* request(
+        proxy.port,
+        "/mcp?read_only=true",
+        new TextEncoder().encode("mcp-request-body"),
+      ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+      expect(seenUrl).toBe("/api/mcp?read_only=true");
+      expect(seenBody).toBe("mcp-request-body");
+      expect(new TextDecoder().decode(response.body)).toBe("chunk-1chunk-2");
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

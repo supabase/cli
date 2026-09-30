@@ -21,7 +21,6 @@ import {
   replaceImageTag,
   slimImageForAlias,
   slimImageForCurrentPin,
-  slimImagesEnabled,
 } from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
@@ -44,6 +43,8 @@ export type LocalServiceVersionOverrides = Partial<Record<LocalServiceVersionNam
 export type LocalServiceImageOverrides = Partial<Record<LocalServiceVersionName, string>>;
 
 export interface LocalServiceImageOptions {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   readonly imageOverrides?: LocalServiceImageOverrides;
   readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
@@ -167,14 +168,14 @@ export function isUsableServiceVersionTag(
 }
 
 function localServiceImagesForOptions(
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceImageSpec> {
   const normalizeVersionTags = options.normalizeVersionTags ?? true;
-  const slim = slimImagesEnabled();
+  const slim = options.slim;
   return LOCAL_SERVICE_IMAGES.map((service) => {
     // Explicit overrides are used verbatim; the caller decides slim vs docker.io.
     const override = options.imageOverrides?.[service.localService];
-    const baseImage = override ?? slimImageForAlias(service.alias, service.image);
+    const baseImage = override ?? slimImageForAlias(service.alias, service.image, slim);
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
@@ -188,8 +189,8 @@ function localServiceImagesForOptions(
       return {
         ...service,
         image: options.slimCurrentPinOnly
-          ? slimImageForCurrentPin(service.alias, service.image, pin)
-          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin)),
+          ? slimImageForCurrentPin(service.alias, service.image, pin, slim)
+          : slimImageForAlias(service.alias, replaceImageTag(service.image, pin), slim),
       };
     }
     return {
@@ -376,7 +377,7 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
 
   const normalized = version?.trim().split(/\s+/)[0];
   if (normalized === undefined || normalized.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "postgrest" }));
+    return yield* new ServiceVersionNotFoundError({ service: "postgrest" });
   }
 
   return tagForServiceVersion("postgrest", normalized);
@@ -391,7 +392,7 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
   const version = stringField(body, "version")?.trim();
 
   if (version === undefined || version.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "auth" }));
+    return yield* new ServiceVersionNotFoundError({ service: "auth" });
   }
 
   return version;
@@ -404,15 +405,15 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
 ) {
   const version = (yield* fetchText(client, `${baseUrl}/storage/v1/version`, accessKey)).trim();
   if (version.length === 0 || version === "0.0.0") {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "storage" }));
+    return yield* new ServiceVersionNotFoundError({ service: "storage" });
   }
 
   return tagForServiceVersion("storage", version);
 });
 
-const fetchOptionalVersion = (
+const fetchOptionalVersion = <E>(
   service: OptionalRemoteServiceName,
-  effect: Effect.Effect<string, unknown>,
+  effect: Effect.Effect<string, E>,
 ) =>
   effect.pipe(
     Effect.exit,
@@ -432,14 +433,14 @@ const makeConfiguredApiClient = Effect.fnUntraced(function* (input: ServiceFetch
 });
 
 export function listLocalServiceVersions(
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceVersionRow> {
   return localServiceImagesForOptions(options).map((service) => toServiceVersionRow(service));
 }
 
 export function mergeRemoteServiceVersions(
   remote: Partial<Record<RemoteServiceName, string>>,
-  options: LocalServiceImageOptions = {},
+  options: LocalServiceImageOptions,
 ): ReadonlyArray<ServiceVersionRow> {
   return localServiceImagesForOptions(options).map((service) =>
     toServiceVersionRow(service, remote),

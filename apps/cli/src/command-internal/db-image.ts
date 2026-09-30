@@ -1,7 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
-import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
+import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
 
 /**
  * Resolves the local Postgres Docker image for commands that run a pg_dump/shadow-DB container
@@ -60,8 +60,8 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override: on a 15/17 project with `experimental.orioledb_version` set, the Postgres
-  // image is replaced with the OrioleDB tag, taking precedence over the default/pinned image.
+  // OrioleDB override: on a 15/17 project with `db.orioledb_version` set, the Postgres image is
+  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
   if (
     orioledbVersion !== undefined &&
     orioledbVersion.length > 0 &&
@@ -73,6 +73,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
         : `supabase/postgres:orioledb-${orioledbVersion}`;
     return { image, configImage: image };
   }
+  const slim = yield* slimImagesEnabled;
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
@@ -96,7 +97,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   const configImage =
     appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
   return {
-    image: slimImageForCurrentPin("pg", currentRaw, appliedPin),
+    image: slimImageForCurrentPin("pg", currentRaw, appliedPin, slim),
     configImage,
   };
 });

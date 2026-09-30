@@ -12,14 +12,22 @@ import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shar
 import { stackDestroy } from "./destroy.handler.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
-const fixture = Effect.fn("StackDestroyTest.fixture")(function* (yes: boolean) {
+const fixture = Effect.fn("StackDestroyTest.fixture")(function* (
+  yes: boolean,
+  confirm?: { readonly answer: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-" });
+  const projectRoot = yield* fs.realPath(root);
   const api = yield* StackApi;
   const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
   const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "native" });
-  const output = mockOutput({ interactive: false });
+  const output = mockOutput(
+    confirm === undefined
+      ? { interactive: false }
+      : { interactive: true, promptConfirmResponses: [confirm.answer] },
+  );
   const telemetry = mockTelemetryStateTracked();
   const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
   const layer = Layer.mergeAll(
@@ -27,13 +35,14 @@ const fixture = Effect.fn("StackDestroyTest.fixture")(function* (yes: boolean) {
     telemetry.layer,
     settings,
     stackTargetResolverLayer.pipe(Layer.provide(settings)),
-    mockTty({ stdinIsTty: false }),
+    mockTty({ stdinIsTty: confirm !== undefined }),
     mockStdin(false),
     Layer.succeed(YesFlag, yes),
     Layer.succeed(CliArgs, { args: yes ? ["--yes"] : ["--yes=false"] }),
   );
   return {
     root,
+    projectRoot,
     fs,
     path,
     api,
@@ -56,6 +65,19 @@ describe("stack destroy", () => {
       expect(saved.map(({ definition }) => definition.id)).toEqual([f.stack.id]);
       expect(saved[0]?.host).toBeUndefined();
       expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("asks on an interactive terminal and keeps the stack when declined", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(false, { answer: false });
+      const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
+      expect(error.reason).toBe("cancelled");
+      expect(f.output.promptConfirmCalls.map(({ message }) => message)).toEqual([
+        `Permanently destroy stack ${f.stack.id} at ${f.projectRoot} and its owned data? Storage upload files will be preserved.`,
+      ]);
+      const saved = yield* f.api.discover(f.locations);
+      expect(saved.map(({ definition }) => definition.id)).toEqual([f.stack.id]);
     }).pipe(Effect.provide(live)),
   );
 
@@ -87,6 +109,11 @@ describe("stack destroy", () => {
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         other.id,
       ]);
+      expect(f.output.stderrText).toContain(
+        `Permanently destroying stack ${f.stack.id} at ${f.projectRoot} and its owned data. Storage upload files will be preserved.\n`,
+      );
+      expect(f.output.stderrText).not.toContain("[y/N]");
+      expect(f.output.promptConfirmCalls).toEqual([]);
       expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
       expect(f.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(live)),

@@ -136,7 +136,10 @@ const pathFor = (request: IncomingMessage, route: HttpRoute) => {
   const path =
     route.upstreamPrefix === undefined
       ? pathname
-      : `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
+      : // Exact-path upstreams such as Studio's `/api/mcp` redirect a trailing slash.
+        suffix === ""
+        ? route.upstreamPrefix
+        : `${route.upstreamPrefix.replace(/\/$/u, "")}${suffix.startsWith("/") ? suffix : `/${suffix}`}`;
   return `${path}${rewriteQuery(query, route)}`;
 };
 

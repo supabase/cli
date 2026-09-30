@@ -6,6 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
+import { toUserFacingDatabaseUrl } from "./postgres-url.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { currentStackBackend } from "./stack-backend.ts";
@@ -183,9 +184,11 @@ const stackLocalDatabaseUrl: Effect.Effect<
     return yield* notRunning("The local stack primary service is not a database.");
   if (endpoint === undefined)
     return yield* notRunning("The local stack database SQL endpoint is unavailable.");
-  const password = Redacted.value(status.config.config.databasePassword);
-  const host = endpoint.host.includes(":") ? `[${endpoint.host}]` : endpoint.host;
-  return `postgresql://postgres:${encodeURIComponent(password)}@${host}:${endpoint.port}/postgres`;
+  return toUserFacingDatabaseUrl({
+    host: endpoint.host,
+    port: endpoint.port,
+    password: Redacted.value(status.config.config.databasePassword),
+  });
 }).pipe(Effect.scoped);
 
 export const stackLocalDatabaseConn: Effect.Effect<

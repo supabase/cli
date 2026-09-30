@@ -149,7 +149,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       );
     if (entries.length > 0) {
       // `--yes`/`SUPABASE_YES` auto-confirms with a `<title> [Y/n] y` stderr echo; non-TTY
-      // stdin scans one piped line (100ms) before falling back to Yes.
+      // stdin scans one piped line (100ms): empty or EOF takes Yes, an unrecognised answer declines.
       const overwrite = yield* promptYesNo(
         output,
         yesFlag,

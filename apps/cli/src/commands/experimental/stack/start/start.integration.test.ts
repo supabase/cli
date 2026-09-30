@@ -31,8 +31,9 @@ import {
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   DbConnection,
@@ -44,7 +45,6 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { runtimeInfoLayer } from "../../../../shared/runtime/runtime-info.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -401,6 +401,8 @@ const layers = (
   output = mockOutput(),
   existing = true,
   explicitWorkdir = false,
+  // Fixtures request the native runtime, so pin a host that ships native artifacts.
+  runtimeInfo = mockRuntimeInfo({ platform: "linux", arch: "x64" }),
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
@@ -420,7 +422,7 @@ const layers = (
   });
   return Layer.mergeAll(
     BunServices.layer,
-    runtimeInfoLayer,
+    runtimeInfo,
     output.layer,
     telemetry.layer,
     mockCommandSettings({ workdir: root, explicitWorkdir }),
@@ -495,6 +497,48 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "rejects --runtime native on a platform with no native artifacts before creating a stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-start-native-unsupported-",
+        });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "unsupported"\n');
+        let created = false;
+        const fixture = fakeStack();
+        const base = layers(
+          root,
+          fixture,
+          mockOutput(),
+          false,
+          false,
+          mockRuntimeInfo({ platform: "win32", arch: "x64" }),
+        );
+        const api = Layer.succeed(StackApi, {
+          create: () =>
+            Effect.sync(() => {
+              created = true;
+              return fixture.stack;
+            }),
+          open: () => Effect.succeed(fixture.stack),
+          discover: () => Effect.succeed([]),
+          find: () => Effect.die("identity not used"),
+        });
+        const result = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.merge(base, api)),
+        );
+        expect(result).toMatchObject({
+          reason: "flags",
+          message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
+        });
+        expect(created).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("applies capability selection across repeated starts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -532,6 +576,13 @@ describe("experimental stack start", () => {
               },
             },
             lazy_services: [],
+            env: {
+              DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+              PUBLISHABLE_KEY: "sb_publishable_test",
+              SECRET_KEY: "sb_secret_test",
+              ANON_KEY: "anon-token",
+              SERVICE_ROLE_KEY: "service-token",
+            },
           },
         }),
       );
@@ -582,14 +633,28 @@ describe("experimental stack start", () => {
       const fixture = fakeStack();
       const json = mockOutput({ format: "json" });
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
-      expect(json.messages.find(({ data }) => data !== undefined)?.data).toMatchObject({
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        endpoints: Readonly<Record<string, unknown>>;
+      };
+      expect(data).toMatchObject({
         runtime: "native",
         endpoints: {
           "rest.http": { url: "http://127.0.0.1:23457" },
-          "studio.mcp": { port: 23458, url: "http://127.0.0.1:23458/api/mcp" },
         },
         lazy_services: ["pgmeta", "rest", "studio"],
+        env: {
+          API_URL: "http://127.0.0.1:23457",
+          REST_URL: "http://127.0.0.1:23457/rest/v1",
+          DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+          STUDIO_URL: "http://127.0.0.1:23458",
+          MCP_URL: "http://127.0.0.1:23457/mcp",
+          PUBLISHABLE_KEY: "sb_publishable_test",
+          SECRET_KEY: "sb_secret_test",
+          ANON_KEY: "anon-token",
+          SERVICE_ROLE_KEY: "service-token",
+        },
       });
+      expect(data.endpoints).not.toHaveProperty("studio.mcp");
 
       yield* fixture.stack.composition.stop;
       const text = mockOutput();
@@ -597,13 +662,70 @@ describe("experimental stack start", () => {
         Effect.provide(layers(root, fixture, text, true, true)),
       );
       expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
-      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
+      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23457\/mcp +│/u);
       expect(text.stdoutText).not.toContain("GraphQL");
       expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
       expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
+      // Windows temp paths contain `\` and `~`, so the PowerShell pointer quotes the workdir.
+      const workdir = process.platform === "win32" ? `'${root}'` : root;
       expect(text.stdoutText).toContain(
-        `Runtime: native\nRun supabase status --env --workdir ${root} --stack 'feature demo' to export these values as environment variables.\n`,
+        `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
       );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("returns the connection env for an already-running stack in JSON", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-already-running-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "already-running"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(fixture.composed).toBe(1);
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        env: Readonly<Record<string, string>>;
+      };
+      expect(data.env).toMatchObject({
+        API_URL: "http://127.0.0.1:23457",
+        MCP_URL: "http://127.0.0.1:23457/mcp",
+        DB_URL: "postgresql://postgres:postgres@127.0.0.1:23456/postgres",
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("returns the connection env for a resumed stack in JSON", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-resumed-env-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "resumed-env"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
+      const rest = fixture.members.find(({ service }) => service === "rest");
+      if (rest === undefined) return yield* Effect.die("Expected a REST member");
+      // The database stays running; another member starting keeps the composition short of
+      // fully started, so the next start takes the resumed branch, not the already-running one.
+      fixture.setMemberStatus(rest.id, { lifecycle: "starting", health: "starting" });
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(fixture.compositionStarts).toBe(2);
+      expect(fixture.composed).toBe(1);
+      const data = json.messages.find(({ data }) => data !== undefined)?.data as {
+        env: Readonly<Record<string, string>>;
+      };
+      expect(data.env.DB_URL).toBe("postgresql://postgres:postgres@127.0.0.1:23456/postgres");
+      expect(data.env.API_URL).toBe("http://127.0.0.1:23457");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -1128,52 +1250,106 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("leaves no stack registered when a new stack's owner cannot reach Docker", () =>
+  // The `#!/bin/sh` shim is never picked up on Windows, which only resolves `docker.exe` on PATH.
+  it.live.skipIf(process.platform === "win32")(
+    "leaves no stack registered when a new stack's owner cannot reach the Docker daemon",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "create-failure"\n',
+        );
+        yield* fs.makeDirectory(`${root}/bin`);
+        yield* fs.writeFileString(
+          `${root}/bin/docker`,
+          "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
+        );
+        yield* fs.chmod(`${root}/bin/docker`, 0o755);
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+        const originalPath = process.env.PATH;
+        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+        process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+            process.env.PATH = originalPath;
+          }),
+        );
+        const output = mockOutput();
+        const target = Layer.succeed(StackTargetResolver, {
+          resolve: () =>
+            Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+        });
+        const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+        const error = yield* stackStart(flags()).pipe(
+          Effect.flip,
+          Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+        );
+        expect(error.message).toContain("Cannot connect to the Docker daemon");
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.reason).toBe("runtime");
+          expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+        }
+        expect(output.stderrText).not.toContain("Failed to stop");
+
+        const stacks = yield* StackApi.pipe(
+          Effect.flatMap((stackApi) =>
+            stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+          ),
+          Effect.provide(api),
+        );
+        expect(stacks).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("leaves no stack registered when a new stack's owner finds no Docker CLI", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
       yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
-      yield* fs.makeDirectory(`${root}/bin`);
-      yield* fs.writeFileString(
-        `${root}/bin/docker`,
-        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
-      );
-      yield* fs.chmod(`${root}/bin/docker`, 0o755);
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
-      const originalPath = process.env.PATH;
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
-      process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
-          process.env.PATH = originalPath;
+      // An empty PATH hides any installed Docker CLI on every platform.
+      yield* fs.makeDirectory(`${root}/empty-bin`);
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
+      const envKeys = Object.keys(process.env);
+      const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+      yield* withEnvVar(
+        pathKey,
+        `${root}/empty-bin`,
+        Effect.gen(function* () {
+          const output = mockOutput();
+          const target = Layer.succeed(StackTargetResolver, {
+            resolve: () =>
+              Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
+          });
+          const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+          const error = yield* stackStart(flags()).pipe(
+            Effect.flip,
+            Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+          );
+          expect(error.message).toContain("docker ps");
+          expect(error).toBeInstanceOf(StackCommandStartError);
+          if (error instanceof StackCommandStartError) {
+            expect(error.reason).toBe("runtime");
+            expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+          }
+          expect(output.stderrText).not.toContain("Failed to stop");
+
+          const stacks = yield* StackApi.pipe(
+            Effect.flatMap((stackApi) =>
+              stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+            ),
+            Effect.provide(api),
+          );
+          expect(stacks).toEqual([]);
         }),
       );
-      const output = mockOutput();
-      const target = Layer.succeed(StackTargetResolver, {
-        resolve: () =>
-          Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
-      });
-      const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
-
-      const error = yield* stackStart(flags()).pipe(
-        Effect.flip,
-        Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
-      );
-      expect(error.message).toContain("Cannot connect to the Docker daemon");
-      expect(error).toBeInstanceOf(StackCommandStartError);
-      if (error instanceof StackCommandStartError) {
-        expect(error.reason).toBe("runtime");
-        expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
-      }
-      expect(output.stderrText).not.toContain("Failed to stop");
-
-      const stacks = yield* StackApi.pipe(
-        Effect.flatMap((stackApi) => stackApi.discover({ stateRoot: `${root}/.supabase/stacks` })),
-        Effect.provide(api),
-      );
-      expect(stacks).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

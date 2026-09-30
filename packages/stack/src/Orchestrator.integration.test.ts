@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
+import { captureLogs } from "../tests/logs.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { RegisteredInstance } from "./Orchestrator.ts";
 import { makeService, ServiceError } from "./Service.ts";
@@ -57,6 +58,7 @@ const makeInstance = (
     );
     const instance: RegisteredInstance = {
       id,
+      service: id,
       core,
       startAt: (revision, inputs, wake, guard) => core.startAt(revision, inputs, wake, guard),
       restart: (revision, inputs, candidate, guard) =>
@@ -782,6 +784,152 @@ it.live("allows later traffic to retry an armed service after a failed wake laun
     }),
   ),
 );
+
+it.live("logs a named failure for a failed wake and readiness for a successful one", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      const failing = yield* Ref.make(true);
+      yield* makeInstance(orchestrator, "api", {
+        launch: Ref.get(failing).pipe(
+          Effect.flatMap((value) => (value ? Effect.fail(failure("launch failed")) : Effect.void)),
+        ),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "lazy" }],
+        dependencies: [],
+      });
+      yield* orchestrator.startComposition;
+      yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+      yield* Ref.set(failing, false);
+      yield* Effect.scoped(orchestrator.acquire("api"));
+      yield* orchestrator.stopNamespace;
+      expect(logs.some((line) => line.includes("api api failed to wake"))).toBe(true);
+      expect(logs.some((line) => line.includes("api api is ready"))).toBe(true);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
+
+it.live("logs exactly one wake for many concurrent acquires of a sleeping member", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      const launching = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      yield* makeInstance(orchestrator, "api", {
+        launch: Deferred.succeed(launching, undefined).pipe(
+          Effect.andThen(Deferred.await(proceed)),
+        ),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "lazy" }],
+        dependencies: [],
+      });
+      yield* orchestrator.startComposition;
+      const callers = yield* Effect.forEach(Array.from({ length: 20 }), () =>
+        Effect.scoped(orchestrator.acquire("api")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        ),
+      );
+      yield* Deferred.await(launching);
+      yield* Deferred.succeed(proceed, undefined);
+      yield* Effect.forEach(callers, Fiber.join);
+      yield* orchestrator.stopNamespace;
+      expect(logs.filter((line) => line.includes("Waking api api"))).toHaveLength(1);
+      expect(logs.filter((line) => line.includes("api api is ready"))).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
+
+it.live("logs a distinct failure when a launched member never becomes ready", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      yield* makeInstance(orchestrator, "api", {
+        health: Effect.fail(failure("still booting")),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "lazy" }],
+        dependencies: [],
+      });
+      yield* orchestrator.startComposition;
+      yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+      yield* orchestrator.stopNamespace;
+      expect(logs.some((line) => line.includes("api api failed to become ready"))).toBe(true);
+      expect(logs.some((line) => line.includes("api api failed to wake"))).toBe(false);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
+
+it.live("logs no extra wake while the initiator is still waiting for readiness", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      const healthEntered = yield* Deferred.make<void>();
+      const readyGate = yield* Deferred.make<void>();
+      yield* makeInstance(orchestrator, "api", {
+        health: Deferred.succeed(healthEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(readyGate)),
+        ),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "lazy" }],
+        dependencies: [],
+      });
+      yield* orchestrator.startComposition;
+      const first = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(healthEntered);
+      expect(logs.filter((line) => line.includes("Waking api api"))).toHaveLength(1);
+      const second = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(readyGate, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      yield* orchestrator.stopNamespace;
+      expect(logs.filter((line) => line.includes("Waking api api"))).toHaveLength(1);
+      expect(logs.filter((line) => line.includes("api api is ready"))).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
+
+it.live("does not log a spurious wake for a member already starting outside acquire", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      const launching = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      yield* makeInstance(orchestrator, "api", {
+        launch: Deferred.succeed(launching, undefined).pipe(
+          Effect.andThen(Deferred.await(proceed)),
+        ),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "eager" }],
+        dependencies: [],
+      });
+      const composition = yield* orchestrator.startComposition.pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(launching);
+      const acquired = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(proceed, undefined);
+      yield* Fiber.join(composition);
+      yield* Fiber.join(acquired);
+      yield* orchestrator.stopNamespace;
+      expect(logs.filter((line) => line.includes("Waking api api"))).toHaveLength(0);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
 
 describe("readiness recovery", () => {
   const recoverableHealth = (healthy: Ref.Ref<boolean>) =>

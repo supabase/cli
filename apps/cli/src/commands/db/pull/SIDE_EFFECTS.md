@@ -23,6 +23,9 @@ cache described below. Native artifacts
 are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
 find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
 and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Migra (`--diff-engine migra`) is rejected in stack mode.
+A `--db-url` whose host and port match the running project stack's SQL endpoint (the `DB_URL`
+from `stack status --env`) is a local target and connects in plaintext, like `--local`; a remote
+or multi-host `--db-url` without an explicit `sslmode` still requires TLS.
 
 Pg-delta runs in-process. Coverage gaps warn; `--strict-coverage` makes them
 fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
@@ -71,8 +74,10 @@ disables formatting without disabling safe compaction.
   below. Migration-style pulls only; `--declarative` provisions no shadow.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
-  (`streamPgDumpWithClient`, shared with `db dump`). Stack-backed pulls skip dump
-  seeding: they always use pg-delta and reject `--diff-engine migra`.
+  (`streamPgDumpWithClient`, shared with `db dump`). It runs on the host network unless
+  `--network-id` / `SUPABASE_NETWORK_ID` names another network; on a named network a loopback
+  target is rewritten to `host.docker.internal`. Stack-backed pulls skip dump seeding: they
+  always use pg-delta and reject `--diff-engine migra`.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
@@ -124,7 +129,7 @@ at all, so nothing is cached for it.
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                                                                                                                                                                                                          | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                                                                                                                                                                                                | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                                                                             | no        |
-| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                                                                                                                                                                                             | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow and initial-migra `pg_dump` containers onto an existing Docker network                                                                                                                                                                                                                                                                                                        | no        |
 | `SUPABASE_USE_SLIM_IMAGES`                                                            | resolves the current-pin shadow Postgres, `pg_dump`, PG15+ realtime/storage/auth migrate-job images (migration-style cold shadow), and (for migra) the edge-runtime image from the slim `ghcr.io/supabase/cli` builds (`true`/`1` enable); majors 13/15 use `15.14.1.167` when the flag is on; historical pins, PG14, OrioleDB, flag-off `15.8.1.085`, and `deno_version = 1` stay on docker.io | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                                                                                                                                                                                       | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; on by default, opt-out (`0`/`false`); the shadow's post-baseline state is saved under a managed snapshot key and restored into the next run's fresh stack database (see Notes)                                                                                                                                                                                           | no        |

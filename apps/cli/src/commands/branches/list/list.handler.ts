@@ -48,7 +48,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

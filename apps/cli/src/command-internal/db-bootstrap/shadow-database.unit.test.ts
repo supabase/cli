@@ -504,7 +504,7 @@ describe("buildShadowSetupDatabaseInput", () => {
 
 describe("setupShadowDatabase / migrateShadowDatabase", () => {
   it.effect(
-    "setupShadowDatabase connects, sets up the platform baseline, and creates the template database",
+    "setupShadowDatabase applies the platform baseline without creating contrib_regression",
     () => {
       const { session, calls } = fakeSession();
       const workdir = tempRoot.current;
@@ -528,7 +528,8 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
           },
           setup: baseShadowSetup(),
         });
-        expect(calls.some((c) => c.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
+        expect(mock.spawned.length).toBeGreaterThan(0);
+        expect(calls.some((c) => c.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -596,6 +597,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(false);
+          expect(calls.some((call) => call.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
         }),
       ),
     );
@@ -654,6 +656,7 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
         );
         expect(jwksEvaluated).toBe(false);
         expect(calls.some((call) => call.sql === "drop extension if exists pg_net")).toBe(true);
+        expect(calls.some((call) => call.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -713,63 +716,60 @@ describe("setupShadowDatabase / migrateShadowDatabase", () => {
     );
   });
 
-  it.effect(
-    "skips the platform baseline on a warm cache hit but still creates the template",
-    () => {
-      const { session, calls } = fakeSession();
-      const workdir = tempRoot.current;
-      const mock = mockSpawner();
-      let jwksEvaluated = false;
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* setupShadowDatabase(
-          mock.spawner,
-          {
-            fs,
-            path,
-            workdir,
-            projectId: "proj",
-            container: "shadow-container-id-0123456789abcdef",
-            networkId: "supabase_network_proj",
-            connConfig: {
-              host: "127.0.0.1",
-              port: 54320,
-              user: "postgres",
-              password: "postgres",
-              database: "postgres",
-            },
-            setup: baseShadowSetup({
-              majorVersion: 17,
-              realtimeEnabledForSetup: true,
-              jwks: Effect.sync(() => {
-                jwksEvaluated = true;
-                return '{"keys":[]}';
-              }),
+  it.effect("skips the platform baseline and contrib_regression on a warm cache hit", () => {
+    const { session, calls } = fakeSession();
+    const workdir = tempRoot.current;
+    const mock = mockSpawner();
+    let jwksEvaluated = false;
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* setupShadowDatabase(
+        mock.spawner,
+        {
+          fs,
+          path,
+          workdir,
+          projectId: "proj",
+          container: "shadow-container-id-0123456789abcdef",
+          networkId: "supabase_network_proj",
+          connConfig: {
+            host: "127.0.0.1",
+            port: 54320,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          setup: baseShadowSetup({
+            majorVersion: 17,
+            realtimeEnabledForSetup: true,
+            jwks: Effect.sync(() => {
+              jwksEvaluated = true;
+              return '{"keys":[]}';
             }),
-          },
-          {},
-          {
-            baselinePresent: true,
-            snapshotRequired: false,
-            snapshotBaseline: Effect.void,
-          },
-        );
-        expect(jwksEvaluated).toBe(false);
-        expect(calls.some((c) => c.sql === SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            BunServices.layer,
-            mockOutput().layer,
-            mockDockerRun(),
-            mockRuntimeInfo(),
-            mockDbConnection(session),
-          ),
-        ),
+          }),
+        },
+        {},
+        {
+          baselinePresent: true,
+          snapshotRequired: false,
+          snapshotBaseline: Effect.void,
+        },
       );
-    },
-  );
+      expect(jwksEvaluated).toBe(false);
+      expect(calls).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          mockOutput().layer,
+          mockDockerRun(),
+          mockRuntimeInfo(),
+          mockDbConnection(session),
+        ),
+      ),
+    );
+  });
 
   it.effect(
     "migrateShadowDatabase lists local migrations BEFORE connecting, tolerating a missing migrations directory as an empty list rather than a failure",
