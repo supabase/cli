@@ -6,10 +6,12 @@ import path from "node:path";
 const script = path.resolve(import.meta.dirname, "sweep-live-projects.sh");
 const directories: string[] = [];
 
-// The describe budget below; the hang safety net fires well before it so vitest
-// still has time to report a clear failure instead of a bare test-timeout.
-const TEST_BUDGET_MS = 40_000;
-const HANG_KILL_MS = TEST_BUDGET_MS - 10_000;
+// Per-sweep hang guard: a spawned run gets this long before the safety net kills
+// it. A test's own timeout must cover every sweep it runs plus report margin, so
+// derive it from the sweep count rather than a single shared budget.
+const SWEEP_GUARD_MS = 30_000;
+const REPORT_MARGIN_MS = 10_000;
+const sweepBudget = (sweeps: number) => sweeps * SWEEP_GUARD_MS + REPORT_MARGIN_MS;
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
@@ -82,7 +84,7 @@ async function runSweep(scenario: Scenario) {
     const timeout = setTimeout(() => {
       hung = true;
       child.kill();
-    }, HANG_KILL_MS);
+    }, SWEEP_GUARD_MS);
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
@@ -91,7 +93,7 @@ async function runSweep(scenario: Scenario) {
     clearTimeout(timeout);
     if (hung) {
       throw new Error(
-        `sweep script hung: killed after ${HANG_KILL_MS}ms without exiting (stdout: ${stdout}, stderr: ${stderr})`,
+        `sweep script hung: killed after ${SWEEP_GUARD_MS}ms without exiting (stdout: ${stdout}, stderr: ${stderr})`,
       );
     }
     return { exitCode, stdout, stderr, deletes };
@@ -104,7 +106,7 @@ const active = (ref: string, name = `e2e-${ref}`) => ({ ref, name, status: "ACTI
 
 describe.skipIf(process.platform === "win32")(
   "sweep-live-projects.sh",
-  { timeout: TEST_BUDGET_MS },
+  { timeout: sweepBudget(1) },
   () => {
     test("accepts refused deletion when a fresh authenticated list shows absence", async () => {
       const result = await runSweep({
@@ -124,33 +126,41 @@ describe.skipIf(process.platform === "win32")(
       expect(result.exitCode).toBe(0);
     });
 
-    test("retries a transient read failure but rejects malformed evidence", async () => {
-      const transient = await runSweep({
-        lists: [503, [active("retry")], []],
-        deletes: { retry: { status: 202 } },
-      });
-      expect(transient.exitCode).toBe(0);
+    test(
+      "retries a transient read failure but rejects malformed evidence",
+      async () => {
+        const transient = await runSweep({
+          lists: [503, [active("retry")], []],
+          deletes: { retry: { status: 202 } },
+        });
+        expect(transient.exitCode).toBe(0);
 
-      const malformed = await runSweep({ lists: [{ projects: [] }], deletes: {} });
-      expect(malformed.exitCode).not.toBe(0);
-      expect(malformed.deletes).toEqual([]);
-    });
+        const malformed = await runSweep({ lists: [{ projects: [] }], deletes: {} });
+        expect(malformed.exitCode).not.toBe(0);
+        expect(malformed.deletes).toEqual([]);
+      },
+      sweepBudget(2),
+    );
 
-    test("fails terminal listing errors without retrying or deleting", async () => {
-      const forbidden = await runSweep({ lists: [403, []], deletes: {} });
-      expect(forbidden.exitCode).not.toBe(0);
-      expect(forbidden.deletes).toEqual([]);
+    test(
+      "fails terminal listing errors without retrying or deleting",
+      async () => {
+        const forbidden = await runSweep({ lists: [403, []], deletes: {} });
+        expect(forbidden.exitCode).not.toBe(0);
+        expect(forbidden.deletes).toEqual([]);
 
-      const unavailable = await runSweep({ lists: [503, 503, 503], deletes: {} });
-      expect(unavailable.exitCode).not.toBe(0);
-      expect(unavailable.deletes).toEqual([]);
+        const unavailable = await runSweep({ lists: [503, 503, 503], deletes: {} });
+        expect(unavailable.exitCode).not.toBe(0);
+        expect(unavailable.deletes).toEqual([]);
 
-      const malformedReconciliation = await runSweep({
-        lists: [[active("bad-evidence")], { projects: [] }],
-        deletes: { "bad-evidence": { status: 403 } },
-      });
-      expect(malformedReconciliation.exitCode).not.toBe(0);
-    });
+        const malformedReconciliation = await runSweep({
+          lists: [[active("bad-evidence")], { projects: [] }],
+          deletes: { "bad-evidence": { status: 403 } },
+        });
+        expect(malformedReconciliation.exitCode).not.toBe(0);
+      },
+      sweepBudget(3),
+    );
 
     test("attempts every owned project and fails if one remains active", async () => {
       const result = await runSweep({
