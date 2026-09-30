@@ -52,7 +52,8 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
       const remoteName = remoteNames[service];
       return {
         name,
-        local: artifact.version,
+        // A slim revision suffix (`-rN`) repackages the same upstream release.
+        local: artifact.version.replace(/-r\d+$/u, ""),
         remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
       } satisfies ServiceVersionRow;
     }),

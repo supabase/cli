@@ -342,6 +342,9 @@ describe("services", () => {
       expect(rows).toContainEqual(
         expect.objectContaining({ name: "ghcr.io/supabase/cli/vector", local: "0.53.0" }),
       );
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/storage", local: "v1.79.28" }),
+      );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

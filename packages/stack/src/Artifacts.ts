@@ -91,8 +91,8 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   ),
   storage: definition(
     "storage",
-    "v1.73.0",
-    "ghcr.io/supabase/cli/storage:v1.73.0@sha256:69590a75f916837641976d4018e5ead7c7d2c2305312d9bfb06d86aec8fb1cdd",
+    "v1.79.28-r1",
+    "ghcr.io/supabase/cli/storage:v1.79.28-r1@sha256:95e0007f273e7c990ab81c44e021e4278b8953dd95ae2fbdc19fca047d4bd470",
     "bin/storage",
     ["bin/storage", "bin/prepare"],
   ),
