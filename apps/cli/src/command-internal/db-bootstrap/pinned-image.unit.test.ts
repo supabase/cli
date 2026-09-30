@@ -4,7 +4,7 @@ import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-imag
 import {
   expectedPinnedImage,
   GHCR_SLIM_IMAGE_PATTERN,
-} from "../../shared/services/slim-images.test-support.ts";
+} from "../../../tests/helpers/slim-images.ts";
 import { resolvePinnedImage } from "./pinned-image.ts";
 
 const currentTag = (alias: string) => dockerfileServiceImageRaw(alias).split(":")[1] ?? "";

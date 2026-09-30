@@ -9,7 +9,7 @@ import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.t
 import {
   expectedPinnedImage,
   GHCR_SLIM_IMAGE_PATTERN,
-} from "../../shared/services/slim-images.test-support.ts";
+} from "../../../tests/helpers/slim-images.ts";
 import { buildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
   slimWgetHealthcheck,
@@ -324,8 +324,8 @@ describe("supabase start slim images (e2e)", () => {
         });
         expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
 
-        // Every alias here is slim-capable, and design B guarantees its default Dockerfile tag
-        // matches a catalog pin — so each expected image is read straight from the catalog
+        // Every alias here is slim-capable, and its default Dockerfile tag is generated from the
+        // catalog, so it matches a catalog pin — so each expected image is read straight from the catalog
         // (`expectedPinnedImage`), independent of `toSlimImage`.
         const authImage = expectedPinnedImage("gotrue", dockerfileServiceImageRaw("gotrue"));
         const realtimeImage = expectedPinnedImage(

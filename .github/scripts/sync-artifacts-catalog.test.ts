@@ -74,8 +74,7 @@ async function formatWithOxfmt(source: string): Promise<string> {
 
 /**
  * A resolved `ArtifactPin` literal, for fixtures that exercise refreshing an already-resolved
- * catalog entry to a new revision (design B: a committed catalog is never an unresolved
- * placeholder). `seed` keys a real, distinct digest via the module's `digest` helper.
+ * catalog entry to a new revision (the committed catalog only carries resolved pins). `seed` keys a real, distinct digest via the module's `digest` helper.
  */
 function resolvedPinLiteral(
   service: string,
@@ -495,8 +494,8 @@ describe("planSlimUpdates", () => {
     // The catalog's own pinned upstream carries a space here — never written by `refreshCatalogPin`
     // (which validates every field it resolves), but this simulates a corrupted catalog, or a
     // release tag whose upstream portion isn't newline-only-unsafe (`.` already excludes
-    // newlines) yet still fails `UPSTREAM_VERSION_PATTERN`. Ruling 6 requires every value the
-    // planner emits to be checked, regardless of source.
+    // newlines) yet still fails `UPSTREAM_VERSION_PATTERN`. Every value the planner emits is
+    // checked, regardless of source.
     const adversarial = `const workloadCatalog = {
   rest: definition(
     "postgrest",

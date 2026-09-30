@@ -7,7 +7,7 @@ import type { LocalServiceVersionOverrides } from "../../shared/services/service
 import {
   expectedPinnedImage,
   GHCR_SLIM_IMAGE_PATTERN,
-} from "../../shared/services/slim-images.test-support.ts";
+} from "../../../tests/helpers/slim-images.ts";
 import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";

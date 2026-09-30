@@ -7,7 +7,7 @@ import { slimCatalogPin, toSlimImage } from "./slim-images.ts";
  * Every slim-capable Dockerfile alias, against the real (unmocked) catalog. The Dockerfile is
  * generated from that same catalog (`render-service-dockerfile.ts`), so each alias's raw tag is
  * always one of the catalog's own upstream versions by construction — no fixture, no
- * `vi.mock`, exercising the true "one-time alignment" invariant end to end.
+ * `vi.mock`, exercising the Dockerfile/catalog alignment end to end.
  */
 const SLIM_CAPABLE_ALIASES = [
   "pg",

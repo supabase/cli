@@ -11,10 +11,7 @@ import {
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
 import { imageTag } from "../shared/services/slim-images.ts";
-import {
-  expectedPinnedImage,
-  GHCR_SLIM_IMAGE_PATTERN,
-} from "../shared/services/slim-images.test-support.ts";
+import { expectedPinnedImage, GHCR_SLIM_IMAGE_PATTERN } from "../../tests/helpers/slim-images.ts";
 import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");

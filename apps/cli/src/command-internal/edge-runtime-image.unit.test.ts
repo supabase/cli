@@ -10,10 +10,7 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import {
-  expectedPinnedImage,
-  GHCR_SLIM_IMAGE_PATTERN,
-} from "../shared/services/slim-images.test-support.ts";
+import { expectedPinnedImage, GHCR_SLIM_IMAGE_PATTERN } from "../../tests/helpers/slim-images.ts";
 import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
 
 const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");

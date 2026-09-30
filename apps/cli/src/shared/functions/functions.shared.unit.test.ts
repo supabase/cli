@@ -5,7 +5,7 @@ import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import {
   expectedPinnedImage,
   GHCR_SLIM_IMAGE_PATTERN,
-} from "../services/slim-images.test-support.ts";
+} from "../../../tests/helpers/slim-images.ts";
 import {
   DENO1_EDGE_RUNTIME_VERSION,
   edgeRuntimeImage,

@@ -731,7 +731,7 @@ const SINGLE_LINE_KEY = "*";
  * into a file the workflow parses as records; a `console.log`'d warning on the same stdout the
  * workflow captures would corrupt that file instead of just being informational.
  *
- * Per release line (ruling: the default pin's line, plus one per additional pin — only postgres
+ * Per release line (the default pin's line, plus one per additional pin — only postgres
  * has more than one) a **hotfix** fires when the pinned upstream has a committed revision higher
  * than the pinned one; an **upgrade** fires when the newest committed upstream on the line is
  * newer than the pinned one (ties, e.g. two Studio builds dated the same day, are not newer).

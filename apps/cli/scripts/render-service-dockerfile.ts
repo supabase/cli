@@ -31,7 +31,7 @@ type CatalogEntry = ReturnType<typeof catalogPins>[number];
 const REPOSITORY_OVERRIDES: Readonly<Record<string, string>> = {
   // slim-services mirrors ghcr.io/imgproxy/imgproxy (its `upstreamImage`), but the Dockerfile —
   // and `mirror-template-images.yml` and the docker.io registry rewrite — keep darthsim/imgproxy,
-  // which carries the same tags on Docker Hub. See the design doc's "Repository rule".
+  // which carries the same tags on Docker Hub.
   imgproxy: "darthsim/imgproxy",
 };
 
