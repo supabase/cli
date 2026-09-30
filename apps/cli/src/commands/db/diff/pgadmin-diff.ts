@@ -22,7 +22,8 @@ import { trimGoSpace } from "../shared/go-string.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { DbDiffPgAdminError } from "./diff.errors.ts";
 
-const DIFFER_IMAGE = dockerfileServiceImage("differ");
+// `differ` has no slim build, so the slim flag never applies to it.
+const DIFFER_IMAGE = dockerfileServiceImage("differ", false);
 
 /**
  * Only the front of the buffer is trimmed, not every occurrence — a real pgAdmin4

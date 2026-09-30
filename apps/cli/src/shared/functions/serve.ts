@@ -89,6 +89,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   DockerLogsStreamError,
   EdgeRuntimeContainerCrashedError,
@@ -2031,7 +2032,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     // `docker pull` on cold cache instead of immediately — left open since
     // fixing it risks `start`'s shared, more critical bring-up path.
     const image = yield* resolveFunctionsDockerImage(
-      edgeRuntimeImage(edgeRuntimeVersion),
+      edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled),
       resolved.projectEnvValues,
     );
 

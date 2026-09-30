@@ -48,6 +48,7 @@ import {
 } from "./pgdata-snapshot.ts";
 import type { PgDataArchiveProblem, PgDataSnapshotUnavailable } from "./pgdata-snapshot.ts";
 import { resolvePinnedImage } from "./pinned-image.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import {
   createShadowDatabase,
   removeShadowDatabase,
@@ -290,13 +291,14 @@ const resolveShadowCacheKeyInputs = <E>(
     const realtimeConsumesJwks =
       input.setup.majorVersion >= 15 && input.setup.config.realtime.enabled;
     const jwks = realtimeConsumesJwks ? yield* input.setup.jwks : "";
+    const slim = yield* slimImagesEnabled;
     const realtimeImage = yield* resolveJobImage(
-      resolvePinnedImage("realtime", "realtime", overrides),
+      resolvePinnedImage("realtime", "realtime", overrides, slim),
     );
     const storageImage = yield* resolveJobImage(
-      resolvePinnedImage("storage", "storage", overrides),
+      resolvePinnedImage("storage", "storage", overrides, slim),
     );
-    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides));
+    const authImage = yield* resolveJobImage(resolvePinnedImage("gotrue", "auth", overrides, slim));
     if (Option.isNone(realtimeImage) || Option.isNone(storageImage) || Option.isNone(authImage)) {
       return Option.none();
     }

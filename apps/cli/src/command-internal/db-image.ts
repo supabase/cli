@@ -1,7 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
-import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
+import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
 
 /**
  * Resolves the local Postgres Docker image for commands that run a pg_dump/shadow-DB container
@@ -73,7 +73,8 @@ export const resolveDbImage = Effect.fnUntraced(function* (
         : `supabase/postgres:orioledb-${orioledbVersion}`;
     return { image, configImage: image };
   }
-  const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
+  const slim = yield* slimImagesEnabled;
+  const currentRaw = postgresImageForDbMajorVersion(majorVersion, slim) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
     const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
@@ -96,7 +97,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   const configImage =
     appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
   return {
-    image: slimImageForCurrentPin("pg", currentRaw, appliedPin),
+    image: slimImageForCurrentPin("pg", currentRaw, appliedPin, slim),
     configImage,
   };
 });

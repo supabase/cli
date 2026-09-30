@@ -246,6 +246,8 @@ export function buildVectorEntrypointScript(
 }
 
 export interface VectorContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** `config.analytics.vector_image`, already resolved/pulled by the caller. */
   readonly image: string;
   /** `serviceContainerName("vector", projectId)`, also used as the `vector.yaml` template's `vectorId` field. */
@@ -276,7 +278,7 @@ export interface VectorContainerSpecInput {
 
 /** Builds Vector's {@link StartContainerSpec}. */
 export function buildVectorContainerSpec(input: VectorContainerSpecInput): StartContainerSpec {
-  const slim = usesSlimImageRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image, input.slim);
   const vectorYaml = renderStartVectorYaml({
     apiKey: input.apiKey,
     vectorId: input.containerName,

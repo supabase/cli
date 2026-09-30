@@ -33,6 +33,7 @@ import {
 import { mockTelemetryStateTracked, useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../../shared/services/services.shared.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
@@ -188,8 +189,8 @@ const writeTempFile = Effect.fnUntraced(function* (workdir: string, name: string
   yield* fs.writeFileString(path.join(tempDir, name), content);
 });
 
-function postgresVersionForDbMajorVersion(majorVersion: number): string {
-  const image = postgresImageForDbMajorVersion(majorVersion);
+function postgresVersionForDbMajorVersion(majorVersion: number, slim: boolean): string {
+  const image = postgresImageForDbMajorVersion(majorVersion, slim);
   if (image === undefined) {
     throw new Error(`Missing Postgres image for db major ${majorVersion}.`);
   }
@@ -316,7 +317,7 @@ describe("services", () => {
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "supabase/postgres",
-          local: postgresVersionForDbMajorVersion(15),
+          local: postgresVersionForDbMajorVersion(15, yield* slimImagesEnabled),
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -417,7 +418,7 @@ describe("services", () => {
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "supabase/postgres",
-          local: postgresVersionForDbMajorVersion(15),
+          local: postgresVersionForDbMajorVersion(15, yield* slimImagesEnabled),
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -444,7 +445,7 @@ major_version = 15
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "supabase/postgres",
-          local: postgresVersionForDbMajorVersion(15),
+          local: postgresVersionForDbMajorVersion(15, yield* slimImagesEnabled),
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
@@ -562,7 +563,7 @@ major_version = 15
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "supabase/postgres",
-          local: postgresVersionForDbMajorVersion(15),
+          local: postgresVersionForDbMajorVersion(15, yield* slimImagesEnabled),
           remote: "17.6.1.200",
         }),
       );

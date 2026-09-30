@@ -9,6 +9,7 @@ import {
   withTempHome,
 } from "../../../../tests/helpers/cli.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import {
   RESOLVE_BUDGET_MS,
@@ -21,7 +22,6 @@ const TYPEGEN_LANGS: ReadonlyArray<string> = languages
   .map((language) => language.name);
 type TypegenLang = string;
 
-const LOCAL_POSTGRES_IMAGE = dockerfileServiceImage("pg");
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 // Image resolution runs inside the test body, so its timeout must add on top of the
@@ -214,8 +214,9 @@ const startLocalPostgres = Effect.fnUntraced(function* (input: {
 }) {
   const containerName = localDbContainerId(input.projectId);
   const imageDeadline = resolveDeadline(LOCAL_IMAGE_BUDGET_MS);
+  const localPostgresImage = dockerfileServiceImage("pg", yield* slimImagesEnabled);
   const postgresImage = yield* Effect.tryPromise({
-    try: () => ensureImage(LOCAL_POSTGRES_IMAGE, imageDeadline - RESOLVE_BUDGET_MS),
+    try: () => ensureImage(localPostgresImage, imageDeadline - RESOLVE_BUDGET_MS),
     catch: (cause) => new TypegenE2eSetupError({ message: "failed to ensure Docker image", cause }),
   });
 

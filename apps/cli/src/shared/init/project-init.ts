@@ -106,6 +106,8 @@ const decodeJsonObject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+
 // Parses a settings file through a Schema boundary so malformed JSON surfaces
 // as a typed `InitParseSettingsError` (never a fiber defect) and a
 // non-object document is rejected.
@@ -147,9 +149,9 @@ const INIT_DIR_MODE = 0o755;
 function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(pathname, `${JSON.stringify(contents, null, 2)}\n`, {
-      mode: INIT_FILE_MODE,
-    });
+    // `contents` was just decoded from JSON, so encoding it back cannot fail.
+    const json = yield* encodePrettyJson(contents).pipe(Effect.orDie);
+    yield* fs.writeFileString(pathname, `${json}\n`, { mode: INIT_FILE_MODE });
   });
 }
 
