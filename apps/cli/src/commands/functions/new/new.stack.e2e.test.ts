@@ -7,7 +7,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { homedir } from "node:os";
 
 import { makeTempHome, runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
-import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
+import { removeStateRootVolume } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const nativeSupported =
   (process.platform === "linux" && (process.arch === "x64" || process.arch === "arm64")) ||

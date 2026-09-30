@@ -28,8 +28,7 @@ import { BundledPostgresClient } from "../../../command-internal/bundled-postgre
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
-import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
-import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
+import { destroyTestStack, removeStateRootVolume } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));

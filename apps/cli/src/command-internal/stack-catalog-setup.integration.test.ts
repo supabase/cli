@@ -20,8 +20,7 @@ import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import type { Command } from "@supabase/stack/commands";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
-import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
-import { removeStateRootVolume } from "../../../../packages/stack/tests/docker-fixture.ts";
+import { destroyTestStack, removeStateRootVolume } from "../../tests/helpers/stack-cleanup.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "stack-catalog-setup-integration-secret";

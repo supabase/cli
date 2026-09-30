@@ -7,8 +7,7 @@ import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";
 
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
-import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
-import { removeStateRootVolume } from "../../../../../../packages/stack/tests/docker-fixture.ts";
+import { destroyTestStack, removeStateRootVolume } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 2 * 60_000;
