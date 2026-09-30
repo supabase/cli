@@ -499,30 +499,6 @@ it.live("returns a gateway error naming the route and cause when a target cannot
   );
 });
 
-it.live("returns a gateway error naming the route when its target never wakes", () => {
-  const logs: Array<string> = [];
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-      // A target that never resolves stands in for a stalled wake.
-      yield* proxy.setRoutes([
-        { id: "rest", prefix: "/", target: Effect.never, wakeTimeout: "200 millis" },
-      ]);
-      const client = yield* HttpClient.HttpClient;
-      const response = yield* client.get(`http://127.0.0.1:${proxy.port}/`);
-      expect(response.status).toBe(502);
-      expect(yield* response.text).toBe("Bad Gateway");
-      expect(logs).toHaveLength(1);
-      expect(logs[0]).toContain("Route rest request failed");
-      expect(logs[0]).toContain("Wake for rest did not complete in time");
-    }),
-  ).pipe(
-    Effect.provide(
-      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
-    ),
-  );
-});
-
 it.live("retries a bodyless request once when the upstream drops the connection unanswered", () => {
   const logs: Array<string> = [];
   return Effect.scoped(

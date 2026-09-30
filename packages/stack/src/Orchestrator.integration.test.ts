@@ -1,11 +1,31 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Logger,
+  Option,
+  Ref,
+  Schema,
+  Scope,
+  Stream,
+  type LogLevel,
+} from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { RegisteredInstance } from "./Orchestrator.ts";
 import { makeService, ServiceError } from "./Service.ts";
 
 const failure = (message: string) => new ServiceError({ operation: "fixture", message });
+const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
+  Logger.layer([
+    Logger.make(({ logLevel, message }) => {
+      if (levels.some((level) => level === logLevel))
+        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
+    }),
+  ]);
 const makeTestOrchestrator = () => Orchestrator.make<RegisteredInstance>();
 const makeInstance = (
   orchestrator: Orchestrator.Interface,
@@ -783,6 +803,32 @@ it.live("allows later traffic to retry an armed service after a failed wake laun
     }),
   ),
 );
+
+it.live("logs a named failure for a failed wake and readiness for a successful one", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const orchestrator = yield* makeTestOrchestrator();
+      const failing = yield* Ref.make(true);
+      yield* makeInstance(orchestrator, "api", {
+        launch: Ref.get(failing).pipe(
+          Effect.flatMap((value) => (value ? Effect.fail(failure("launch failed")) : Effect.void)),
+        ),
+      });
+      yield* orchestrator.configure({
+        members: [{ id: "api", activation: "lazy" }],
+        dependencies: [],
+      });
+      yield* orchestrator.startComposition;
+      yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+      yield* Ref.set(failing, false);
+      yield* Effect.scoped(orchestrator.acquire("api"));
+      yield* orchestrator.stopNamespace;
+      expect(logs.some((line) => line.includes("api api failed to wake"))).toBe(true);
+      expect(logs.some((line) => line.includes("api api is ready"))).toBe(true);
+    }),
+  ).pipe(Effect.provide(captureLogs(["Error", "Info"])(logs)));
+});
 
 describe("readiness recovery", () => {
   const recoverableHealth = (healthy: Ref.Ref<boolean>) =>

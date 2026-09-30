@@ -926,6 +926,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <
               Effect.logError(`${instance.service} ${id} failed to wake`, cause),
             ),
           );
+          if (!awaitReady)
+            yield* Effect.logInfo(`${instance.service} ${id} started (readiness not awaited)`);
         }
         if (awaitReady) {
           yield* instance.core.ready.pipe(
