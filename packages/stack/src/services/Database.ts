@@ -66,6 +66,7 @@ import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import {
   containerInstancePath,
   ensureOwnedInstanceRoot,
+  isSafeInstanceId,
   removeOwnedInstanceRoot,
 } from "./InstanceRoot.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
@@ -477,7 +478,7 @@ export const makeDatabase = (
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))
       return yield* databaseError("identity", "Invalid stack id");
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(options.instanceId))
+    if (!isSafeInstanceId(options.instanceId))
       return yield* databaseError("identity", "Invalid instance id");
     const instanceRoot = path.join(options.root, options.instanceId);
     yield* ensureOwnedRoot(fs, path, instanceRoot, String(options.stackId), options.instanceId);

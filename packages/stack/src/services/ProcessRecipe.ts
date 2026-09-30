@@ -82,7 +82,7 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
     creation: C,
     endpoints: ReadonlyMap<string, ServiceEndpoint>,
     container: boolean,
-    /** Set when `instanceDirectory` is claimed: the host path natively, `/instance` in a container. */
+    /** Set when `instanceDirectory` is claimed, for the main process's `env` only: the host path natively, `/instance` in a container. */
     instanceDir?: string,
   ) => Effect.Effect<Readonly<Record<string, string>>, ServiceError>;
   readonly nativeStartupEnv?: (
@@ -103,7 +103,7 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly containerEntrypoint?: (creation: C) => string | undefined;
   readonly prepare?: (creation: C) => Effect.Effect<void, ServiceError>;
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
-  /** Claims `<stack data root>/<instanceId>` for this recipe, cleaned up like `Database`'s own root. */
+  /** Claims `<stack data root>/<instanceId>` for this recipe, cleaned up like `Database`'s own root, and passed to only the main process's `env`, mounted at `/instance` for it in containers. */
   readonly instanceDirectory?: boolean;
 }
 
