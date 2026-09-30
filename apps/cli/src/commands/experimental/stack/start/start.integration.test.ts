@@ -602,8 +602,10 @@ describe("experimental stack start", () => {
       expect(text.stdoutText).not.toContain("GraphQL");
       expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
       expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
+      // Windows temp paths contain `\` and `~`, so the PowerShell pointer quotes the workdir.
+      const workdir = process.platform === "win32" ? `'${root}'` : root;
       expect(text.stdoutText).toContain(
-        `Runtime: native\nRun supabase status --env --workdir ${root} --stack 'feature demo' to export these values as environment variables.\n`,
+        `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
       );
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -1195,8 +1197,8 @@ describe("experimental stack start", () => {
       // An empty PATH hides any installed Docker CLI on every platform.
       yield* fs.makeDirectory(`${root}/empty-bin`);
       // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
-      const pathKey =
-        Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+      const envKeys = Object.keys(process.env);
+      const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
       yield* withEnvVar(
         pathKey,
         `${root}/empty-bin`,
