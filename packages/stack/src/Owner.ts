@@ -35,6 +35,7 @@ import {
   credentialsFor,
   endpointNames,
   endpointPort,
+  joinRoutes,
   outputsFor,
   publicUrl,
   sharedRoutes,
@@ -358,6 +359,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     const endpoints = Object.fromEntries(
       endpointNames(initial).map((name) => {
         const shared = sharedRoutes(initial, name, routeKeys);
+        const join = joinRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
@@ -372,6 +374,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           ),
           enabled,
           ...(shared === undefined ? {} : { shared }),
+          ...(join === undefined ? {} : { join }),
         };
         return [name, endpoint];
       }),
