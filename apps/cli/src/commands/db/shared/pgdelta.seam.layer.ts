@@ -281,11 +281,21 @@ type StartLocalDatabaseDeps =
     ? R
     : never;
 
+/** Trailing `-r<N>` immutable-revision suffix a slim tag carries; docker.io tags never have one. */
+const REVISION_SUFFIX = /-r(0|[1-9][0-9]*)$/;
+
+/**
+ * The tag portion of `image`, ignoring any `@sha256:…` digest suffix and, for a slim ref, its
+ * `-r<N>` revision suffix — so a slim `<upstream>-r<N>` tag still compares equal to a docker.io
+ * container running the same `<upstream>` version.
+ */
 function dockerImageTag(image: string): string {
   const trimmed = image.trim();
-  const index = trimmed.lastIndexOf(":");
-  if (index < 0 || index === trimmed.length - 1) return "";
-  return trimmed.slice(index + 1);
+  const withoutDigest = trimmed.split("@")[0] ?? trimmed;
+  const index = withoutDigest.lastIndexOf(":");
+  if (index < 0 || index === withoutDigest.length - 1) return "";
+  const tag = withoutDigest.slice(index + 1);
+  return isSlimImageRef(trimmed) ? tag.replace(REVISION_SUFFIX, "") : tag;
 }
 
 export function isMissingContainerInspectError(stderr: string): boolean {

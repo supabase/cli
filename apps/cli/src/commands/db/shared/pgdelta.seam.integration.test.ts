@@ -33,6 +33,36 @@ import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { declarativeSeamLayer } from "./pgdelta.seam.layer.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 
+// The real catalog's postgres pin has moved past the Dockerfile's own pinned `pg` tag (the
+// "catalog leads the Dockerfile until Dependabot catches up" gap), so `toSlimImage` would find no
+// match and fall back to the upstream (non-slim) image regardless of `SUPABASE_USE_SLIM_IMAGES` —
+// masking the family-mismatch check below. Pin a fixture catalog entry at the Dockerfile's actual
+// `pg` tag (17.6.1.171) instead, the same pattern `slim-images.unit.test.ts` uses. `vi.mock`
+// factories are hoisted above every other top-level statement, so the tag is inlined rather than
+// referencing `dockerfileServiceImageRaw` here.
+vi.mock("@supabase/stack/internal/artifacts", () => {
+  const digest = "d348483ad1141c54bfb4eaae801f5385fe1c2970fc106f95f531b5247092d52c";
+  const nativePin = { archive: digest, manifest: digest };
+  return {
+    catalogPins: () => [
+      {
+        service: "database",
+        sourceService: "postgres",
+        pin: {
+          upstreamVersion: "17.6.1.171",
+          revision: 0,
+          image: `ghcr.io/supabase/cli/postgres:17.6.1.171-r0@sha256:${digest}`,
+          natives: {
+            "darwin-arm64": nativePin,
+            "linux-amd64": nativePin,
+            "linux-arm64": nativePin,
+          },
+        },
+      },
+    ],
+  };
+});
+
 /**
  * Integration coverage for the fully-native `declarativeSeamLayer`: `generate`/`sync`'s own
  * tests stub `DeclarativeSeam` entirely, so this file is the only place the real local-database
