@@ -563,6 +563,17 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
     );
   }
 
+  it.effect("keeps a multi-host url remote even when its primary is the stack endpoint", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@127.0.0.1:${STACK_SQL_PORT},db.example.com:5432/postgres`,
+      );
+      expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+
   it.effect("does not consult the stack for a non-loopback host", () =>
     Effect.gen(function* () {
       const untouchedStackApi = Layer.succeed(StackApi, {

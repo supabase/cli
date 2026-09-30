@@ -518,9 +518,11 @@ export const dbConfigResolverLayer = Layer.effect(
             tomlValues.shadowPort,
           );
           // The stack backend publishes its database on a runtime-assigned port rather than
-          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
+          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too. A
+          // multi-host URL stays remote: local disables TLS for every fallback host as well.
           const stackConn =
             (yield* currentStackBackend).kind === "stack" &&
+            conn.fallbacks === undefined &&
             mayBeStackDatabaseHost(conn.host, localHost)
               ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
               : undefined;
