@@ -66,10 +66,38 @@ const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/release
 
 /** Bounded retry for `waitForExpectedRelease`: 6 attempts, 10s apart, by default. */
 const EXPECT_RELEASE_ATTEMPTS = 6;
-/** Overridable so an integration test can shrink the real delay between attempts. */
-const EXPECT_RELEASE_INTERVAL_MS = Number(
-  process.env.SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ?? 10_000,
-);
+const DEFAULT_EXPECT_RELEASE_INTERVAL_MS = 10_000;
+
+/**
+ * Parses `SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS` fresh on every call (not once at module load), so
+ * an integration test can shrink the real delay between `waitForExpectedRelease` attempts by
+ * setting the env var before spawning, not before this module is first imported. Unset keeps the
+ * default; anything else must be a non-negative integer (no `"5ms"`, no `""`, no negative value,
+ * no decimal) or this throws a clear configuration error instead of silently coercing it to NaN,
+ * 0, or a meaningless delay.
+ */
+function expectReleaseIntervalMs(): number {
+  const raw = process.env.SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS;
+  if (raw === undefined) return DEFAULT_EXPECT_RELEASE_INTERVAL_MS;
+  if (!/^(0|[1-9][0-9]*)$/.test(raw)) {
+    throw new InvalidPayloadError(
+      `invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS ${JSON.stringify(raw)}: expected a non-negative integer`,
+    );
+  }
+  return Number(raw);
+}
+
+/**
+ * A GitHub Actions workflow-command line (`::error ::…`/`::warning ::…`), with `message` run
+ * through the workflow-command data encoding (`%` first, so encoding `\r`/`\n` into `%0D`/`%0A`
+ * never gets re-escaped) — the single boundary every `::error ::`/`::warning ::` this script
+ * emits goes through, so an external value embedding a newline can never start a second line the
+ * runner's log would parse as its own workflow command.
+ */
+function workflowCommand(kind: "error" | "warning", message: string): string {
+  const encoded = message.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  return `::${kind} ::${encoded}`;
+}
 
 /** Leading numeric component, `v` stripped. Only postgres carries more than one line. */
 function releaseLine(version: string): string {
@@ -750,7 +778,12 @@ export function planSlimUpdates(
   const warnings: string[] = [];
   const pins = collectServicePins(catalog, service);
   if (pins === undefined) {
-    warnings.push(`::warning ::${CATALOG_PATH} has no slim entry for ${service}; nothing to plan.`);
+    warnings.push(
+      workflowCommand(
+        "warning",
+        `${CATALOG_PATH} has no slim entry for ${service}; nothing to plan.`,
+      ),
+    );
     return { updates: [], warnings };
   }
 
@@ -782,7 +815,10 @@ export function planSlimUpdates(
       line = releaseLine(upstream);
       if (!pinnedByLine.has(line)) {
         warnings.push(
-          `::warning ::${service} ${upstream} is not on a release line ${CATALOG_PATH} carries for it; ignoring ${tag}.`,
+          workflowCommand(
+            "warning",
+            `${service} ${upstream} is not on a release line ${CATALOG_PATH} carries for it; ignoring ${tag}.`,
+          ),
         );
         continue;
       }
@@ -822,7 +858,12 @@ export function planSlimUpdates(
     for (const upstream of highestRevisionByUpstream.keys()) {
       const comparedToPinned = compareVersions(upstream, pinned.upstream);
       if (comparedToPinned === undefined) {
-        warnings.push(`::warning ::${service} ${upstream} is not a comparable version; ignoring.`);
+        warnings.push(
+          workflowCommand(
+            "warning",
+            `${service} ${upstream} is not a comparable version; ignoring.`,
+          ),
+        );
         continue;
       }
       if (bestUpstream === undefined || (compareVersions(upstream, bestUpstream) ?? 0) > 0) {
@@ -864,8 +905,9 @@ export interface WaitForExpectedReleaseResult {
  * dispatch that triggered this run: re-lists up to `attempts` times, `io.wait`-ing between
  * attempts, until `<service>-<releaseVersion>` appears. Not a test retry — a real, bounded wait
  * for an external API to catch up. `io.wait` is the seam a unit test overrides to skip the real
- * delay; an integration test instead shrinks `EXPECT_RELEASE_INTERVAL_MS` via
- * `SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS`, since a subprocess can't be handed a function.
+ * delay; an integration test instead shrinks the real delay via `SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS`
+ * (parsed fresh by `expectReleaseIntervalMs` on every call this default reaches), since a
+ * subprocess can't be handed a function.
  */
 export async function waitForExpectedRelease(
   service: string,
@@ -875,7 +917,7 @@ export async function waitForExpectedRelease(
     readonly wait: (ms: number) => Promise<void>;
   },
   attempts: number = EXPECT_RELEASE_ATTEMPTS,
-  intervalMs: number = EXPECT_RELEASE_INTERVAL_MS,
+  intervalMs: number = expectReleaseIntervalMs(),
 ): Promise<WaitForExpectedReleaseResult> {
   const expectedTag = `${service}-${releaseVersion}`;
   let tags: ReadonlyArray<string> = [];
@@ -1183,6 +1225,9 @@ export async function runPlanUpdates(
         "[--format lines] [--expect-release <U>-r<N>]",
     );
   }
+  if (!SERVICE_NAME_PATTERN.test(service)) {
+    throw new InvalidPayloadError(`invalid --service ${JSON.stringify(service)}`);
+  }
   const format = flags.get("format") ?? "json";
   if (format !== "json" && format !== "lines") {
     throw new InvalidPayloadError(`invalid --format '${format}' (expected 'json' or 'lines')`);
@@ -1266,7 +1311,7 @@ async function main(argv: ReadonlyArray<string>): Promise<void> {
 
 if (import.meta.main) {
   main(process.argv.slice(2)).catch((error: unknown) => {
-    console.log(`::error ::${error instanceof Error ? error.message : String(error)}`);
+    console.log(workflowCommand("error", error instanceof Error ? error.message : String(error)));
     process.exit(1);
   });
 }

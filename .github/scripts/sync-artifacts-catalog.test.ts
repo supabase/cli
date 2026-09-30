@@ -448,6 +448,20 @@ describe("planSlimUpdates", () => {
     ]);
   });
 
+  test("a `%` in a non-comparable version is encoded, staying a single workflow-command line", () => {
+    // `.` in the tag pattern allows `%` (only a real newline can't reach this far — the pattern
+    // can't match across one), so a real, legitimately-listed tag can still carry a `%` here.
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
+      "postgrest-v16.2%off-r0",
+    ]);
+
+    expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgrest v16.2%25off is not a comparable version; ignoring.",
+    ]);
+    expect(warnings[0]?.split("\n")).toHaveLength(1);
+  });
+
   test("a legacy tag with no -rN is ignored", () => {
     const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", ["postgrest-v16.4"]);
 
@@ -751,6 +765,89 @@ describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure pl
     expect(stdout).toContain(
       "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path>",
     );
+  });
+
+  test("a newline-bearing --service is rejected before any listing or wait", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "plan-updates-bad-service-"));
+    const outputPath = join(dir, "slim-updates.tsv");
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ".github/scripts/sync-artifacts-catalog.ts",
+          "plan-updates",
+          "--service",
+          "auth\n::error ::injected",
+          "--output",
+          outputPath,
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      expect(stdout).toContain("invalid --service");
+      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a newline-bearing --format is rejected, producing exactly one ::error :: line (not JSON.stringify'd; the boundary encoder is what protects it)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "plan-updates-bad-format-"));
+    const outputPath = join(dir, "slim-updates.tsv");
+    try {
+      const proc = Bun.spawn(
+        [
+          "bun",
+          ".github/scripts/sync-artifacts-catalog.ts",
+          "plan-updates",
+          "--service",
+          "auth",
+          "--output",
+          outputPath,
+          "--format",
+          "lines\n::error ::injected",
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+      expect(exitCode).toBe(1);
+      const lines = stdout.trimEnd().split("\n");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^::error ::/);
+      expect(lines[0]).toContain("%0A");
+      await expect(readFile(outputPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an invalid SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS exits non-zero with a configuration error", async () => {
+    const proc = Bun.spawn(
+      [
+        "bun",
+        ".github/scripts/sync-artifacts-catalog.ts",
+        "plan-updates",
+        "--service",
+        "postgrest",
+        "--expect-release",
+        "v999.0-r0",
+        "--output",
+        join(await mkdtemp(join(tmpdir(), "plan-updates-bad-wait-")), "slim-updates.tsv"),
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...globalThis.process.env, SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS: "5ms" },
+      },
+    );
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("SLIM_UPDATES_EXPECT_RELEASE_WAIT_MS");
+    expect(stdout).toContain("non-negative integer");
   });
 });
 
