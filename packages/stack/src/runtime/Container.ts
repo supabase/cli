@@ -27,7 +27,7 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly reason?: "engine-unavailable";
 }> {}
 
-// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+// TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
 /**
  * A host bind, an engine volume, or a `stack-volume`: an engine volume named from the stack and
  * `source`, created on first use and removed only by {@link removeStackVolumes}.
@@ -97,7 +97,7 @@ export interface ContainerRuntime {
   readonly launchCommand: (
     spec: Omit<ContainerSpec, "ports">,
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
-  // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+  // TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
   /** Whether a `stack-volume` mount of `source` has already created its volume. */
   readonly stackVolumeExists: (options: {
     readonly stackId: string;
@@ -784,7 +784,7 @@ export const removeStackContainersCommand = (options: {
   return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
 };
 
-// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+// TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
 /** Removes the stack-volumes of this stack and data root; its containers must be removed first. */
 export const removeStackVolumes = Effect.fn("Container.removeStackVolumes")(
   (options: {
@@ -813,7 +813,7 @@ export const removeStackVolumes = Effect.fn("Container.removeStackVolumes")(
     }),
 );
 
-// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+// TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
 /** Shell command that removes the same volumes as `removeStackVolumes`, succeeding when none remain. */
 export const removeStackVolumesCommand = (options: {
   readonly engine: "docker" | "podman";

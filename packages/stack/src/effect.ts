@@ -368,7 +368,7 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
       const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
       const cleanupCommands = [
         removeStackContainersCommand({ engine, stackId: id, root }),
-        // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+        // TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
         removeStackVolumesCommand({ engine, stackId: id, root }),
         ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
       ];

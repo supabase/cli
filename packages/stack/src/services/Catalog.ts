@@ -369,7 +369,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
             yield* makeProcessRecipe(creation, options, deps, Realtime.makeSpec()),
             Schema.is(Realtime.Creation),
           );
-        // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
         case "storage":
           return catalogRecipe(
             creation,

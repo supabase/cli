@@ -83,7 +83,7 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
     }),
 );
 
-// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+// TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
 /** Removes the stack-volumes that services launched with this stack and root create, on scope close. */
 export const cleanupStackVolumes = (stackId: string, root: string) =>
   Effect.addFinalizer(() =>

@@ -200,7 +200,7 @@ describe("container process adapter", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+  // TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
   it.live("shares a stack-volume per source and removes it with the stack's volumes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

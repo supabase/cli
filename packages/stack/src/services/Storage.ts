@@ -38,7 +38,7 @@ export const initializationCommand = {
   withoutMounts: true,
 } satisfies StartupCommand & { readonly containerEntrypoint: string };
 
-// TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
+// TODO(STORAGE-825): drop the probe once Storage works without extended attributes.
 /** How a container sees a Storage `filePath` at `/mnt`; Imgproxy reads the same objects. */
 export type UploadsMount = (mount: {
   readonly filePath: string;
@@ -109,6 +109,15 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
           mounts: [{ source: filePath, target: "/probe", readOnly: false }],
         })
         .pipe(
+          Effect.catchTag("ContainerLaunchError", (error) => Effect.fail(error.failure)),
+          Effect.mapError(
+            (cause) =>
+              new ServiceError({
+                operation: "launch",
+                message: `Unable to check whether the Storage uploads directory ${filePath} keeps extended attributes: ${cause.message}`,
+                cause,
+              }),
+          ),
           Effect.flatMap((process) =>
             Effect.all(
               [
@@ -151,6 +160,7 @@ export const makeUploadsMount = Effect.fn("Storage.makeUploadsMount")(function* 
           message: "Storage uploads mount requires a container runtime",
         });
       const known = (yield* Ref.get(answers)).get(filePath);
+      // TODO(STORAGE-825): keep the existing-volume check without the probe, or uploads in it 404.
       const bind =
         known ??
         (!(yield* container.stackVolumeExists({ stackId: options.stackId, source: filePath })) &&
@@ -239,7 +249,6 @@ export const makeSpec = (uploads = missingUploadsMount): ProcessRecipeSpec<Creat
       };
     }),
   args: () => Effect.succeed([]),
-  // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
   mounts: (creation) =>
     uploads({
       filePath: creation.config.filePath,

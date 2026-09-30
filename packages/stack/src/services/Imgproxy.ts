@@ -32,7 +32,6 @@ export const makeSpec = (uploads = missingUploadsMount): ProcessRecipeSpec<Creat
     });
   },
   args: () => Effect.succeed([]),
-  // TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
   mounts: (creation) =>
     creation.config.filePath === undefined
       ? Effect.succeed([])

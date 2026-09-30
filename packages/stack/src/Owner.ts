@@ -92,7 +92,7 @@ export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
     yield* Container.removeStackContainers({ engine: saved.runtime, stackId: saved.id, root });
 });
 
-// TODO(storage-xattr): remove once Storage no longer needs stack-volumes and none remain.
+// TODO(STORAGE-825): remove once Storage no longer needs stack-volumes and none remain.
 /** Removes the stack's containers and then the volumes they mounted; native stacks own neither. */
 const sweepContainersAndVolumes = Effect.fn("Owner.sweepContainersAndVolumes")(function* (
   saved: Pick<SavedStack, "id" | "runtime">,

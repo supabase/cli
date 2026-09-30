@@ -88,7 +88,7 @@ const writeWithStorageImage = (
     );
   });
 
-// TODO(storage-xattr): bind-mount uploads once Storage works without extended attributes.
+// TODO(STORAGE-825): drop the probe once Storage works without extended attributes.
 describe("Storage uploads mount", () => {
   it.effect("keeps using an existing stack-volume without probing the directory", () =>
     Effect.gen(function* () {
@@ -153,6 +153,22 @@ describe("Storage uploads mount", () => {
 
         expect(yield* writeWithStorageImage(container, stackId, mount)).toEqual(["etag\n", 0]);
         expect(yield* fs.exists(`${uploads}/object`)).toBe(mount.type !== "stack-volume");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "reports the engine's error for a missing uploads directory",
+    () =>
+      Effect.gen(function* () {
+        const { uploads, stackId, container } = yield* liveStack;
+        const resolve = yield* makeUploadsMount({ container, stackId, instanceId: "storage" });
+        const missing = `${uploads}/missing`;
+
+        const error = yield* Effect.flip(resolve({ filePath: missing, readOnly: false }));
+
+        expect(error.message).toContain(`Storage uploads directory ${missing}`);
+        expect(error.message).toMatch(/does not exist|no such file or directory/iu);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: 180_000 },
   );
