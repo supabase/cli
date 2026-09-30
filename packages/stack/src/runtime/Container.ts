@@ -383,6 +383,7 @@ export const makeContainerRuntime = (options: {
         ],
         { timeout: undefined },
       ).pipe(
+        // No IPv4 entry is a stable engine answer, so `host-gateway` is cached rather than re-probed.
         Effect.map(
           (hosts) =>
             hosts
