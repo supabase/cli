@@ -58,7 +58,7 @@ Same as `--output-format json` above.
 
 - `--algorithm` accepts `ES256` (default, recommended) or `RS256`.
 - `--append` appends the new key to an existing keys file instead of overwriting.
-- The overwrite prompt honors `SUPABASE_YES` (shell env or the project `.env`/`.env.local`/`.env.<env>[.local]` files, shell wins) and an explicit `--yes=false` override (flag wins over env; an omitted flag falls back to the env var, resolved after the project env loads — CLI-1878). On non-TTY stdin, a piped `y`/`n` line is read within a 100ms timeout and honored before falling back to the default (`y`) — a piped answer other than an exact `y`/`yes`/`n`/`no` (case-insensitive) also falls back to the default.
+- The overwrite prompt honors `SUPABASE_YES` (shell env or the project `.env`/`.env.local`/`.env.<env>[.local]` files, shell wins) and an explicit `--yes=false` override (flag wins over env; an omitted flag falls back to the env var, resolved after the project env loads — CLI-1878). On non-TTY stdin, a piped `y`/`n` line is read within a 100ms timeout and honored before falling back to the default (`y`) — a non-empty piped answer other than an exact `y`/`yes`/`n`/`no` (case-insensitive) declines.
 - `auth.signing_keys_path` is resolved relative to the active `supabase/config.toml` or `supabase/config.json`.
 - Generated keys are JWKs, not PEM files.
 - No network or Management API calls are involved.

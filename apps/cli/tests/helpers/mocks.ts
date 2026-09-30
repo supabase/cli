@@ -89,15 +89,14 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
       ? Stream.fromIterable([pipedBytes.value])
       : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
-    // Ignores any timeout argument; dispenses piped lines one per call (trimmed),
-    // then None once exhausted.
+    // Ignores any timeout argument; dispenses piped lines one per call, then None once
+    // exhausted.
     readLine: () =>
       Effect.sync(() => {
         if (lineIndex >= lines.length) {
           return Option.none<string>();
         }
-        const line = (lines[lineIndex++] ?? "").trim();
-        return line.length > 0 ? Option.some(line) : Option.none<string>();
+        return Option.some(lines[lineIndex++] ?? "");
       }),
   });
 }

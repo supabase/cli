@@ -32,7 +32,7 @@ export const migrationConfirm = (
     // TTY input echoes via the terminal; a non-TTY run needs a manual stderr echo.
     yield* output.raw(label, "stderr");
     const line = yield* stdin.readLine(stdin.isTTY ? TTY_TIMEOUT_MILLIS : NON_TTY_TIMEOUT_MILLIS);
-    const input = Option.getOrElse(line, () => "");
+    const input = Option.getOrElse(line, () => "").trim();
     if (!stdin.isTTY) yield* output.raw(`${input}\n`, "stderr");
     return parseYesNo(input) ?? options.defaultValue;
   });
