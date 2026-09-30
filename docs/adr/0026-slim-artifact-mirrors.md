@@ -49,8 +49,10 @@ stack, the Go CLI embed, `mirror-template-images.yml`, `detect-unmirrored-images
 but for a slim-capable alias its `FROM` line is now a **generated view** of the catalog's
 `ArtifactPin.upstreamImage`: `apps/cli/scripts/render-service-dockerfile.ts` rewrites those lines
 in place, and a CI check (`render-service-dockerfile.unit.test.ts`) fails on drift between the
-Dockerfile and the catalog. Kong, Postgres 14, and the one-shot job images (migra, pg_prove,
-pgadmin-schema-diff) have no slim build and stay hand- or Dependabot-managed, as today.
+Dockerfile and the catalog. Kong and Postgres 14 have no slim build and are bumped by hand (both
+share `library/kong`'s or `supabase/postgres`'s Dependabot `ignore` entry — see "Tradeoffs" below).
+The one-shot job images (migra, pg_prove, pgadmin-schema-diff) also have no slim build, but are
+upstream-only: they are the images Dependabot still bumps.
 
 ### Content pins, not runtime checksums
 
@@ -152,14 +154,17 @@ or considered stale and backfilled — never rewritten in place.
 ### Tradeoffs of moving updates onto the catalog
 
 - Upstream and security fixes for slim-capable images now reach the CLI only once
-  slim-services publishes a release. Direct Dependabot discovery is gone for them; Dependabot
-  still bumps only the upstream-only images `.github/dependabot.yml`'s docker `ignore` list
-  excludes (kong, and the job images: migra, pg_prove, pgadmin-schema-diff).
-- Dependabot's 7-day cooldown no longer governs those images — hotfix and upgrade PRs land as
-  soon as `slim-release-published` fires, on whatever cadence slim-services publishes.
-- `pg14` has no slim build and was already upstream-only; it is bumped by hand (Dependabot's
-  `docker` ecosystem also ignores `supabase/postgres` entirely now, since Dependabot cannot tell
-  `pg14`'s `FROM` line apart from `pg`'s and `pg15`'s by repository name alone).
+  slim-services publishes a release. Direct Dependabot discovery is gone for them; Dependabot's
+  `docker` ecosystem `ignore` list (`.github/dependabot.yml`) now excludes every slim-capable
+  image plus `library/kong` and `supabase/postgres`, so it bumps only the three images that
+  remain genuinely upstream-only: migra, pg_prove, pgadmin-schema-diff.
+- Dependabot's 7-day cooldown no longer governs the excluded images — hotfix and upgrade PRs for
+  slim-capable ones land as soon as `slim-release-published` fires, on whatever cadence
+  slim-services publishes; kong and `pg14` are simply bumped by hand.
+- `pg14` has no slim build and was already upstream-only; it is bumped by hand alongside kong,
+  not by Dependabot — Dependabot's `docker` ecosystem ignores `supabase/postgres` entirely now,
+  since it cannot tell `pg14`'s `FROM` line apart from `pg`'s and `pg15`'s by repository name
+  alone.
 - The Deno 1 edge-runtime override (`apps/cli/src/shared/functions/functions.shared.ts`, and the
   Go `deno1` constant) stays a separately pinned, upstream-only exception — it never goes through
   the catalog.
