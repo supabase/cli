@@ -72,3 +72,8 @@ export function red(text: string, stream: ColorStream = process.stderr): string 
 export function green(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("green", text, { validateStream: false }) : text;
 }
+
+/** Renders in gray for secondary text. */
+export function gray(text: string, stream: ColorStream = process.stderr): string {
+  return supportsColor(stream) ? styleText("gray", text, { validateStream: false }) : text;
+}

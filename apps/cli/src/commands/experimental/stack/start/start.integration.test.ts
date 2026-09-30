@@ -87,7 +87,16 @@ const instance = (
     endpoints:
       config.service === "database"
         ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 23456 }]
-        : [],
+        : config.service === "rest" || config.service === "studio"
+          ? [
+              {
+                name: "http",
+                protocol: "http" as const,
+                host: "127.0.0.1",
+                port: config.service === "rest" ? 23457 : 23458,
+              },
+            ]
+          : [],
     config,
     lifecycle: lifecycle(),
     health: health(),
@@ -288,7 +297,12 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
               () => memberReadiness.get(id) ?? Effect.void,
             );
           });
-          activations = new Map(members.map(({ id }) => [id, "eager"]));
+          activations = new Map(
+            members.map(({ id, service }) => [
+              id,
+              options?.eager === true || service === "database" ? "eager" : "lazy",
+            ]),
+          );
           return members;
         }),
       plan: (creations) =>
@@ -386,6 +400,7 @@ const layers = (
   fixture: ReturnType<typeof fakeStack>,
   output = mockOutput(),
   existing = true,
+  explicitWorkdir = false,
 ) => {
   const telemetry = mockTelemetryStateTracked();
   const target = Layer.succeed(StackTargetResolver, {
@@ -408,7 +423,7 @@ const layers = (
     runtimeInfoLayer,
     output.layer,
     telemetry.layer,
-    mockCommandSettings({ workdir: root }),
+    mockCommandSettings({ workdir: root, explicitWorkdir }),
     target,
     api,
     Layer.succeed(ExperimentalFlag, false),
@@ -507,6 +522,7 @@ describe("experimental stack start", () => {
         expect.objectContaining({
           data: {
             id: fixture.stack.id,
+            runtime: "native",
             endpoints: {
               "database.sql": {
                 protocol: "tcp",
@@ -515,6 +531,7 @@ describe("experimental stack start", () => {
                 url: "tcp://127.0.0.1:23456",
               },
             },
+            lazy_services: [],
           },
         }),
       );
@@ -549,6 +566,44 @@ describe("experimental stack start", () => {
       yield* fixture.stack.composition.stop;
       yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture)));
       expect(fixture.composed).toBe(5);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports connection details and lazy services once the stack is ready", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-summary-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "start-summary"\n[edge_runtime]\nenabled = false\n',
+      );
+      const excluded = ["auth", "realtime", "storage", "functions", "mail", "analytics", "pooler"];
+      const fixture = fakeStack();
+      const json = mockOutput({ format: "json" });
+      yield* stackStart(flags(excluded)).pipe(Effect.provide(layers(root, fixture, json)));
+      expect(json.messages.find(({ data }) => data !== undefined)?.data).toMatchObject({
+        runtime: "native",
+        endpoints: {
+          "rest.http": { url: "http://127.0.0.1:23457" },
+          "studio.mcp": { port: 23458, url: "http://127.0.0.1:23458/api/mcp" },
+        },
+        lazy_services: ["pgmeta", "rest", "studio"],
+      });
+
+      yield* fixture.stack.composition.stop;
+      const text = mockOutput();
+      yield* stackStart({ ...flags(excluded), stack: Option.some("feature demo") }).pipe(
+        Effect.provide(layers(root, fixture, text, true, true)),
+      );
+      expect(text.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:23457 +│/u);
+      expect(text.stdoutText).toMatch(/MCP +│ http:\/\/127\.0\.0\.1:23458\/api\/mcp +│/u);
+      expect(text.stdoutText).not.toContain("GraphQL");
+      expect(text.stdoutText).toMatch(/Secret +│ \S+ +│/u);
+      expect(text.stdoutText).toMatch(/rest +│ running · healthy · lazy +│/u);
+      expect(text.stdoutText).toContain(
+        `Runtime: native\nRun supabase status --env --workdir ${root} --stack 'feature demo' to export these values as environment variables.\n`,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
