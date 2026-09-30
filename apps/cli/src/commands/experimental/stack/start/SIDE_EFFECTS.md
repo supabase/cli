@@ -42,7 +42,8 @@ asks the user to start Docker or Podman. When auto selection skips Docker, an in
 saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
 runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
 When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
-Docker, and `--runtime native` for a new stack on platforms that support native.
+Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+`--runtime native` on a platform with no native artifacts fails before creating a stack.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
@@ -96,7 +97,8 @@ apply needed catalog and webhook setup without replaying project migrations or s
 composition reapplies the webhook setting before activation.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
-files using the service-role JWT. Storage is started and made ready before those requests. A resumed
+files using the service-role JWT, silently overwriting or pruning existing buckets without a
+confirmation prompt. Storage is started and made ready before those requests. A resumed
 stack is not re-seeded. Projects without configured buckets make no bucket-seeding requests.
 
 A new stack is registered by its owner once that owner starts; if the owner fails to start (for

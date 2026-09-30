@@ -87,7 +87,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
         Effect.mapError(
           (error) =>
             new StackCommandPrepareError({
-              reason: "runtime",
+              reason: error.reason === "native-unsupported" ? "flags" : "runtime",
               message: error.message,
               suggestion: error.suggestion,
               cause: error,

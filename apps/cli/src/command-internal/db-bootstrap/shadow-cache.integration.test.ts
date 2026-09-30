@@ -307,7 +307,7 @@ describe("acquireShadowDatabase", () => {
         // tar is not a coherent snapshot — the acquire must degrade to the bare uncached shadow.
         const input = {
           ...shadowInput(fs, path),
-          experimental: { ...defaultConfig.experimental, orioledb_version: "15" },
+          db: { major_version: 17, settings: {}, orioledb_version: "15" },
         };
         const handle = yield* acquireShadowDatabase(docker.spawner, input);
         expect(handle.baselinePresent).toBe(false);

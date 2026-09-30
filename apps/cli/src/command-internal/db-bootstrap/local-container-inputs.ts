@@ -156,6 +156,7 @@ export const buildLocalDbContainerInputs = (
         ...config.db,
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
+        orioledb_version: bootstrapConfig.orioledbVersion,
         settings: resolveDbSettingsEnvOverrides(
           config.db.settings,
           projectEnvValues,
@@ -164,7 +165,6 @@ export const buildLocalDbContainerInputs = (
       },
       experimental: {
         ...config.experimental,
-        orioledb_version: bootstrapConfig.orioledbVersion,
         s3_host: bootstrapConfig.s3Host,
         s3_region: bootstrapConfig.s3Region,
         s3_access_key: bootstrapConfig.s3AccessKey,

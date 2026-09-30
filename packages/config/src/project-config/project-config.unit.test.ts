@@ -579,6 +579,7 @@ describe("fromConfigDocument — CLI-only field exclusion (CLI-2316)", () => {
         shadow_port: 2,
         health_timeout: "5m",
         major_version: 15,
+        orioledb_version: "1.0",
         pooler: { enabled: true, port: 7777, pool_mode: "session" },
         migrations: { enabled: false },
         seed: { enabled: false },

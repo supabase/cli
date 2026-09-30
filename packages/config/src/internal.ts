@@ -31,5 +31,6 @@ export {
   writeCliConfigDocumentText,
   decodeCliConfigDocumentForValidationEffect,
   type DecodeCliConfigDocumentForValidationEffectOptions,
+  normalizeDeprecatedOrioleDBVersion,
 } from "./io.ts";
 export { CliConfigWriteError } from "./errors.ts";

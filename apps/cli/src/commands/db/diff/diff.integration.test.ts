@@ -529,10 +529,10 @@ function pgadminEntry(overrides: Record<string, unknown> = {}) {
 const PGADMIN_DIFF_SQL = `${PGADMIN_DIFF_HEADER}\n\nALTER TABLE test;\n`;
 
 // Matches `setup()`'s default resolver/shadow-port fixtures (conn 127.0.0.1:54322,
-// shadow port 54320).
+// shadow port 54320), as seen from the differ's project network.
 const PGADMIN_SOURCE_URL =
-  "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10";
-const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
+  "postgresql://postgres:postgres@host.docker.internal:54322/postgres?connect_timeout=10";
+const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@host.docker.internal:54320/postgres";
 
 describe("db diff", () => {
   it.effect("diffs local with the default migra engine and prints SQL to stdout", () => {
@@ -544,7 +544,9 @@ describe("db diff", () => {
       expect(stdout(s.out)).toBe("create table players ();\n\n");
       expect(stderr(s.out)).toContain("Creating shadow database...");
       expect(stderr(s.out)).toContain("Diffing schemas...");
-      expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
+      // The temp workdir sits outside any git checkout, so the branch is unknown and
+      // the "Finished" line omits the clause instead of falsely claiming "main".
+      expect(stderr(s.out)).toContain("Finished supabase db diff.\n");
       expect(s.telemetry.flushed).toBe(true);
       const expectedHost = FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
       expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
@@ -562,7 +564,7 @@ describe("db diff", () => {
         }
       }
       expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("GITHUB_HEAD_REF", undefined, body));
   });
 
   it.effect("forwards SUPABASE_SSL_DEBUG=TRUE to the migra script as true", () => {
@@ -1935,6 +1937,24 @@ describe("db diff", () => {
       });
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "the migra OOM fallback on a named network targets loopback databases via the host",
+    () => {
+      const s = setup(tmp.current, {
+        oom: true,
+        diffSql: "create table fb ();\n",
+        isLocal: true,
+        networkId: "my-net",
+      });
+      return Effect.gen(function* () {
+        yield* dbDiff(flags({ schema: ["public"] }));
+        const env = (s.dockerCalls[0] as { env: Readonly<Record<string, string>> }).env;
+        expect(new URL(env["SOURCE"] ?? "").hostname).toBe("host.docker.internal");
+        expect(new URL(env["TARGET"] ?? "").host).toBe("host.docker.internal:54322");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.live(
     "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",

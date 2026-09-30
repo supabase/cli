@@ -375,14 +375,7 @@ const resolveEffectiveCliConfig = (
   const mail = config.local_smtp;
   const pooler = db.pooler;
   const edge = config.edge_runtime;
-  const experimental = {
-    ...config.experimental,
-    orioledb_version: envOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      env,
-    ),
-  };
+  const experimental = config.experimental;
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
   const imageDocument = section(section(document, "storage"), "image_transformation");
@@ -666,6 +659,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
+      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
@@ -731,7 +725,7 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "experimental.orioledb_version", active: (_config: CliConfig) => true },
+  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {

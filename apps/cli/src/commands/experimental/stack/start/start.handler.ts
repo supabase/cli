@@ -247,7 +247,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       Effect.mapError(
         (error) =>
           new StackCommandStartError({
-            reason: "runtime",
+            reason: error.reason === "native-unsupported" ? "flags" : "runtime",
             message: error.message,
             suggestion: error.suggestion,
             cause: error,
@@ -660,6 +660,8 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             emitSummary: false,
             interactive: false,
             yes: true,
+            // Non-interactive prompts here would fake a `[Y/n]` question nobody answers.
+            promptless: true,
             credentials,
             resolvedConfig: { config: context.config, document: context.loaded?.document },
             projectEnvValues: toml.projectEnv,
