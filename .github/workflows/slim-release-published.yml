@@ -1,0 +1,227 @@
+name: Slim Release Published
+
+# supabase/slim-services sends this dispatch after it mints an immutable release
+# `<service>-<upstream_version>-r<revision>`. The stack catalog
+# (packages/stack/src/Artifacts.ts) is the single version table for the service; this workflow
+# treats the dispatch as a trigger and reconciles the catalog against every committed
+# (published, non-draft) `<service>-...-r<N>` release, opening or updating one pull request per
+# hotfix and/or upgrade it finds (`.github/scripts/sync-artifacts-catalog.ts`'s `planSlimUpdates`).
+#
+# Plan and apply run from the same checkout of the default branch, in a single job: a re-run
+# always recomputes from the latest develop, so a stale plan can never be applied, and a
+# superseded PR's branch is rewritten in place (force-pushed) instead of racing a fresh one. A
+# backlog republish of an older upstream version naturally plans nothing.
+#
+# The payload arrives with whatever authority holds the dispatch token, so it is treated as
+# untrusted: fields are pattern- and shape-checked before use
+# (`validateSlimReleasePublishedPayload`), and never interpolated directly into a `run:` script
+# (only passed through `env:`). Release tag names come from an external API too, so every value
+# `planSlimUpdates` emits is re-validated against the same anchored patterns before it can reach a
+# branch name or PR title.
+
+on:
+  repository_dispatch:
+    types:
+      - slim-release-published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slim-release-published-${{ github.event.client_payload.service }}
+  cancel-in-progress: false
+
+jobs:
+  pickup:
+    runs-on: ubuntu-latest
+    # Setup (~10 min) + release visibility (<1 min) + the S3-mirror wait (up to ~10 min, normally only
+    # for the first planned item) + pin, render and push per item.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      # Installs the locked workspace dependencies the scripts need: `Artifacts.ts` imports
+      # `effect`, and `render-service-dockerfile.ts` imports `@supabase/stack/internal/artifacts`.
+      # Replaces the bare mise step the pre-single-table version of this workflow used.
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Record the base commit
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      # Delegates to `validateSlimReleasePublishedPayload` (sync-artifacts-catalog.ts) so every
+      # field — including `upstream_version` and `release_version`, not just `service` and
+      # `revision` — is checked against an anchored charset before it is ever written to
+      # `$GITHUB_OUTPUT`, a branch name, or a PR title. A value that fails validation makes the
+      # script exit non-zero and print a single `::error ::…` line to stdout (the rejected value
+      # is JSON-escaped in that message, so it can never smuggle in a newline or workflow command),
+      # which this step re-echoes so it still surfaces as an annotation.
+      - name: Validate payload
+        id: validate
+        env:
+          SERVICE: ${{ github.event.client_payload.service }}
+          UPSTREAM_VERSION: ${{ github.event.client_payload.upstream_version }}
+          REVISION: ${{ github.event.client_payload.revision }}
+          RELEASE_VERSION: ${{ github.event.client_payload.release_version }}
+        run: |
+          set -euo pipefail
+          if ! output="$(bun .github/scripts/sync-artifacts-catalog.ts validate-payload \
+            --service "$SERVICE" --upstream "$UPSTREAM_VERSION" --revision "$REVISION" --release "$RELEASE_VERSION")"; then
+            echo "$output"
+            exit 1
+          fi
+          echo "$output" >>"$GITHUB_OUTPUT"
+
+      # Reconciles the service against every committed slim-services release (`planSlimUpdates`),
+      # not just the release that triggered this dispatch — this run is idempotent and safe to
+      # receive out of order. Records go only to `--output` (never stdout): each line is
+      # field-separated with `\x1f` (see `updateLine`), which a later step reads directly. Any
+      # `::warning ::…` the planner emits (an ignored tag, say) prints to this step's own stdout
+      # instead, so it can never be mistaken for a malformed record.
+      #
+      # `--expect-release` guards against the releases API lagging behind this very dispatch: it
+      # requires `<service>-<release_version>` to be a listed tag before planning runs at all,
+      # re-listing a bounded number of times first (`waitForExpectedRelease`). Without it, a slow
+      # API would make this run plan without the release that triggered it, and pass quietly.
+      - name: Plan updates
+        id: plan
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service "$SERVICE" --format lines \
+            --expect-release "$RELEASE_VERSION" --output "${RUNNER_TEMP}/slim-updates.tsv"
+          count="$(wc -l < "${RUNNER_TEMP}/slim-updates.tsv" | tr -d ' ')"
+          echo "count=${count}" >>"$GITHUB_OUTPUT"
+
+      - name: Nothing to do
+        if: steps.plan.outputs.count == '0'
+        env:
+          SERVICE: ${{ steps.validate.outputs.service }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+        run: echo "No catalog updates for ${SERVICE} from ${RELEASE_VERSION}; nothing to do."
+
+      - name: Install regctl
+        if: steps.plan.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
+            https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >>"$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
+
+      - name: Generate token
+        if: steps.plan.outputs.count != '0'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      # One branch per planned item, built fresh from the base commit recorded above (the default
+      # branch's head at the start of this run) — never from wherever a previous loop iteration
+      # left HEAD. Pins exactly the planned release (`--release`, never "highest at apply time"),
+      # so plan and pin agree by construction: a revision minted a second later arrives with its
+      # own dispatch, not by racing this one.
+      #
+      # The app token (contents + pull-requests write) never reaches third-party code or disk:
+      # `git push` takes it only as part of an explicit URL, computed once as `push_url`
+      # (overridable via `PUSH_REMOTE_URL`, the seam a dry run uses to target a local bare repo
+      # instead), and `gh` gets it inline per call. Every `bun`/`pnpm` command below — the sync
+      # script, the Dockerfile generator, the formatter — runs under `env -u APP_TOKEN` so a
+      # compromised transitive dependency of any of them (they import `effect`) can't read it.
+      - name: Apply planned updates
+        if: steps.plan.outputs.count != '0'
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SERVICE: ${{ steps.validate.outputs.service }}
+          RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          push_url="${PUSH_REMOTE_URL:-https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
+          manual_prefix="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --release"
+
+          # Read the records on fd 3, not stdin: every command the loop body runs (`bun`, `gh`,
+          # `git`) otherwise shares stdin with the `read`, and any of them consuming a byte of it
+          # would swallow the rest of the file's records.
+          while IFS=$'\x1f' read -r -u 3 kind branch title release from; do
+            if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || [ -z "$from" ]; then
+              echo "::error ::Malformed plan-updates line: kind='${kind}' branch='${branch}' title='${title}' release='${release}' from='${from}'."
+              exit 1
+            fi
+
+            git checkout -B "$branch" "$BASE_SHA"
+
+            env -u APP_TOKEN bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
+            env -u APP_TOKEN -u GITHUB_TOKEN pnpm exec oxfmt --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+            env -u APP_TOKEN -u GITHUB_TOKEN bun apps/cli/scripts/render-service-dockerfile.ts
+
+            generated_files=(
+              packages/stack/src/Artifacts.ts
+              apps/cli/src/shared/services/Dockerfile
+              apps/cli-go/pkg/config/templates/Dockerfile
+            )
+            if git diff --quiet -- "${generated_files[@]}"; then
+              echo "${branch}: catalog and Dockerfiles already match ${release}; skipping."
+              continue
+            fi
+
+            git add -- "${generated_files[@]}"
+            git commit -m "$title"
+
+            if ! git push --force "$push_url" "HEAD:refs/heads/${branch}"; then
+              echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+              exit 1
+            fi
+
+            if [ "$kind" = "upgrade" ]; then
+              action="bumps"
+            else
+              action="pins"
+            fi
+            # Names the release this PR actually pins as the subject; the dispatch's triggering
+            # release (RELEASE_VERSION) can differ from it (a hotfix dispatch commonly also
+            # yields an unrelated upgrade on the same line), so it's only mentioned, not implied
+            # to be what changed.
+            body="$(printf 'This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
+              "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
+
+            # `--head` matches by branch name only and ignores the owner, so a fork PR with the
+            # same head branch name would otherwise match too; `isCrossRepository` excludes it.
+            existing="$(GH_TOKEN="$APP_TOKEN" gh pr list --head "$branch" --base "$DEFAULT_BRANCH" --state open --json number,isCrossRepository --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty')"
+            if [ -n "$existing" ]; then
+              if ! GH_TOKEN="$APP_TOKEN" gh pr edit "$existing" --title "$title" --body "$body"; then
+                echo "::error ::Pushed ${branch} but failed to edit pull request #${existing}. Run manually: ${manual_prefix} ${release}, then edit the pull request from ${branch} by hand."
+                exit 1
+              fi
+            elif ! GH_TOKEN="$APP_TOKEN" gh pr create \
+              --title "$title" \
+              --body "$body" \
+              --assignee jgoux \
+              --head "$branch" \
+              --base "$DEFAULT_BRANCH"; then
+              echo "::error ::Pushed ${branch} but failed to open a pull request. Run manually: ${manual_prefix} ${release}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
+              exit 1
+            fi
+          done 3< "${RUNNER_TEMP}/slim-updates.tsv"

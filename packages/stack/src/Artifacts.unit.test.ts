@@ -1,5 +1,14 @@
 import { expect, it } from "@effect/vitest";
-import { slimImageMirrors } from "./Artifacts.ts";
+import { catalogPins, slimImageMirrors } from "./Artifacts.ts";
+
+it("carries a normalized upstreamImage for every catalog pin", () => {
+  for (const { pin } of catalogPins()) {
+    expect(pin.upstreamImage).not.toBe("");
+    expect(pin.upstreamImage).not.toContain("docker.io/");
+    expect(pin.upstreamImage).not.toContain("@sha256:");
+    expect(pin.upstreamImage.split(":").at(-1)).not.toBe("");
+  }
+});
 
 it("rewrites a GHCR catalog image onto ECR Public and keeps the tag and digest", () => {
   expect(

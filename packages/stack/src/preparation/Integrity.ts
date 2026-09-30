@@ -35,7 +35,7 @@ export const verifySha256 = Effect.fn("Integrity.verifySha256")(function* (
       );
     const actual = digestHex(digest);
     if (actual !== canonical)
-      return yield* integrityError("Artifact SHA-256 does not match the catalog", {
+      return yield* integrityError(`expected ${canonical}, got ${actual}`, {
         expected: canonical,
         actual,
       });

@@ -6,6 +6,13 @@ import path from "node:path";
 const script = path.resolve(import.meta.dirname, "sweep-live-projects.sh");
 const directories: string[] = [];
 
+// Per-sweep hang guard: a spawned run gets this long before the safety net kills
+// it. A test's own timeout must cover every sweep it runs plus report margin, so
+// derive it from the sweep count rather than a single shared budget.
+const SWEEP_GUARD_MS = 30_000;
+const REPORT_MARGIN_MS = 10_000;
+const sweepBudget = (sweeps: number) => sweeps * SWEEP_GUARD_MS + REPORT_MARGIN_MS;
+
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
@@ -73,13 +80,22 @@ async function runSweep(scenario: Scenario) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const timeout = setTimeout(() => child.kill(), 10_000);
+    let hung = false;
+    const timeout = setTimeout(() => {
+      hung = true;
+      child.kill();
+    }, SWEEP_GUARD_MS);
     const [exitCode, stdout, stderr] = await Promise.all([
       child.exited,
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
     ]);
     clearTimeout(timeout);
+    if (hung) {
+      throw new Error(
+        `sweep script hung: killed after ${SWEEP_GUARD_MS}ms without exiting (stdout: ${stdout}, stderr: ${stderr})`,
+      );
+    }
     return { exitCode, stdout, stderr, deletes };
   } finally {
     await server.stop(true);
@@ -88,75 +104,91 @@ async function runSweep(scenario: Scenario) {
 
 const active = (ref: string, name = `e2e-${ref}`) => ({ ref, name, status: "ACTIVE" });
 
-describe.skipIf(process.platform === "win32")("sweep-live-projects.sh", { timeout: 40_000 }, () => {
-  test("accepts refused deletion when a fresh authenticated list shows absence", async () => {
-    const result = await runSweep({
-      lists: [[active("gone")], []],
-      deletes: { gone: { status: 403, body: { message: "already removed" } } },
+describe.skipIf(process.platform === "win32")(
+  "sweep-live-projects.sh",
+  { timeout: sweepBudget(1) },
+  () => {
+    test("accepts refused deletion when a fresh authenticated list shows absence", async () => {
+      const result = await runSweep({
+        lists: [[active("gone")], []],
+        deletes: { gone: { status: 403, body: { message: "already removed" } } },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.deletes).toEqual(["gone"]);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("test-token");
     });
-    expect(result.exitCode).toBe(0);
-    expect(result.deletes).toEqual(["gone"]);
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("test-token");
-  });
 
-  test("accepts a terminal status and converges after a stale list", async () => {
-    const result = await runSweep({
-      lists: [[active("stale")], [active("stale")], [{ ...active("stale"), status: "REMOVED" }]],
-      deletes: { stale: { status: 202 } },
+    test("accepts a terminal status and converges after a stale list", async () => {
+      const result = await runSweep({
+        lists: [[active("stale")], [active("stale")], [{ ...active("stale"), status: "REMOVED" }]],
+        deletes: { stale: { status: 202 } },
+      });
+      expect(result.exitCode).toBe(0);
     });
-    expect(result.exitCode).toBe(0);
-  });
 
-  test("retries a transient read failure but rejects malformed evidence", async () => {
-    const transient = await runSweep({
-      lists: [503, [active("retry")], []],
-      deletes: { retry: { status: 202 } },
-    });
-    expect(transient.exitCode).toBe(0);
+    test(
+      "retries a transient read failure but rejects malformed evidence",
+      async () => {
+        const transient = await runSweep({
+          lists: [503, [active("retry")], []],
+          deletes: { retry: { status: 202 } },
+        });
+        expect(transient.exitCode).toBe(0);
 
-    const malformed = await runSweep({ lists: [{ projects: [] }], deletes: {} });
-    expect(malformed.exitCode).not.toBe(0);
-    expect(malformed.deletes).toEqual([]);
-  });
-
-  test("fails terminal listing errors without retrying or deleting", async () => {
-    const forbidden = await runSweep({ lists: [403, []], deletes: {} });
-    expect(forbidden.exitCode).not.toBe(0);
-    expect(forbidden.deletes).toEqual([]);
-
-    const unavailable = await runSweep({ lists: [503, 503, 503], deletes: {} });
-    expect(unavailable.exitCode).not.toBe(0);
-    expect(unavailable.deletes).toEqual([]);
-
-    const malformedReconciliation = await runSweep({
-      lists: [[active("bad-evidence")], { projects: [] }],
-      deletes: { "bad-evidence": { status: 403 } },
-    });
-    expect(malformedReconciliation.exitCode).not.toBe(0);
-  });
-
-  test("attempts every owned project and fails if one remains active", async () => {
-    const result = await runSweep({
-      lists: [
-        [active("stuck"), active("other"), { ref: "foreign", name: "unrelated", status: "ACTIVE" }],
-        [active("stuck"), { ref: "foreign", name: "unrelated", status: "ACTIVE" }],
-      ],
-      deletes: { stuck: { status: 403 }, other: { status: 204 } },
-    });
-    expect(result.exitCode).not.toBe(0);
-    expect(result.deletes).toEqual(["stuck", "other"]);
-  });
-
-  test("retries a transient deletion after fresh evidence still shows the project", async () => {
-    const result = await runSweep({
-      lists: (deletes) => (deletes.length >= 2 ? [] : [active("flaky")]),
-      deletes: {},
-      deleteStatuses: { flaky: [503, 204] },
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.deletes).toEqual(["flaky", "flaky"]);
-    expect(result.stderr).toContain(
-      "delete retry completed for project flaky (HTTP 204 request delete-flaky)",
+        const malformed = await runSweep({ lists: [{ projects: [] }], deletes: {} });
+        expect(malformed.exitCode).not.toBe(0);
+        expect(malformed.deletes).toEqual([]);
+      },
+      sweepBudget(2),
     );
-  });
-});
+
+    test(
+      "fails terminal listing errors without retrying or deleting",
+      async () => {
+        const forbidden = await runSweep({ lists: [403, []], deletes: {} });
+        expect(forbidden.exitCode).not.toBe(0);
+        expect(forbidden.deletes).toEqual([]);
+
+        const unavailable = await runSweep({ lists: [503, 503, 503], deletes: {} });
+        expect(unavailable.exitCode).not.toBe(0);
+        expect(unavailable.deletes).toEqual([]);
+
+        const malformedReconciliation = await runSweep({
+          lists: [[active("bad-evidence")], { projects: [] }],
+          deletes: { "bad-evidence": { status: 403 } },
+        });
+        expect(malformedReconciliation.exitCode).not.toBe(0);
+      },
+      sweepBudget(3),
+    );
+
+    test("attempts every owned project and fails if one remains active", async () => {
+      const result = await runSweep({
+        lists: [
+          [
+            active("stuck"),
+            active("other"),
+            { ref: "foreign", name: "unrelated", status: "ACTIVE" },
+          ],
+          [active("stuck"), { ref: "foreign", name: "unrelated", status: "ACTIVE" }],
+        ],
+        deletes: { stuck: { status: 403 }, other: { status: 204 } },
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.deletes).toEqual(["stuck", "other"]);
+    });
+
+    test("retries a transient deletion after fresh evidence still shows the project", async () => {
+      const result = await runSweep({
+        lists: (deletes) => (deletes.length >= 2 ? [] : [active("flaky")]),
+        deletes: {},
+        deleteStatuses: { flaky: [503, 204] },
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.deletes).toEqual(["flaky", "flaky"]);
+      expect(result.stderr).toContain(
+        "delete retry completed for project flaky (HTTP 204 request delete-flaky)",
+      );
+    });
+  },
+);

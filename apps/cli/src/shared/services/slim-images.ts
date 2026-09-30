@@ -1,3 +1,4 @@
+import { catalogPins } from "@supabase/stack/internal/artifacts";
 import { Config, ConfigProvider, Effect, Option } from "effect";
 
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
@@ -5,11 +6,13 @@ const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 
 /**
  * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
- * no slim build (kong, the `differ`/`migra`/`pgprove` job images) are absent and
- * keep their docker.io reference. OrioleDB tags are excluded in `slimCatalogPin`.
+ * no slim build (kong, `pg14`, the `differ`/`migra`/`pgprove` job images) are
+ * absent and keep their docker.io reference. OrioleDB tags are excluded in
+ * `slimCatalogPin`.
  */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
+  pg15: "postgres",
   gotrue: "auth",
   postgrest: "postgrest",
   realtime: "realtime",
@@ -70,7 +73,7 @@ export interface SlimCatalogPin {
 }
 
 /** OrioleDB tags are docker.io-only; slim-services does not publish them. */
-export function isOrioleImage(image: string): boolean {
+function isOrioleImage(image: string): boolean {
   const tag = imageTag(image);
   return tag !== undefined && tag.toLowerCase().includes("orioledb");
 }
@@ -98,35 +101,71 @@ export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | u
 }
 
 /**
- * Rewrites a docker.io image reference to its `ghcr.io/supabase/cli` slim
- * equivalent, keeping the pin's version. This helper owns tag normalization
- * (`v`-prefixing, `tagPrefix`), so pins that differ only in prefix between the
- * two registries (`supavisor`, `logflare`) land on the right slim tag. Vector's
- * docker.io tags carry an `-alpine` variant suffix that the slim build does
- * not publish, so the strip is scoped to `vector` only — an `-alpine`-suffixed
- * pin on any other service is a real tag, not a variant marker.
+ * Looks up the pinned catalog image (with its published `@sha256` digest) for
+ * `service` whose `upstreamVersion` equals `version`. Reads the same catalog
+ * `apps/cli`'s stack-independent clients use, keyed by the slim-services
+ * `sourceService` name (which matches this module's `SlimServiceName`).
  */
-export function toSlimImage(alias: string, image: string): string {
+function catalogImageFor(service: SlimServiceName, upstreamVersion: string): string | undefined {
+  for (const entry of catalogPins()) {
+    if (entry.sourceService === service && entry.pin.upstreamVersion === upstreamVersion) {
+      return entry.pin.image;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the catalog's pinned slim image (repository, release version and
+ * digest) whose `upstreamVersion` normalizes to `image`'s tag for `alias`.
+ * This owns tag normalization (`v`-prefixing, `tagPrefix`, vector's `-alpine`
+ * strip) via {@link slimCatalogPin}, so pins that differ only in prefix
+ * between the two registries (`supavisor`, `logflare`) still match. Returns `undefined` whenever
+ * no catalog pin matches `alias` and `image`'s tag — callers then keep the upstream (non-slim)
+ * image instead of guessing a slim tag. That covers more than "no slim build": an alias with no
+ * slim build at all (kong, `pg14`, the one-shot job images); an excluded tag on an alias that
+ * does have one (an OrioleDB `pg` tag, which {@link slimCatalogPin} always excludes); and a tag
+ * the catalog simply doesn't pin (an upstream version the catalog hasn't caught up to yet, or a
+ * hosted-project override from `supabase link` that doesn't match the pinned upstream version).
+ */
+export function toSlimImage(alias: string, image: string): string | undefined {
   const pin = slimCatalogPin(alias, image);
   if (pin === undefined) {
-    return image;
+    return undefined;
   }
-  return `${SLIM_IMAGE_PREFIX}${pin.service}:${pin.version}`;
+  return catalogImageFor(pin.service, pin.version);
 }
 
 /** `toSlimImage` behind the feature flag; a no-op while the flag is off. */
 export function slimImageForAlias(alias: string, image: string, enabled: boolean): string {
-  return enabled ? toSlimImage(alias, image) : image;
+  return enabled ? (toSlimImage(alias, image) ?? image) : image;
 }
 
+/** The tag portion of `image`, ignoring any `@sha256:…` digest suffix. */
 export function imageTag(image: string): string | undefined {
-  const tagSeparator = image.lastIndexOf(":");
-  return tagSeparator === -1 ? undefined : image.slice(tagSeparator + 1);
+  const withoutDigest = image.split("@")[0] ?? image;
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  return tagSeparator === -1 ? undefined : withoutDigest.slice(tagSeparator + 1);
 }
 
-function replaceImageTag(image: string, tag: string): string {
-  const tagSeparator = image.lastIndexOf(":");
-  return tagSeparator === -1 ? image : `${image.slice(0, tagSeparator + 1)}${tag}`;
+/** The repository portion of `image` (before the tag), the other half of `imageTag`'s split. */
+export function imageRepository(image: string): string | undefined {
+  const withoutDigest = image.split("@")[0] ?? image;
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  return tagSeparator === -1 ? undefined : withoutDigest.slice(0, tagSeparator);
+}
+
+/** The `@sha256:…` digest suffix of `image`, if it carries one. */
+export function imageDigest(image: string): string | undefined {
+  const at = image.indexOf("@");
+  return at === -1 ? undefined : image.slice(at + 1);
+}
+
+/** Replaces `image`'s tag with `tag`, dropping any `@sha256:…` digest — a new tag invalidates it. */
+export function replaceImageTag(image: string, tag: string): string {
+  const withoutDigest = image.split("@")[0] ?? image;
+  const tagSeparator = withoutDigest.lastIndexOf(":");
+  return tagSeparator === -1 ? image : `${withoutDigest.slice(0, tagSeparator + 1)}${tag}`;
 }
 
 /**
@@ -167,7 +206,7 @@ export function slimImageForCurrentPin(
   if (trimmed.length > 0 && !pinMatchesCurrentImage(alias, trimmed, currentRawImage)) {
     return tagged;
   }
-  return toSlimImage(alias, tagged);
+  return toSlimImage(alias, tagged) ?? tagged;
 }
 
 /** Slim images are published only under this prefix; single home for the check. */

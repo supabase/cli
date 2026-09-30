@@ -3,9 +3,10 @@ name: Mirror template images
 # Keeps the ghcr.io/ECR mirror in sync with the image versions pinned in
 # apps/cli/src/shared/services/Dockerfile, which `dockerfileServiceImages`
 # parses as the single source of truth for local service images. When the
-# Dockerfile changes on develop — most often via a merged dependabot `docker`
-# bump — this workflow detects any tag that is not yet mirrored and backfills
-# it the same way `cli-go-mirror-image.yml` does.
+# Dockerfile changes on develop — most often via a merged catalog bump or
+# hotfix PR from slim-release-published.yml, or a Dependabot `docker` bump for
+# an upstream-only image — this workflow detects any tag that is not yet
+# mirrored and backfills it the same way `cli-go-mirror-image.yml` does.
 #
 # It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
 # AWS role + packages:write, which a dependabot-triggered `pull_request` run

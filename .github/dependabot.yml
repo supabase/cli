@@ -85,11 +85,26 @@ updates:
         update-types:
           - minor
           - patch
+    # These lines are generated from packages/stack/src/Artifacts.ts (the single version table
+    # for slim-capable services); updates to them arrive through slim-release-published.yml, not
+    # Dependabot. Kong and pg14 (supabase/postgres) have no slim build either, but are bumped by
+    # hand, not by Dependabot. Dependabot keeps bumping only the images that remain genuinely
+    # upstream-only: migra, pg_prove, pgadmin-schema-diff.
     ignore:
       - dependency-name: "library/kong"
       - dependency-name: "axllent/mailpit"
       - dependency-name: "darthsim/imgproxy"
       - dependency-name: "timberio/vector"
+      - dependency-name: "supabase/postgres"
+      - dependency-name: "supabase/gotrue"
+      - dependency-name: "postgrest/postgrest"
+      - dependency-name: "supabase/realtime"
+      - dependency-name: "supabase/storage-api"
+      - dependency-name: "supabase/edge-runtime"
+      - dependency-name: "supabase/studio"
+      - dependency-name: "supabase/postgres-meta"
+      - dependency-name: "supabase/logflare"
+      - dependency-name: "supabase/supavisor"
     cooldown:
       default-days: 7
       exclude:

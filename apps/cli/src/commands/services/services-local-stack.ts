@@ -6,6 +6,7 @@ import {
 import { Effect, Result } from "effect";
 import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
 import { envOverrideMajorVersion } from "../../command-internal/local-config-values.ts";
+import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
 
@@ -53,7 +54,7 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
       return {
         name,
         // A slim revision suffix (`-rN`) repackages the same upstream release.
-        local: artifact.version.replace(/-r\d+$/u, ""),
+        local: upstreamVersionFromTag(artifact.version),
         remote: remoteName === undefined ? "" : (remote[remoteName] ?? ""),
       } satisfies ServiceVersionRow;
     }),

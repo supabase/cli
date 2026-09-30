@@ -1058,7 +1058,9 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.writeFileString(path.join(nativeRoot, "data", "PG_VERSION"), "17\n");
         yield* fs.writeFileString(
           path.join(nativeRoot, ".supabase-database-ready.json"),
-          '{"version":"17.6.1.173","runtime":"native","profile":"supabase"}',
+          // `makeDatabaseSnapshots` below resolves `version: "17"` through the real catalog
+          // (`postgresVersion`), so the ready marker must carry that same resolved version.
+          `{"version":"${postgresVersion("17")}","runtime":"native","profile":"supabase"}`,
         );
         const nativeSnapshots = yield* makeDatabaseSnapshots({
           instanceRoot: nativeRoot,
