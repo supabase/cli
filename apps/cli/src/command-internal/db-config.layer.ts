@@ -379,7 +379,8 @@ export const resolveLinkedConn = Effect.fnUntraced(function* (
   return poolerConn.value;
 });
 
-const dbConfigResolverLayer = Layer.effect(
+/** The resolver without its `StackApi`, for callers that supply their own stack boundary. */
+export const dbConfigResolverLayer = Layer.effect(
   DbConfigResolver,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
@@ -456,6 +457,13 @@ const dbConfigResolverLayer = Layer.effect(
       ambientLayer;
     void _ambientCoverageCheck;
 
+    // `resolve`'s R is `never`, so capture StackApi at layer build.
+    const stackDatabaseConn = stackLocalDatabaseConn.pipe(
+      Effect.provideService(CommandSettings, cliSettings),
+      Effect.provideService(StackApi, stackApi),
+      Effect.provideService(Path.Path, path),
+    );
+
     const resolve = (flags: DbConfigFlags) =>
       Effect.gen(function* () {
         const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
@@ -492,21 +500,28 @@ const dbConfigResolverLayer = Layer.effect(
               }),
             );
           }
-          const isLocal = isLocalDatabase(
+          const legacyLocal = isLocalDatabase(
             conn.host,
             localHost,
             conn.port,
             tomlValues.port,
             tomlValues.shadowPort,
           );
-          // A local direct URL fills an empty password from the local `[db].password` config,
-          // so a passwordless local DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
+          // The stack backend publishes its database on a runtime-assigned port rather than
+          // `[db].port`, so a URL naming the running stack's SQL endpoint is local too.
+          const stackConn =
+            !legacyLocal && (yield* currentStackBackend).kind === "stack"
+              ? Option.getOrUndefined(yield* Effect.option(stackDatabaseConn))
+              : undefined;
+          const onStack = stackConn?.host === conn.host && stackConn.port === conn.port;
+          const isLocal = legacyLocal || onStack;
+          // A local direct URL fills an empty password from the local database's own
+          // credentials, so a passwordless DSN like `postgresql://postgres@127.0.0.1:54322/postgres`
           // still authenticates.
+          const localPassword = onStack ? stackConn.password : tomlValues.password;
           return {
             conn:
-              isLocal && conn.password.length === 0
-                ? { ...conn, password: tomlValues.password }
-                : conn,
+              isLocal && conn.password.length === 0 ? { ...conn, password: localPassword } : conn,
             isLocal,
           };
         }
@@ -575,13 +590,7 @@ const dbConfigResolverLayer = Layer.effect(
         });
         const backend = yield* currentStackBackend;
         if (backend.kind === "stack") {
-          // `resolve`'s R is `never`, so capture StackApi at layer build.
-          const conn = yield* stackLocalDatabaseConn.pipe(
-            Effect.provideService(CommandSettings, cliSettings),
-            Effect.provideService(StackApi, stackApi),
-            Effect.provideService(Path.Path, path),
-          );
-          return { conn, isLocal: true };
+          return { conn: yield* stackDatabaseConn, isLocal: true };
         }
         return {
           conn: {
