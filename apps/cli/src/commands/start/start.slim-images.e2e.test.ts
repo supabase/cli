@@ -2,9 +2,10 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { BunServices } from "@effect/platform-bun";
 import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
+import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
 import { buildHealthCmdArg } from "../../command-internal/db-bootstrap/docker-create-args.ts";
 import {
   slimWgetHealthcheck,
@@ -63,20 +64,29 @@ const PULL_ALIASES = [
   "mailpit",
   "kong",
 ] as const;
-/** Slim images whose in-container probe is BusyBox wget. */
-const WGET_PROBE_ALIASES = [
-  "gotrue",
+/**
+ * Catalog services whose slim image ships BusyBox wget as its in-container probe (not the
+ * Dockerfile-derived image: whether the Dockerfile's tag currently matches that catalog pin is
+ * unrelated to whether the pinned slim image itself accepts the BusyBox argv).
+ */
+const WGET_PROBE_SERVICES: ReadonlyArray<ServiceKind> = [
+  "auth",
   "realtime",
   "storage",
-  "logflare",
-  "supavisor",
+  "analytics",
   "vector",
-] as const;
+  "pooler",
+];
+
+function wgetProbeCatalogImages(): ReadonlyArray<string> {
+  return catalogPins()
+    .filter((entry) => WGET_PROBE_SERVICES.includes(entry.service))
+    .map((entry) => entry.pin.image);
+}
 
 function latestImagesToPull(): ReadonlyArray<string> {
-  return [...new Set([...PULL_ALIASES, ...WGET_PROBE_ALIASES])].map((alias) =>
-    expectedSlimImage(alias),
-  );
+  const dockerfileImages = PULL_ALIASES.map((alias) => expectedSlimImage(alias));
+  return [...new Set([...dockerfileImages, ...wgetProbeCatalogImages()])];
 }
 
 function readSectionPort(config: string, section: string): number {
@@ -95,6 +105,71 @@ const containerImage = Effect.fnUntraced(function* (name: string) {
 function expectedSlimImage(alias: string): string {
   const raw = dockerfileServiceImageRaw(alias);
   return toSlimImage(alias, raw) ?? raw;
+}
+
+/**
+ * The Dockerfile aliases whose spec builder switches its healthcheck on `usesSlimImageRuntime`
+ * (`*.service.ts`). Whether each one is actually running its slim image today depends on whether
+ * the Dockerfile's tag currently matches that service's catalog pin (`expectedSlimImage`) —
+ * Dependabot moves that independently for every service, so the assertions below always derive
+ * the expected healthcheck from the image actually resolved, never from an assumption that it's
+ * one family or the other.
+ */
+type HealthcheckedAlias = "gotrue" | "storage" | "realtime";
+
+/** Mirrors each service's own upstream (non-slim) `healthcheck.test`, `CMD` prefix included. */
+function upstreamHealthcheckTest(alias: HealthcheckedAlias): ReadonlyArray<string> {
+  switch (alias) {
+    case "gotrue":
+      return [
+        "CMD",
+        "wget",
+        "--no-verbose",
+        "--tries=1",
+        "--spider",
+        "http://127.0.0.1:9999/health",
+      ];
+    case "storage":
+      return [
+        "CMD",
+        "wget",
+        "--no-verbose",
+        "--tries=1",
+        "--spider",
+        "http://127.0.0.1:5000/status",
+      ];
+    case "realtime":
+      return [
+        "CMD",
+        "curl",
+        "-sSfL",
+        "--head",
+        "-o",
+        "/dev/null",
+        "-H",
+        `Host:${REALTIME_TENANT_ID}`,
+        "http://127.0.0.1:4000/api/ping",
+      ];
+  }
+}
+
+/** Mirrors each service's own slim (BusyBox wget) `healthcheck.test`, `CMD` prefix included. */
+function slimHealthcheckTest(alias: HealthcheckedAlias): ReadonlyArray<string> {
+  switch (alias) {
+    case "gotrue":
+      return slimWgetHealthcheck("http://127.0.0.1:9999/health").test;
+    case "storage":
+      return slimWgetHealthcheck("http://127.0.0.1:5000/status").test;
+    case "realtime":
+      return slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+        header: `Host:${REALTIME_TENANT_ID}`,
+      }).test;
+  }
+}
+
+/** The `healthcheck.test` a container running `image` must have — matched to its family. */
+function expectedHealthcheckTest(alias: HealthcheckedAlias, image: string): ReadonlyArray<string> {
+  return isSlimImageRef(image) ? slimHealthcheckTest(alias) : upstreamHealthcheckTest(alias);
 }
 
 const containerHealthcheckTest = Effect.fnUntraced(function* (name: string) {
@@ -186,19 +261,20 @@ describe("supabase start slim images (e2e)", () => {
   );
 
   it.live(
-    "every slim wget image accepts the BusyBox healthcheck argv",
+    "every pinned slim wget image accepts the BusyBox healthcheck argv",
     () =>
       Effect.gen(function* () {
-        for (const alias of WGET_PROBE_ALIASES) {
-          const image = expectedSlimImage(alias);
+        for (const entry of catalogPins()) {
+          if (!WGET_PROBE_SERVICES.includes(entry.service)) continue;
+          const image = entry.pin.image;
           const probe =
-            alias === "realtime"
+            entry.service === "realtime"
               ? slimWgetHealthcheck("http://127.0.0.1:9/", {
                   header: `Host:${REALTIME_TENANT_ID}`,
                 })
               : slimWgetHealthcheck("http://127.0.0.1:9/");
           expectBusyBoxAccepted(yield* runWgetInImage(image, probe.test.slice(2)), image);
-          if (alias === "vector") {
+          if (entry.service === "vector") {
             const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
             expectBusyBoxAccepted(yield* runWgetInImage(image, waitArgs), `${image} wait`);
           }
@@ -208,7 +284,7 @@ describe("supabase start slim images (e2e)", () => {
   );
 
   it.live(
-    "starts the latest slim images, serves a function without a version pin, and keeps the Dockerfile tag",
+    "starts each service on its resolved image (slim or upstream), matching healthchecks to family, and serves a function without a version pin",
     () =>
       Effect.gen(function* () {
         const projectDir = yield* makeProject("sb-slim-start-e2e-");
@@ -245,25 +321,31 @@ describe("supabase start slim images (e2e)", () => {
         });
         expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
 
+        // Each service's expected image follows the Dockerfile: slim when its tag matches the
+        // catalog pin, upstream otherwise (`expectedSlimImage`). Today only auth, pgmeta,
+        // edge-runtime and pooler match — Dependabot moves the Dockerfile independently of the
+        // catalog, so which of these is slim today is not assumed anywhere below.
+        const authImage = expectedSlimImage("gotrue");
+        const realtimeImage = expectedSlimImage("realtime");
+        const storageImage = expectedSlimImage("storage");
+
         expect(yield* containerImage(dbContainer)).toBe(expectedSlimImage("pg"));
-        expect(yield* containerImage(storageContainer)).toBe(expectedSlimImage("storage"));
+        expect(yield* containerImage(storageContainer)).toBe(storageImage);
         expect(yield* containerImage(edgeRuntimeContainer)).toBe(expectedSlimImage("edgeruntime"));
+        expect(yield* containerImage(authContainer)).toBe(authImage);
+        expect(yield* containerImage(realtimeContainer)).toBe(realtimeImage);
 
         expect(yield* containerHealthcheckTest(authContainer)).toEqual([
           "CMD-SHELL",
-          buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:9999/health").test),
+          buildHealthCmdArg(expectedHealthcheckTest("gotrue", authImage)),
         ]);
         expect(yield* containerHealthcheckTest(realtimeContainer)).toEqual([
           "CMD-SHELL",
-          buildHealthCmdArg(
-            slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
-              header: `Host:${REALTIME_TENANT_ID}`,
-            }).test,
-          ),
+          buildHealthCmdArg(expectedHealthcheckTest("realtime", realtimeImage)),
         ]);
         expect(yield* containerHealthcheckTest(storageContainer)).toEqual([
           "CMD-SHELL",
-          buildHealthCmdArg(slimWgetHealthcheck("http://127.0.0.1:5000/status").test),
+          buildHealthCmdArg(expectedHealthcheckTest("storage", storageImage)),
         ]);
         expect(yield* containerHealthStatus(authContainer)).toBe("healthy");
         expect(yield* containerHealthStatus(realtimeContainer)).toBe("healthy");
