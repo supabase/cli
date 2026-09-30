@@ -3,7 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
-import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
+import { createServer as createTcpServer, Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
 import { ProxyError } from "./Proxy.ts";
@@ -553,6 +553,74 @@ it.live("does not replay a request with a body when the upstream drops the conne
     ),
   );
 });
+
+it.live(
+  "succeeds a second POST when a keep-alive backend only answers the first request per connection",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let connections = 0;
+        // Models what the Docker port forwarder did in the reported failure: it answers the
+        // first request on a connection and resets the connection on any further traffic,
+        // without ever closing the healthy-looking idle socket itself.
+        const backend = createTcpServer((socket) => {
+          connections += 1;
+          let buffered = Buffer.alloc(0);
+          let bodyEnd: number | undefined;
+          let answered = false;
+          socket.on("data", (chunk: Buffer) => {
+            if (answered) {
+              socket.resetAndDestroy();
+              return;
+            }
+            buffered = Buffer.concat([buffered, chunk]);
+            if (bodyEnd === undefined) {
+              const headerEnd = buffered.indexOf("\r\n\r\n");
+              if (headerEnd === -1) return;
+              const contentLength = Number(
+                /content-length:\s*(\d+)/iu.exec(
+                  buffered.subarray(0, headerEnd).toString("latin1"),
+                )?.[1] ?? 0,
+              );
+              bodyEnd = headerEnd + 4 + contentLength;
+            }
+            if (buffered.length < bodyEnd) return;
+            answered = true;
+            socket.write(
+              "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok",
+            );
+          });
+        });
+        const address = yield* Effect.acquireRelease(
+          Effect.callback<{ host: string; port: number }, HttpProxyTestError>((resume) => {
+            const onError = (cause: Error) =>
+              resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause })));
+            backend.once("error", onError);
+            backend.listen(0, "127.0.0.1", () => {
+              const value = backend.address();
+              if (value === null || typeof value === "string")
+                resume(Effect.fail(new HttpProxyTestError({ message: "no address" })));
+              else resume(Effect.succeed({ host: "127.0.0.1", port: value.port }));
+            });
+            return Effect.sync(() => backend.off("error", onError));
+          }),
+          () =>
+            Effect.callback<void>((resume) => {
+              backend.close(() => resume(Effect.void));
+            }),
+        );
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "mcp", prefix: "/", target: Effect.succeed(address) }]);
+        const first = yield* request(proxy.port, "/mcp", new TextEncoder().encode("first-body"));
+        expect(first.status).toBe(200);
+        expect(new TextDecoder().decode(first.body)).toBe("ok");
+        const second = yield* request(proxy.port, "/mcp", new TextEncoder().encode("second-body"));
+        expect(second.status).toBe(200);
+        expect(new TextDecoder().decode(second.body)).toBe("ok");
+        expect(connections).toBe(2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
 it.live(
   "does not replay a bodyless non-idempotent request when the upstream drops the connection",
