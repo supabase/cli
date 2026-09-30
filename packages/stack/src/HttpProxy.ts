@@ -287,9 +287,13 @@ const forward = Effect.fn("HttpProxy.forward")(
           host: "path" in backend ? undefined : backend.host,
           port: "path" in backend ? undefined : backend.port,
           socketPath: "path" in backend ? backend.path : undefined,
+          // A reused upstream connection can be reset by a just-woken backend, and a body
+          // cannot be replayed.
+          agent: false,
           method: request.method,
           path: pathFor(request, route),
-          headers: upstreamHeadersFor(request.headers, route),
+          // Bun ends a streamed upstream response early when the request says Connection: close.
+          headers: { ...upstreamHeadersFor(request.headers, route), connection: "keep-alive" },
         },
         (value) => {
           incoming = value;

@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
+import { Cause, Deferred, Effect, FileSystem, Layer, Ref, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeService } from "../Service.ts";
@@ -200,6 +200,160 @@ describe("service catalog", () => {
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
       { timeout: 120_000 },
     );
+
+  it.live(
+    "loads a function's configured deno.jsonc as its Deno config",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const temporaryRoot = `${process.cwd()}/tmp`;
+          yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+          const root = yield* fs.makeTempDirectoryScoped({
+            directory: temporaryRoot,
+            prefix: "functions-deno-config-",
+          });
+          const functionsRoot = `${root}/supabase/functions`;
+          yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+          yield* fs.writeFileString(
+            `${functionsRoot}/hello/deno.jsonc`,
+            '// Deno config files allow comments; plain import maps do not.\n{"imports":{"message":"./message.ts"}}',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/hello/message.ts`,
+            'export const message = "config";',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/hello/index.ts`,
+            'import { message } from "message"; Deno.serve(() => new Response(message));',
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              config: {
+                functionsRoot,
+                verifyJwt: false,
+                functions: { hello: { import_map: `${functionsRoot}/hello/deno.jsonc` } },
+              },
+            },
+            {
+              ...options(root),
+              stackId: "e".repeat(64),
+              instanceId: "deno-config",
+              cacheRoot: "/tmp/supabase-stack-artifacts",
+            },
+          );
+          const logs = yield* Ref.make("");
+          yield* recipe.logs.pipe(
+            Stream.runForEach(({ bytes }) =>
+              Ref.update(logs, (text) => text + new TextDecoder().decode(bytes)),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const instance = yield* makeService(recipe.definition, {
+            id: "deno-config",
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready.pipe(
+            Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
+          );
+          const endpoint = yield* recipe.endpoint("http");
+
+          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+
+          expect(response.status, yield* Ref.get(logs)).toBe(200);
+          expect(yield* response.text).toBe("config");
+          yield* instance.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "warns when a configured Deno config is not the one Edge Runtime discovers",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const temporaryRoot = `${process.cwd()}/tmp`;
+          yield* fs.makeDirectory(temporaryRoot, { recursive: true });
+          const root = yield* fs.makeTempDirectoryScoped({
+            directory: temporaryRoot,
+            prefix: "functions-plain-deno-config-",
+          });
+          const functionsRoot = `${root}/supabase/functions`;
+          yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
+          yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
+          yield* fs.writeFileString(
+            `${functionsRoot}/_shared/deno.jsonc`,
+            '{"imports":{"message":"./message.ts"}}',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/_shared/message.ts`,
+            'export const message = "shared";',
+          );
+          yield* fs.writeFileString(
+            `${functionsRoot}/hello/index.ts`,
+            'import { message } from "message"; Deno.serve(() => new Response(message));',
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              config: {
+                functionsRoot,
+                verifyJwt: false,
+                functions: { hello: { import_map: `${functionsRoot}/_shared/deno.jsonc` } },
+              },
+            },
+            {
+              ...options(root),
+              stackId: "f".repeat(64),
+              instanceId: "plain-deno-config",
+              cacheRoot: "/tmp/supabase-stack-artifacts",
+            },
+          );
+          const logs = yield* Ref.make("");
+          const warned = yield* Deferred.make<void>();
+          yield* recipe.logs.pipe(
+            Stream.runForEach(({ bytes }) =>
+              Ref.updateAndGet(logs, (text) => text + new TextDecoder().decode(bytes)).pipe(
+                Effect.flatMap((text) =>
+                  text.includes("is not the nearest Deno config")
+                    ? Deferred.succeed(warned, undefined)
+                    : Effect.void,
+                ),
+              ),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          const instance = yield* makeService(recipe.definition, {
+            id: "plain-deno-config",
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready.pipe(
+            Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
+          );
+          const endpoint = yield* recipe.endpoint("http");
+
+          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+          yield* Deferred.await(warned).pipe(
+            Effect.timeout("30 seconds"),
+            Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
+          );
+
+          expect(response.status).toBe(200);
+          expect(yield* Ref.get(logs)).toContain(
+            `hello: ${yield* fs.realPath(functionsRoot)}/_shared/deno.jsonc is not the nearest Deno config`,
+          );
+          yield* instance.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
 });
 
 for (const runtime of ["native", "docker"] as const) {

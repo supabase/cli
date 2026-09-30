@@ -52,6 +52,16 @@ const rest: ServiceCreation = {
   config: {},
   endpoints: { http: { port: 54321 } },
 };
+const auth: ServiceCreation = {
+  service: "auth",
+  config: { jwtSecret },
+  endpoints: { http: { port: 54321 } },
+};
+const studio: ServiceCreation = {
+  service: "studio",
+  config: {},
+  endpoints: { http: { port: 54323 } },
+};
 const functions: ServiceCreation = {
   service: "functions",
   config: {
@@ -243,16 +253,11 @@ const runStatus = (input: {
     return { effect, out, root };
   }).pipe(Effect.provide(BunServices.layer));
 
-it.live("reports observed lifecycle and health without requesting credentials", () =>
+it.live("renders connections and a services summary without internal IDs", () =>
   Effect.gen(function* () {
     const databaseCalls = { value: 0 };
     const restCalls = { value: 0 };
     const authCalls = { value: 0 };
-    const auth: ServiceCreation = {
-      service: "auth",
-      config: { jwtSecret },
-      endpoints: { http: { port: 54325 } },
-    };
     const services = [
       makeService({
         id: "database-id",
@@ -283,14 +288,27 @@ it.live("reports observed lifecycle and health without requesting credentials", 
         }),
       }),
     ];
-    const run = yield* runStatus({ services, reachable: true });
+    const run = yield* runStatus({
+      services,
+      members: [
+        { id: "database-id", activation: "eager" },
+        { id: "rest-id", activation: "lazy" },
+        { id: "auth-id", activation: "lazy" },
+      ],
+      reachable: true,
+    });
     yield* run.effect;
-    expect(run.out.stdoutText).toContain("Owner: reachable");
-    expect(run.out.stdoutText).toContain("database (database-id): running");
-    expect(run.out.stdoutText).toContain("rest (rest-id): sleeping");
-    expect(run.out.stdoutText).toContain("auth (auth-id): unhealthy");
-    expect(run.out.stdoutText).toContain("health=unhealthy");
-    expect(run.out.stdoutText).toContain("Readiness: unhealthy");
+    const text = run.out.stdoutText;
+    expect(text).toMatch(/^Stack status-stack · unhealthy · native · /u);
+    expect(text).toMatch(/Project URL │ http:\/\/127\.0\.0\.1:54321 +│/u);
+    expect(text).toContain("postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres");
+    expect(text).toMatch(/Publishable │ saved-publishable-key +│/u);
+    expect(text).toMatch(/database +│ running · healthy · eager +│/u);
+    expect(text).toMatch(/rest +│ sleeping · starts on first request +│/u);
+    expect(text).toMatch(/auth +│ unhealthy · lazy +│/u);
+    expect(text).toContain("Project configuration matches the saved composition members.");
+    expect(text).not.toContain("database-id");
+    expect(text).not.toContain(stackId);
     expect(databaseCalls.value).toBe(1);
     expect(restCalls.value).toBe(1);
     expect(authCalls.value).toBe(1);
@@ -395,44 +413,97 @@ it.live("reports stopped readiness without treating unbound endpoints as drift",
 
 it.live("reports the planned differences of composition members as drift", () =>
   Effect.gen(function* () {
-    const run = yield* runStatus({
-      services: [
-        makeService({
-          id: "database-id",
-          creation: database,
-          statusCalls: { value: 0 },
-          observation: makeObservation("database-id", database, {
-            lifecycle: "stopped",
-            wakeEnabled: false,
+    const drifted = (outputFormat: StatusOutputFormat) =>
+      runStatus({
+        services: [
+          makeService({
+            id: "database-id",
+            creation: database,
+            statusCalls: { value: 0 },
+            observation: makeObservation("database-id", database, {
+              lifecycle: "stopped",
+              wakeEnabled: false,
+            }),
           }),
-        }),
-      ],
-      members: [{ id: "database-id", activation: "eager" }],
-      planned: [
-        {
-          id: "database-id",
-          service: "database",
-          member: true,
-          change: "incompatible",
-          paths: ["endpoints.sql.port"],
-        },
-        {
-          id: "standalone-rest",
-          service: "rest",
-          member: false,
-          change: "changed",
-          paths: ["config.maxRows"],
-        },
-      ],
-      config: "explicit",
-      reachable: false,
-      outputFormat: "json",
-    });
-    yield* run.effect;
-    const result = run.out.messages.find((message) => message.type === "success")?.data;
-    expect(result).toMatchObject({
+        ],
+        members: [{ id: "database-id", activation: "eager" }],
+        planned: [
+          {
+            id: "database-id",
+            service: "database",
+            member: true,
+            change: "incompatible",
+            paths: ["endpoints.sql.port"],
+          },
+          {
+            id: "standalone-rest",
+            service: "rest",
+            member: false,
+            change: "changed",
+            paths: ["config.maxRows"],
+          },
+        ],
+        config: "explicit",
+        reachable: false,
+        outputFormat,
+      });
+    const json = yield* drifted("json");
+    yield* json.effect;
+    expect(json.out.messages.find((message) => message.type === "success")?.data).toMatchObject({
       config_drift: { status: "changed", paths: ["services.database.endpoints.sql.port"] },
     });
+    const text = yield* drifted("text");
+    yield* text.effect;
+    expect(text.out.stdoutText).toContain(
+      "1 configured service value differs from the saved stack.\n  services.database.endpoints.sql.port\nRun supabase stack stop, then supabase stack start to apply the changes.\n",
+    );
+  }),
+);
+
+it.live("reports the Studio MCP and gateway API endpoints without REST", () =>
+  Effect.gen(function* () {
+    const services = [
+      makeService({
+        id: "database-id",
+        creation: database,
+        statusCalls: { value: 0 },
+        observation: makeObservation("database-id", database, {
+          lifecycle: "running",
+          health: "healthy",
+          wakeEnabled: false,
+          endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+        }),
+      }),
+      makeService({
+        id: "auth-id",
+        creation: auth,
+        statusCalls: { value: 0 },
+        observation: makeObservation("auth-id", auth, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+        }),
+      }),
+      makeService({
+        id: "studio-id",
+        creation: studio,
+        statusCalls: { value: 0 },
+        observation: makeObservation("studio-id", studio, {
+          endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54323 }],
+        }),
+      }),
+    ];
+    const report = yield* runStatus({ services, reachable: true, outputFormat: "json" });
+    yield* report.effect;
+    expect(report.out.messages.find((message) => message.type === "success")?.data).toMatchObject({
+      endpoints: {
+        "studio.http": { url: "http://127.0.0.1:54323" },
+        "studio.mcp": { port: 54323, url: "http://127.0.0.1:54323/api/mcp" },
+      },
+    });
+    const env = yield* runStatus({ services, reachable: true, flags: flags({ env: true }) });
+    yield* env.effect;
+    expect(env.out.stdoutText).toContain("MCP_URL='http://127.0.0.1:54323/api/mcp'");
+    expect(env.out.stdoutText).toContain("STUDIO_URL='http://127.0.0.1:54323'");
+    expect(env.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
   }),
 );
 
@@ -476,9 +547,9 @@ it.live("reports unavailable owner and does not query service status", () =>
     ];
     const run = yield* runStatus({ services, reachable: false });
     yield* run.effect;
-    expect(run.out.stdoutText).toContain("Owner: unavailable");
-    expect(run.out.stdoutText).toContain("Lifecycle: unavailable");
-    expect(run.out.stdoutText).toContain("database (database-id): unavailable");
+    expect(run.out.stdoutText).toMatch(/^Stack status-stack · unavailable · /u);
+    expect(run.out.stdoutText).toContain("The stack owner is not running.");
+    expect(run.out.stdoutText).toMatch(/database +│ unavailable · lazy +│/u);
     expect(statusCalls.value).toBe(0);
   }),
 );

@@ -164,6 +164,16 @@ jobs:
           src/HttpProxy.integration.test.ts
           --passWithNoTests=false
 
+      # Windows-only CLI subset: paths, PATH lookup, and permission semantics diverge there.
+      - name: Run CLI integration tests
+        if: runner.os == 'Windows'
+        working-directory: apps/cli
+        run: >-
+          pnpm test:integration
+          src/commands/db/reset/reset.integration.test.ts
+          src/commands/experimental/stack/start/start.integration.test.ts
+          --passWithNoTests=false
+
   test-summary:
     if: |
       always() &&

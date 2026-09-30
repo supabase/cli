@@ -73,17 +73,22 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         message: "Destroying a stack requires confirmation; rerun with --yes.",
         suggestion: "Pass --yes when running non-interactively or in a machine-readable format.",
       });
-    const confirmed = yield* promptYesNo(
-      output,
-      yes,
-      `Permanently destroy stack ${target.id} at ${target.projectRoot} and its owned data? Storage upload files will be preserved.`,
-      false,
-    );
-    if (!confirmed)
-      return yield* new StackCommandDestroyError({
-        reason: "cancelled",
-        message: "Stack destruction was not confirmed.",
-      });
+    const scope = `stack ${target.id} at ${target.projectRoot} and its owned data`;
+    const preserved = "Storage upload files will be preserved.";
+    if (yes) yield* output.raw(`Permanently destroying ${scope}. ${preserved}\n`, "stderr");
+    else {
+      const confirmed = yield* promptYesNo(
+        output,
+        false,
+        `Permanently destroy ${scope}? ${preserved}`,
+        false,
+      );
+      if (!confirmed)
+        return yield* new StackCommandDestroyError({
+          reason: "cancelled",
+          message: "Stack destruction was not confirmed.",
+        });
+    }
     const stack = yield* api
       .open({
         id: target.id,
