@@ -9,6 +9,7 @@ import {
   planSlimUpdates,
   planUpdatesForService,
   refreshCatalogPin,
+  runPlanUpdates,
   validateSlimReleasePublishedPayload,
   type RevisionIo,
 } from "./sync-artifacts-catalog.ts";
@@ -512,6 +513,66 @@ describe("planUpdatesForService (the plan-updates transport's IO seam)", () => {
         toRelease: "17.11.0.002-r0",
       },
     ]);
+  });
+});
+
+describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure planner)", () => {
+  test("an ignored tag plus a valid update: --output gets exactly the valid record, and the warning reaches stdout", async () => {
+    // Real catalog, real "auth" pin — `io.listReleaseTags` is the seam this CLI mode injects, so
+    // this exercises its own file/stdout wiring (P1) without a network call.
+    const catalog = await Bun.file(CATALOG_PATH).text();
+    const pinMatch =
+      /definition\(\s*"auth",\s*\{\s*upstreamVersion:\s*"([^"]+)",\s*revision:\s*(\d+)/.exec(
+        catalog,
+      );
+    if (pinMatch === null) throw new Error("auth pin not found in the real catalog");
+    const pinnedUpstream = pinMatch[1] as string;
+    const pinnedRevision = Number(pinMatch[2]);
+    const hotfixRelease = `${pinnedUpstream}-r${pinnedRevision + 1}`;
+
+    const dir = await mkdtemp(join(tmpdir(), "plan-updates-cli-"));
+    const outputPath = join(dir, "slim-updates.tsv");
+    const logs: string[] = [];
+    const originalLog = console.log;
+    let content: string;
+    try {
+      console.log = (...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      };
+      // No exception reaching past this call is this mode's own success condition — `main()`'s
+      // wrapper only calls `process.exit(1)` when `runPlanUpdates` rejects, so resolving here is
+      // the in-process analogue of "the exit status is 0".
+      await runPlanUpdates(["--service", "auth", "--format", "lines", "--output", outputPath], {
+        listReleaseTags: async () => [
+          `auth-${hotfixRelease}`,
+          `auth-${pinnedUpstream}-orioledb-r0`, // ignored: not a comparable version
+        ],
+      });
+      content = await readFile(outputPath, "utf8");
+    } finally {
+      console.log = originalLog;
+      await rm(dir, { recursive: true, force: true });
+    }
+
+    expect(logs).toEqual([
+      `::warning ::auth ${pinnedUpstream}-orioledb is not a comparable version; ignoring.`,
+    ]);
+    expect(content).toBe(
+      `hotfix\x1fslim-hotfix/auth\x1fchore(stack): pin auth ${hotfixRelease}\x1f${hotfixRelease}\x1f${pinnedUpstream}-r${pinnedRevision}\n`,
+    );
+  });
+
+  test("a missing --output exits non-zero before any network call", async () => {
+    const proc = Bun.spawn(
+      ["bun", ".github/scripts/sync-artifacts-catalog.ts", "plan-updates", "--service", "auth"],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain(
+      "Usage: sync-artifacts-catalog.ts plan-updates --service <service> --output <path>",
+    );
   });
 });
 

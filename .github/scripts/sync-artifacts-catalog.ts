@@ -1097,8 +1097,17 @@ function updateLine(update: SlimUpdate): string {
  * `plan-updates`' records go only into `--output <path>`, never stdout: a caller (the workflow)
  * reads warnings from stdout as `::warning ::…` lines, and would otherwise mistake one for a
  * malformed record and abort a run that had valid updates alongside it.
+ *
+ * `io.listReleaseTags` defaults to the real network lister but is overridable — the minimal seam
+ * a test uses to exercise this CLI mode's own file/stdout wiring (not just the pure planner)
+ * without a network call, the same pattern `RevisionIo` already uses. The `--service`/`--output`
+ * usage check runs before either the catalog read or the lister, so a test can also assert this
+ * mode fails fast on a missing flag without touching the network.
  */
-async function runPlanUpdates(argv: ReadonlyArray<string>): Promise<void> {
+export async function runPlanUpdates(
+  argv: ReadonlyArray<string>,
+  io: { readonly listReleaseTags: () => Promise<ReadonlyArray<string>> } = { listReleaseTags },
+): Promise<void> {
   const flags = parseFlags(argv);
   const service = flags.get("service");
   const output = flags.get("output");
@@ -1115,7 +1124,7 @@ async function runPlanUpdates(argv: ReadonlyArray<string>): Promise<void> {
   const { updates, warnings } = await planUpdatesForService({
     catalog,
     service,
-    listReleaseTags,
+    listReleaseTags: io.listReleaseTags,
   });
   for (const warning of warnings) console.log(warning);
   const content =
