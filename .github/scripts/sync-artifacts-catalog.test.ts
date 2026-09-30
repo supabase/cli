@@ -51,6 +51,25 @@ function matchingS3(
   return async (url) => byUrl.get(url);
 }
 
+/** A `fetchManifest` returning a derived service's `upstream_image`, for every native target. */
+const manifestWithUpstreamImage =
+  (image: string): RevisionIo["fetchManifest"] =>
+  async () =>
+    JSON.stringify({ upstream_image: image });
+
+/** A `fetchProvenance` returning a mirrored service's `source`. */
+const provenanceWithSource =
+  (source: string): RevisionIo["fetchProvenance"] =>
+  async () =>
+    JSON.stringify({ source });
+
+const unusedFetchManifest: RevisionIo["fetchManifest"] = async () => {
+  throw new Error("fetchManifest should not be called for this service");
+};
+const unusedFetchProvenance: RevisionIo["fetchProvenance"] = async () => {
+  throw new Error("fetchProvenance should not be called for this service");
+};
+
 /**
  * Runs the repo's pinned `oxfmt` binary over `source`, the way `slim-release-published.yml`
  * formats the catalog after every write, so parsing tests exercise real formatter output
@@ -281,22 +300,13 @@ describe("planSlimUpdates", () => {
     ]);
   });
 
-  test("both a hotfix and an upgrade can be planned in the same run", () => {
-    const { updates } = planSlimUpdates(plannerFixture, "postgrest", [
+  test("an upgrade on a line suppresses that line's hotfix, warning about the skipped release", () => {
+    const { updates, warnings } = planSlimUpdates(plannerFixture, "postgrest", [
       "postgrest-v16.2-r1",
       "postgrest-v16.4-r0",
     ]);
 
     expect(updates).toEqual([
-      {
-        kind: "hotfix",
-        line: undefined,
-        branch: "slim-hotfix/postgrest",
-        title: "chore(stack): pin postgrest v16.2-r1",
-        fromRelease: "v16.2-r0",
-        toUpstream: "v16.2",
-        toRelease: "v16.2-r1",
-      },
       {
         kind: "upgrade",
         line: undefined,
@@ -306,6 +316,9 @@ describe("planSlimUpdates", () => {
         toUpstream: "v16.4",
         toRelease: "v16.4-r0",
       },
+    ]);
+    expect(warnings).toEqual([
+      "::warning ::postgrest v16.2-r1 hotfix skipped because this line is upgrading to v16.4-r0; run --service postgrest --release v16.2-r1 to pin the hotfix alone.",
     ]);
   });
 
@@ -326,7 +339,7 @@ describe("planSlimUpdates", () => {
     ]);
 
     // The ignored major-18 tag is warned about, but doesn't block the two valid updates
-    // alongside it (P1: a warning must never corrupt or swallow the plan).
+    // alongside it: a warning never corrupts or swallows the plan.
     expect(warnings).toEqual([
       "::warning ::postgres 18.0.0.001 is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-r0.",
     ]);
@@ -570,7 +583,7 @@ describe("planUpdatesForService (the plan-updates transport's IO seam)", () => {
   });
 });
 
-describe("waitForExpectedRelease (item A's eventual-consistency wait, call counts a subprocess can't assert)", () => {
+describe("waitForExpectedRelease", () => {
   test("visible on the first listing: returns immediately without waiting", async () => {
     let calls = 0;
     const waits: number[] = [];
@@ -645,7 +658,7 @@ describe("waitForExpectedRelease (item A's eventual-consistency wait, call count
 });
 
 describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure planner)", () => {
-  test("an ignored tag, a valid upgrade, and the expected dispatched release: --output gets exactly the valid record, the warning reaches stdout, and the process exits 0", async () => {
+  test("an ignored tag, a valid upgrade, and the expected dispatched release: --output gets only the valid record, the warning reaches stdout, and the process exits 0", async () => {
     // Real catalog, real "postgrest" pin — a local fixture server stands in for the releases API
     // (`SLIM_SERVICES_RELEASES_API`), so this exercises the real subprocess: the CLI's argv
     // parsing, `--expect-release`'s visibility wait, the network lister, and the file/stdout
@@ -794,7 +807,7 @@ describe("runPlanUpdates (the actual plan-updates CLI mode, not just the pure pl
     }
   });
 
-  test("a newline-bearing --format is rejected, producing exactly one ::error :: line (not JSON.stringify'd; the boundary encoder is what protects it)", async () => {
+  test("a newline-bearing --format is rejected, producing a single ::error :: line (not JSON.stringify'd; the boundary encoder is what protects it)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "plan-updates-bad-format-"));
     const outputPath = join(dir, "slim-updates.tsv");
     try {
@@ -863,6 +876,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r1", digests),
       imageDigest: async () => digest("h"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
+      fetchManifest: manifestWithUpstreamImage("supabase/logflare:1.50.9"),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -878,6 +893,7 @@ describe("refreshCatalogPin", () => {
     expect(result.source).toContain(
       `image: "ghcr.io/supabase/cli/analytics:v1.50.9-r1@${digest("h")}"`,
     );
+    expect(result.source).toContain('upstreamImage: "supabase/logflare:1.50.9"');
   });
 
   test("a resolved pin survives real formatting and can be refreshed again", async () => {
@@ -887,6 +903,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", first),
       imageDigest: async () => digest("j"),
       s3Sha256: matchingS3("postgrest", "v16.2-r0", first),
+      fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
+      fetchProvenance: unusedFetchProvenance,
     };
     const written = await refreshCatalogPin({
       catalog: fixture,
@@ -906,6 +924,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r1", second),
       imageDigest: async () => digest("l"),
       s3Sha256: matchingS3("postgrest", "v16.2-r1", second),
+      fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
+      fetchProvenance: unusedFetchProvenance,
     };
     const refreshed = await refreshCatalogPin({
       catalog: formatted,
@@ -922,6 +942,7 @@ describe("refreshCatalogPin", () => {
     });
     expect(refreshed.source).toContain("revision: 1");
     expect(refreshed.source).toContain(second["darwin-arm64"].archive);
+    expect(refreshed.source).toContain('upstreamImage: "postgrest/postgrest:v16.2"');
   });
 
   test("refreshes the Postgres 15 additional pin, including after formatting", async () => {
@@ -931,6 +952,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r0", digests),
       imageDigest: async () => digest("n"),
       s3Sha256: matchingS3("postgres", "15.14.1.168-r0", digests),
+      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.14.1.168"),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const written = await refreshCatalogPin({
@@ -956,6 +979,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgres", "15.14.1.168-r1", nextDigests),
       imageDigest: async () => digest("p"),
       s3Sha256: matchingS3("postgres", "15.14.1.168-r1", nextDigests),
+      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.14.1.168"),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const refreshed = await refreshCatalogPin({
@@ -974,6 +999,7 @@ describe("refreshCatalogPin", () => {
     });
     expect(refreshed.source).toContain(postgres17Image);
     expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+    expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.14.1.168"');
   });
 
   test("moves the Postgres 15 additional pin to a new upstream version, updating its key", async () => {
@@ -983,6 +1009,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r0", digests),
       imageDigest: async () => digest("v"),
       s3Sha256: matchingS3("postgres", "15.19.0.002-r0", digests),
+      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.19.0.002"),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const written = await refreshCatalogPin({
@@ -1012,6 +1040,8 @@ describe("refreshCatalogPin", () => {
       fetchChecksums: async () => checksumsFor("postgres", "15.19.0.002-r1", nextDigests),
       imageDigest: async () => digest("x"),
       s3Sha256: matchingS3("postgres", "15.19.0.002-r1", nextDigests),
+      fetchManifest: manifestWithUpstreamImage("supabase/postgres:15.19.0.002"),
+      fetchProvenance: unusedFetchProvenance,
     };
     const refreshed = await refreshCatalogPin({
       catalog: formatted,
@@ -1028,6 +1058,7 @@ describe("refreshCatalogPin", () => {
       target: "additional",
     });
     expect(refreshed.source).toContain(nextDigests["linux-arm64"].manifest);
+    expect(refreshed.source).toContain('upstreamImage: "supabase/postgres:15.19.0.002"');
   });
 });
 
@@ -1054,6 +1085,8 @@ describe("resolveRevisionPin waits for the S3 mirror", () => {
         }
         return present(url);
       },
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: unusedFetchProvenance,
       wait: async (ms) => {
         waits.push(ms);
       },
@@ -1075,6 +1108,8 @@ describe("resolveRevisionPin waits for the S3 mirror", () => {
       fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
       imageDigest: async () => digest("s3-mismatch-digest"),
       s3Sha256: async () => hex("wrong-bytes"),
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: unusedFetchProvenance,
       wait: async (ms) => {
         waits.push(ms);
       },
@@ -1097,6 +1132,8 @@ describe("resolveRevisionPin waits for the S3 mirror", () => {
       fetchChecksums: async () => checksumsFor("postgrest", releaseVersion, digests),
       imageDigest: async () => digest("s3-never-digest"),
       s3Sha256: async () => undefined,
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: unusedFetchProvenance,
       wait: async (ms) => {
         waits.push(ms);
       },
@@ -1113,13 +1150,15 @@ describe("resolveRevisionPin waits for the S3 mirror", () => {
 });
 
 describe("refreshCatalogPin --release", () => {
-  test("pins exactly the requested committed release, not the highest one", async () => {
+  test("pins the requested committed release, not the highest one", async () => {
     const digests = nativeDigests("release-0");
     const io: RevisionIo = {
       listReleaseTags: async () => ["postgrest-v16.2-r0", "postgrest-v16.2-r1"],
       fetchChecksums: async () => checksumsFor("postgrest", "v16.2-r0", digests),
       imageDigest: async () => digest("release-digest-0"),
       s3Sha256: matchingS3("postgrest", "v16.2-r0", digests),
+      fetchManifest: manifestWithUpstreamImage("postgrest/postgrest:v16.2"),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const result = await refreshCatalogPin({
@@ -1144,6 +1183,8 @@ describe("refreshCatalogPin --release", () => {
       fetchChecksums: async () => undefined,
       imageDigest: async () => undefined,
       s3Sha256: async () => undefined,
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: unusedFetchProvenance,
     };
 
     await expect(
@@ -1157,6 +1198,8 @@ describe("refreshCatalogPin --release", () => {
       fetchChecksums: async () => undefined,
       imageDigest: async () => undefined,
       s3Sha256: async () => undefined,
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: unusedFetchProvenance,
     };
 
     await expect(
@@ -1180,6 +1223,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       imageDigest: async () => digest("z"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r1", digests),
       fetchManifest: async () => JSON.stringify({ upstream_image: "supabase/logflare:1.50.9" }),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -1195,6 +1239,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       imageDigest: async () => digest("ab"),
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
       fetchManifest: async () => JSON.stringify({ source_image: "supabase/logflare:1.50.9" }),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -1211,6 +1256,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
       fetchManifest: async () =>
         JSON.stringify({ upstream_image: "docker.io/supabase/logflare:1.50.9@sha256:deadbeef" }),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
@@ -1230,6 +1276,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
         call += 1;
         return JSON.stringify({ upstream_image: `supabase/logflare:1.50.${call}` });
       },
+      fetchProvenance: unusedFetchProvenance,
     };
 
     await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
@@ -1244,27 +1291,13 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       fetchChecksums: async () => checksumsFor("vector", "0.53.0-r0", digests),
       imageDigest: async () => digest("ah"),
       s3Sha256: matchingS3("vector", "0.53.0-r0", digests),
-      fetchProvenance: async () =>
-        JSON.stringify({ source: "docker.io/timberio/vector:0.53.0-alpine" }),
+      fetchManifest: unusedFetchManifest,
+      fetchProvenance: provenanceWithSource("docker.io/timberio/vector:0.53.0-alpine"),
     };
 
     const result = await refreshCatalogPin({ catalog: vectorFixture, service: "vector", io });
 
     expect(result.source).toContain('upstreamImage: "timberio/vector:0.53.0-alpine"');
-  });
-
-  test("leaves upstreamImage absent when io has no manifest/provenance fetchers", async () => {
-    const digests = nativeDigests("ai");
-    const io: RevisionIo = {
-      listReleaseTags: async () => ["analytics-v1.50.9-r0"],
-      fetchChecksums: async () => checksumsFor("analytics", "v1.50.9-r0", digests),
-      imageDigest: async () => digest("aj"),
-      s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
-    };
-
-    const result = await refreshCatalogPin({ catalog: fixture, service: "analytics", io });
-
-    expect(result.source).not.toContain("upstreamImage");
   });
 
   test("rejects a manifest upstream_image carrying a quote or template expression, writing nothing", async () => {
@@ -1276,6 +1309,7 @@ describe("refreshCatalogPin backfills upstreamImage", () => {
       s3Sha256: matchingS3("analytics", "v1.50.9-r0", digests),
       fetchManifest: async () =>
         JSON.stringify({ upstream_image: 'supabase/logflare:1.50.9"] }; import("evil"); //' }),
+      fetchProvenance: unusedFetchProvenance,
     };
 
     await expect(refreshCatalogPin({ catalog: fixture, service: "analytics", io })).rejects.toThrow(
@@ -1298,6 +1332,8 @@ describe("against the real catalog", () => {
       fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r0`, first),
       imageDigest: async () => digest("r"),
       s3Sha256: matchingS3("auth", `${pinnedVersion}-r0`, first),
+      fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
+      fetchProvenance: unusedFetchProvenance,
     };
     const written = await refreshCatalogPin({ catalog, service: "auth", io: firstIo });
     expect(written.update?.revision).toBe(0);
@@ -1311,6 +1347,8 @@ describe("against the real catalog", () => {
       fetchChecksums: async () => checksumsFor("auth", `${pinnedVersion}-r1`, second),
       imageDigest: async () => digest("t"),
       s3Sha256: matchingS3("auth", `${pinnedVersion}-r1`, second),
+      fetchManifest: manifestWithUpstreamImage(`supabase/gotrue:${pinnedVersion}`),
+      fetchProvenance: unusedFetchProvenance,
     };
     const refreshed = await refreshCatalogPin({
       catalog: formatted,
@@ -1327,5 +1365,6 @@ describe("against the real catalog", () => {
     });
     expect(refreshed.source).toContain("revision: 1");
     expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
+    expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
   });
 });

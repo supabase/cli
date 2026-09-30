@@ -222,14 +222,9 @@ const VECTOR_HEALTHCHECK = {
 } as const;
 
 /**
- * Creates `/etc/vector` (absent from Vector 0.58's images, both slim and upstream), writes the
- * rendered `vector.yaml` via a `cat <<'EOF'` heredoc, waits on Logflare's `/health` (sinks would
- * otherwise start too early), then `exec`s Vector so it stays PID 1. A TERM trap covers the wait
- * so `docker stop` does not burn 10s if Logflare is still down; `-T 2` bounds each probe so a hung
- * health endpoint can't defer the trap. Slim Vector ships BusyBox wget, so the wait uses
- * `-q --spider` instead of GNU's `--no-verbose --tries`. Both images run as root, so `mkdir -p`
- * needs no separate ownership handling, and `/var/lib/vector` (the `docker_logs` source's
- * checkpoint `data_dir`) already exists in both.
+ * Vector 0.58's images (slim and upstream) have no `/etc/vector`, so the script creates it. The
+ * TERM trap keeps `docker stop` fast while Logflare's `/health` is still down, and `-T 2` bounds
+ * each probe so a hung endpoint can't defer the trap.
  */
 export function buildVectorEntrypointScript(
   vectorYaml: string,
