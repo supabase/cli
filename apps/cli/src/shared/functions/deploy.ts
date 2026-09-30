@@ -405,9 +405,8 @@ async function realpathIfExists(pathname: string) {
   }
 }
 
-async function resolveFunctionsSourceRoot(projectRoot: string) {
-  return (await findGitRootPath(projectRoot)) ?? resolve(projectRoot);
-}
+const resolveFunctionsSourceRoot = (projectRoot: string) =>
+  findGitRootPath(projectRoot).pipe(Effect.map(Option.getOrElse(() => resolve(projectRoot))));
 
 function humanSize(bytes: number) {
   if (bytes < 1000) {
@@ -1207,23 +1206,39 @@ function sanitizeDockerBinds(
   return result;
 }
 
-export async function buildDockerBinds(
+type DockerBindsOptions = {
+  readonly additionalModuleRoots?: ReadonlyArray<string>;
+  readonly onWarning?: (message: string) => Promise<void>;
+  readonly skipMissingImportMapTargets?: boolean;
+  /** Resolved marker presence, including an explicitly empty project value. */
+  readonly bitbucketCloneDirDefined?: boolean;
+};
+
+export const buildDockerBinds = (
   projectId: string,
   functionsDir: string,
   outputDir: string,
   config: ResolvedDeployFunctionConfig,
-  options: {
-    readonly additionalModuleRoots?: ReadonlyArray<string>;
-    readonly onWarning?: (message: string) => Promise<void>;
-    readonly skipMissingImportMapTargets?: boolean;
-    /** Resolved marker presence, including an explicitly empty project value. */
-    readonly bitbucketCloneDirDefined?: boolean;
-  } = {},
+  options: DockerBindsOptions = {},
+) =>
+  resolveFunctionsSourceRoot(resolve(functionsDir, "..", "..")).pipe(
+    Effect.flatMap((sourceRoot) =>
+      Effect.promise(() =>
+        buildDockerBindsWithin(sourceRoot, projectId, functionsDir, outputDir, config, options),
+      ),
+    ),
+  );
+
+async function buildDockerBindsWithin(
+  sourceRoot: string,
+  projectId: string,
+  functionsDir: string,
+  outputDir: string,
+  config: ResolvedDeployFunctionConfig,
+  options: DockerBindsOptions,
 ): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
-  const projectRoot = resolve(functionsDir, "..", "..");
-  const sourceRoot = await resolveFunctionsSourceRoot(projectRoot);
   const realSourceRoot = await realpath(sourceRoot);
   const moduleRoots = [
     realSourceRoot,
@@ -1443,12 +1458,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
     // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
     const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
-    const binds = yield* Effect.promise(() =>
-      buildDockerBinds(projectId, functionsDir, outputDir, config, {
-        bitbucketCloneDirDefined,
-        onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
-      }),
-    );
+    const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
+      bitbucketCloneDirDefined,
+      onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+    });
     // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
     // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
     // cost is one cached `docker image inspect` per function.
@@ -2083,10 +2096,7 @@ const deployViaApi = Effect.fnUntraced(function* (
   // (`projectRoot`), not at `sourceRoot`. The import-walk boundary (which files may be uploaded
   // at all) is intentionally wider, extending to the nearest git root, so files outside the
   // workdir but inside a monorepo can still deploy — those upload with `../`-relative names.
-  const sourceRoot = yield* Effect.tryPromise({
-    try: () => resolveFunctionsSourceRoot(projectRoot),
-    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-  });
+  const sourceRoot = yield* resolveFunctionsSourceRoot(projectRoot);
   const enabled = configs.filter((config) => config.enabled);
   for (const skipped of configs.filter((config) => !config.enabled)) {
     yield* output.raw(`Skipping disabled Function: ${skipped.slug}\n`, "stderr");

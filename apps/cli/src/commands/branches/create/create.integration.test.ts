@@ -20,6 +20,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { branchesCreateCommand, type BranchesCreateFlags } from "./create.command.ts";
@@ -225,9 +226,8 @@ describe("branches create integration", () => {
 
   it.live("reports a missing name before contacting the API outside a git repository", () => {
     const { layer, api } = setup();
-    return withEnvVar(
-      "GITHUB_HEAD_REF",
-      undefined,
+    return withConfigEnv(
+      { GITHUB_HEAD_REF: "" },
       Effect.gen(function* () {
         const exit = yield* branchesCreate(baseFlags).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -246,7 +246,7 @@ describe("branches create integration", () => {
 
   // `GITHUB_HEAD_REF` drives `detectGitBranch` deterministically (its highest-priority source).
   const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") =>
-    withEnvVar("GITHUB_HEAD_REF", branch, effect);
+    withConfigEnv({ GITHUB_HEAD_REF: branch }, effect);
 
   it.live("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
     const { layer, out, api } = setup({ yes: true, stdinIsTty: true });

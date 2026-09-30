@@ -28,6 +28,7 @@ import {
 import {
   VALID_REF,
   jsonResponse,
+  withConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -1917,9 +1918,8 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return withEnvVar(
-        "GITHUB_HEAD_REF",
-        "feature-x",
+      return withConfigEnv(
+        { GITHUB_HEAD_REF: "feature-x" },
         Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("on branch ");
