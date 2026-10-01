@@ -18,7 +18,12 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 import type { LaunchOutput } from "../runtime/Session.ts";
-import { endedLineGraceMillis, segmentName, type LogRecord } from "./LogRecord.ts";
+import {
+  endedLineGraceMillis,
+  segmentGeneration,
+  segmentName,
+  type LogRecord,
+} from "./LogRecord.ts";
 import * as LogStore from "./LogStore.ts";
 
 const encoder = new TextEncoder();
@@ -268,6 +273,47 @@ describe("LogStore", () => {
 
       expect(beforeGrace).toBe(0);
       expect(late).toMatchObject({ kind: "stdout", launchId: 1, text: "late" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a late line whole when its newline was published before the grace ran out", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* tempRoot("log-store-late-newline-");
+      const blocked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const injected = replaceWrites(fs, (file, buffer) =>
+        new TextDecoder().decode(buffer).includes("busy")
+          ? Deferred.succeed(blocked, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(file.writeAll(buffer)),
+            )
+          : file.writeAll(buffer),
+      );
+      const { store } = yield* openStore(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, injected),
+      );
+      const instance = yield* fakeInstance("newline");
+      yield* store.attach(instance);
+      const reader = yield* collect(store.read("newline", { from: "oldest", follow: true }));
+      yield* instance.setLaunch(1);
+      yield* instance.publish(instance.chunk(1, "ending"));
+      yield* reader.take(1);
+      yield* instance.setLaunch(undefined);
+      yield* untilLast(reader, "ending");
+
+      // The writer is busy with `busy` while the newline is published, so it stays queued.
+      yield* instance.publish(instance.chunk(1, "late "), instance.chunk(1, "busy\n", "stderr"));
+      yield* Deferred.await(blocked);
+      yield* TestClock.adjust(endedLineGraceMillis / 2);
+      yield* instance.publish(instance.chunk(1, "line end\n"));
+      yield* TestClock.adjust(endedLineGraceMillis / 2);
+      yield* Deferred.succeed(release, undefined);
+      const records: Array<LogRecord> = [];
+      while (!records.some((record) => record.text?.endsWith("line end") === true))
+        records.push(...(yield* reader.take(1)));
+
+      expect(texts(records)).toEqual(["busy", "late line end"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -684,8 +730,17 @@ describe("LogStore", () => {
         from: { generation: 3, byteOffset: 0 },
         follow: false,
       })).pipe(Stream.runCollect);
+      const fromHeld = yield* (yield* store.read("stuck", {
+        from: { generation: 1, byteOffset: 0 },
+        follow: false,
+      })).pipe(Stream.runCollect);
+      const afterHeld = segments
+        .map(segmentGeneration)
+        .filter((generation) => generation !== undefined && generation > 1)
+        .toSorted((left, right) => (left ?? 0) - (right ?? 0))[0];
 
       expect(segments).toContain(held);
+      expect(segments).not.toContain(segmentName(2));
       expect(segments).not.toContain(segmentName(3));
       expect(segments.length).toBeLessThanOrEqual(4);
       const [gap] = resumed;
@@ -693,6 +748,11 @@ describe("LogStore", () => {
       expect(gap?.position).toBeUndefined();
       expect(gap?.resumeAt?.generation).toBeGreaterThan(3);
       expect(texts(resumed).at(-1)).toBe("stuck line 9");
+      const heldGaps = Array.from(fromHeld).filter((record) => record.kind === "lost");
+      expect(heldGaps).toHaveLength(1);
+      expect(heldGaps[0]?.resumeAt).toEqual({ generation: afterHeld, byteOffset: 0 });
+      expect(fromHeld[0]?.kind).toBe("launch");
+      expect(texts(fromHeld).at(-1)).toBe("stuck line 9");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

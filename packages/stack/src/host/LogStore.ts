@@ -328,7 +328,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       atEnd: true,
       partial,
     });
-    /** Reports the records of the cursor's deleted segment as a gap before `generation`. */
+    /** Reports segments deleted before `generation` as a gap that resumes there. */
     const gap = Effect.fnUntraced(function* (generation: number) {
       const resumeAt = { generation, byteOffset: 0 };
       const records: ReadonlyArray<LogRecord> =
@@ -359,7 +359,9 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
         partial: false,
       } satisfies Step;
     // A segment is closed once a newer one exists, so its incomplete tail never completes.
-    if (newer !== undefined) return moveOn(newer);
+    // Generations are contiguous, so a hole before the next one is a deleted segment.
+    if (newer !== undefined)
+      return newer === cursor.generation + 1 ? moveOn(newer) : yield* gap(newer);
     if (fresh) return atEnd(chunk.value.partial);
     const writing = live === undefined ? undefined : yield* Ref.get(live.end);
     return writing !== undefined && writing.generation <= cursor.generation
@@ -827,25 +829,48 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     /** Signals the late-line flusher that an ended launch holds a partial line. */
     const lateLines = yield* Queue.sliding<void>(1);
 
+    /** The writer took a batch it has not persisted yet. */
+    let holding = false;
+
+    /**
+     * Persists a batch, then the late partial lines its publish times prove idle: every chunk
+     * published before the batch's last one has been split.
+     */
     const persistBatch = (chunks: ReadonlyArray<LaunchOutput>) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) =>
-          handle.lock.withPermits(1)(
-            Effect.suspend(() =>
-              persist([
-                ...chunks.flatMap((chunk) => splitter.push(chunk)),
-                ...splitter.flushEnded(now),
-              ]),
-            ),
+      handle.lock
+        .withPermits(1)(
+          Effect.suspend(() => {
+            const entries = chunks.flatMap((chunk) => splitter.push(chunk));
+            const published = chunks.reduce((latest, chunk) => Math.max(latest, chunk.time), 0);
+            return persist([...entries, ...splitter.flushEnded(published)]);
+          }),
+        )
+        .pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              holding = false;
+              return splitter.endedDue() === undefined
+                ? Effect.void
+                : Queue.offer(lateLines, undefined);
+            }),
           ),
-        ),
-        Effect.andThen(
-          Effect.suspend(() =>
-            splitter.endedDue() === undefined ? Effect.void : Queue.offer(lateLines, undefined),
-          ),
-        ),
-        Effect.uninterruptible,
-      );
+          Effect.uninterruptible,
+        );
+
+    /**
+     * Flushes due late partial lines unless published output is still unsplit, whose batch then
+     * signals again; `false` when it deferred.
+     */
+    const flushIdle = handle.lock.withPermits(1)(
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (holding || (yield* PubSub.remaining(subscription)) > 0) return false;
+          const now = yield* Clock.currentTimeMillis;
+          yield* persist(splitter.flushEnded(now));
+          return true;
+        }),
+      ),
+    );
 
     /** Flushes late partial lines of ended launches once they stay idle for the grace. */
     const flushLate = Effect.forever(
@@ -854,7 +879,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         for (let due = splitter.endedDue(); due !== undefined; due = splitter.endedDue()) {
           const now = yield* Clock.currentTimeMillis;
           if (now < due) yield* Effect.sleep(Duration.millis(due - now));
-          else yield* persistFlushed((at) => splitter.flushEnded(at));
+          else if (!(yield* flushIdle)) break;
         }
       }),
     );
@@ -922,7 +947,12 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     yield* Effect.forkIn(
       Effect.forever(
         Effect.uninterruptibleMask((restore) =>
-          restore(PubSub.takeAll(subscription)).pipe(Effect.flatMap(persistBatch)),
+          restore(PubSub.takeAll(subscription)).pipe(
+            Effect.flatMap((chunks) => {
+              holding = true;
+              return persistBatch(chunks);
+            }),
+          ),
         ),
       ),
       scope,
