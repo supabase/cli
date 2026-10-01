@@ -4,12 +4,14 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Deferred,
   Effect,
-  Equal,
   Fiber,
   FileSystem,
   Layer,
   Option,
   Redacted,
+  Schema,
+  Sink,
+  Stdio,
   Stream,
 } from "effect";
 import {
@@ -19,10 +21,10 @@ import {
 } from "@supabase/stack/defaults";
 import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
+  planSupabaseComposition,
   StackError,
   type ServiceCreation,
   type ServiceCreationInput,
-  type PlannedInstance,
   type ServiceInstance,
   type ServiceInstances,
   type StackCredentials,
@@ -33,7 +35,12 @@ import {
   mockTelemetryStateTracked,
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockTty,
+} from "../../../../../tests/helpers/mocks.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   DbConnection,
@@ -45,6 +52,9 @@ import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
+import { jsonOutputLayer, streamJsonOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { StackApi, stackApiLayer, StackTargetResolver } from "../stack.shared.ts";
 import { stackStart } from "./start.handler.ts";
 import { StackCommandStartError } from "./start.errors.ts";
@@ -305,29 +315,28 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
           );
           return members;
         }),
-      plan: (creations) =>
+      // Delegates to the production planner so paths/shared-API-port normalization match what
+      // `packages/stack` actually reports, instead of a hand-rolled approximation.
+      plan: (creations: ReadonlyArray<ServiceCreationInput>) =>
         Effect.forEach(members, (member) =>
-          member.status.pipe(
-            Effect.map(({ config }): ReadonlyArray<PlannedInstance> => {
-              const request = creations.find(({ service }) => service === member.service);
-              if (request === undefined) return [];
-              const base = { id: member.id, service: member.service, member: true };
-              if (config.service === "database" && request.service === "database")
-                return [
-                  postgresVersion(config.config.version) === postgresVersion(request.config.version)
-                    ? { ...base, change: "unchanged" }
-                    : { ...base, change: "incompatible", paths: ["config.version"] },
-                ];
-              if (!Equal.equals(config.endpoints, request.endpoints))
-                return [{ ...base, change: "incompatible", paths: ["endpoints.http.port"] }];
-              return [
-                Equal.equals(config.config, request.config)
-                  ? { ...base, change: "unchanged" }
-                  : { ...base, change: "changed", paths: ["config"] },
-              ];
-            }),
+          member.status.pipe(Effect.map(({ config }) => ({ id: member.id, creation: config }))),
+        ).pipe(
+          Effect.map((instances) =>
+            planSupabaseComposition(
+              {
+                instances,
+                composition: {
+                  members: members.map(({ id }) => ({
+                    id,
+                    activation: activations.get(id) ?? "eager",
+                  })),
+                  dependencies: [],
+                },
+              },
+              creations,
+            ),
           ),
-        ).pipe(Effect.map((planned) => planned.flat())),
+        ),
       configure: ({ members: configured }) =>
         Effect.sync(() => {
           activations = new Map(configured.map(({ id, activation }) => [id, activation]));
@@ -398,7 +407,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
 const layers = (
   root: string,
   fixture: ReturnType<typeof fakeStack>,
-  output = mockOutput(),
+  output: Pick<ReturnType<typeof mockOutput>, "layer"> = mockOutput(),
   existing = true,
   explicitWorkdir = false,
   // Fixtures request the native runtime, so pin a host that ships native artifacts.
@@ -443,6 +452,57 @@ const layers = (
     stdinLayer.pipe(Layer.provide(mockTty({ stdinIsTty: false, stdoutIsTty: false }))),
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
   );
+};
+
+const machineEnvelope = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+/**
+ * A real captured `Stdio` layer, needed only by the JSON/stream-json failure-envelope tests below
+ * since `machineErrorContextLayer`'s merge into the error envelope lives inside the real
+ * `jsonOutputLayer`/`streamJsonOutputLayer` `fail` implementations, which `mockOutput()` never
+ * replicates.
+ */
+const mockCapturingStdio = () => {
+  const stdout: Array<string> = [];
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() => {
+            stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+          }),
+        ),
+      stderr: () => Sink.forEach(() => Effect.void),
+    }),
+  );
+  return { layer, stdout };
+};
+
+/**
+ * Wires the real `jsonOutputLayer`/`streamJsonOutputLayer` over a captured `Stdio`, with
+ * `machineErrorContextLayer` merged alongside it (matching `start.command.ts`'s composition) so
+ * the handler and the output layer's `fail` share the same live cell, plus a real
+ * `mockProcessControl()` since `withJsonErrorHandling` sets the exit code on it.
+ */
+const jsonErrorLayers = (
+  root: string,
+  fixture: ReturnType<typeof fakeStack>,
+  format: "json" | "stream-json",
+) => {
+  const stdio = mockCapturingStdio();
+  const processControl = mockProcessControl();
+  const outputLayer = format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
+  const layer = Layer.mergeAll(
+    layers(root, fixture, { layer: outputLayer.pipe(Layer.provide(stdio.layer)) }),
+    machineErrorContextLayer,
+    processControl.layer,
+  );
+  return { layer, stdio, processControl };
 };
 
 describe("experimental stack start", () => {
@@ -1212,6 +1272,117 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("names a dedicated (non-shared) port's own config key", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-dedicated-port-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "dedicated-port"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "dedicated-port"\n[studio]\nport = 12345\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
+      });
+      // A dedicated port only affects its own service, unlike the shared API port.
+      if (error instanceof StackCommandStartError)
+        expect(error.message).not.toContain("[api] port");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports a shared API port transitioning from automatic to fixed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-api-to-fixed-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "api-to-fixed"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "api-to-fixed"\n[api]\nport = 54999\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("[api] port: saved automatic, requested 54999"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  // The production planner (`fixedApiPorts`/`withSharedApiPort`) normalizes a requested
+  // automatic shared-API port to the composition's already-fixed value whenever one exists, so a
+  // saved fixed port going back to automatic in `config.toml` reuses the saved port rather than
+  // failing. This locks down that non-obvious compatible case: it is not an incompatible path.
+  it.live(
+    "accepts a shared API port going from fixed back to automatic, reusing the saved port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-api-to-auto-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "api-to-auto"\n[api]\nport = 54321\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "api-to-auto"\n');
+        yield* fixture.stack.composition.stop;
+        // Does not throw: the planner treats this as compatible (`change: "unchanged"`), not an
+        // incompatible path to report. Reusing the already-bound port for the resumed instance is
+        // `packages/stack`'s own concern, not asserted here.
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("collects simultaneous database-version and port changes into one error", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-multi-change-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "multi-change"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "multi-change"\n[db]\nmajor_version = 15\n[studio]\nport = 12345\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+      });
+      expect(error).toMatchObject({
+        message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("names the env var override when SUPABASE_*_PORT set the saved port", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1268,27 +1439,85 @@ describe("experimental stack start", () => {
           ),
         });
         expect(error).toMatchObject({ suggestion: expect.stringContaining("database data") });
-
-        const json = mockOutput({ format: "json" });
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          'project_id = "major-version"\n[db]\nmajor_version = 15\n',
-        );
-        const jsonError = yield* stackStart(flags()).pipe(
-          Effect.provide(layers(root, fixture, json)),
-          Effect.flip,
-        );
-        expect(jsonError).toMatchObject({
-          reason: "invalid-config",
-          message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
-          suggestion: expect.stringContaining(
-            `supabase stack destroy --stack-id ${fixture.stack.id}`,
-          ),
-        });
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("names the --stack flag in the destroy command for a named stack", () =>
+  it.live("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-json-envelope-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "json-envelope"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "json-envelope"\n[db]\nmajor_version = 15\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const { layer, stdio } = jsonErrorLayers(root, fixture, "json");
+      yield* stackStart(flags()).pipe(withJsonErrorHandling, Effect.provide(layer));
+
+      expect(stdio.stdout).toHaveLength(1);
+      const envelope = yield* machineEnvelope(stdio.stdout[0]!);
+      expect(envelope._tag).toBe("Error");
+      expect(envelope.error).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+      });
+      expect(envelope.stack_changes).toEqual([
+        {
+          service: "database",
+          path: "config.version",
+          key: "[db] major_version",
+          saved: "17",
+          requested: "15",
+        },
+      ]);
+      expect(envelope.recreate_command).toBe(
+        `supabase stack destroy --stack-id ${fixture.stack.id}`,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("emits the same structured error fields on the stream-json terminal event", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stream-json-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stream-json"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "stream-json"\n[db]\nmajor_version = 15\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const { layer, stdio } = jsonErrorLayers(root, fixture, "stream-json");
+      yield* stackStart(flags()).pipe(withJsonErrorHandling, Effect.provide(layer));
+
+      const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
+      expect(event.type).toBe("error");
+      expect(event.error).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+      });
+      expect(event.stack_changes).toEqual([
+        {
+          service: "database",
+          path: "config.version",
+          key: "[db] major_version",
+          saved: "17",
+          requested: "15",
+        },
+      ]);
+      expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-named-destroy-" });
@@ -1320,8 +1549,12 @@ describe("experimental stack start", () => {
       );
 
       expect(error).toMatchObject({
-        suggestion: expect.stringContaining("supabase stack destroy --stack feature-a"),
+        suggestion: expect.stringContaining(
+          `supabase stack destroy --stack-id ${fixture.stack.id}\` (stack feature-a)`,
+        ),
       });
+      if (error instanceof StackCommandStartError)
+        expect(error.suggestion).not.toContain("--stack feature-a");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
