@@ -642,7 +642,8 @@ The state root is the stack registry root. Each stack keeps one state document a
 <stateRoot>/<stack-id>/logs/<service>/<instance-id>/<generation>.log   persisted service output
 ```
 
-The owner is the only subscriber of each instance's output. It writes one record per line, `<ISO
+The owner is the only subscriber of each instance's output. It writes one record per line, ended by
+`\n`, `\r\n` or a lone `\r` so carriage-return progress updates become separate records, `<ISO
 time> <stdout|stderr|launch|lost> <launch id>[ truncated] | <text>`, into immutable generation-named
 segments: each owner start opens a new generation on the instance's first output, and a record that
 would take a segment past 5 MiB starts the next one. The oldest closed segments except the newest
@@ -650,8 +651,11 @@ are deleted while an instance holds more than 10 MiB or 64 segments. Records car
 of their first byte. Line state is kept per launch, process and stream; chunk sequence numbers span
 a launch's processes, so a process whose output was all dropped still shows as `lost`. A late
 partial line of an ended launch waits for its newline for two seconds of quiet, or until the store
-closes. Lines are cut at 32 KiB; chunks the in-memory output buffer dropped, that failed to write,
-or that were still queued when a bounded drain at close ran out are recorded as `lost`. Every
+closes. Lines are cut at 32 KiB; chunks the in-memory output buffer dropped or that were still
+queued when a bounded drain at close ran out, and records that failed to write, are recorded as
+`lost`; a write that fails part-way can count records that did land, so the count is an upper bound.
+Closing aborts filesystem work still pending after 5 seconds; output not yet written by then is not
+recorded. Every
 reader, live or offline, reads segments by position, so history and following share one path; a
 follow can resume at a record position, and a reader that finds its segment deleted reports a
 `lost` gap marker, which carries `resumeAt` instead of a record position. Destroying an instance deletes its segments, and an owner start removes directories of
@@ -664,7 +668,7 @@ direct backend (never the proxy, so shipping neither wakes it nor counts as acti
 at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
 position of its last shipped record, written atomically after each body settles: a missing cursor
 or unreadable cursor starts at the oldest retained segment, and a cursor in a deleted segment
-resumes at the oldest retained one. Bodies of an instance are sequential. Event ids
+resumes at the next retained one. Bodies of an instance are sequential. Event ids
 derive from the instance and record position, and Logflare keeps the first row per id, so a failed
 body is posted again until it settles or the target changes. A 401, 403 or 404 response pauses the
 instance with its cursor until the target changes; any other 4xx except 408 and 429 skips the body. The target is re-selected when the composition or Analytics' health changes.

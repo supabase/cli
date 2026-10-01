@@ -44,7 +44,7 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
-import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import { LogTail, StackError, type Definition, type Observation } from "./Rpc.ts";
 import {
   readStackLogs as readPersistedLogs,
   sinceMillis,
@@ -1058,7 +1058,9 @@ export const readStackLogs = Effect.fn("Stack.readStackLogs")(
       root,
       ...(options.instances === undefined ? {} : { instances: options.instances }),
       ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
-      ...(options.tail === undefined ? {} : { tail: options.tail }),
+      ...(options.tail === undefined
+        ? {}
+        : { tail: yield* Schema.decodeEffect(LogTail)(options.tail) }),
     });
   },
   Effect.mapError((cause) => failure("readStackLogs", cause)),

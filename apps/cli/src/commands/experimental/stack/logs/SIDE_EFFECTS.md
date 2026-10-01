@@ -29,8 +29,10 @@ the selected services, with the `launch` and `lost` markers between them.
 ISO-8601 time, or `start`, which keeps each instance's records from its latest
 launch (all of them when retention removed that launch record). Records are
 ordered by timestamp, service, instance, and file position. Timestamps are the
-owner's clock at each line's first byte. History is read as a stream holding at
-most N lines per instance, while every matching line is counted for the footer.
+owner's clock at each line's first byte. Lines end at `\n`, `\r\n`, or a lone
+`\r`, so carriage-return progress updates print as separate lines. History is
+read as a stream holding at most N lines per instance, while every matching line
+is counted for the footer.
 
 `-f/--follow` requires a reachable owner: without one it fails with status 1
 before printing anything and suggests running without `--follow`. It prints the

@@ -1,11 +1,14 @@
 import { Duration, Effect, Predicate, Schedule } from "effect";
 
-/** The errno code a platform error carries on its cause, when it has one. */
+/** The errno code a platform error carries on its cause, also when another error wraps it. */
 export const errorCode = (error: unknown): string | undefined => {
-  if (!Predicate.hasProperty(error, "cause")) return undefined;
-  return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
-    ? error.cause.code
-    : undefined;
+  let current = error;
+  for (let depth = 0; depth < 4 && Predicate.hasProperty(current, "cause"); depth++) {
+    current = current.cause;
+    if (Predicate.hasProperty(current, "code") && typeof current.code === "string")
+      return current.code;
+  }
+  return undefined;
 };
 
 /** Windows reports a file that another process holds or replaces as a transient sharing violation. */

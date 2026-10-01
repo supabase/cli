@@ -5,10 +5,12 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Option,
   Path,
   PubSub,
+  Queue,
   Ref,
   Schema,
   Scope,
@@ -110,7 +112,10 @@ const readerPermits = 1024;
 const retryBaseMillis = 100;
 const retryMaxMillis = 30_000;
 const drainBatch = 4096;
-const drainTimeout = Duration.seconds(5);
+/** Draining output still queued at close stops here; the rest is recorded as `lost`. */
+const drainTimeout = Duration.seconds(4);
+/** Detaching aborts filesystem work still pending here, so a hung write cannot block shutdown. */
+const shutdownTimeout = Duration.seconds(5);
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -323,14 +328,16 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       atEnd: true,
       partial,
     });
-    const first = listed[0];
-    if (first === undefined) return fresh ? atEnd(false) : relist(false);
-    if (cursor.generation < first) {
-      const resumeAt = { generation: first, byteOffset: 0 };
+    /** Reports the records of the cursor's deleted segment as a gap before `generation`. */
+    const gap = Effect.fnUntraced(function* (generation: number) {
+      const resumeAt = { generation, byteOffset: 0 };
       const records: ReadonlyArray<LogRecord> =
         cursor.generation === 0 ? [] : [{ kind: "lost", timestamp: yield* nowIso, resumeAt }];
       return { records, cursor: resumeAt, listed, atEnd: false, partial: false } satisfies Step;
-    }
+    });
+    const first = listed[0];
+    if (first === undefined) return fresh ? atEnd(false) : relist(false);
+    if (cursor.generation < first) return yield* gap(first);
     const newer = listed.find((generation) => generation > cursor.generation);
     const moveOn = (generation: number): Step => ({
       records: [],
@@ -340,7 +347,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       partial: false,
     });
     if (!listed.includes(cursor.generation))
-      return newer !== undefined ? moveOn(newer) : fresh ? atEnd(false) : relist(false);
+      return newer !== undefined ? yield* gap(newer) : fresh ? atEnd(false) : relist(false);
     const chunk = yield* readAt(directory, cursor, live);
     if (Option.isNone(chunk)) return relist(false);
     if (chunk.value.progressed)
@@ -381,8 +388,8 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
   });
 
   /**
-   * Reads the history after `cursor`. With `tail`, only the newest segments that hold the last
-   * `tail` records are read.
+   * Reads the history after `cursor`. With `tail`, every segment is read and only the last `tail`
+   * records are kept.
    */
   const history = Effect.fnUntraced(function* (
     directory: string,
@@ -400,25 +407,17 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
           cursor: live === undefined ? cursor : yield* live.lock.withPermits(1)(Ref.get(live.end)),
           listed,
         };
-      // A partial line is written when it ends, so a segment can hold a record older than records
-      // in the segment before it; one more segment is read past each stopping point.
-      const collected: Array<LogRecord> = [];
+      // A partial line is written when it ends, so any segment can hold the newest records.
+      let records: ReadonlyArray<LogRecord> = [];
       let end: LogPosition = cursor;
-      let first = true;
-      let past = 0;
-      for (const generation of listed.toReversed()) {
+      for (const [index, generation] of listed.toReversed().entries()) {
         const segment = yield* readSegment(directory, generation, live);
-        if (first) end = segment.position;
-        first = false;
-        const matching = segment.records.filter(keep);
-        collected.push(...matching);
-        const olderThanSince =
-          options.since !== undefined && segment.records.length > 0 && matching.length === 0;
-        past = collected.length >= tail || olderThanSince ? past + 1 : 0;
-        if (past > 1) break;
+        if (index === 0) end = segment.position;
+        records = [...records, ...segment.records.filter(keep)]
+          .toSorted(compareRecords)
+          .slice(-tail);
       }
-      const records = collected.toSorted(compareRecords);
-      return { records: records.slice(Math.max(0, records.length - tail)), cursor: end, listed };
+      return { records, cursor: end, listed };
     }
     const records: Array<LogRecord> = [];
     let current = cursor;
@@ -528,10 +527,14 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     readonly instanceId: string;
     readonly directory: string;
     readonly closed: Deferred.Deferred<void>;
+    /** Completed at the shutdown deadline; filesystem work then fails at once. */
+    readonly abort: Deferred.Deferred<void>;
     readonly scope: Scope.Closeable;
   }
   const instances = yield* Ref.make<ReadonlyMap<string, Attached>>(new Map());
   const closed = yield* Ref.make(false);
+  // Forked before the close finalizer is added, so the store's close detaches instances first.
+  const instancesScope = yield* Scope.fork(storeScope, "parallel");
   const attached = (instanceId: string) =>
     Ref.get(instances).pipe(
       Effect.flatMap((current) => {
@@ -553,6 +556,25 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     yield* Scope.close(instance.scope, Exit.void);
   });
 
+  /** Detaches instances together under one deadline that aborts their pending filesystem work. */
+  const detachAll = Effect.fnUntraced(function* (handles: ReadonlyArray<Attached>) {
+    if (handles.length === 0) return;
+    const deadline = yield* Effect.sleep(shutdownTimeout).pipe(
+      Effect.andThen(
+        Effect.forEach(handles, (handle) => Deferred.succeed(handle.abort, undefined)),
+      ),
+      Effect.andThen(
+        Effect.logWarning(
+          "Log persistence did not stop by the shutdown deadline; output not yet written is not recorded",
+        ),
+      ),
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.forEach(handles, detach, { concurrency: "unbounded", discard: true }).pipe(
+      Effect.ensuring(Fiber.interrupt(deadline)),
+    );
+  });
+
   const attach = Effect.fn("LogStore.attach")(function* (instance: AttachedInstance) {
     if (yield* Ref.get(closed)) return;
     const directory = path.join(options.root, instance.service, instance.instanceId);
@@ -567,7 +589,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       ),
     );
     const latest = Option.getOrElse(existing, () => []).at(-1);
-    const scope = yield* Scope.fork(storeScope, "sequential");
+    const scope = yield* Scope.fork(instancesScope, "sequential");
     const handle: Attached = {
       service: instance.service,
       instanceId: instance.instanceId,
@@ -581,6 +603,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       }),
       wake: yield* PubSub.sliding<void>(1),
       closed: yield* Deferred.make<void>(),
+      abort: yield* Deferred.make<void>(),
     };
     const splitter = makeSplitter();
     let nextGeneration: number | undefined = Option.isSome(existing)
@@ -594,14 +617,36 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           size: number;
         }
       | undefined;
-    /** Chunks not persisted, reported as `lost` by the next successful append. */
+    /** Scopes of segments a failed or aborted write may have left with a partial record. */
+    const retired: Array<Scope.Closeable> = [];
+    /** Output not persisted, reported as `lost` by the next successful append. */
     const dropped = new Map<string, Extract<LogEntry, { kind: "lost" }>>();
     let broken: { readonly attempts: number; readonly retryAt: number } | undefined;
 
+    const aborted = new LogStoreError({
+      operation: "write",
+      message: `Log persistence of ${instance.service} instance ${instance.instanceId} passed the shutdown deadline`,
+    });
+    /** Fails at the shutdown deadline instead of waiting for filesystem work that hangs. */
+    const abortable = <A>(effect: Effect.Effect<A, LogStoreError>) =>
+      Deferred.isDone(handle.abort).pipe(
+        Effect.flatMap((done) =>
+          done
+            ? Effect.fail(aborted)
+            : effect.pipe(
+                Effect.raceFirst(
+                  Deferred.await(handle.abort).pipe(Effect.andThen(Effect.fail(aborted))),
+                ),
+              ),
+        ),
+      );
+
     const closeFile = Effect.suspend(() => {
-      const current = file;
+      const scopes = [...retired.splice(0), ...(file === undefined ? [] : [file.scope])];
       file = undefined;
-      return current === undefined ? Effect.void : Scope.close(current.scope, Exit.void);
+      return Effect.forEach(scopes, (current) => Scope.close(current, Exit.void), {
+        discard: true,
+      });
     });
 
     const enforceRetention = reader.segments(directory).pipe(
@@ -675,7 +720,13 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         }
         yield* current.handle.writeAll(bytes).pipe(
           Effect.mapError(storeError("write")),
-          Effect.tapError(() => closeFile),
+          // The next record goes to a new segment, never after a partial one.
+          Effect.onError(() =>
+            Effect.sync(() => {
+              retired.push(current.scope);
+              file = undefined;
+            }),
+          ),
         );
         current.size += bytes.length;
         yield* Ref.set(handle.end, { generation: current.generation, byteOffset: current.size });
@@ -683,7 +734,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       });
 
     /** Appends records, rotating before a record that would overflow the segment. */
-    const append = (entries: ReadonlyArray<LogEntry>) =>
+    const append = (entries: ReadonlyArray<LogEntry>, progress: { written: number }) =>
       Effect.gen(function* () {
         let pieces: Array<Uint8Array> = [];
         let pending = 0;
@@ -692,6 +743,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           const used = (file?.size ?? 0) + pending;
           if (used > 0 && used + bytes.length > rotateBytes) {
             if (pieces.length > 0) yield* writePieces(pieces);
+            progress.written += pieces.length;
             yield* openGeneration;
             pieces = [];
             pending = 0;
@@ -700,40 +752,57 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           pending += bytes.length;
         }
         if (pieces.length > 0) yield* writePieces(pieces);
+        progress.written += pieces.length;
       });
 
-    const countDropped = (chunks: ReadonlyArray<LaunchOutput>) => {
-      for (const chunk of chunks) {
-        const key = `${chunk.launchId}:${chunk.stream}`;
-        dropped.set(key, {
-          kind: "lost",
-          timestamp: chunk.time,
-          launchId: chunk.launchId,
-          stream: chunk.stream,
-          count: (dropped.get(key)?.count ?? 0) + 1,
-        });
-      }
+    const dropKey = (launchId: number, stream: LaunchOutput["stream"]) => `${launchId}:${stream}`;
+    const drop = (
+      launchId: number,
+      stream: LaunchOutput["stream"],
+      time: number,
+      count: number,
+    ) => {
+      const previous = dropped.get(dropKey(launchId, stream));
+      dropped.set(dropKey(launchId, stream), {
+        kind: "lost",
+        timestamp: Math.max(previous?.timestamp ?? time, time),
+        launchId,
+        stream,
+        count: (previous?.count ?? 0) + count,
+      });
+    };
+    const dropChunks = (chunks: ReadonlyArray<LaunchOutput>) => {
+      for (const chunk of chunks) drop(chunk.launchId, chunk.stream, chunk.time, 1);
+    };
+    /** Records unwritten records as `lost`: a line counts as one chunk, a gap with its count. */
+    const dropRecords = (entries: ReadonlyArray<LogEntry>) => {
+      for (const entry of entries)
+        if (entry.kind === "lost") drop(entry.launchId, entry.stream, entry.timestamp, entry.count);
+        else if (entry.kind !== "launch") drop(entry.launchId, entry.kind, entry.timestamp, 1);
     };
 
     /**
-     * Appends records. After a failure, appends are skipped with backoff and their chunks are
-     * reported as `lost` once writing works again.
+     * Appends records after the pending `lost` markers. After a failure, appends are skipped with
+     * backoff, and every record not written is reported as `lost` once writing works again.
      */
-    const persist = Effect.fnUntraced(function* (
-      entries: ReadonlyArray<LogEntry>,
-      chunks: ReadonlyArray<LaunchOutput>,
-    ) {
+    const persist = Effect.fnUntraced(function* (entries: ReadonlyArray<LogEntry>) {
       const now = yield* Clock.currentTimeMillis;
-      if (broken !== undefined && now < broken.retryAt) return countDropped(chunks);
+      if (broken !== undefined && now < broken.retryAt) return dropRecords(entries);
       if (entries.length === 0 && dropped.size === 0) return;
-      const written = yield* append([...dropped.values(), ...entries]).pipe(Effect.exit);
+      const markers = [...dropped.values()];
+      const markersWritten = { written: 0 };
+      const entriesWritten = { written: 0 };
+      const written = yield* abortable(
+        append(markers, markersWritten).pipe(Effect.andThen(append(entries, entriesWritten))),
+      ).pipe(Effect.exit);
+      for (const marker of markers.slice(0, markersWritten.written))
+        dropped.delete(dropKey(marker.launchId, marker.stream));
       if (Exit.isSuccess(written)) {
-        dropped.clear();
         broken = undefined;
         return;
       }
-      countDropped(chunks);
-      if (broken === undefined)
+      dropRecords(entries.slice(entriesWritten.written));
+      if (broken === undefined && !(yield* Deferred.isDone(handle.abort)))
         yield* Effect.logError(
           `Unable to persist ${instance.service} logs of instance ${instance.instanceId}; retrying with a new segment`,
           written.cause,
@@ -745,20 +814,50 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       };
     });
 
+    /** Persists flushed partial lines; only waiting for the writer lock is interruptible. */
+    const persistFlushed = (flushed: (now: number) => ReadonlyArray<LogEntry>) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          handle.lock.withPermits(1)(
+            Effect.uninterruptible(Effect.suspend(() => persist(flushed(now)))),
+          ),
+        ),
+      );
+
+    /** Signals the late-line flusher that an ended launch holds a partial line. */
+    const lateLines = yield* Queue.sliding<void>(1);
+
     const persistBatch = (chunks: ReadonlyArray<LaunchOutput>) =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap((now) =>
           handle.lock.withPermits(1)(
             Effect.suspend(() =>
-              persist(
-                [...chunks.flatMap((chunk) => splitter.push(chunk)), ...splitter.flushEnded(now)],
-                chunks,
-              ),
+              persist([
+                ...chunks.flatMap((chunk) => splitter.push(chunk)),
+                ...splitter.flushEnded(now),
+              ]),
             ),
+          ),
+        ),
+        Effect.andThen(
+          Effect.suspend(() =>
+            splitter.endedDue() === undefined ? Effect.void : Queue.offer(lateLines, undefined),
           ),
         ),
         Effect.uninterruptible,
       );
+
+    /** Flushes late partial lines of ended launches once they stay idle for the grace. */
+    const flushLate = Effect.forever(
+      Effect.gen(function* () {
+        yield* Queue.take(lateLines);
+        for (let due = splitter.endedDue(); due !== undefined; due = splitter.endedDue()) {
+          const now = yield* Clock.currentTimeMillis;
+          if (now < due) yield* Effect.sleep(Duration.millis(due - now));
+          else yield* persistFlushed((at) => splitter.flushEnded(at));
+        }
+      }),
+    );
 
     const flushLaunches = Effect.gen(function* () {
       const previous = yield* Ref.make<number | undefined>(undefined);
@@ -770,13 +869,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
             Effect.flatMap((prior) =>
               prior === undefined
                 ? Effect.void
-                : Clock.currentTimeMillis.pipe(
-                    Effect.flatMap((now) =>
-                      handle.lock.withPermits(1)(
-                        Effect.suspend(() => persist(splitter.endLaunch(prior, now), [])),
-                      ),
-                    ),
-                  ),
+                : persistFlushed((now) => splitter.endLaunch(prior, now)),
             ),
           ),
         ),
@@ -801,9 +894,9 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
               Effect.flatMap((chunks) =>
                 handle.lock.withPermits(1)(
                   Effect.suspend(() => {
-                    countDropped(chunks);
+                    dropChunks(chunks);
                     broken = undefined;
-                    return persist([], []);
+                    return persist([]);
                   }),
                 ),
               ),
@@ -814,15 +907,18 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     yield* Scope.addFinalizer(
       scope,
       drain.pipe(
-        Effect.andThen(Clock.currentTimeMillis),
-        Effect.flatMap((now) =>
-          handle.lock.withPermits(1)(Effect.suspend(() => persist(splitter.flush(now), []))),
+        Effect.andThen(persistFlushed((now) => splitter.flush(now))),
+        // Closing outlives the deadline so aborted segments still release their handles.
+        Effect.andThen(
+          Effect.forkDetach(closeFile).pipe(
+            Effect.flatMap((fiber) => abortable(Fiber.join(fiber))),
+          ),
         ),
         Effect.ignore,
-        Effect.andThen(closeFile),
       ),
     );
-    // A taken batch is always persisted, so interruption only lands while waiting for output.
+    // A taken batch is persisted unless the shutdown deadline aborts it, so interruption only
+    // lands while waiting for output.
     yield* Effect.forkIn(
       Effect.forever(
         Effect.uninterruptibleMask((restore) =>
@@ -832,6 +928,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       scope,
     );
     yield* Effect.forkIn(flushLaunches, scope);
+    yield* Effect.forkIn(flushLate, scope);
     yield* Ref.update(instances, (current) => new Map(current).set(instance.instanceId, handle));
   });
 
@@ -846,15 +943,15 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     readonly instanceId: string;
   }) {
     const directory = path.join(options.root, target.service, target.instanceId);
-    const instance = (yield* Ref.get(instances)).get(target.instanceId);
-    if (instance !== undefined) {
-      yield* Ref.update(instances, (current) => {
+    const instance = yield* Ref.modify(
+      instances,
+      (current): readonly [Attached | undefined, ReadonlyMap<string, Attached>] => {
         const next = new Map(current);
         next.delete(target.instanceId);
-        return next;
-      });
-      yield* detach(instance);
-    }
+        return [current.get(target.instanceId), next];
+      },
+    );
+    if (instance !== undefined) yield* detachAll([instance]);
     yield* fs
       .remove(directory, { recursive: true, force: true })
       .pipe(retryShared, Effect.mapError(removeError(directory)));
@@ -879,7 +976,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
   const close = Effect.gen(function* () {
     yield* Ref.set(closed, true);
     const current = yield* Ref.getAndSet(instances, new Map());
-    yield* Effect.forEach(current.values(), detach, { discard: true });
+    yield* detachAll([...current.values()]);
   }).pipe(Effect.withSpan("LogStore.close"));
 
   yield* Effect.addFinalizer(() => close);

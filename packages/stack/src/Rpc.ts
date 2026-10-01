@@ -80,6 +80,8 @@ export const Definition = Schema.Struct({ id: Schema.String, creation: ServiceCr
 export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
+/** How many of the latest log records a read starts with. */
+export const LogTail = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const SnapshotScope = Schema.Literals(snapshotScopes);
 
 export const CommandEvent = Schema.TaggedUnion({
@@ -122,7 +124,7 @@ export const OwnerRpc = RpcGroup.make(
       ...Instance,
       from: Schema.optionalKey(LogPosition),
       since: Schema.optionalKey(Schema.String),
-      tail: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+      tail: Schema.optionalKey(LogTail),
       follow: Schema.Boolean,
     },
     success: LogRecord,

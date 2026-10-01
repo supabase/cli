@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Clock,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -17,7 +18,7 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 import type { LaunchOutput } from "../runtime/Session.ts";
-import { segmentName, type LogRecord } from "./LogRecord.ts";
+import { endedLineGraceMillis, segmentName, type LogRecord } from "./LogRecord.ts";
 import * as LogStore from "./LogStore.ts";
 
 const encoder = new TextEncoder();
@@ -66,13 +67,43 @@ const fakeInstance = (
     };
   });
 
-/** Opens a store in its own scope so a test can close it like an owner stop. */
+/** Opens a store in a child of the test's scope so a test can close it like an owner stop. */
 const openStore = (root: string, options: Omit<LogStore.LogStoreOptions, "root"> = {}) =>
   Effect.gen(function* () {
-    const scope = yield* Scope.make();
+    const scope = yield* Scope.fork(yield* Scope.Scope);
     const store = yield* LogStore.make({ root, ...options }).pipe(Scope.provide(scope));
     return { store, close: Scope.close(scope, Exit.void) };
   });
+
+/** A file system whose segment writes run `writeAll` in place of the real file's. */
+const replaceWrites = (
+  fs: FileSystem.FileSystem,
+  writeAll: (
+    file: FileSystem.File,
+    buffer: Uint8Array,
+  ) => Effect.Effect<void, PlatformError.PlatformError>,
+): FileSystem.FileSystem => ({
+  ...fs,
+  open: (target, options) =>
+    fs.open(target, options).pipe(
+      Effect.map((file): FileSystem.File => ({
+        [FileSystem.FileTypeId]: FileSystem.FileTypeId,
+        stat: file.stat,
+        seek: (offset, from) => file.seek(offset, from),
+        sync: file.sync,
+        read: (buffer) => file.read(buffer),
+        readAlloc: (size) => file.readAlloc(size),
+        truncate: (length) => file.truncate(length),
+        write: (buffer) => file.write(buffer),
+        writeAll: (buffer) => writeAll(file, buffer),
+      })),
+    ),
+});
+
+const lostCounts = (records: Iterable<LogRecord>) =>
+  Array.from(records).flatMap(({ kind, launchId, stream, count }) =>
+    kind === "lost" ? [{ launchId, stream, count }] : [],
+  );
 
 /** Takes `count` items; `Queue.takeN` returns fewer once it has waited for the first. */
 const takeExactly = <A>(queue: Queue.Dequeue<A>, count: number) =>
@@ -213,6 +244,140 @@ describe("LogStore", () => {
       const [flushed] = yield* reader.take(1);
 
       expect(flushed).toMatchObject({ kind: "stdout", launchId: 1, text: "no trailing newline" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("writes a late partial line of an ended launch once it stays quiet for the grace", () =>
+    Effect.gen(function* () {
+      const root = yield* tempRoot("log-store-quiet-");
+      const { store } = yield* openStore(root);
+      const instance = yield* fakeInstance("quiet");
+      yield* store.attach(instance);
+      const reader = yield* collect(store.read("quiet", { from: "oldest", follow: true }));
+      yield* instance.setLaunch(1);
+      yield* instance.publish(instance.chunk(1, "ending"));
+      yield* reader.take(1);
+      yield* instance.setLaunch(undefined);
+      yield* untilLast(reader, "ending");
+
+      yield* instance.publish(instance.chunk(1, "late"), instance.chunk(1, "written\n", "stderr"));
+      yield* untilLast(reader, "written");
+      const beforeGrace = yield* Queue.size(reader.records);
+      yield* TestClock.adjust(endedLineGraceMillis);
+      const [late] = yield* reader.take(1);
+
+      expect(beforeGrace).toBe(0);
+      expect(late).toMatchObject({ kind: "stdout", launchId: 1, text: "late" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("records each failed write as lost once, including a partial-line flush", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* tempRoot("log-store-failed-write-");
+      const failures = yield* Queue.unbounded<string>();
+      const failOnce = new Set(["pending", "doomed"]);
+      const injected = replaceWrites(fs, (file, buffer) => {
+        const text = new TextDecoder().decode(buffer);
+        const word = [...failOnce].find((candidate) => text.includes(candidate));
+        if (word === undefined) return file.writeAll(buffer);
+        failOnce.delete(word);
+        // Leaves part of the first record behind, like a write that fails part-way.
+        return file.writeAll(buffer.subarray(0, 10)).pipe(
+          Effect.andThen(Queue.offer(failures, word)),
+          Effect.andThen(
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "write",
+              }),
+            ),
+          ),
+        );
+      });
+      const { store } = yield* openStore(root, { rotateBytes: 1 }).pipe(
+        Effect.provideService(FileSystem.FileSystem, injected),
+      );
+      const instance = yield* fakeInstance("failing");
+      yield* store.attach(instance);
+      const reader = yield* collect(store.read("failing", { from: "oldest", follow: true }));
+      yield* instance.setLaunch(1);
+      yield* instance.publish(instance.chunk(1, "first\n"));
+      yield* untilLast(reader, "first");
+      yield* instance.publish(instance.chunk(1, "pending"), instance.chunk(1, "sync\n", "stderr"));
+      yield* untilLast(reader, "sync");
+
+      yield* instance.setLaunch(undefined);
+      const flushFailure = yield* Queue.take(failures);
+      yield* TestClock.adjust(100);
+      yield* instance.publish({ ...instance.chunk(2, "doomed\n"), seq: 0 });
+      const lineFailure = yield* Queue.take(failures);
+      yield* TestClock.adjust(200);
+      yield* instance.publish({ ...instance.chunk(2, "after\n"), seq: 1 });
+      const followed = yield* untilLast(reader, "after");
+      const offline = yield* LogStore.readStackLogs({ root });
+
+      const expectedLost = [
+        { launchId: 1, stream: "stdout", count: 1 },
+        { launchId: 2, stream: "stdout", count: 1 },
+      ];
+      expect([flushFailure, lineFailure]).toEqual(["pending", "doomed"]);
+      expect(lostCounts(followed)).toEqual(expectedLost);
+      expect(lostCounts(offline)).toEqual(expectedLost);
+      expect(texts(offline)).toEqual(["first", "sync", "after"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("closes by the shutdown deadline while a segment write hangs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* tempRoot("log-store-hung-write-");
+      const writing = yield* Deferred.make<void>();
+      const injected = replaceWrites(fs, () =>
+        Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      const opened = yield* openStore(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, injected),
+      );
+      const instance = yield* fakeInstance("hung");
+      yield* opened.store.attach(instance);
+      yield* instance.publish(instance.chunk(1, "never written\n"));
+      yield* Deferred.await(writing);
+
+      const closing = yield* Effect.forkChild(opened.close, { startImmediately: true });
+      yield* TestClock.adjust(4_999);
+      const beforeDeadline = closing.pollUnsafe();
+      yield* TestClock.adjust(1);
+      yield* Fiber.join(closing);
+
+      expect(beforeDeadline).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads past a partial record a write left at the end of an earlier segment", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* tempRoot("log-store-torn-");
+      const directory = path.join(root, "auth", "torn");
+      const torn = path.join(directory, segmentName(1));
+      const content =
+        "1970-01-01T00:00:00.000Z stdout 1 | whole\n1970-01-01T00:00:00.000Z stdout 1 | to";
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(torn, content);
+      const { store } = yield* openStore(root);
+      const instance = yield* fakeInstance("torn");
+      yield* store.attach(instance);
+      const reader = yield* collect(store.read("torn", { from: "oldest", follow: true }));
+
+      yield* instance.publish(instance.chunk(2, "after\n"));
+      const followed = yield* untilLast(reader, "after");
+
+      expect(texts(followed)).toEqual(["whole", "after"]);
+      expect(texts(yield* LogStore.readStackLogs({ root }))).toEqual(["whole", "after"]);
+      expect(texts(yield* LogStore.readStackLogs({ root, tail: 3 }))).toEqual(["whole", "after"]);
+      expect(yield* fs.readFileString(torn)).toBe(content);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -446,7 +611,41 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps sweeping older segments past one it cannot delete", () =>
+  it.effect("tails the newest record when several newer segments hold older flushed lines", () =>
+    Effect.gen(function* () {
+      const root = yield* tempRoot("log-store-late-flushes-");
+      const { store } = yield* openStore(root, { rotateBytes: 1 });
+      const instance = yield* fakeInstance("flushes");
+      yield* store.attach(instance);
+      const progress = yield* collect(store.read("flushes", { from: "oldest", follow: true }));
+      yield* instance.setLaunch(1);
+
+      // Partial lines of a later process part stay open while part 0 writes a newer line.
+      yield* TestClock.setTime(1_000);
+      yield* instance.publish(
+        { ...instance.chunk(1, "early stdout"), part: 1 },
+        { ...instance.chunk(1, "early stderr", "stderr"), part: 1 },
+      );
+      yield* TestClock.setTime(3_000);
+      yield* instance.publish(instance.chunk(1, "latest\n"));
+      yield* untilLast(progress, "latest");
+      yield* TestClock.setTime(4_000);
+      yield* instance.setLaunch(undefined);
+      yield* untilLast(progress, "early stderr");
+
+      const offline = yield* LogStore.readStackLogs({ root, tail: 1 });
+      const live = yield* (yield* store.read("flushes", {
+        from: "oldest",
+        follow: false,
+        tail: 1,
+      })).pipe(Stream.runCollect);
+
+      expect(texts(offline)).toEqual(["latest"]);
+      expect(texts(live)).toEqual(["latest"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("sweeps past a segment it cannot delete and reports the deleted ones to a reader", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -481,8 +680,19 @@ describe("LogStore", () => {
       yield* store.read("stuck", { from: "end", follow: false }).pipe(Effect.asVoid);
 
       const segments = yield* fs.readDirectory(path.join(root, "auth", "stuck"));
+      const resumed = yield* (yield* store.read("stuck", {
+        from: { generation: 3, byteOffset: 0 },
+        follow: false,
+      })).pipe(Stream.runCollect);
+
       expect(segments).toContain(held);
+      expect(segments).not.toContain(segmentName(3));
       expect(segments.length).toBeLessThanOrEqual(4);
+      const [gap] = resumed;
+      expect(gap?.kind).toBe("lost");
+      expect(gap?.position).toBeUndefined();
+      expect(gap?.resumeAt?.generation).toBeGreaterThan(3);
+      expect(texts(resumed).at(-1)).toBe("stuck line 9");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

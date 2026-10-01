@@ -336,7 +336,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
               for (const record of page) {
                 if (record.position === undefined) {
                   yield* Effect.logWarning(
-                    `Logs of ${service} instance ${instanceId} were deleted before shipping; resuming from the oldest retained record`,
+                    `Logs of ${service} instance ${instanceId} were deleted before shipping; resuming from the next retained record`,
                   );
                   continue;
                 }

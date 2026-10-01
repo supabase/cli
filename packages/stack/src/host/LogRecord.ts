@@ -121,7 +121,9 @@ interface LineState {
   text: string;
   bytes: number;
   since: number | undefined;
-  /** Publish time of bytes the decoder holds until their character completes. */
+  /** Bytes the decoder holds until their character completes. */
+  held: Uint8Array;
+  /** Publish time of the first held byte. */
   heldSince: number | undefined;
   /** Publish time of the latest chunk. */
   lastChunk: number;
@@ -137,6 +139,8 @@ export interface Splitter {
   readonly endLaunch: (launchId: number, now: number) => ReadonlyArray<LogEntry>;
   /** Flushes partial lines late chunks of ended launches left once they are idle for a grace. */
   readonly flushEnded: (now: number) => ReadonlyArray<LogEntry>;
+  /** The earliest time `flushEnded` has a partial line to flush. */
+  readonly endedDue: () => number | undefined;
   readonly flush: (now: number) => ReadonlyArray<LogEntry>;
 }
 
@@ -147,15 +151,26 @@ const seenLaunches = 64;
 /** A late partial line of an ended launch waits this long for its newline. */
 export const endedLineGraceMillis = 2_000;
 
-/** Reports whether `bytes` ends inside a UTF-8 sequence the next chunk completes. */
-const endsMidCharacter = (bytes: Uint8Array) => {
+const noBytes = new Uint8Array(0);
+
+/** The length of the UTF-8 sequence that `bytes` ends inside and a later chunk completes. */
+const incompleteLength = (bytes: Uint8Array) => {
   for (let index = bytes.length - 1; index >= Math.max(0, bytes.length - 4); index--) {
     const byte = bytes[index] ?? 0;
     if ((byte & 0xc0) === 0x80) continue;
     const width = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
-    return bytes.length - index < width;
+    return bytes.length - index < width ? bytes.length - index : 0;
   }
-  return false;
+  return 0;
+};
+
+/** The last four bytes of the held bytes followed by `bytes`. */
+const lastBytes = (held: Uint8Array, bytes: Uint8Array) => {
+  if (bytes.length >= 4) return bytes.subarray(bytes.length - 4);
+  const joined = new Uint8Array(held.length + bytes.length);
+  joined.set(held);
+  joined.set(bytes, held.length);
+  return joined.subarray(Math.max(0, joined.length - 4));
 };
 
 /** Splits lines like `Stream.decodeText` plus `Stream.splitLines`, per launch, part and stream. */
@@ -211,6 +226,7 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
   const flushLine = (state: LineState, now: number, out: Array<LogEntry>) => {
     append(state, state.decoder.decode(), state.heldSince ?? now, out);
     state.decoder = new TextDecoder();
+    state.held = noBytes;
     state.heldSince = undefined;
     state.midCarriageReturn = false;
     if (state.since !== undefined && !state.discarding) terminate(state, now, out);
@@ -255,6 +271,7 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
         text: "",
         bytes: 0,
         since: undefined,
+        held: noBytes,
         heldSince: undefined,
         lastChunk: now,
         midCarriageReturn: false,
@@ -275,17 +292,17 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
       });
       resetLine(state);
       state.decoder = new TextDecoder();
+      state.held = noBytes;
       state.heldSince = undefined;
       state.midCarriageReturn = false;
     }
     expected.set(sequence, Math.max(next, chunk.seq + 1));
     const carried = state.heldSince;
     const text = state.decoder.decode(chunk.bytes, { stream: true });
-    state.heldSince = endsMidCharacter(chunk.bytes)
-      ? text.length === 0
-        ? (carried ?? now)
-        : now
-      : undefined;
+    const tail = lastBytes(state.held, chunk.bytes);
+    const held = incompleteLength(tail);
+    state.held = tail.slice(tail.length - held);
+    state.heldSince = held === 0 ? undefined : held > chunk.bytes.length ? (carried ?? now) : now;
     if (text.length > 0) {
       let from = state.midCarriageReturn && text.startsWith("\n") ? 1 : 0;
       state.midCarriageReturn = false;
@@ -324,11 +341,19 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
     return out;
   };
 
+  const endedDue = () => {
+    let due: number | undefined;
+    for (const state of states.values())
+      if (ended.has(state.launchId) && pending(state))
+        due = Math.min(due ?? Number.POSITIVE_INFINITY, state.lastChunk + endedLineGraceMillis);
+    return due;
+  };
+
   const flush = (now: number) => {
     const out: Array<LogEntry> = [];
     for (const state of states.values()) flushLine(state, now, out);
     return out;
   };
 
-  return { push, endLaunch, flushEnded, flush };
+  return { push, endLaunch, flushEnded, endedDue, flush };
 };

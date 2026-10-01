@@ -180,7 +180,6 @@ describe("splitter", () => {
     expect(waiting).toEqual([]);
     expect(lines(flushed)).toEqual(["idle partial"]);
   });
-
   it("reports a whole process of a launch whose chunks were dropped", () => {
     const splitter = makeSplitter();
     push(splitter, chunk(1, 0, "startup\n", "stdout", 0), 10);
@@ -209,6 +208,22 @@ describe("splitter", () => {
       { kind: "stdout", timestamp: 10, launchId: 1, text: "€", truncated: false },
     ]);
   });
+
+  it.each(["€", "😀"])(
+    "stamps a line with its first byte's time when %s spans one chunk per byte",
+    (character) => {
+      const splitter = makeSplitter();
+      const encoded = bytes(`${character}\n`);
+
+      const pushed = Array.from(encoded, (byte, seq) =>
+        push(splitter, { ...chunk(1, seq, ""), bytes: new Uint8Array([byte]) }, 10 * (seq + 1)),
+      );
+
+      expect(pushed.at(-1)).toEqual([
+        { kind: "stdout", timestamp: 10, launchId: 1, text: character, truncated: false },
+      ]);
+    },
+  );
 
   it("ends a startup command's unterminated line when the main process of the launch starts", () => {
     const splitter = makeSplitter();

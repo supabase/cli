@@ -128,20 +128,21 @@ describe("owner persisted logs", () => {
         const records = yield* Effect.promise(() =>
           readStackLogs({ stateRoot: owner.stateRoot, stackId: owner.stack.id }),
         );
-        const invalid = yield* Effect.promise(() =>
-          readStackLogs({
-            stateRoot: owner.stateRoot,
-            stackId: owner.stack.id,
-            since: "soon",
-          }).then(
-            () => undefined,
-            (error: unknown) => error,
-          ),
+        const rejected = (options: { readonly since?: string; readonly tail?: number }) =>
+          Effect.promise(() =>
+            readStackLogs({ stateRoot: owner.stateRoot, stackId: owner.stack.id, ...options }).then(
+              () => undefined,
+              (error: unknown) => error,
+            ),
+          );
+        const invalid = yield* Effect.forEach(
+          [{ since: "soon" }, { tail: -1 }, { tail: 1.5 }, { tail: Number.POSITIVE_INFINITY }],
+          rejected,
         );
 
         expect(records[0]).toMatchObject({ kind: "launch", service: "mail", instanceId: mail.id });
         expect(records.map(({ text }) => text)).toContain(followed?.text);
-        expect(invalid).toBeInstanceOf(StackError);
+        for (const error of invalid) expect(error).toBeInstanceOf(StackError);
       }),
     ).pipe(Effect.provide(services)),
   );
@@ -180,63 +181,67 @@ describe("owner persisted logs", () => {
     ).pipe(Effect.provide(services)),
   );
 
-  it.live("keeps database logs across a data reset and removes all logs with the stack", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const owner = yield* openOwner("owner-logs-reset-", "native");
-        const database = yield* owner.rpc.createService({
-          service: "database",
-          config: {
-            version: "17",
-            databasePassword: Redacted.make("owner-logs-reset-password"),
-            jwtExpiry: 3600,
-          },
-          endpoints: { sql: { port: "auto" } },
-        });
-        yield* owner.rpc.startService({ id: database.id });
-        yield* owner.rpc.readyService({ id: database.id });
-        yield* owner.rpc.stopService({ id: database.id });
-        const before = Array.from(
-          yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
-        );
+  it.live(
+    "keeps database logs across a data reset and removes all logs with the stack",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const owner = yield* openOwner("owner-logs-reset-", "native");
+          const database = yield* owner.rpc.createService({
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("owner-logs-reset-password"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          });
+          yield* owner.rpc.startService({ id: database.id });
+          yield* owner.rpc.readyService({ id: database.id });
+          yield* owner.rpc.stopService({ id: database.id });
+          const before = Array.from(
+            yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
+          );
 
-        yield* owner.rpc.resetData({ id: database.id });
-        const after = Array.from(
-          yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
-        );
+          yield* owner.rpc.resetData({ id: database.id });
+          const after = Array.from(
+            yield* owner.rpc.readLogs({ id: database.id, follow: false }).pipe(Stream.runCollect),
+          );
 
-        expect(before.some(isOutput)).toBe(true);
-        expect(after.slice(0, before.length)).toEqual(before);
-        yield* owner.namespace.destroy;
-        expect(yield* fs.exists(owner.logsRoot)).toBe(false);
-      }),
-    ).pipe(Effect.provide(services)),
+          expect(before.some(isOutput)).toBe(true);
+          expect(after.slice(0, before.length)).toEqual(before);
+          yield* owner.namespace.destroy;
+          expect(yield* fs.exists(owner.logsRoot)).toBe(false);
+        }),
+      ).pipe(Effect.provide(services)),
     { timeout: 120_000 },
   );
 
-  it.live.skipIf(process.platform === "win32")("persists container output", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const owner = yield* openOwner("owner-logs-docker-", "docker");
-        const mail = yield* owner.rpc.createService({
-          service: "mail",
-          config: {},
-          endpoints: { http: { port: "auto" } },
-        });
-        yield* owner.rpc.startService({ id: mail.id });
-        yield* owner.rpc.readyService({ id: mail.id });
+  it.live.skipIf(process.platform === "win32")(
+    "persists container output",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const owner = yield* openOwner("owner-logs-docker-", "docker");
+          const mail = yield* owner.rpc.createService({
+            service: "mail",
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          });
+          yield* owner.rpc.startService({ id: mail.id });
+          yield* owner.rpc.readyService({ id: mail.id });
 
-        const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+          const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
 
-        expect(followed).toMatchObject({ launchId: 1 });
-        expect(yield* fs.readDirectory(path.join(owner.logsRoot, "mail", mail.id))).toEqual([
-          "0000000001.log",
-        ]);
-      }),
-    ).pipe(Effect.provide(services)),
+          expect(followed).toMatchObject({ launchId: 1 });
+          expect(yield* fs.readDirectory(path.join(owner.logsRoot, "mail", mail.id))).toEqual([
+            "0000000001.log",
+          ]);
+        }),
+      ).pipe(Effect.provide(services)),
     { timeout: 120_000 },
   );
 });
