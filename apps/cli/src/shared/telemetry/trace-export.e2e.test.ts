@@ -10,6 +10,7 @@ interface TraceLine {
         readonly name: string;
         readonly traceId: string;
         readonly parentSpanId?: string;
+        readonly status: { readonly code: number };
         readonly attributes?: ReadonlyArray<{
           readonly key: string;
           readonly value: { readonly intValue?: string | number };
@@ -18,6 +19,9 @@ interface TraceLine {
     }>;
   }>;
 }
+
+const STATUS_OK = 1;
+const STATUS_ERROR = 2;
 
 const withoutTraceEnv = {
   SUPABASE_DEBUG: undefined,
@@ -60,11 +64,26 @@ describe("trace export across the process exit", () => {
       expect(spans.find((span) => span.name === "cli.run")).toMatchObject({
         traceId,
         parentSpanId: parentId,
+        status: { code: STATUS_OK },
       });
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("records a failed command's exit code on cli.run", () =>
+  it.live("warns once and still runs the command when the trace file is /dev/null", () =>
+    Effect.gen(function* () {
+      const { exitCode, stdout, stderr } = yield* runSupabaseEffect(["--version"], {
+        env: { ...withoutTraceEnv, SUPABASE_TRACE_FILE: "/dev/null" },
+      });
+
+      expect(exitCode, stderr).toBe(0);
+      expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+      expect(stderr.trim().split("\n")).toEqual([
+        expect.stringMatching(/^Warning: tracing disabled: /u),
+      ]);
+    }),
+  );
+
+  it.live("records a failed command's exit code and error status on cli.run", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -80,6 +99,7 @@ describe("trace export across the process exit", () => {
       const run = (yield* readTraceSpans(tracePath)).find((span) => span.name === "cli.run");
       const recorded = run?.attributes?.find((attribute) => attribute.key === "process.exit_code");
       expect(Number(recorded?.value.intValue)).toBe(1);
+      expect(run?.status.code).toBe(STATUS_ERROR);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

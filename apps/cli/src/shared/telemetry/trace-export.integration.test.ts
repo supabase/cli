@@ -11,6 +11,9 @@ import {
   Logger,
   Option,
   Path,
+  References,
+  Sink,
+  Stdio,
 } from "effect";
 import {
   VALID_REF,
@@ -23,11 +26,7 @@ import {
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
 import { projectsList } from "../../commands/projects/list/list.handler.ts";
-import {
-  TraceExportConfigError,
-  withTraceExport,
-  type TraceSettings,
-} from "./trace-export.layer.ts";
+import { withTraceExport, type TraceSettings } from "./trace-export.layer.ts";
 
 interface ExportedAttribute {
   readonly key: string;
@@ -209,14 +208,33 @@ describe("withTraceExport with a trace file", () => {
     }).pipe(Effect.provide(runtime)),
   );
 
-  it.live("fails with a config error when the file cannot be created", () =>
+  it.live.each([
+    { target: "a path in a missing directory", tracePath: "missing/trace.jsonl" },
+    { target: "/dev/null", tracePath: "/dev/null" },
+  ])("warns once and runs the command untraced for $target", ({ tracePath }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const tracePath = path.join(tempRoot.current, "missing", "trace.jsonl");
+      const written: Array<string> = [];
+      const stderr = Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => {
+          written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        }),
+      );
 
-      const error = yield* Effect.void.pipe(withTraceExport(fileSink(tracePath), {}), Effect.flip);
+      const result = yield* Effect.gen(function* () {
+        return { tracerEnabled: yield* References.TracerEnabled, value: "ran" };
+      }).pipe(
+        withTraceExport(fileSink(path.resolve(tempRoot.current, tracePath)), {}),
+        Effect.provide(Stdio.layerTest({ stderr: () => stderr })),
+      );
 
-      expect(error).toBeInstanceOf(TraceExportConfigError);
+      expect(result).toEqual({ tracerEnabled: false, value: "ran" });
+      const lines = written
+        .join("")
+        .split("\n")
+        .filter((line) => line.length > 0);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^Warning: tracing disabled: could not start trace export: /u);
     }).pipe(Effect.provide(runtime)),
   );
 });
@@ -256,6 +274,10 @@ describe("withTraceExport for a failed migration", () => {
       expect(span?.attributes).toContainEqual({
         key: "db.response.status_code",
         value: { stringValue: "23502" },
+      });
+      expect(span?.attributes).toContainEqual({
+        key: "error.type",
+        value: { stringValue: "DbExecError" },
       });
       expect(span?.events.map(({ name, attributes }) => ({ name, attributes }))).toEqual([
         logEvent("WARN"),

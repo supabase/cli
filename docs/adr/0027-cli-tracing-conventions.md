@@ -14,13 +14,19 @@ OpenTelemetry backend, costs nothing when unused, and never exports secrets.
 
 Each run produces one trace rooted at `cli.run`, exported to at most one sink:
 
-- `SUPABASE_TRACE_FILE=<path>` appends one OTLP/JSON batch per line. The file is created with, or
-  restricted to, mode `0600`.
+- `SUPABASE_TRACE_FILE=<path>` appends one OTLP/JSON batch per line to a regular file. A relative
+  path resolves once against the startup directory, so a command that changes directory keeps one
+  file. A new file is created with mode `0600`; an existing one is restricted to `0600` when the
+  CLI may change its mode.
 - `SUPABASE_OTLP_ENDPOINT=<base URL>` posts OTLP/HTTP JSON to `<base>/v1/traces`, with optional
   `SUPABASE_OTLP_HEADERS=k=v,k2=v2`.
-- Setting both is a configuration error. Generic `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and
-  `OTEL_RESOURCE_ATTRIBUTES` are ignored, so a global collector setting never receives CLI
-  internals.
+- Tracing never stops a command. Setting both variables, a malformed endpoint or headers, or a
+  sink that cannot start prints one `Warning: tracing disabled: <reason>` line on stderr and runs
+  the command untraced, with the same exit code and stdout. Generic `OTEL_EXPORTER_OTLP_*`,
+  `OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES` are ignored, so a global collector setting
+  never receives CLI internals.
+- `cli.run` records `process.exit_code` and ends with error status, as a `CliNonZeroExit`
+  failure, when that code is non-zero.
 - `TRACEPARENT` becomes the parent of `cli.run` when a sink is active, even when its sampled flag
   is off, and spawned processes receive a `TRACEPARENT` for their process span.
 - `SUPABASE_DEBUG=1` or `SUPABASE_TELEMETRY_DEBUG=1`, read from the project `.env` or the
@@ -36,17 +42,19 @@ Exported traces carry no free-form text, because pattern scrubbing cannot reliab
 inside Postgres details, dollar-quoted bodies, or Storage paths in error messages. Every exported
 batch and console line goes through `shared/telemetry/trace-sanitize.ts`:
 
-- Exception events keep only `exception.type`, the error class or tag name. Failed spans record a
-  Postgres SQLSTATE carried by the error as `db.response.status_code`.
+- Exception events keep only `exception.type`, the error class or tag name, and only when it reads
+  as an identifier; any other name becomes `Error`. Failed spans record a tagged error's tag as
+  `error.type` and a Postgres SQLSTATE carried by the error as `db.response.status_code`.
 - Status messages are dropped; the status code remains.
 - Log events are renamed `log` and keep only `effect.logLevel`.
 - `db.query.text` becomes `db.operation.name`, `db.query.hash`, and `db.query.length`. The hash is
   keyed by a random salt drawn once per sink or console, so repeated statements match within one
   run but hashes cannot be compared across runs.
-- `url.full` loses its query; `url.full` and `url.path` hide Storage bucket and object names;
-  `url.query` and non-allowlisted headers are dropped; string values under credential-named keys
-  are dropped; remaining strings are scrubbed of credentials, SQL literals, and constraint key
-  values, and capped at 2 KB.
+- `url.full` loses its query; `url.full` and `url.path` hide Storage bucket and object names in
+  `object`, `bucket`, and `iceberg/bucket` routes; `url.query` and non-allowlisted headers are
+  dropped; string values under credential-named keys are dropped; remaining strings are scrubbed
+  of URL userinfo up to its last `@`, other credentials, SQL literals, and constraint key values,
+  and capped at 2 KB.
 
 HTTP trace-header propagation is disabled for all CLI requests.
 

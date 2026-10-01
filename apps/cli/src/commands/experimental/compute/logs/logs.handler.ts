@@ -333,7 +333,9 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       // window and filtering by actual timestamp lets both cases coexist.
       const followFloorMs = flags.tail === 0 ? startedAtMs : Number.NEGATIVE_INFINITY;
 
+      let pollAttempts = 0;
       const pollOnce = Effect.gen(function* () {
+        pollAttempts += 1;
         const cursor = yield* Ref.get(newestSeen);
 
         // One request only ever answers with the newest page of its window, so a
@@ -421,8 +423,10 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
       // A 429 or a blip should not end a tail the user is watching; the spaced
       // schedule rides out a transient failure without spending the rate limit.
       // Anything definitive surfaces on the first attempt.
+      // A tail can run for hours, so polls emit no request spans; the attempt count stands in.
       const poll = pollOnce.pipe(
         Effect.retry({ schedule: readRetrySchedule, while: isRetryableFollowFailure }),
+        Effect.withTracerEnabled(false),
       );
 
       // `repeat` runs the body before applying the schedule, so the first poll is
@@ -441,6 +445,10 @@ export const computeLogs = Effect.fn("compute.logs")(function* (
           .pipe(
             Effect.flatMap((signal) => processControl.setExitCode(signal === "SIGINT" ? 130 : 0)),
           ),
+      ).pipe(
+        Effect.ensuring(
+          Effect.suspend(() => Effect.annotateCurrentSpan({ "poll.attempt_count": pollAttempts })),
+        ),
       );
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
   }).pipe(Effect.ensuring(telemetryState.flush));

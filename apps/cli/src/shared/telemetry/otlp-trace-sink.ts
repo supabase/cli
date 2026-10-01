@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Redacted, Semaphore } from "effect";
+import { Effect, FileSystem, Layer, Option, PlatformError, Redacted, Semaphore } from "effect";
 import type { Crypto, Scope, Tracer } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
@@ -54,8 +54,19 @@ export const fileTransportLayer = (path: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const lock = yield* Semaphore.make(1);
+      const existing = yield* Effect.option(fs.stat(path));
+      if (Option.isSome(existing) && existing.value.type !== "File") {
+        return yield* PlatformError.systemError({
+          _tag: "BadResource",
+          module: "FileSystem",
+          method: "open",
+          pathOrDescriptor: path,
+          description: "not a regular file",
+        });
+      }
       yield* fs.writeFile(path, new Uint8Array(), { flag: "a", mode: 0o600 });
-      yield* fs.chmod(path, 0o600);
+      // A file we did not create may belong to someone else; owner-only mode is then best-effort.
+      yield* Effect.ignore(fs.chmod(path, 0o600));
       return HttpClient.make((request) => {
         const write =
           request.body._tag === "Uint8Array"

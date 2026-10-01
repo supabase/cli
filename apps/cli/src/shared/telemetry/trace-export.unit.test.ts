@@ -1,42 +1,71 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Option, Redacted, Sink, Stdio } from "effect";
+import { ConfigProvider, Effect, Layer, Option, Path, Redacted, Sink, Stdio } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
-import {
-  resolveTraceSettings,
-  TraceExportConfigError,
-  withDebugConsole,
-  withTraceExport,
-} from "./trace-export.layer.ts";
+import { resolveTraceSettings, withDebugConsole, withTraceExport } from "./trace-export.layer.ts";
 
-const withEnv = (env: Record<string, string>) =>
-  Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(env)));
+const capturedStderr = () => {
+  const written: Array<string> = [];
+  const sink = Sink.forEach((chunk: string | Uint8Array) =>
+    Effect.sync(() => {
+      written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+    }),
+  );
+  return {
+    layer: Stdio.layerTest({ stderr: () => sink }),
+    text: () => written.join(""),
+  };
+};
+
+const resolveWithEnv = (env: Readonly<Record<string, string | undefined>>) => {
+  const stderr = capturedStderr();
+  return resolveTraceSettings.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ConfigProvider.layer(ConfigProvider.fromUnknown(env)),
+        BunServices.layer,
+        stderr.layer,
+      ),
+    ),
+    Effect.map((settings) => ({ settings, stderr: stderr.text() })),
+  );
+};
 
 describe("resolveTraceSettings", () => {
-  it.effect("rejects a trace file and an OTLP endpoint set together", () =>
+  it.effect("warns and turns tracing off for a trace file and an OTLP endpoint set together", () =>
     Effect.gen(function* () {
-      const error = yield* resolveTraceSettings.pipe(
-        withEnv({
-          SUPABASE_TRACE_FILE: "/tmp/trace.jsonl",
-          SUPABASE_OTLP_ENDPOINT: "http://localhost:4318",
-        }),
-        Effect.flip,
-      );
+      const { settings, stderr } = yield* resolveWithEnv({
+        SUPABASE_TRACE_FILE: "/tmp/trace.jsonl",
+        SUPABASE_OTLP_ENDPOINT: "http://localhost:4318",
+      });
 
-      expect(error).toBeInstanceOf(TraceExportConfigError);
-      expect(error.message).toContain("choose one trace destination");
+      expect(settings).toEqual({ sink: Option.none() });
+      expect(stderr).toBe(
+        "Warning: tracing disabled: SUPABASE_TRACE_FILE and SUPABASE_OTLP_ENDPOINT are both set; choose one trace destination\n",
+      );
     }),
+  );
+
+  it.effect("resolves a relative trace file against the startup directory", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+
+      const { settings } = yield* resolveWithEnv({ SUPABASE_TRACE_FILE: "traces/run.jsonl" });
+
+      expect(Option.getOrThrow(settings.sink)).toEqual({
+        _tag: "File",
+        path: path.join(process.cwd(), "traces", "run.jsonl"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("appends the OTLP traces path to a collector base URL", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings.pipe(
-        withEnv({
-          SUPABASE_OTLP_ENDPOINT: "http://localhost:4318/",
-          SUPABASE_OTLP_HEADERS: "x-api-key=abc%3D,x-tenant = team",
-        }),
-      );
+      const { settings } = yield* resolveWithEnv({
+        SUPABASE_OTLP_ENDPOINT: "http://localhost:4318/",
+        SUPABASE_OTLP_HEADERS: "x-api-key=abc%3D,x-tenant = team",
+      });
 
       expect(Option.getOrThrow(settings.sink)).toMatchObject({
         _tag: "Otlp",
@@ -52,9 +81,9 @@ describe("resolveTraceSettings", () => {
 
   it.effect("keeps an endpoint that already targets the traces path", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings.pipe(
-        withEnv({ SUPABASE_OTLP_ENDPOINT: "https://otel.example.com/v1/traces" }),
-      );
+      const { settings } = yield* resolveWithEnv({
+        SUPABASE_OTLP_ENDPOINT: "https://otel.example.com/v1/traces",
+      });
 
       expect(Option.getOrThrow(settings.sink)).toMatchObject({
         url: "https://otel.example.com/v1/traces",
@@ -62,22 +91,33 @@ describe("resolveTraceSettings", () => {
     }),
   );
 
-  it.effect("rejects a non-http endpoint", () =>
+  it.effect.each([
+    {
+      setting: "endpoint",
+      env: { SUPABASE_OTLP_ENDPOINT: "localhost:4318" },
+      reason: "SUPABASE_OTLP_ENDPOINT must be an http(s) URL",
+    },
+    {
+      setting: "headers",
+      env: { SUPABASE_OTLP_ENDPOINT: "http://localhost:4318", SUPABASE_OTLP_HEADERS: "no-sep" },
+      reason: "SUPABASE_OTLP_HEADERS must be a comma-separated list",
+    },
+  ])("warns and turns tracing off for invalid collector $setting", ({ env, reason }) =>
     Effect.gen(function* () {
-      const error = yield* resolveTraceSettings.pipe(
-        withEnv({ SUPABASE_OTLP_ENDPOINT: "localhost:4318" }),
-        Effect.flip,
-      );
+      const { settings, stderr } = yield* resolveWithEnv(env);
 
-      expect(error).toBeInstanceOf(TraceExportConfigError);
+      expect(settings).toEqual({ sink: Option.none() });
+      expect(stderr).toContain(`Warning: tracing disabled: ${reason}`);
+      expect(stderr.split("\n").filter((line) => line.length > 0)).toHaveLength(1);
     }),
   );
 
-  it.effect("is off without a sink, even with SUPABASE_DEBUG set", () =>
+  it.effect("is off without a sink or warning, even with SUPABASE_DEBUG set", () =>
     Effect.gen(function* () {
-      const settings = yield* resolveTraceSettings.pipe(withEnv({ SUPABASE_DEBUG: "1" }));
+      const { settings, stderr } = yield* resolveWithEnv({ SUPABASE_DEBUG: "1" });
 
       expect(settings).toEqual({ sink: Option.none() });
+      expect(stderr).toBe("");
     }),
   );
 });
@@ -106,12 +146,7 @@ const runWithDebugConsole = Effect.fnUntraced(function* (
   program: Effect.Effect<void>,
   options: { readonly enclosingRoot?: boolean } = {},
 ) {
-  const written: Array<string> = [];
-  const stderr = Sink.forEach((chunk: string | Uint8Array) =>
-    Effect.sync(() => {
-      written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-    }),
-  );
+  const stderr = capturedStderr();
   const consoled = withDebugConsole(program);
   yield* (
     options.enclosingRoot === true
@@ -119,15 +154,10 @@ const runWithDebugConsole = Effect.fnUntraced(function* (
       : consoled.pipe(withTraceExport({ sink: Option.none() }, {}))
   ).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        BunServices.layer,
-        Stdio.layerTest({ stderr: () => stderr }),
-        mockRuntimeInfo(),
-        debugSettings(debug),
-      ),
+      Layer.mergeAll(BunServices.layer, stderr.layer, mockRuntimeInfo(), debugSettings(debug)),
     ),
   );
-  return written.join("");
+  return stderr.text();
 });
 
 describe("withDebugConsole", () => {

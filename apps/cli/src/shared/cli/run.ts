@@ -55,7 +55,6 @@ import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
 import {
   resolveTraceSettings,
-  TraceExportConfigError,
   withDebugConsole,
   withTraceExport,
 } from "../telemetry/trace-export.layer.ts";
@@ -630,6 +629,16 @@ function cliProgramFor<
   );
 }
 
+/**
+ * Marks `cli.run` failed for a non-zero exit, after the outcome is already rendered and reported.
+ * It is recovered to the exit code right outside the span, so it is a span signal, not a CLI error.
+ */
+class CliNonZeroExit {
+  readonly _tag = "CliNonZeroExit";
+  readonly name = "CliNonZeroExit";
+  constructor(readonly code: number) {}
+}
+
 export async function runCli<
   Name extends string,
   Input,
@@ -773,13 +782,13 @@ export async function runCli<
           withTraceExport(settings, { "process.boot_ms": bootMs })(
             runToExitCode(program).pipe(
               Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+              Effect.flatMap((code) =>
+                code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
+              ),
             ),
           ),
         ),
-        Effect.catchIf(
-          (error) => error instanceof TraceExportConfigError,
-          (error) => runToExitCode(Effect.fail(error)),
-        ),
+        Effect.catchTag("CliNonZeroExit", (failure) => Effect.succeed(failure.code)),
       );
       return yield* processControl.exit(exitCode);
     }).pipe(

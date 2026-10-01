@@ -581,7 +581,6 @@ TestDbRunError
 TestNewFileExistsError
 TestNewInvalidNameError
 TestNewWriteError
-TraceExportConfigError
 UnknownComputeExposureError
 UnknownComputeRuntimeError
 UnknownComputeSizeError

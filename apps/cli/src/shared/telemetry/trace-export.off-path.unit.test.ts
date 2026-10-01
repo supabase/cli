@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, References } from "effect";
+import { Effect, Layer, Option, References, Sink, Stdio } from "effect";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
-import { TraceExportConfigError, withTraceExport } from "./trace-export.layer.ts";
+import { withTraceExport } from "./trace-export.layer.ts";
 
 const runtime = Layer.mergeAll(mockRuntimeInfo(), BunServices.layer);
 
@@ -32,16 +32,25 @@ describe("withTraceExport without a sink", () => {
     }),
   );
 
-  it.effect("loads the sink module once a sink is configured", () =>
+  it.effect("loads the sink module once a sink is configured, and runs untraced if it breaks", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.void.pipe(
-        withTraceExport({ sink: Option.some({ _tag: "File", path: "/unused" }) }, {}),
-        Effect.provide(runtime),
-        Effect.flip,
+      const written: Array<string> = [];
+      const stderr = Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => {
+          written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        }),
       );
 
-      expect(error).toBeInstanceOf(TraceExportConfigError);
+      const tracerEnabled = yield* Effect.service(References.TracerEnabled).pipe(
+        withTraceExport({ sink: Option.some({ _tag: "File", path: "/unused" }) }, {}),
+        Effect.provide(Layer.mergeAll(runtime, Stdio.layerTest({ stderr: () => stderr }))),
+      );
+
       expect(sinkModule.evaluated).toBe(true);
+      expect(tracerEnabled).toBe(false);
+      expect(written.join("")).toMatch(
+        /^Warning: tracing disabled: could not start trace export: /u,
+      );
     }),
   );
 });

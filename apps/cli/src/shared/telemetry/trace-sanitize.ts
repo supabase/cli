@@ -10,6 +10,8 @@ const QUERY_HASH_HEX_LENGTH = 16;
 const MAX_CAUSE_DEPTH = 6;
 /** SQLSTATE classes start with a digit or `F0`/`HV`/`P0`/`XX`, which excludes errno names like `E2BIG`. */
 const POSTGRES_SQLSTATE = /^(?:[0-9][0-9A-Z]|F0|HV|P0|XX)[0-9A-Z]{3}$/u;
+const TRACE_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$.]{0,99}$/u;
+const FALLBACK_ERROR_TYPE = "Error";
 /** Effect also merges `OTEL_RESOURCE_ATTRIBUTES` into the resource; only these keys are exported. */
 const RESOURCE_ATTRIBUTE_KEPT: ReadonlySet<string> = new Set([
   "service.name",
@@ -44,7 +46,8 @@ const HEADER_ATTRIBUTE = /^http\.(?:request|response)\.header\.(.+)$/u;
 const DENIED_KEY = /token|password|secret|apikey|api_key|authorization|cookie/iu;
 
 const VALUE_SCRUBBERS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/giu, `$1${REDACTED}@`],
+  // Greedy to the last `@`, since a password may itself contain `/` or `@`.
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s"'<>]+@/giu, `$1${REDACTED}@`],
   [/(https?:\/\/[^\s?#"'<>]+)\?[^\s#"'<>]*/giu, `$1?${REDACTED}`],
   [/\b(bearer\s+)[A-Za-z0-9._~+/=-]+/giu, `$1${REDACTED}`],
   [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/gu, REDACTED],
@@ -60,7 +63,14 @@ const VALUE_SCRUBBERS: ReadonlyArray<readonly [RegExp, string]> = [
   [/(?<![\w'])'(?:[^']|'')*'(?!\w)/gu, `'${REDACTED}'`],
 ];
 
-const STORAGE_OBJECT_PATH = "/storage/v1/object/";
+const STORAGE_PATH = "/storage/v1/";
+const STORAGE_OBJECT_ROUTE = "object/";
+/** Storage routes whose remaining path segments name a bucket or object. */
+const STORAGE_NAMED_ROUTES: ReadonlyArray<string> = [
+  STORAGE_OBJECT_ROUTE,
+  "bucket/",
+  "iceberg/bucket/",
+];
 const STORAGE_OBJECT_VERBS: ReadonlySet<string> = new Set([
   "sign",
   "public",
@@ -83,12 +93,17 @@ export function scrubString(value: string): string {
     : scrubbed;
 }
 
-function redactStorageObjectPath(pathname: string): string {
-  const start = pathname.indexOf(STORAGE_OBJECT_PATH);
+function redactStoragePath(pathname: string): string {
+  const start = pathname.indexOf(STORAGE_PATH);
   if (start === -1) return pathname;
-  const prefixEnd = start + STORAGE_OBJECT_PATH.length;
+  const routeStart = start + STORAGE_PATH.length;
+  const route = STORAGE_NAMED_ROUTES.find((candidate) =>
+    pathname.startsWith(candidate, routeStart),
+  );
+  if (route === undefined) return pathname;
+  const prefixEnd = routeStart + route.length;
   const [first = "", ...rest] = pathname.slice(prefixEnd).split("/");
-  if (STORAGE_OBJECT_VERBS.has(first)) {
+  if (route === STORAGE_OBJECT_ROUTE && STORAGE_OBJECT_VERBS.has(first)) {
     return rest.join("/").length === 0
       ? pathname
       : `${pathname.slice(0, prefixEnd)}${first}/${REDACTED}`;
@@ -101,7 +116,7 @@ function redactStorageObjectPath(pathname: string): string {
 function urlWithoutQuery(value: string): string {
   try {
     const url = new URL(value);
-    return `${url.protocol}//${url.host}${redactStorageObjectPath(url.pathname)}`;
+    return `${url.protocol}//${url.host}${redactStoragePath(url.pathname)}`;
   } catch {
     return scrubString(value);
   }
@@ -109,7 +124,7 @@ function urlWithoutQuery(value: string): string {
 
 function sanitizeUrlAttribute(key: string, value: string): string | undefined {
   if (key === "url.full") return urlWithoutQuery(value);
-  if (key === "url.path") return scrubString(redactStorageObjectPath(value));
+  if (key === "url.path") return scrubString(redactStoragePath(value));
   return undefined;
 }
 
@@ -237,15 +252,29 @@ function sanitizeKeyValues(
   return result;
 }
 
+/** `value` when it reads as a class or tag name; an error's `name` is free text that may carry user data. */
+function errorTypeName(value: unknown): string {
+  return typeof value === "string" && TRACE_IDENTIFIER.test(value) ? value : FALLBACK_ERROR_TYPE;
+}
+
 /** Log events are named after their free-text message, so every non-exception event becomes `log`. */
 function sanitizeEvent(event: SpanEvent, hashQuery: QueryHasher): SpanEvent {
-  const name = event.name === EXCEPTION_EVENT ? EXCEPTION_EVENT : LOG_EVENT;
-  const kept = EVENT_ATTRIBUTE_KEPT[name];
+  if (event.name === EXCEPTION_EVENT) {
+    return {
+      ...event,
+      attributes: event.attributes
+        .filter((attribute) => attribute.key === EVENT_ATTRIBUTE_KEPT[EXCEPTION_EVENT])
+        .map((attribute) => ({
+          key: attribute.key,
+          value: { stringValue: errorTypeName(attribute.value.stringValue) },
+        })),
+    };
+  }
   return {
     ...event,
-    name,
+    name: LOG_EVENT,
     attributes: sanitizeKeyValues(
-      event.attributes.filter((attribute) => attribute.key === kept),
+      event.attributes.filter((attribute) => attribute.key === EVENT_ATTRIBUTE_KEPT[LOG_EVENT]),
       hashQuery,
     ),
   };
@@ -308,15 +337,29 @@ export const makeTraceSanitizer: Effect.Effect<TraceSanitizer, never, Crypto.Cry
   },
 );
 
+function failureOf(reason: Cause.Reason<unknown>): unknown {
+  if (Cause.isFailReason(reason)) return reason.error;
+  if (Cause.isDieReason(reason)) return reason.defect;
+  return undefined;
+}
+
+/** The `_tag` of a failed exit's first tagged error, if any, reduced to an identifier. */
+export function errorTypeOf(exit: Exit.Exit<unknown, unknown>): string | undefined {
+  if (Exit.isSuccess(exit)) return undefined;
+  for (const reason of exit.cause.reasons) {
+    const failure = failureOf(reason);
+    if (typeof failure !== "object" || failure === null) continue;
+    const tag = Reflect.get(failure, "_tag");
+    if (typeof tag === "string") return errorTypeName(tag);
+  }
+  return undefined;
+}
+
 /** The Postgres SQLSTATE carried by a failed exit's error or its `cause` chain, if any. */
 export function sqlStateOf(exit: Exit.Exit<unknown, unknown>): string | undefined {
   if (Exit.isSuccess(exit)) return undefined;
   for (const reason of exit.cause.reasons) {
-    let current: unknown = Cause.isFailReason(reason)
-      ? reason.error
-      : Cause.isDieReason(reason)
-        ? reason.defect
-        : undefined;
+    let current: unknown = failureOf(reason);
     for (
       let depth = 0;
       depth < MAX_CAUSE_DEPTH && typeof current === "object" && current !== null;

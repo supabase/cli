@@ -2,7 +2,6 @@ import {
   Cause,
   Config,
   Crypto,
-  Data,
   Duration,
   Effect,
   Exit,
@@ -10,6 +9,7 @@ import {
   FileSystem,
   Layer,
   Option,
+  Path,
   Queue,
   Redacted,
   Scope,
@@ -21,27 +21,22 @@ import { Headers, HttpTraceContext } from "effect/unstable/http";
 import { CLI_VERSION } from "../cli/version.ts";
 import { CliSettings } from "../config/cli-settings.service.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
-import {
-  actionability,
-  type CliErrorActionabilityDeclaration,
-  ErrorActionabilityId,
-} from "./error-actionability.ts";
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { detectCi } from "./runtime.layer.ts";
 import { ChildTracePropagation } from "./spans.ts";
-import { makeTraceSanitizer, sqlStateOf } from "./trace-sanitize.ts";
+import { errorTypeOf, makeTraceSanitizer, sqlStateOf } from "./trace-sanitize.ts";
 
 const FLUSH_TIMEOUT = Duration.seconds(2);
 const OTLP_TRACES_PATH = "/v1/traces";
 
-/** Raised when the trace export environment is contradictory or malformed. */
-export class TraceExportConfigError extends Data.TaggedError("TraceExportConfigError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
+/** Tracing never stops a command: a setup problem prints one warning and the run continues untraced. */
+const warnTracingDisabled = (reason: string) =>
+  Effect.flatMap(Stdio.Stdio, (stdio) =>
+    Stream.make(`Warning: tracing disabled: ${reason}\n`).pipe(
+      Stream.run(stdio.stderr()),
+      Effect.ignore,
+    ),
+  );
 
 type TraceSink =
   | { readonly _tag: "File"; readonly path: string }
@@ -59,7 +54,7 @@ export interface TraceSettings {
 const optionalEnv = (name: string) =>
   Config.option(Config.string(name)).pipe(
     Effect.map(Option.filter((value) => value.trim().length > 0)),
-    Effect.mapError((error) => new TraceExportConfigError({ message: error.message })),
+    Effect.mapError(() => `${name} could not be read`),
   );
 
 function otlpTracesUrl(endpoint: string): Option.Option<string> {
@@ -93,33 +88,33 @@ function parseOtlpHeaders(value: string): Option.Option<Record<string, string>> 
   return Option.some(headers);
 }
 
-const resolveSink = Effect.fnUntraced(function* (
-  file: Option.Option<string>,
-  endpoint: Option.Option<string>,
-) {
+const resolveSink = Effect.fnUntraced(function* () {
+  const file = yield* optionalEnv("SUPABASE_TRACE_FILE");
+  const endpoint = yield* optionalEnv("SUPABASE_OTLP_ENDPOINT");
   if (Option.isSome(file) && Option.isSome(endpoint)) {
-    return yield* new TraceExportConfigError({
-      message:
-        "SUPABASE_TRACE_FILE and SUPABASE_OTLP_ENDPOINT are both set; choose one trace destination.",
-    });
+    return yield* Effect.fail(
+      "SUPABASE_TRACE_FILE and SUPABASE_OTLP_ENDPOINT are both set; choose one trace destination",
+    );
   }
   if (Option.isSome(file)) {
-    return Option.some<TraceSink>({ _tag: "File", path: file.value });
+    // Resolved once against the startup cwd, so a later `process.chdir` keeps one trace file.
+    const path = yield* Path.Path;
+    return Option.some<TraceSink>({ _tag: "File", path: path.resolve(file.value) });
   }
   if (Option.isNone(endpoint)) return Option.none<TraceSink>();
 
   const url = otlpTracesUrl(endpoint.value);
   if (Option.isNone(url)) {
-    return yield* new TraceExportConfigError({
-      message: "SUPABASE_OTLP_ENDPOINT must be an http(s) URL, for example http://localhost:4318.",
-    });
+    return yield* Effect.fail(
+      "SUPABASE_OTLP_ENDPOINT must be an http(s) URL, for example http://localhost:4318",
+    );
   }
   const rawHeaders = yield* optionalEnv("SUPABASE_OTLP_HEADERS");
   const headers = Option.isSome(rawHeaders) ? parseOtlpHeaders(rawHeaders.value) : Option.some({});
   if (Option.isNone(headers)) {
-    return yield* new TraceExportConfigError({
-      message: "SUPABASE_OTLP_HEADERS must be a comma-separated list of key=value pairs.",
-    });
+    return yield* Effect.fail(
+      "SUPABASE_OTLP_HEADERS must be a comma-separated list of key=value pairs",
+    );
   }
   return Option.some<TraceSink>({
     _tag: "Otlp",
@@ -128,17 +123,16 @@ const resolveSink = Effect.fnUntraced(function* (
   });
 });
 
-/** Reads the trace sink for this run. */
-export const resolveTraceSettings = Effect.gen(function* () {
-  const sink = yield* resolveSink(
-    yield* optionalEnv("SUPABASE_TRACE_FILE"),
-    yield* optionalEnv("SUPABASE_OTLP_ENDPOINT"),
+/** Reads the trace sink for this run; an invalid setting warns and leaves tracing off. */
+export const resolveTraceSettings: Effect.Effect<TraceSettings, never, Path.Path | Stdio.Stdio> =
+  resolveSink().pipe(
+    Effect.catch((reason) => warnTracingDisabled(reason).pipe(Effect.as(Option.none<TraceSink>()))),
+    Effect.map((sink) => ({ sink })),
   );
-  return { sink } satisfies TraceSettings;
-});
 
 // An explicitly configured sink records the run even when the caller's context is unsampled.
 const externalParent = optionalEnv("TRACEPARENT").pipe(
+  Effect.orElseSucceed(() => Option.none<string>()),
   Effect.map(
     Option.flatMap((traceparent) =>
       HttpTraceContext.w3c(Headers.fromRecordUnsafe({ traceparent })),
@@ -156,7 +150,7 @@ const externalParent = optionalEnv("TRACEPARENT").pipe(
   ),
 );
 
-/** Records a failure's SQLSTATE on the span, since exported exception events keep only the type. */
+/** Records a failure's tag and SQLSTATE on the span, since exported exception events keep only the type. */
 class ObservedSpan implements Tracer.Span {
   readonly _tag = "Span";
   constructor(
@@ -194,6 +188,8 @@ class ObservedSpan implements Tracer.Span {
     return this.span.kind;
   }
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    const errorType = errorTypeOf(exit);
+    if (errorType !== undefined) this.span.attribute("error.type", errorType);
     const sqlState = sqlStateOf(exit);
     if (sqlState !== undefined) this.span.attribute("db.response.status_code", sqlState);
     this.span.end(endTime, exit);
@@ -307,12 +303,9 @@ export const withTraceExport =
   (settings: TraceSettings, attributes: Readonly<Record<string, unknown>>) =>
   <A, E, R>(
     effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<
-    A,
-    E | TraceExportConfigError,
-    R | Crypto.Crypto | FileSystem.FileSystem | RuntimeInfo
-  > => {
-    if (Option.isNone(settings.sink)) return effect.pipe(Effect.withTracerEnabled(false));
+  ): Effect.Effect<A, E, R | Crypto.Crypto | FileSystem.FileSystem | RuntimeInfo | Stdio.Stdio> => {
+    const untraced = effect.pipe(Effect.withTracerEnabled(false));
+    if (Option.isNone(settings.sink)) return untraced;
     const sink = settings.sink.value;
     return Effect.gen(function* () {
       const parent = yield* externalParent;
@@ -320,23 +313,25 @@ export const withTraceExport =
         Scope.make(),
         (scope) =>
           Layer.buildWithScope(Layer.effect(Tracer.Tracer, sinkTracer(sink)), scope).pipe(
+            Effect.map(Option.some),
             Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
               const reason = Cause.squash(cause);
-              return Effect.fail(
-                new TraceExportConfigError({
-                  message: `Could not start trace export: ${reason instanceof Error ? reason.message : String(reason)}`,
-                }),
-              );
+              return warnTracingDisabled(
+                `could not start trace export: ${reason instanceof Error ? reason.message : String(reason)}`,
+              ).pipe(Effect.as(Option.none()));
             }),
             Effect.flatMap((context) =>
-              effect.pipe(
-                Effect.withSpan("cli.run", {
-                  attributes,
-                  ...(Option.isSome(parent) ? { parent: parent.value } : {}),
-                }),
-                Effect.provideService(ChildTracePropagation, true),
-                Effect.provide(context),
-              ),
+              Option.isNone(context)
+                ? untraced
+                : effect.pipe(
+                    Effect.withSpan("cli.run", {
+                      attributes,
+                      ...(Option.isSome(parent) ? { parent: parent.value } : {}),
+                    }),
+                    Effect.provideService(ChildTracePropagation, true),
+                    Effect.provide(context.value),
+                  ),
             ),
           ),
         (scope, exit) =>

@@ -12,13 +12,17 @@ Pick one destination per run:
 
 | Variable                 | Effect                                                                   |
 | ------------------------ | ------------------------------------------------------------------------ |
-| `SUPABASE_TRACE_FILE`    | Appends one OTLP/JSON batch per line to this file (kept at `0600`).      |
+| `SUPABASE_TRACE_FILE`    | Appends one OTLP/JSON batch per line to this file (`0600` when allowed). |
 | `SUPABASE_OTLP_ENDPOINT` | Posts OTLP/HTTP JSON to `<endpoint>/v1/traces`.                          |
 | `SUPABASE_OTLP_HEADERS`  | Extra collector headers as `key=value,key2=value2` (percent-encoded).    |
 | `TRACEPARENT`            | W3C trace context adopted as the parent of `cli.run` when a sink is set. |
 
-Setting both `SUPABASE_TRACE_FILE` and `SUPABASE_OTLP_ENDPOINT` fails the run with a
-configuration error. The generic `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and
+Tracing never stops a command. When both `SUPABASE_TRACE_FILE` and `SUPABASE_OTLP_ENDPOINT` are
+set, the endpoint or headers are malformed, or the sink cannot start (for example, the trace
+file's directory is missing or the path is not a regular file, such as `/dev/null`), the CLI
+prints one `Warning: tracing disabled: <reason>` line on stderr and runs the command untraced with
+the same exit code and stdout. A relative `SUPABASE_TRACE_FILE` resolves against the directory the
+CLI started in. The generic `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, and
 `OTEL_RESOURCE_ATTRIBUTES` variables are ignored. A sink records the run even when `TRACEPARENT`
 is marked unsampled.
 
@@ -99,7 +103,9 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 - Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`,
   `service.instance.id` (a random id per run).
 - `cli.run`: `process.boot_ms`, the time from process start to CLI entry, and
-  `process.exit_code`, the code the CLI exits with.
+  `process.exit_code`, the code the CLI exits with. A non-zero code ends `cli.run` with error
+  status and a `CliNonZeroExit` exception type.
+- Failed spans: `error.type`, the failing error's tag, when it has one.
 - Command span (`command.<path>`): `command` and `command_run_id`. When telemetry consent is
   granted, also `device_id`, `session_id`, and `is_first_run`.
 - Layer spans such as `CliSettings.load`, `CliProjectContext.load`, and `ProjectLinkState.load`.
@@ -112,9 +118,10 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 
 Traces carry no free-form error or log text. Every batch and every console line is sanitized:
 
-- Exception events keep only `exception.type`, the error class or tag name such as `SqlError`.
-  Error messages and stack traces are dropped. A failed span records the Postgres SQLSTATE, when
-  the error carries one, as `db.response.status_code`.
+- Exception events keep only `exception.type`, the error class or tag name such as `SqlError`; a
+  name that is not an identifier is exported as `Error`. Error messages and stack traces are
+  dropped. A failed span records the Postgres SQLSTATE, when the error carries one, as
+  `db.response.status_code`.
 - Span status messages are dropped; the status code remains.
 - Log events are renamed `log` and keep only `effect.logLevel`.
 - `db.query.text` is replaced by `db.operation.name`, `db.query.hash`, and `db.query.length`. The
@@ -122,12 +129,13 @@ Traces carry no free-form error or log text. Every batch and every console line 
   run but hashes from different runs cannot be compared.
 - `url.full` keeps only scheme, host, and path; `url.query` is dropped.
 - Storage object paths in `url.full` and `url.path` keep the operation, such as `sign`, and replace
-  the bucket and object name with `<redacted>`.
+  the bucket and object name with `<redacted>`. Bucket routes (`/storage/v1/bucket/…` and
+  `/storage/v1/iceberg/bucket/…`) replace the bucket name the same way.
 - Only `content-type`, `content-length`, `user-agent`, `x-request-id`, `cf-ray`, and `retry-after`
   headers are kept.
 - String values under keys that mention tokens, passwords, secrets, API keys, authorization, or
   cookies are dropped; numeric and boolean values such as counts are kept.
-- Remaining string attributes lose URL credentials, bearer tokens, JWTs, Supabase keys and access
+- Remaining string attributes lose URL credentials (everything before the last `@`), bearer tokens, JWTs, Supabase keys and access
   tokens, password pairs, single-quoted SQL literals, and constraint key values such as
   `Key (email)=(…)`, and are capped at 2 KB.
 

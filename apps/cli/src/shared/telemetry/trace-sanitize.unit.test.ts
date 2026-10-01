@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import type { TraceData } from "effect/unstable/observability/OtlpTracer";
 import { SqlError, UniqueViolation } from "effect/unstable/sql/SqlError";
 import { DbExecError } from "../../command-internal/db-connection.errors.ts";
-import { makeTraceSanitizer, scrubString, sqlStateOf } from "./trace-sanitize.ts";
+import { errorTypeOf, makeTraceSanitizer, scrubString, sqlStateOf } from "./trace-sanitize.ts";
 
 const JWT =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2lnbmF0dXJlLXZhbHVl";
@@ -113,6 +113,19 @@ describe("scrubString", () => {
   it("keeps apostrophes inside words", () => {
     expect(scrubString("can't read the project's config")).toBe("can't read the project's config");
   });
+
+  it.each([
+    ["a slash", "dial postgresql://postgres:pa/ss@db.example.com/postgres failed"],
+    ["an at sign", "dial postgresql://postgres:p@ss@db.example.com/postgres failed"],
+  ])("redacts URL credentials whose password contains %s", (_label, input) => {
+    expect(scrubString(input)).toBe("dial postgresql://<redacted>@db.example.com/postgres failed");
+  });
+
+  it("keeps a URL without credentials unchanged", () => {
+    expect(scrubString("GET https://api.supabase.com/v1/projects failed")).toBe(
+      "GET https://api.supabase.com/v1/projects failed",
+    );
+  });
 });
 
 describe("attribute entries", () => {
@@ -159,8 +172,13 @@ describe("attribute entries", () => {
     ["/storage/v1/object/avatars/u1/a.png", "/storage/v1/object/<redacted>"],
     ["/storage/v1/object/list/avatars", "/storage/v1/object/list/<redacted>"],
     ["/storage/v1/object/move", "/storage/v1/object/move"],
+    ["/storage/v1/bucket/avatars", "/storage/v1/bucket/<redacted>"],
+    ["/storage/v1/bucket", "/storage/v1/bucket"],
+    ["/storage/v1/iceberg/bucket/analytics", "/storage/v1/iceberg/bucket/<redacted>"],
+    ["/storage/v1/iceberg/bucket", "/storage/v1/iceberg/bucket"],
+    ["/storage/v1/vector/ListVectorBuckets", "/storage/v1/vector/ListVectorBuckets"],
     ["/v1/projects/abc/functions", "/v1/projects/abc/functions"],
-  ])("redacts the Storage object in url.path and url.full for %s", (path, expected) => {
+  ])("redacts the Storage bucket or object in url.path and url.full for %s", (path, expected) => {
     const attributes = Object.fromEntries(
       sanitizeAttributeEntries([
         ["url.path", path],
@@ -285,6 +303,29 @@ describe("trace data", () => {
     ]);
   });
 
+  it.each([
+    ["Key (email)=(a@b) already exists", "Error"],
+    ["", "Error"],
+    ["x".repeat(101), "Error"],
+    ["PlatformError", "PlatformError"],
+    ["effect.Cause.NoSuchElementError", "effect.Cause.NoSuchElementError"],
+  ])("exports exception type %j as %j", (type, expected) => {
+    const data = traceWith({
+      events: [
+        {
+          name: "exception",
+          timeUnixNano: "1",
+          droppedAttributesCount: 0,
+          attributes: [{ key: "exception.type", value: { stringValue: type } }],
+        },
+      ],
+    });
+
+    expect(firstSpan(sanitizeTraceData(data)).events[0]!.attributes).toEqual([
+      { key: "exception.type", value: { stringValue: expected } },
+    ]);
+  });
+
   it("renames log events to log and keeps only their level", () => {
     const data = traceWith({
       events: [dollarQuotedBody, escapeLiteral, storageError].map((message) => ({
@@ -367,6 +408,23 @@ describe("trace data", () => {
     expect(firstSpan(sanitizeTraceData(data)).attributes).toEqual([
       { key: "url.path", value: { stringValue: "/storage/v1/object/public/<redacted>" } },
     ]);
+  });
+});
+
+describe("errorTypeOf", () => {
+  it("reads the tag of a tagged failure", () => {
+    expect(errorTypeOf(Exit.fail(new DbExecError({ message: failingMigration })))).toBe(
+      "DbExecError",
+    );
+  });
+
+  it("reduces a free-form tag to Error", () => {
+    expect(errorTypeOf(Exit.fail({ _tag: "Key (email)=(a@b) already exists" }))).toBe("Error");
+  });
+
+  it("is absent for an untagged defect and a success", () => {
+    expect(errorTypeOf(Exit.die(new Error("boom")))).toBeUndefined();
+    expect(errorTypeOf(Exit.void)).toBeUndefined();
   });
 });
 
