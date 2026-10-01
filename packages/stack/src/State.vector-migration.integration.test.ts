@@ -155,7 +155,7 @@ describe("saved Vector instance migration", () => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(held);
 
-      const checked = yield* state.migrate("legacy").pipe(Effect.exit);
+      const checked = yield* state.migrate("legacy").pipe(Effect.timeout("1 second"), Effect.exit);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(holder);
 

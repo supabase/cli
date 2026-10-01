@@ -97,6 +97,11 @@ export interface Interface {
   }) => Effect.Effect<void, LogStoreError>;
   /** Deletes log directories of instances that are not attached; failures are logged. */
   readonly removeOrphans: Effect.Effect<void, LogStoreError>;
+  /** The highest launch id at the end of an instance's newest segment, if one is readable. */
+  readonly latestLaunchId: (instance: {
+    readonly service: string;
+    readonly instanceId: string;
+  }) => Effect.Effect<Option.Option<number>>;
   /** Stops every writer and reader; later reads fail. */
   readonly close: Effect.Effect<void>;
 }
@@ -254,6 +259,43 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.mapError(storeError("read")),
     );
 
+  /** Reads only the last chunk of the newest segment, skipping its first, possibly cut, line. */
+  const latestLaunchId = (directory: string) =>
+    generations(directory).pipe(
+      Effect.flatMap((listed) => {
+        const newest = listed.at(-1);
+        if (newest === undefined) return Effect.succeed(Option.none<number>());
+        const file = path.join(directory, segmentName(newest));
+        return fs.stat(file).pipe(
+          Effect.mapError(storeError("read")),
+          Effect.flatMap((info) => {
+            const offset = Math.max(0, Number(info.size) - readChunkBytes);
+            return readChunk(file, offset).pipe(
+              Effect.map(
+                Option.match({
+                  onNone: () => Option.none<number>(),
+                  onSome: (bytes) => {
+                    let latest: number | undefined;
+                    for (const line of decoder
+                      .decode(bytes)
+                      .split("\n")
+                      .slice(offset > 0 ? 1 : 0, -1)) {
+                      const launchId = parseRecord(line, {
+                        generation: newest,
+                        byteOffset: 0,
+                      })?.launchId;
+                      if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
+                    }
+                    return Option.fromNullishOr(latest);
+                  },
+                }),
+              ),
+            );
+          }),
+        );
+      }),
+    );
+
   const guarded = <A, E>(live: Live | undefined, effect: Effect.Effect<A, E>) =>
     live === undefined ? effect : live.passes.withPermits(1)(effect);
 
@@ -402,12 +444,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
     const listed = yield* generations(directory);
     const tail = options.tail;
     if (tail !== undefined) {
-      if (tail === 0)
-        return {
-          records: [],
-          cursor: live === undefined ? cursor : yield* live.lock.withPermits(1)(Ref.get(live.end)),
-          listed,
-        };
+      if (tail === 0) return { records: [], cursor, listed };
       // A partial line is written when it ends, so any segment can hold the newest records.
       let records: ReadonlyArray<LogRecord> = [];
       let end: LogPosition = cursor;
@@ -509,7 +546,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       undefined,
     );
 
-  return { read, history, records, segments, generations };
+  return { read, history, records, segments, generations, latestLaunchId };
 };
 
 /** Creates the owner's log store; closing its scope flushes and closes every writer. */
@@ -1015,6 +1052,10 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     directory: (instanceId) => Effect.map(attached(instanceId), (instance) => instance.directory),
     remove,
     removeOrphans: removeOrphans(),
+    latestLaunchId: (instance) =>
+      reader
+        .latestLaunchId(path.join(options.root, instance.service, instance.instanceId))
+        .pipe(Effect.orElseSucceed(() => Option.none<number>())),
     close,
   } satisfies Interface;
 });

@@ -239,6 +239,51 @@ describe("owner persisted logs", () => {
     ).pipe(Effect.provide(services)),
   );
 
+  it.live("continues after the launch ids in its logs when its saved state has none", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-unsaved-launch-" });
+        const firstRun = yield* Scope.make();
+        const owner = yield* openOwner("owner-logs-unsaved-launch-", "native", { root }).pipe(
+          Scope.provide(firstRun),
+        );
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* Scope.close(firstRun, Exit.void);
+        const state = Context.get(
+          yield* Layer.build(State.layer({ root: owner.stateRoot })),
+          State.Service,
+        );
+        const saved = yield* state.read(owner.stack.id);
+        if (saved === undefined) return yield* Effect.die("stack state missing");
+        // Logs a state saved before launch ids were persisted left behind at launch 3.
+        const directory = `${owner.logsRoot}/mail/${mail.id}`;
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(
+          `${directory}/0000000001.log`,
+          "2026-01-01T00:00:00.000Z launch 3 | \n2026-01-01T00:00:00.001Z stdout 3 | earlier\n",
+        );
+        const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
+
+        yield* restarted.rpc.startService({ id: mail.id });
+        yield* restarted.rpc.readyService({ id: mail.id });
+        const records = yield* restarted.rpc
+          .readLogs({ id: mail.id, follow: false })
+          .pipe(Stream.runCollect);
+
+        expect(saved.instances.find(({ id }) => id === mail.id)?.launchId).toBeUndefined();
+        expect(
+          records.filter(({ kind }) => kind === "launch").map(({ launchId }) => launchId),
+        ).toEqual([3, 4]);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
   it.live("resumes a follow at a record position without replaying earlier records", () =>
     Effect.scoped(
       Effect.gen(function* () {

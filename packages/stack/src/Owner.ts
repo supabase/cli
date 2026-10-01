@@ -346,6 +346,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (
         message: `Duplicate instance ${id}`,
       });
     const initial = recipe.creation;
+    // A state saved before launch ids were persisted continues after the ids its logs hold.
+    const resumeAfter =
+      lastLaunchId ??
+      Option.getOrUndefined(
+        yield* logStore.latestLaunchId({ service: initial.service, instanceId: id }),
+      );
     const creation = yield* Ref.make(initial);
     const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
     const core = yield* makeService(
@@ -388,7 +394,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       {
         id,
         config: initial,
-        ...(lastLaunchId === undefined ? {} : { lastLaunchId }),
+        ...(resumeAfter === undefined ? {} : { lastLaunchId: resumeAfter }),
         coordinate: (operation, transition) =>
           (drainingBlocks.includes(operation) ? rejectWhileDraining : Effect.void).pipe(
             Effect.andThen(orchestrator.admissionFor(id)(operation, transition)),
