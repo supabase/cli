@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Layer, Redacted, Scope } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Redacted, Scope } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { makeService, type ServiceInstance } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
@@ -25,15 +25,16 @@ const dockerOptions = (root: string) => ({
 const secret = "catalog-pooler-secret-with-at-least-32-chars";
 
 let scope: Scope.Closeable;
+let setupFiber: Fiber.Fiber<void, never>;
+let database: ServiceInstance<any> | undefined;
 let root: string;
-let database: ServiceInstance<any>;
 let nativeDatabaseUrl: string;
 let dockerDatabaseUrl: string;
 
 describe("service catalog", () => {
   beforeAll(() => {
     scope = Scope.makeUnsafe();
-    return Effect.gen(function* () {
+    const setup = Effect.gen(function* () {
       const databaseRoot = yield* makeDockerDatabaseRoot("catalog-pooler-");
       const databaseRecipe = yield* makeServiceRecipe(
         {
@@ -51,6 +52,8 @@ describe("service catalog", () => {
         id: "database",
         config: databaseRecipe.creation,
       });
+      // Assigned before start so afterAll can still stop it if a later step fails.
+      database = databaseService;
       yield* databaseService.start;
       yield* databaseService.ready;
       const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
@@ -58,18 +61,24 @@ describe("service catalog", () => {
         return yield* new ProxyError({ message: "Docker database did not expose TCP" });
       const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
       root = databaseRoot;
-      database = databaseService;
       dockerDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/_supabase`;
       nativeDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseEndpoint.host}:${databaseEndpoint.port}/_supabase`;
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
       Scope.provide(scope),
-      Effect.runPromise,
+      Effect.orDie,
     );
+    setupFiber = Effect.runFork(setup);
+    return Fiber.join(setupFiber).pipe(Effect.runPromise);
   }, 120_000);
 
   afterAll(
-    () => database.stop.pipe(Effect.andThen(Scope.close(scope, Exit.void)), Effect.runPromise),
+    () =>
+      Fiber.interrupt(setupFiber).pipe(
+        Effect.andThen(() => (database === undefined ? Effect.void : Effect.ignore(database.stop))),
+        Effect.ensuring(Scope.close(scope, Exit.void)),
+        Effect.runPromise,
+      ),
     60_000,
   );
 
