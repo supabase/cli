@@ -649,19 +649,19 @@ segments: each owner start opens a new generation on the instance's first output
 would take a segment past 5 MiB starts the next one. The oldest closed segments except the newest
 are deleted while an instance holds more than 10 MiB or 64 segments. Records carry the publish time
 of their first byte. Launch ids keep increasing across owner starts, since each saved instance
-records its latest one. Line state is kept per launch, process and stream; chunk sequence numbers
-span a launch's processes, so a process whose output was all dropped still shows as `lost`. A late
-partial line of an ended launch waits for its newline for two seconds of quiet, or until the store
-closes. Lines are cut at 32 KiB; chunks the in-memory output buffer dropped or that were still
-queued when a bounded drain at close ran out, and records that failed to write, are recorded as
-`lost`; a write that fails part-way can count records that did land, so the count is an upper bound.
-Closing aborts filesystem work still pending after 5 seconds; output not yet written by then is not
-recorded. Every reader, live or offline, reads segments by position, so history and following share
-one path; a follow can resume at a record position, and a reader that finds its segment deleted
-reports a `lost` gap marker, which carries `resumeAt` instead of a record position. Destroying an
-instance deletes its segments, and an owner start removes directories of instances no longer saved,
-so a failed deletion is retried; destroying the stack removes `logs/`; resetting database data keeps
-them.
+records its latest one; an instance saved without one continues after the launch ids at the end of
+its newest segment. Line state is kept per launch, process and stream; chunk sequence numbers span a
+launch's processes, so a process whose output was all dropped still shows as `lost`. A late partial
+line of an ended launch waits for its newline for two seconds of quiet, or until the store closes.
+Lines are cut at 32 KiB; chunks the in-memory output buffer dropped or that were still queued when a
+bounded drain at close ran out, and records that failed to write, are recorded as `lost`; a write
+that fails part-way can count records that did land, so the count is an upper bound. Closing aborts
+filesystem work still pending after 5 seconds; output not yet written by then is not recorded. Every
+reader, live or offline, reads segments by position, so history and following share one path; a
+follow can resume at a record position, and a reader that finds its segment deleted reports a `lost`
+gap marker, which carries `resumeAt` instead of a record position. Destroying an instance deletes
+its segments, and an owner start removes directories of instances no longer saved, so a failed
+deletion is retried; destroying the stack removes `logs/`; resetting database data keeps them.
 
 While the composed Analytics instance is running and healthy, the owner ships the persisted
 stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances to its
