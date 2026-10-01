@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Clock,
@@ -391,30 +392,23 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
   path: string,
   timeout: Duration.Input = "60 seconds",
 ) {
-  const attempts = yield* Ref.make(0);
-  const attempt = Ref.update(attempts, (count) => count + 1).pipe(
-    Effect.andThen(
-      client.execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`)),
-    ),
-    Effect.flatMap((response) =>
-      (response.status >= 200 && response.status < 300) || response.status === 401
-        ? Effect.void
-        : Effect.fail(
-            new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
-          ),
-    ),
-    // Probes emit no spans; the attempt count on this span stands in for them.
-    Effect.withTracerEnabled(false),
-  );
-  return yield* attempt.pipe(
-    Effect.retry({ schedule: Schedule.spaced("250 millis") }),
-    Effect.timeout(timeout),
-    Effect.mapError((cause) => serviceError("health", cause)),
-    Effect.asVoid,
-    Effect.ensuring(
-      Ref.get(attempts).pipe(
-        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
+  const attempt = client
+    .execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`))
+    .pipe(
+      Effect.flatMap((response) =>
+        (response.status >= 200 && response.status < 300) || response.status === 401
+          ? Effect.void
+          : Effect.fail(
+              new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
+            ),
       ),
+    );
+  return yield* withAttemptCount(attempt, (counted) =>
+    counted.pipe(
+      Effect.retry({ schedule: Schedule.spaced("250 millis") }),
+      Effect.timeout(timeout),
+      Effect.mapError((cause) => serviceError("health", cause)),
+      Effect.asVoid,
     ),
   );
 });

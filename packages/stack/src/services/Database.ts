@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import { PgClient } from "@effect/sql-pg";
 import {
   Context,
@@ -224,35 +225,31 @@ const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPasswor
     "process.arg_count": args.length,
   });
   // Each retry overwrites `process.exit_code`, so the span reports the last attempt's status.
-  const retryAttempts = yield* Ref.make(0);
-  return yield* Ref.update(retryAttempts, (count) => count + 1).pipe(
-    Effect.andThen(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
-          const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
-          const [, , , code] = yield* Effect.all(
-            [
-              Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
-              child.stdout.pipe(Stream.runDrain),
-              child.stderr.pipe(Stream.runDrain),
-              child.exitCode,
-            ],
-            { concurrency: "unbounded" },
-          );
-          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
-          if (Number(code) !== 0)
-            return yield* errorFor("health", "Local database credential setup has not succeeded");
-        }),
-      ),
+  return yield* withAttemptCount(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
+        const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
+        const [, , , code] = yield* Effect.all(
+          [
+            Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
+            child.stdout.pipe(Stream.runDrain),
+            child.stderr.pipe(Stream.runDrain),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+        if (Number(code) !== 0)
+          return yield* errorFor("health", "Local database credential setup has not succeeded");
+      }),
     ),
-    Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
-    Effect.retry(Schedule.spaced("250 millis")),
-    Effect.ensuring(
-      Ref.get(retryAttempts).pipe(
-        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
+    (counted) =>
+      counted.pipe(
+        Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
+        Effect.retry(Schedule.spaced("250 millis")),
       ),
-    ),
+    { traced: true },
   );
 });
 
@@ -270,36 +267,24 @@ const health = Effect.fn("Database.health")(function* (
   },
 ) {
   const host = endpoint.kind === "unix" ? endpoint.path : endpoint.host;
-  const retryAttempts = yield* Ref.make(0);
-  const probe = Ref.update(retryAttempts, (count) => count + 1).pipe(
-    Effect.andThen(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const layer = yield* Layer.build(
-            PgClient.layer({
-              host,
-              port: endpoint.port,
-              database: "postgres",
-              username: "supabase_admin",
-              password: config.databasePassword,
-              connectTimeout: "2 seconds",
-            }),
-          );
-          const client = Context.get(layer, PgClient.PgClient);
-          yield* client.unsafe("SELECT 1");
+  const probe = Effect.scoped(
+    Effect.gen(function* () {
+      const layer = yield* Layer.build(
+        PgClient.layer({
+          host,
+          port: endpoint.port,
+          database: "postgres",
+          username: "supabase_admin",
+          password: config.databasePassword,
+          connectTimeout: "2 seconds",
         }),
-      ),
-    ),
-    // Probes emit no spans; the attempt count on this span stands in for them.
-    Effect.withTracerEnabled(false),
+      );
+      const client = Context.get(layer, PgClient.PgClient);
+      yield* client.unsafe("SELECT 1");
+    }),
   );
-  const retryProbe = probe.pipe(
-    Effect.retry(Schedule.spaced("250 millis")),
-    Effect.ensuring(
-      Ref.get(retryAttempts).pipe(
-        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
-      ),
-    ),
+  const retryProbe = withAttemptCount(probe, (counted) =>
+    counted.pipe(Effect.retry(Schedule.spaced("250 millis"))),
   );
   return yield* reconcile.pipe(
     Effect.andThen(retryProbe),

@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Crypto,
@@ -601,30 +602,36 @@ export const makeContainerRuntime = (options: {
           const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (
             failure: ContainerError,
           ) {
-            const probe = run(
-              [
-                "ps",
-                "--all",
-                "--no-trunc",
-                "--filter",
-                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
-                `name=^/?${name.replaceAll(".", "\\.")}$`,
-                "--format",
-                "{{.State}}",
-              ],
-              { timeout: "5 seconds" },
-            ).pipe(
-              Effect.map((output) =>
-                output === ""
-                  ? ("absent" as const)
-                  : output === "removing"
-                    ? "removing"
-                    : "present",
+            const probe = withAttemptCount(
+              run(
+                [
+                  "ps",
+                  "--all",
+                  "--no-trunc",
+                  "--filter",
+                  // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                  `name=^/?${name.replaceAll(".", "\\.")}$`,
+                  "--format",
+                  "{{.State}}",
+                ],
+                { timeout: "5 seconds" },
+              ).pipe(
+                Effect.map((output) =>
+                  output === ""
+                    ? ("absent" as const)
+                    : output === "removing"
+                      ? "removing"
+                      : "present",
+                ),
               ),
-              Effect.repeat({
-                schedule: Schedule.spaced("250 millis"),
-                while: (state) => state === "removing",
-              }),
+              (counted) =>
+                counted.pipe(
+                  Effect.repeat({
+                    schedule: Schedule.spaced("250 millis"),
+                    while: (state) => state === "removing",
+                  }),
+                ),
+            ).pipe(
               Effect.timeout("10 seconds"),
               Effect.mapError((error) =>
                 error instanceof ContainerError ? error : errorFor("cleanup", error),
