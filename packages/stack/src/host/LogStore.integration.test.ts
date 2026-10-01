@@ -290,11 +290,28 @@ describe("LogStore", () => {
             )
           : file.writeAll(buffer),
       );
+      const armed = yield* Deferred.make<void>();
+      const woke = yield* Deferred.make<void>();
+      const clock = yield* TestClock.testClockWith(Effect.succeed);
+      // The store's only sleep before close is the grace flusher's wait for the deadline.
+      const graceClock: Clock.Clock = {
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+        currentTimeMillis: clock.currentTimeMillis,
+        currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+        currentTimeNanos: clock.currentTimeNanos,
+        monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: clock.monotonicTimeNanos,
+        sleep: (duration) =>
+          Deferred.succeed(armed, undefined).pipe(
+            Effect.andThen(clock.sleep(duration)),
+            Effect.andThen(Deferred.succeed(woke, undefined)),
+          ),
+      };
       const { store } = yield* openStore(root).pipe(
         Effect.provideService(FileSystem.FileSystem, injected),
       );
       const instance = yield* fakeInstance("newline");
-      yield* store.attach(instance);
+      yield* store.attach(instance).pipe(Effect.provideService(Clock.Clock, graceClock));
       const reader = yield* collect(store.read("newline", { from: "oldest", follow: true }));
       yield* instance.setLaunch(1);
       yield* instance.publish(instance.chunk(1, "ending"));
@@ -302,12 +319,14 @@ describe("LogStore", () => {
       yield* instance.setLaunch(undefined);
       yield* untilLast(reader, "ending");
 
-      // The writer is busy with `busy` while the newline is published, so it stays queued.
-      yield* instance.publish(instance.chunk(1, "late "), instance.chunk(1, "busy\n", "stderr"));
+      yield* instance.publish(instance.chunk(1, "late "));
+      yield* Deferred.await(armed);
+      yield* instance.publish(instance.chunk(1, "busy\n", "stderr"));
       yield* Deferred.await(blocked);
       yield* TestClock.adjust(endedLineGraceMillis / 2);
       yield* instance.publish(instance.chunk(1, "line end\n"));
       yield* TestClock.adjust(endedLineGraceMillis / 2);
+      yield* Deferred.await(woke);
       yield* Deferred.succeed(release, undefined);
       const records: Array<LogRecord> = [];
       while (!records.some((record) => record.text?.endsWith("line end") === true))
