@@ -32,6 +32,10 @@ interface FakeProcessOptions {
   readonly groupStallClosed?: Deferred.Deferred<void>;
   readonly exitStarted?: Deferred.Deferred<void>;
   readonly exitCode?: Deferred.Deferred<ExitCode>;
+  /** Reports the launcher as still running instead of the default already-exited fake. */
+  readonly isRunning?: boolean;
+  /** Observes the signal a forced `kill` sends to the launcher. */
+  readonly onForcedKill?: (signal: string | undefined) => void;
 }
 
 const makeSpawner = (options: FakeProcessOptions) => {
@@ -107,8 +111,8 @@ const makeSpawner = (options: FakeProcessOptions) => {
                 return yield* Deferred.await(exit);
               });
         })(),
-        isRunning: Effect.succeed(false),
-        kill: () => Effect.void,
+        isRunning: Effect.succeed(options.isRunning ?? false),
+        kill: (killOptions) => Effect.sync(() => options.onForcedKill?.(killOptions?.killSignal)),
         stdin: Sink.drain,
         stdout: Stream.empty,
         stderr: Stream.empty,
@@ -131,23 +135,30 @@ const makeSpawner = (options: FakeProcessOptions) => {
 
 const spec: NativeProcessSpec = { executable: "test-native-process" };
 
+// Intercepts every signal sent to the positive launcher pid and its negative
+// group so tests using a placeholder pid never reach a real OS process, for
+// the effect and its own scope cleanup (e.g. a finalizer-driven retry).
 const withMockedTargetKill = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   target: number,
-  code: "EPERM" | "ESRCH" = "EPERM",
+  code: "EPERM" | "ESRCH" | "SUCCEED" = "EPERM",
   failAlways = true,
+  onSignal?: (pid: number, signal: NodeJS.Signals) => void,
 ) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       const originalKill = globalThis.process.kill;
       let failed = false;
       globalThis.process.kill = (pid, signal) => {
+        onSignal?.(Number(pid), signal as NodeJS.Signals);
         if (pid === -target) {
+          if (code === "SUCCEED") return true;
           if (!failAlways && failed)
             throw Object.assign(new Error("operation ESRCH"), { code: "ESRCH" });
           failed = true;
           throw Object.assign(new Error(`operation ${code}`), { code });
         }
+        if (pid === target) return true;
         return originalKill(pid, signal);
       };
       return originalKill;
@@ -947,92 +958,127 @@ describe("native process group cleanup", () => {
 
   it.effect.skipIf(process.platform === "win32")(
     "does not settle kill until the launcher's exit is confirmed",
-    () =>
-      Effect.gen(function* () {
-        const exitCode = yield* Deferred.make<ExitCode>();
-        const spawner = ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(targetPid),
-              exitCode: Deferred.await(exitCode),
-              isRunning: Effect.succeed(true),
-              kill: () => Effect.void,
-              stdin: Sink.drain,
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: (fd) =>
-                fd === 5
-                  ? Stream.succeed(new TextEncoder().encode(`${targetPid}\n`))
-                  : Stream.empty,
-              unref: Effect.succeed(Effect.void),
-            }),
-          ),
-        );
-        // A manually owned scope isolates the explicit kill call below from the
-        // scope-finalizer's own kill, which would otherwise race the assertion.
-        const processScope = yield* Scope.make();
-        const native: NativeProcess = yield* spawnNativeProcess(
-          { ...spec, gracefulStopTimeout: "20 millis" },
-          { command: "test-launcher", args: [] },
-        ).pipe(
-          Scope.provide(processScope),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const fiber = yield* Effect.forkChild(native.kill);
-        yield* TestClock.adjust("20 millis");
-        yield* Effect.yieldNow;
-        expect(fiber.pollUnsafe()).toBeUndefined();
-        yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
-        expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
-        yield* Scope.close(processScope, Exit.void);
-      }),
+    () => {
+      const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode>();
+          const spawner = makeSpawner({ isRunning: true, exitCode });
+          // A manually owned scope isolates the explicit kill call below from
+          // the scope-finalizer's own kill, which would otherwise race the
+          // assertion.
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill);
+          yield* TestClock.adjust("20 millis");
+          yield* Effect.yieldNow;
+          // The graceful signal timed out: the reaping phase (group cleanup)
+          // must have run before the confirmation wait can be pending.
+          expect(signals.some(({ pid }) => pid === -targetPid)).toBe(true);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
+          yield* Scope.close(processScope, Exit.void);
+        }),
+        targetPid,
+        "SUCCEED",
+        true,
+        (pid, signal) => {
+          signals.push({ pid, signal });
+        },
+      );
+    },
   );
 
-  it.live.skipIf(process.platform === "win32")(
-    "forces the launcher and confirms its exit once the reap grace period lapses",
-    () =>
-      Effect.gen(function* () {
-        const exitCode = yield* Deferred.make<ExitCode>();
-        const forcedKillSignal = yield* Deferred.make<string | undefined>();
-        const spawner = ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(targetPid),
-              exitCode: Deferred.await(exitCode),
-              isRunning: Effect.succeed(true),
-              kill: (options) =>
-                Deferred.succeed(forcedKillSignal, options?.killSignal).pipe(
-                  Effect.andThen(Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137))),
-                  Effect.asVoid,
-                ),
-              stdin: Sink.drain,
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              getInputFd: () => Sink.drain,
-              getOutputFd: (fd) =>
-                fd === 5
-                  ? Stream.succeed(new TextEncoder().encode(`${targetPid}\n`))
-                  : Stream.empty,
-              unref: Effect.succeed(Effect.void),
-            }),
-          ),
-        );
-        const processScope = yield* Scope.make();
-        const native: NativeProcess = yield* spawnNativeProcess(
-          { ...spec, gracefulStopTimeout: "20 millis" },
-          { command: "test-launcher", args: [] },
-        ).pipe(
-          Scope.provide(processScope),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const result = yield* native.kill.pipe(Effect.exit);
-        expect(result).toMatchObject({ _tag: "Success" });
-        expect(yield* Deferred.await(forcedKillSignal)).toBe("SIGKILL");
-        yield* Scope.close(processScope, Exit.void);
-      }),
+  it.effect.skipIf(process.platform === "win32")(
+    "forces the launcher and waits for its exit to be confirmed",
+    () => {
+      const forcedSignals: Array<string | undefined> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode>();
+          const spawner = makeSpawner({
+            isRunning: true,
+            exitCode,
+            onForcedKill: (signal) => forcedSignals.push(signal),
+          });
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill);
+          yield* TestClock.adjust("20 millis"); // graceful signal timeout
+          yield* Effect.yieldNow;
+          // launcherReapTimeout in NativeProcess.ts; kept in sync here.
+          yield* TestClock.adjust("2 seconds"); // launcher reap-grace timeout
+          yield* Effect.yieldNow;
+          expect(forcedSignals).toEqual(["SIGKILL"]);
+          // The launcher was force-killed but its exit is not resolved yet:
+          // kill must still wait for confirmation, not complete right away.
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
+          yield* Scope.close(processScope, Exit.void);
+        }),
+        targetPid,
+        "SUCCEED",
+      );
+    },
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "forces and confirms the launcher even when group cleanup fails, then reports the cleanup error",
+    () => {
+      const forcedSignals: Array<string | undefined> = [];
+      return withMockedTargetKill(
+        Effect.gen(function* () {
+          const exitCode = yield* Deferred.make<ExitCode>();
+          const spawner = makeSpawner({
+            isRunning: true,
+            exitCode,
+            groupOutput: `${targetPid} S\n`,
+            onForcedKill: (signal) => forcedSignals.push(signal),
+          });
+          const processScope = yield* Scope.make();
+          const native: NativeProcess = yield* spawnNativeProcess(
+            { ...spec, gracefulStopTimeout: "20 millis" },
+            { command: "test-launcher", args: [] },
+          ).pipe(
+            Scope.provide(processScope),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          const fiber = yield* Effect.forkChild(native.kill.pipe(Effect.exit));
+          yield* TestClock.adjust("20 millis");
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("2 seconds");
+          yield* Effect.yieldNow;
+          expect(forcedSignals).toEqual(["SIGKILL"]);
+          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          const result = yield* Fiber.join(fiber);
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
+            const error = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+            expect(error).toMatchObject({ cause: { code: "EPERM" } });
+          }
+          // The finalizer retries the same still-failing group cleanup; only
+          // the explicit kill result above is under test.
+          yield* Scope.close(processScope, Exit.void).pipe(Effect.exit);
+        }),
+        targetPid,
+        "EPERM",
+        true,
+      );
+    },
   );
 
   it.live("keeps the shared exit observation alive after a canceled waiter", () =>

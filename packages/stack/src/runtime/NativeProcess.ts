@@ -105,6 +105,9 @@ const mapProcessError = (error: unknown, spec: NativeProcessSpec): NativeProcess
     cause: error,
   });
 
+/** Bound for confirming the launcher has exited once its workload is force-killed. */
+const launcherReapTimeout: Duration.Input = "2 seconds";
+
 /**
  * Starts one native process through a tiny parent-loss-aware launcher. The
  * launcher receives an inherited pipe (fd3); closing this process scope closes
@@ -266,18 +269,31 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
               .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
         } else {
           // Kill the workload's group first so the still-alive launcher reaps
-          // its direct child itself; only force the launcher if it doesn't.
-          yield* cleanupProcessGroup();
+          // its direct child itself; only force the launcher if it doesn't. A
+          // failed group cleanup must not skip forcing and confirming it.
+          const cleanupFailure = yield* cleanupProcessGroup().pipe(
+            Effect.as(Option.none<NativeProcessError>()),
+            Effect.catch((error) => Effect.succeed(Option.some(error))),
+          );
           const reaped = yield* handle.exitCode.pipe(
-            Effect.catch(() => Effect.void),
-            Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
+            Effect.timeoutOption(launcherReapTimeout),
+            Effect.orElseSucceed(() => Option.none<ExitCode>()),
           );
           if (Option.isNone(reaped)) {
             yield* handle
               .kill({ killSignal: "SIGKILL" })
               .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
-            yield* handle.exitCode.pipe(Effect.catch(() => Effect.void));
+            const confirmed = yield* handle.exitCode.pipe(
+              Effect.timeoutOption(launcherReapTimeout),
+              Effect.orElseSucceed(() => Option.none<ExitCode>()),
+            );
+            if (Option.isNone(confirmed))
+              return yield* new NativeProcessError({
+                message: "Native launcher did not confirm exit after a forced stop",
+                executable: spec.executable,
+              });
           }
+          if (Option.isSome(cleanupFailure)) return yield* cleanupFailure.value;
         }
       }
       if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup();
