@@ -61,7 +61,7 @@ const databaseLayer = Layer.effect(
     }).pipe(Scope.provide(serviceScope));
     yield* database.start;
     yield* database.ready;
-    yield* Effect.addFinalizer(() => database.stop.pipe(Effect.ignore));
+    yield* Effect.addFinalizer(() => database.stop.pipe(Effect.orDie));
     const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
     if (databaseEndpoint.kind !== "tcp" || databaseEndpoint.host === undefined)
       return yield* new ProxyError({ message: "Docker database did not expose TCP" });
