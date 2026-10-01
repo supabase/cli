@@ -10,25 +10,24 @@ permissions:
   contents: read
 
 jobs:
-  notify:
+  classify:
     if: github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
+    outputs:
+      suite: ${{ steps.classify.outputs.suite }}
+      startup_failure: ${{ steps.classify.outputs.startup_failure }}
     steps:
-      - name: Notify Slack
+      - name: Classify suite result
+        id: classify
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-          WORKFLOW_ID: ${{ github.event.workflow_run.workflow_id }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
         run: |
           set -euo pipefail
 
@@ -50,74 +49,148 @@ jobs:
           elif [[ "$current_suite" == none || ("$current_suite" == failure && "$WORKFLOW_NAME" == "Release") ]]; then
             # Release's generic notification covers release failures and runs
             # that reused a staging result without creating a suite job.
+            echo "Current ${WORKFLOW_NAME} suite: ${current_suite}; nothing to notify"
+            exit 0
+          fi
+          echo "Current ${WORKFLOW_NAME} suite: ${current_suite}"
+          {
+            echo "suite=${current_suite}"
+            echo "startup_failure=${startup_failure}"
+          } >> "$GITHUB_OUTPUT"
+
+  notify:
+    needs: classify
+    if: needs.classify.outputs.suite != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    # A group keeps one pending job and replaces it when another arrives, so
+    # only real suite results take the lock.
+    concurrency:
+      group: live-e2e-notify-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - name: Notify Slack
+        id: notify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+          NOTIFY_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CURRENT_SUITE: ${{ needs.classify.outputs.suite }}
+          STARTUP_FAILURE: ${{ needs.classify.outputs.startup_failure }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+        run: |
+          set -euo pipefail
+
+          # The artifact holds the newest applied result and its source run's creation
+          # time, so late older results are ignored. Fork runs can upload the same
+          # artifact name, so only same-repository runs count.
+          branch_digest="$(printf '%s' "$BRANCH" | sha256sum | cut -c1-12)"
+          state_artifact="live-e2e-alert-state-${BRANCH//[^A-Za-z0-9._-]/-}-${branch_digest}"
+          state_dir="${RUNNER_TEMP}/live-e2e-alert-state"
+          mkdir -p "$state_dir"
+
+          artifact_id=""
+          lookup_ok=true
+          for page in $(seq 1 20); do
+            if ! artifacts="$(gh api -X GET "/repos/${REPOSITORY}/actions/artifacts" -f "name=${state_artifact}" -F per_page=100 -F "page=${page}")"; then
+              lookup_ok=false
+              break
+            fi
+            artifact_id="$(jq -r '[.artifacts[]? | select(.expired != true and .workflow_run.repository_id != null and .workflow_run.head_repository_id == .workflow_run.repository_id)] | sort_by(.created_at) | last // empty | .id' <<< "$artifacts")"
+            if [[ -n "$artifact_id" ]] || (( $(jq '.artifacts | length' <<< "$artifacts") < 100 )); then
+              break
+            fi
+          done
+
+          recorded_state=unknown
+          recorded_at=""
+          if [[ "$lookup_ok" == true && -z "$artifact_id" ]]; then
+            recorded_state=none
+          elif [[ -n "$artifact_id" ]] \
+            && gh api "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}/zip" > "${state_dir}/previous.zip" \
+            && stored="$(unzip -p "${state_dir}/previous.zip" state)"; then
+            stored_state="$(sed -n 1p <<< "$stored")"
+            if [[ "$stored_state" == failing || "$stored_state" == passing ]]; then
+              recorded_state="$stored_state"
+              recorded_at="$(sed -n 2p <<< "$stored")"
+            fi
+          fi
+          echo "Recorded state for ${BRANCH}: ${recorded_state} (source created ${recorded_at:-unknown}); this run's source created ${SOURCE_CREATED_AT}"
+
+          if [[ -n "$recorded_at" && "$SOURCE_CREATED_AT" < "$recorded_at" ]]; then
+            echo "Action: none (a newer suite result is already recorded)"
             exit 0
           fi
 
-          prior_conclusion=""
-          if (( RUN_ATTEMPT > 1 )); then
-            if ! prior_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${RUN_ID}/attempts/$((RUN_ATTEMPT - 1))/jobs?per_page=100")"; then
-              echo "::warning::Could not inspect the prior attempt for ${WORKFLOW_NAME} run ${RUN_ID}; suppressing transition notification."
-              exit 0
-            fi
-            prior_conclusion="$(printf '%s\n' "$prior_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-            [[ "$prior_conclusion" != none ]] || prior_conclusion=""
-          fi
-
-          if ! history="$(gh api -X GET "/repos/${REPOSITORY}/actions/workflows/${WORKFLOW_ID}/runs" -f "branch=${BRANCH}" -F per_page=25)"; then
-            if [[ "$current_suite" == success && -z "$prior_conclusion" ]]; then
-              echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; suppressing recovery notification."
-              exit 0
-            fi
-            echo "::warning::Could not inspect recent ${WORKFLOW_NAME} history; continuing with the confirmed current result."
-          else
-            candidates="$(jq -r --argjson current_number "$RUN_NUMBER" --argjson current_attempt "$RUN_ATTEMPT" '(.workflow_runs // []) | map(select((.run_number != $current_number or (.run_attempt // 1) != $current_attempt) and .status == "completed" and (.conclusion == "failure" or .conclusion == "success"))) | sort_by(.run_number, (.run_attempt // 1)) | reverse | .[] | [.id, (.run_attempt // 1), .run_number, .conclusion] | @tsv' <<< "$history")"
-            while IFS=$'\t' read -r candidate_id candidate_attempt candidate_number candidate_conclusion; do
-              [[ -z "$candidate_id" ]] && continue
-              if (( candidate_number > RUN_NUMBER || (candidate_number == RUN_NUMBER && candidate_attempt > RUN_ATTEMPT) )); then
-                relation=newer
-              else
-                relation=older
-              fi
-              if [[ "$relation" == newer || -z "$prior_conclusion" ]]; then
-                if ! candidate_jobs="$(gh api --paginate "/repos/${REPOSITORY}/actions/runs/${candidate_id}/attempts/${candidate_attempt}/jobs?per_page=100")"; then
-                  echo "::warning::Could not inspect candidate run ${candidate_id}; suppressing notification because history is incomplete."
-                  exit 0
-                fi
-                candidate_suite="$(printf '%s\n' "$candidate_jobs" | jq -s '{jobs: map(.jobs[])}' | suite_conclusion)"
-                if [[ "$candidate_suite" == none && "$WORKFLOW_NAME" == "Live E2E" && "$candidate_conclusion" == failure ]]; then
-                  candidate_suite=failure
-                fi
-                if [[ "$candidate_suite" == failure || "$candidate_suite" == success ]]; then
-                  if [[ "$relation" == newer ]]; then
-                    echo "A newer completed relevant suite exists; suppressing stale notification."
-                    exit 0
-                  fi
-                  prior_conclusion="$candidate_suite"
-                  break
-                fi
-              fi
-            done <<< "$candidates"
-          fi
-
-          if [[ "$current_suite" == success ]]; then
-            [[ "$prior_conclusion" == failure ]] || exit 0
-            header="✅ Live E2E recovered"
-            text="Live E2E recovered"
-            detail="The previous relevant ${WORKFLOW_NAME} live suite failed; this run passed."
-          else
-            [[ "$prior_conclusion" != failure ]] || exit 0
-            if [[ "$startup_failure" == true ]]; then
-              header="❌ Live E2E failed to start"
-              text="Live E2E failed to start"
-              detail="The Live E2E workflow failed before it produced a Live e2e job."
+          # A recorded failure is only saved after its alert was posted, so a
+          # recovery posts at most once per reported failure.
+          header=""
+          if [[ "$CURRENT_SUITE" == success ]]; then
+            new_state=passing
+            if [[ "$recorded_state" == failing ]]; then
+              header="✅ Live E2E recovered"
+              text="Live E2E recovered"
+              detail="Live E2E is passing again after the failure reported earlier."
             else
-              header="❌ Live E2E failed"
-              text="Live E2E failed"
-              detail="The ${WORKFLOW_NAME} live suite failed."
+              echo "Action: recorded ${BRANCH} as passing"
+            fi
+          else
+            new_state=failing
+            # The lock group replaces a pending notifier when another arrives, and the
+            # replaced run is cancelled; a pass dropped that way would have re-armed this alert.
+            dropped=false
+            if [[ "$recorded_state" == failing && -n "$recorded_at" ]]; then
+              notify_workflow="${NOTIFY_WORKFLOW_REF%@*}"
+              if ! cancelled="$(gh api -X GET "/repos/${REPOSITORY}/actions/workflows/${notify_workflow##*/}/runs" -f status=cancelled -f "created=>=${recorded_at}" -F per_page=1 --jq '.total_count')" \
+                || [[ "$cancelled" != 0 ]]; then
+                dropped=true
+              fi
+            fi
+            if [[ "$recorded_state" == failing && "$dropped" == false ]]; then
+              echo "Action: recorded ${BRANCH} as failing (failure already reported)"
+            else
+              if [[ "$recorded_state" == unknown ]]; then
+                echo "::warning::Could not read ${state_artifact}; posting the failure in case it is new."
+              elif [[ "$dropped" == true ]]; then
+                echo "::warning::A notifier run may have been dropped since the recorded failure; posting the failure in case the suite recovered in between."
+              fi
+              if [[ "$STARTUP_FAILURE" == true ]]; then
+                header="❌ Live E2E failed to start"
+                text="Live E2E failed to start"
+                detail="The Live E2E workflow failed before it produced a Live e2e job."
+              else
+                header="❌ Live E2E failed"
+                text="Live E2E failed"
+                detail="The ${WORKFLOW_NAME} live suite failed."
+              fi
             fi
           fi
 
-          run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
-          commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
-          payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
-          curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+          if [[ -n "$header" ]]; then
+            run_url="https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}"
+            commit_url="https://github.com/${REPOSITORY}/commit/${SHA}"
+            payload="$(jq -n --arg text "$text" --arg header "$header" --arg detail "$detail" --arg run_url "$run_url" --arg commit_url "$commit_url" --arg branch "$BRANCH" --arg sha "${SHA:0:7}" '{text:$text,blocks:[{type:"header",text:{type:"plain_text",text:$header,emoji:true}},{type:"section",text:{type:"mrkdwn",text:($detail + "\n*Branch:* `" + $branch + "`\n*Commit:* <" + $commit_url + "|" + $sha + ">\n*Workflow run:* <" + $run_url + "|view logs and failed tests>")}}]}')"
+            curl -fsSL -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK"
+            echo "Action: posted ${text}"
+          fi
+
+          printf '%s\n%s\n' "$new_state" "$SOURCE_CREATED_AT" > "${state_dir}/state"
+          {
+            echo "state=${new_state}"
+            echo "artifact=${state_artifact}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record reported state
+        if: steps.notify.outputs.state != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.notify.outputs.artifact }}
+          path: ${{ runner.temp }}/live-e2e-alert-state/state
+          retention-days: 90
+          if-no-files-found: error
