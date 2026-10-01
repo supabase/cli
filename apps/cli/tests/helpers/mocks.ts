@@ -4,6 +4,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
+import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
@@ -570,9 +571,6 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
 
   return snapshot;
 }
-
-/** A test run's volume-cleanup id; survives env replacement below unless a caller overrides it. */
-const stackTestRunEnvVar = "SUPABASE_STACK_TEST_RUN";
 
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},

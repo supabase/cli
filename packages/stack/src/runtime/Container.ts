@@ -19,6 +19,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
@@ -92,6 +93,11 @@ const errorFor = (operation: string, cause: unknown) =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+
+/** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
+const testRunLabelArgs = readTestRunLabelArgs.pipe(
+  Effect.mapError((cause) => errorFor("config", cause)),
+);
 
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
@@ -389,26 +395,32 @@ export const makeContainerRuntime = (options: {
     const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
     /** Reads `/etc/hosts` from a throwaway container of an already present image. */
     const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
-      run(
-        [
-          "run",
-          "--rm",
-          "--pull",
-          "never",
-          ...addHost,
-          // No instance label: `--rm` removal is asynchronous and must not count as an
-          // instance container; the stack labels keep it sweepable.
-          "--label",
-          `com.supabase.stack=${spec.stackId}`,
-          "--label",
-          `com.supabase.stack-root=${stackRoot}`,
-          "--entrypoint",
-          "cat",
-          image,
-          "/etc/hosts",
-        ],
-        { timeout: undefined },
-      ).pipe(Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT));
+      testRunLabelArgs.pipe(
+        Effect.flatMap((testRunLabel) =>
+          run(
+            [
+              "run",
+              "--rm",
+              "--pull",
+              "never",
+              ...addHost,
+              // No instance label: `--rm` removal is asynchronous and must not count as an
+              // instance container; the stack labels keep it sweepable.
+              "--label",
+              `com.supabase.stack=${spec.stackId}`,
+              "--label",
+              `com.supabase.stack-root=${stackRoot}`,
+              ...testRunLabel,
+              "--entrypoint",
+              "cat",
+              image,
+              "/etc/hosts",
+            ],
+            { timeout: undefined },
+          ),
+        ),
+        Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT),
+      );
     /** Resolves the IPv4 host address the engine writes itself, since it rejects `host-gateway`. */
     const engineHostProbe = (image: string, spec: ContainerSpec, rejection: ContainerError) =>
       readProbeHosts(image, spec, []).pipe(
@@ -489,6 +501,7 @@ export const makeContainerRuntime = (options: {
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const hostAlias =
         options.engine === "docker" ? yield* hostAliasTarget(image, spec) : undefined;
+      const testRunLabel = yield* testRunLabelArgs;
       const createArgs = (target: string | undefined) => [
         "create",
         "--pull",
@@ -512,6 +525,7 @@ export const makeContainerRuntime = (options: {
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
         ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        ...testRunLabel,
         "--label",
         `com.docker.compose.project=${composeProject}`,
         "--label",
