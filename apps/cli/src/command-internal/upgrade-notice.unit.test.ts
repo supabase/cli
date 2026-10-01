@@ -109,6 +109,11 @@ describe("runUpgradeNotice", () => {
         utimesSync(cacheFile, then, then);
       }
     }
+    // A symlinked SUPABASE_HOME disables the user-level cache, so runs outside a
+    // project record no backoff.
+    const supabaseHome = join(workdir, "home");
+    mkdirSync(join(workdir, "home-target"));
+    symlinkSync(join(workdir, "home-target"), supabaseHome);
     let fetchCalls = 0;
     const stderr: Array<string> = [];
     const deps: UpgradeNoticeDeps = {
@@ -116,6 +121,7 @@ describe("runUpgradeNotice", () => {
       args: opts.args ?? ["db", "start"],
       cwd: workdir,
       currentVersion: opts.currentVersion ?? "2.113.0",
+      supabaseHome,
       now: Date.now,
       fetchLatestTag: () => {
         fetchCalls += 1;
@@ -191,10 +197,11 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("--version forces a fetch through a fresh cache", async () => {
+  it("--version reads a fresh cache instead of fetching", async () => {
     const ctx = setup({ args: ["--version"], cacheContent: "v2.115.0", cacheAgeMs: 60_000 });
     await runUpgradeNotice(ctx.deps);
-    expect(ctx.fetchCalls).toBe(1);
+    expect(ctx.fetchCalls).toBe(0);
+    expect(ctx.stderr).toContain("v2.115.0");
     ctx.cleanup();
   });
 
@@ -248,7 +255,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a failed fetch surfaces its error under --debug when there is no project to back off in", async () => {
+  it("a failed fetch surfaces its error under --debug when no cache can record the backoff", async () => {
     const ctx = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug"] });
     await runUpgradeNotice(ctx.deps);
     expect(ctx.stderr).toContain("Failed to fetch latest release");
@@ -339,8 +346,8 @@ describe("runUpgradeNotice", () => {
   });
 
   it("a false root version flag before a leaf runs the normal path, workdir included", async () => {
-    // `--version=false <leaf>` still marks the flag as set, forcing the fetch;
-    // only the built-in classification must not trigger.
+    // `--version=false <leaf>` is not the version built-in, so the cache
+    // resolves under `--workdir`.
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     mkdirSync(join(flagged, "supabase"), { recursive: true });
@@ -396,14 +403,6 @@ describe("runUpgradeNotice", () => {
     // The empty-cache backoff write succeeds, so no debug line is emitted.
     expect(ctx.stderr).toBe("");
     expect(readFileSync(ctx.cachePath, "utf8")).toBe("");
-    ctx.cleanup();
-  });
-
-  it("outside a project the notice still prints but nothing is cached", async () => {
-    const ctx = setup({ project: false });
-    await runUpgradeNotice(ctx.deps);
-    expect(ctx.stderr).toContain("v2.114.0");
-    expect(() => readFileSync(ctx.cachePath, "utf8")).toThrow();
     ctx.cleanup();
   });
 
@@ -610,6 +609,16 @@ describe("runUpgradeNotice", () => {
 
       expect(ctx.stderr).toContain("v2.114.0");
       expect(readdirSync(outside)).toEqual([]);
+      ctx.cleanup();
+    },
+  );
+
+  it.each(["", "/", "/."])(
+    "never writes through a symlinked SUPABASE_HOME spelled with suffix %j",
+    async (suffix) => {
+      const ctx = setup({ project: false });
+      await runUpgradeNotice({ ...ctx.deps, supabaseHome: `${ctx.deps.supabaseHome}${suffix}` });
+      expect(readdirSync(join(workdir, "home-target"))).toEqual([]);
       ctx.cleanup();
     },
   );
