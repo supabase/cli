@@ -240,6 +240,15 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             : Effect.fail(error);
         }),
       );
+    // A killed launcher reports its exit as a failure (signal-interrupted),
+    // not a success; settling at all, even with that failure, means it is
+    // gone. Only a genuine timeout (never settling) means it is not.
+    const launcherSettled = (timeout: Duration.Input): Effect.Effect<boolean> =>
+      handle.exitCode.pipe(
+        Effect.timeoutOption(timeout),
+        Effect.map(Option.isSome),
+        Effect.orElseSucceed(() => true),
+      );
     const killProcess = Effect.fn("NativeProcess.kill")(function* () {
       const running = yield* handle.isRunning.pipe(
         Effect.mapError((error) => mapProcessError(error, spec)),
@@ -275,19 +284,13 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
             Effect.as(Option.none<NativeProcessError>()),
             Effect.catch((error) => Effect.succeed(Option.some(error))),
           );
-          const reaped = yield* handle.exitCode.pipe(
-            Effect.timeoutOption(launcherReapTimeout),
-            Effect.orElseSucceed(() => Option.none<ExitCode>()),
-          );
-          if (Option.isNone(reaped)) {
+          const reaped = yield* launcherSettled(launcherReapTimeout);
+          if (!reaped) {
             yield* handle
               .kill({ killSignal: "SIGKILL" })
               .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
-            const confirmed = yield* handle.exitCode.pipe(
-              Effect.timeoutOption(launcherReapTimeout),
-              Effect.orElseSucceed(() => Option.none<ExitCode>()),
-            );
-            if (Option.isNone(confirmed))
+            const confirmed = yield* launcherSettled(launcherReapTimeout);
+            if (!confirmed)
               return yield* new NativeProcessError({
                 message: "Native launcher did not confirm exit after a forced stop",
                 executable: spec.executable,

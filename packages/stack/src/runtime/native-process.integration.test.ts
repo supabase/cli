@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
-import { systemError } from "effect/PlatformError";
+import { systemError, type PlatformError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
@@ -31,7 +31,7 @@ interface FakeProcessOptions {
   readonly groupStallReady?: Deferred.Deferred<void>;
   readonly groupStallClosed?: Deferred.Deferred<void>;
   readonly exitStarted?: Deferred.Deferred<void>;
-  readonly exitCode?: Deferred.Deferred<ExitCode>;
+  readonly exitCode?: Deferred.Deferred<ExitCode, PlatformError>;
   /** Reports the launcher as still running instead of the default already-exited fake. */
   readonly isRunning?: boolean;
   /** Observes the signal a forced `kill` sends to the launcher. */
@@ -962,7 +962,7 @@ describe("native process group cleanup", () => {
       const signals: Array<{ readonly pid: number; readonly signal: NodeJS.Signals }> = [];
       return withMockedTargetKill(
         Effect.gen(function* () {
-          const exitCode = yield* Deferred.make<ExitCode>();
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
           const spawner = makeSpawner({ isRunning: true, exitCode });
           // A manually owned scope isolates the explicit kill call below from
           // the scope-finalizer's own kill, which would otherwise race the
@@ -1002,7 +1002,7 @@ describe("native process group cleanup", () => {
       const forcedSignals: Array<string | undefined> = [];
       return withMockedTargetKill(
         Effect.gen(function* () {
-          const exitCode = yield* Deferred.make<ExitCode>();
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
           const spawner = makeSpawner({
             isRunning: true,
             exitCode,
@@ -1026,7 +1026,17 @@ describe("native process group cleanup", () => {
           // The launcher was force-killed but its exit is not resolved yet:
           // kill must still wait for confirmation, not complete right away.
           expect(fiber.pollUnsafe()).toBeUndefined();
-          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          // A killed process reports its exit as a signal-interrupted
+          // failure, not a success; that must still count as confirmed.
+          yield* Deferred.fail(
+            exitCode,
+            systemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "exitCode",
+              description: "Process interrupted due to receipt of signal: 'SIGKILL'",
+            }),
+          );
           expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
           yield* Scope.close(processScope, Exit.void);
         }),
@@ -1042,7 +1052,7 @@ describe("native process group cleanup", () => {
       const forcedSignals: Array<string | undefined> = [];
       return withMockedTargetKill(
         Effect.gen(function* () {
-          const exitCode = yield* Deferred.make<ExitCode>();
+          const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
           const spawner = makeSpawner({
             isRunning: true,
             exitCode,
@@ -1063,7 +1073,17 @@ describe("native process group cleanup", () => {
           yield* TestClock.adjust("2 seconds");
           yield* Effect.yieldNow;
           expect(forcedSignals).toEqual(["SIGKILL"]);
-          yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+          // A killed process reports its exit as a signal-interrupted
+          // failure, not a success; that must still count as confirmed.
+          yield* Deferred.fail(
+            exitCode,
+            systemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "exitCode",
+              description: "Process interrupted due to receipt of signal: 'SIGKILL'",
+            }),
+          );
           const result = yield* Fiber.join(fiber);
           expect(Exit.isFailure(result)).toBe(true);
           if (Exit.isFailure(result)) {
@@ -1085,7 +1105,7 @@ describe("native process group cleanup", () => {
     withMockedTargetKill(
       Effect.gen(function* () {
         const exitStarted = yield* Deferred.make<void>();
-        const exitCode = yield* Deferred.make<ExitCode>();
+        const exitCode = yield* Deferred.make<ExitCode, PlatformError>();
         yield* Effect.scoped(
           Effect.gen(function* () {
             const native = yield* spawnNativeProcess(spec, {
