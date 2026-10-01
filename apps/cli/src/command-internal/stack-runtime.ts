@@ -8,6 +8,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
+import { withChildTraceEnv, withProcessSpan } from "../shared/telemetry/spans.ts";
 
 /** Runtime that executes a local stack's services. */
 export type StackRuntime = "native" | "docker" | "podman";
@@ -38,20 +39,25 @@ const engineReachable = (
   spawner: ChildProcessSpawner["Service"],
   probe: (typeof engineProbes)[number],
 ) =>
-  spawner
-    .exitCode(
-      ChildProcess.make(probe.runtime, probe.args, {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "ignore",
-        forceKillAfter: "1 second",
-      }),
-    )
-    .pipe(
-      Effect.timeout(PROBE_TIMEOUT),
-      Effect.map((exitCode) => exitCode === 0),
-      Effect.orElseSucceed(() => false),
-    );
+  withProcessSpan(
+    "StackRuntime.probeEngine",
+    { executable: probe.runtime, argCount: probe.args.length, subcommand: probe.args[0] },
+    (traceEnv) =>
+      spawner.exitCode(
+        ChildProcess.make(
+          probe.runtime,
+          probe.args,
+          withChildTraceEnv(
+            { stdin: "ignore", stdout: "ignore", stderr: "ignore", forceKillAfter: "1 second" },
+            traceEnv,
+          ),
+        ),
+      ),
+  ).pipe(
+    Effect.timeout(PROBE_TIMEOUT),
+    Effect.map((exitCode) => exitCode === 0),
+    Effect.orElseSucceed(() => false),
+  );
 
 /**
  * Notice for a new stack whose automatic selection skipped Docker, since that runtime is saved with
