@@ -17,7 +17,7 @@ const config = {
   ),
   service: Flag.string("service").pipe(
     Flag.withDescription(
-      "Read one service kind or instance ID; repeat to select several. Defaults to composition members.",
+      "Read one service kind, instance ID, or gateway (shared API requests); repeat to select several. Defaults to composition members and gateway.",
     ),
     Flag.atLeast(0),
   ),

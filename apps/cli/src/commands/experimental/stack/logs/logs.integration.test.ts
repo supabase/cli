@@ -96,6 +96,8 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
     readonly stateRoot: string;
     readonly stackId: string;
   }) => ReadonlyArray<ServiceInstance<"mail">>;
+  readonly ports?: SavedStack["ports"];
+  readonly gatewayLogs?: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -113,6 +115,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
   const definition: SavedStack = {
     ...found.value.definition,
     instances: options.instances,
+    ports: options.ports ?? [],
     composition: {
       members: options.members.map((id) => ({ id, activation: "eager" as const })),
       dependencies: [],
@@ -147,6 +150,7 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
               ...stack.services,
               list: Effect.succeed(options.handles?.({ stateRoot, stackId: stack.id }) ?? []),
             },
+            gateway: { readLogs: options.gatewayLogs ?? stack.gateway.readLogs },
           }),
         ),
     }),
@@ -432,6 +436,81 @@ describe("stack logs", () => {
           .toSorted(),
       ).toEqual(["a live", "b live"]);
       expect(liveOnly.output.stderrText).toBe("");
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  const apiPort = [{ key: "api", host: "127.0.0.1", port: 54321 }];
+  const request =
+    '127.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "GET /rest/v1/ HTTP/1.1" 200 2 "-" "curl/8.7.1" 3ms';
+
+  it.live("includes the gateway's requests by default and selects them with --service", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        ports: apiPort,
+      });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+      yield* f.writeSegment("gateway", "gateway", [launch(t0), line(t0 + 2, "stdout", request)]);
+
+      const all = yield* f.run({});
+      const gateway = yield* f.run({ service: ["gateway"] }, "stream-json");
+
+      expect(lines(all.output.stdoutText).map((value) => value.replace(/\d{2}:\S+ /u, ""))).toEqual(
+        [
+          "gateway | --- launch 1 ---",
+          "mail    | --- launch 1 ---",
+          "mail    | mail up",
+          `gateway | ${request}`,
+        ],
+      );
+      expect(eventLines(gateway.output.events)).toEqual([request]);
+      expect(gateway.output.events.at(-1)).toMatchObject({
+        service: "gateway",
+        instance_id: "gateway",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("rejects --service gateway when the stack has no shared API listener", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
+
+      const selected = yield* f.run({ service: ["gateway"] });
+      const all = yield* f.run({}, "stream-json");
+
+      expect(failure(selected.exit)).toMatchObject({
+        reason: "flags",
+        message: "No service matches gateway.",
+      });
+      expect(eventLines(all.output.events)).toEqual(["mail up"]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("follows the gateway's new requests through the owner", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [],
+        members: [],
+        ports: apiPort,
+        running: true,
+        gatewayLogs: () =>
+          Stream.make({
+            kind: "stdout" as const,
+            timestamp: iso(t0 + 100),
+            launchId: 1,
+            text: request,
+            position: { generation: 1, byteOffset: 1_000 },
+          }),
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(output.events).toEqual([
+        expect.objectContaining({ service: "gateway", line: request, source: "live" }),
+      ]);
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 

@@ -18,6 +18,7 @@ import {
 import type { ServiceObservation } from "../Service.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import { CatalogError } from "../services/Recipe.ts";
+import * as GatewayLog from "./GatewayLog.ts";
 import type { LogRecord } from "./LogRecord.ts";
 import * as LogForwarder from "./LogForwarder.ts";
 import * as LogStore from "./LogStore.ts";
@@ -190,10 +191,12 @@ const composition = Effect.succeed({
 /** Starts a forwarder in its own scope so a test can stop it like an owner. */
 const startForwarder = (
   store: LogStore.Interface,
-  instances: ReadonlyArray<LogForwarder.ForwardedInstance>,
+  instances: ReadonlyArray<LogForwarder.ForwardedInstance | LogForwarder.ForwardedStream>,
 ) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
+    // Stops before the test's store and temp directory close, so no cursor write races removal.
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
     const forwarder = yield* LogForwarder.make({ composition, logs: store }).pipe(
       Scope.provide(scope),
     );
@@ -387,6 +390,53 @@ describe("LogForwarder", () => {
       expect(shipped.map((event) => event.event_message)).toEqual(
         retained.map((record) => record.text),
       );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("ships gateway access lines to the API Gateway source", () =>
+    Effect.gen(function* () {
+      const { store, sink, analytics } = yield* fixture();
+      const gateway = yield* GatewayLog.make;
+      yield* store.attach({
+        ...GatewayLog.gatewayLog,
+        logs: gateway.logs,
+        observation: gateway.observation,
+      });
+      yield* analytics.set(true);
+      yield* startForwarder(store, [
+        analytics.instance,
+        { id: GatewayLog.gatewayLog.instanceId, service: GatewayLog.gatewayLog.service },
+      ]);
+
+      yield* gateway.record({
+        time: Date.parse("2026-10-01T09:25:23.000Z"),
+        client: "127.0.0.1",
+        method: "POST",
+        target: "/auth/v1/token?grant_type=password",
+        protocol: "HTTP/1.1",
+        status: 400,
+        bytes: 60,
+        durationMillis: 3,
+      });
+      const shipped = yield* sink.next;
+
+      expect(shipped.url).toBe("/api/logs?source_name=cloudflare.logs.prod");
+      expect(shipped.events).toEqual([
+        expect.objectContaining({
+          appname: "gateway",
+          timestamp: "2026-10-01T09:25:23.000Z",
+          metadata: {
+            request: {
+              method: "POST",
+              path: "/auth/v1/token",
+              search: "?grant_type=password",
+              protocol: "HTTP/1.1",
+              headers: { cf_connecting_ip: "127.0.0.1" },
+            },
+            response: { status_code: 400 },
+          },
+        }),
+      ]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

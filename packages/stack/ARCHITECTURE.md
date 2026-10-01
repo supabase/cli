@@ -662,8 +662,16 @@ follow can resume at a record position, and a reader that finds its segment dele
 instances no longer saved, so a failed deletion is retried; destroying the stack removes `logs/`;
 resetting database data keeps them.
 
+The shared API listener is the stack's gateway. Each completed request, and each WebSocket upgrade
+once its handshake status is known, becomes one nginx combined line plus duration, with `apikey`,
+`access_token` and `token` query values redacted. The proxy hands it to a bounded sliding buffer
+after the response settles, so logging never delays a response or holds a target's activity.
+The owner persists these lines as the `gateway` stream, `logs/gateway/gateway/`, with one launch
+per owner run; it is not a service instance, so orphan cleanup keeps it.
+
 While the composed Analytics instance is running and healthy, the owner ships the persisted
-stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances to its
+stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances, and of
+the gateway stream as Studio's API Gateway source, to its
 direct backend (never the proxy, so shipping neither wakes it nor counts as activity), in bodies of
 at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
 position of its last shipped record, written atomically after each body settles: a missing cursor

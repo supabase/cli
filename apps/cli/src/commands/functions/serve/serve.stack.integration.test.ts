@@ -287,6 +287,7 @@ const fixture = (
       },
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
+      gateway: { readLogs: () => Stream.die("unused") },
       commands: { run: () => Effect.die("unused") },
     } satisfies Stack;
     const identity = { projectRoot: "/project", branchContext: "main", stackName: "default" };

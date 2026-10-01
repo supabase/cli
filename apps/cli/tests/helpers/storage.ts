@@ -263,6 +263,7 @@ export function buildStorageStackApi(
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: () => Effect.die("unused") },
   };
   const definition = {

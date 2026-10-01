@@ -153,6 +153,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     stop: Effect.void,
     destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: runCommand },
   } satisfies Stack;
   return Layer.succeed(StackApi, {

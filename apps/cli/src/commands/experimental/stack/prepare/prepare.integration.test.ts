@@ -157,6 +157,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     },
     stop: Effect.void,
     destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();

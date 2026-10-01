@@ -164,6 +164,7 @@ function generateStackApi(workdir: string) {
     },
     stop: unusedStack,
     destroy: unusedStack,
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: unusedStackFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };

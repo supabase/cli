@@ -1733,6 +1733,7 @@ describe("db start stack backend", () => {
       },
       stop: Effect.void,
       destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      gateway: { readLogs: () => Stream.die("unused") },
       commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };

@@ -27,6 +27,7 @@ import {
   type LogflareEvent,
   type ShippedService,
 } from "./LogflareEvents.ts";
+import type { gatewayLog } from "./GatewayLog.ts";
 import { LogPosition, type LogRecord } from "./LogRecord.ts";
 import type * as LogStore from "./LogStore.ts";
 
@@ -39,9 +40,15 @@ export interface ForwardedInstance {
   readonly observation: Stream.Stream<ServiceObservation<unknown>>;
 }
 
+/** An owner log stream without a service instance; it ships while the owner runs. */
+export interface ForwardedStream {
+  readonly id: string;
+  readonly service: typeof gatewayLog.service;
+}
+
 interface Interface {
   /** Ships a shipped service's persisted logs, or tracks an Analytics instance as the target. */
-  readonly attach: (instance: ForwardedInstance) => Effect.Effect<void>;
+  readonly attach: (instance: ForwardedInstance | ForwardedStream) => Effect.Effect<void>;
   /** Re-selects the shipping target after the composition changes. */
   readonly rebind: Effect.Effect<void>;
   /** Emits whether records are currently shipped; the current value first. */
@@ -372,25 +379,29 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       Stream.runDrain,
     );
 
-  const forward = (instance: ForwardedInstance, service: ShippedService) =>
+  const forward = (id: string, service: ShippedService, until: Effect.Effect<void>) =>
     Effect.gen(function* () {
       const current = yield* serving;
       // A stopped target pauses shipping; the cursor keeps the position to resume from.
-      yield* session(instance.id, service, current).pipe(
+      yield* session(id, service, current).pipe(
         Effect.catch((error) =>
           (error._tag === "StaleTarget"
             ? Effect.void
-            : Effect.logWarning(`Log shipping of ${instance.id} paused`, error)
+            : Effect.logWarning(`Log shipping of ${id} paused`, error)
           ).pipe(Effect.andThen(retargeted(current))),
         ),
         Effect.raceFirst(retargeted(current)),
       );
-    }).pipe(Effect.forever, Effect.raceFirst(unregistered(instance)));
+    }).pipe(Effect.forever, Effect.raceFirst(until));
 
-  const attach = Effect.fn("LogForwarder.attach")(function* (instance: ForwardedInstance) {
-    if (instance.service === "analytics") yield* Effect.forkIn(trackTarget(instance), scope);
+  const attach = Effect.fn("LogForwarder.attach")(function* (
+    instance: ForwardedInstance | ForwardedStream,
+  ) {
+    if (instance.service === "gateway")
+      yield* Effect.forkIn(forward(instance.id, instance.service, Effect.never), scope);
+    else if (instance.service === "analytics") yield* Effect.forkIn(trackTarget(instance), scope);
     else if (isShippedService(instance.service))
-      yield* Effect.forkIn(forward(instance, instance.service), scope);
+      yield* Effect.forkIn(forward(instance.id, instance.service, unregistered(instance)), scope);
   });
 
   return {

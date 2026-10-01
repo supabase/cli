@@ -808,6 +808,7 @@ function mockResetStackApi(opts: {
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: () => Effect.die("unused") },
   };
   return {

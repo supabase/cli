@@ -112,6 +112,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: () => Effect.die("unused") },
   } satisfies Stack;
 }

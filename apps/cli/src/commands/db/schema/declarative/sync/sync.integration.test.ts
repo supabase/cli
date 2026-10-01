@@ -166,6 +166,7 @@ function syncStackApi(workdir: string, port: number) {
     },
     stop: unusedSync,
     destroy: unusedSync,
+    gateway: { readLogs: () => Stream.die("unused") },
     commands: { run: unusedSyncFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };

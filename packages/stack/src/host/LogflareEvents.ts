@@ -1,7 +1,11 @@
 import { DateTime, Option } from "effect";
 import type { ServiceCreation } from "../services/Catalog.ts";
+import type { gatewayLog } from "./GatewayLog.ts";
 
-/** Logflare source per shipped service kind; Studio's Logs pages query these names. */
+/** A service kind, or the owner's `gateway` stream of shared API listener requests. */
+export type LogService = ServiceCreation["service"] | typeof gatewayLog.service;
+
+/** Logflare source per shipped log service; Studio's Logs pages query these names. */
 export const logflareSources = {
   auth: "gotrue.logs.prod",
   rest: "postgREST.logs.prod",
@@ -9,11 +13,12 @@ export const logflareSources = {
   storage: "storage.logs.prod.2",
   functions: "deno-relay-logs",
   database: "postgres.logs",
-} as const satisfies Partial<Record<ServiceCreation["service"], string>>;
+  gateway: "cloudflare.logs.prod",
+} as const satisfies Partial<Record<LogService, string>>;
 
 export type ShippedService = keyof typeof logflareSources;
 
-export const isShippedService = (service: ServiceCreation["service"]): service is ShippedService =>
+export const isShippedService = (service: LogService): service is ShippedService =>
   Object.hasOwn(logflareSources, service);
 
 /** One ingest event in the shape Studio's local log queries expect. */
@@ -53,8 +58,8 @@ const months: Record<string, number> = {
   dec: 11,
 };
 
-/** Parses PostgREST's `%d/%b/%Y:%H:%M:%S %z` prefix into an ISO-8601 timestamp. */
-const parsePostgrestTime = (text: string): string | undefined => {
+/** Parses the `%d/%b/%Y:%H:%M:%S %z` time of PostgREST and nginx logs into ISO-8601. */
+const parseLogTime = (text: string): string | undefined => {
   const match =
     /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/u.exec(text);
   if (match === null) return undefined;
@@ -78,6 +83,19 @@ const parsePostgrestTime = (text: string): string | undefined => {
 /** The time and request of PostgREST's Apache combined request line. */
 const postgrestRequest = /^\S+ \S+ \S+ \[([^\]]+)\] "([A-Z]+) (\S+) ([^"\s]+)" (\d{3}) /u;
 
+/** The gateway's nginx combined line with its trailing duration. */
+const gatewayRequest =
+  /^(\S+) \S+ \S+ \[([^\]]+)\] "(\S+) (\S+) (\S+)" (\d{3}) (?:\d+|-) "([^"]*)" "([^"]*)" \d+ms$/u;
+
+const unescapeLogValue = (value: string) =>
+  value.replace(/\\x([0-9a-f]{2})/giu, (_, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  );
+
+/** A quoted combined-log field, absent when nginx wrote `-`. */
+const logValue = (value: string | undefined) =>
+  value === undefined || value === "-" ? undefined : unescapeLogValue(value);
+
 const withoutProject = ({ project: _project, ...event }: LogflareEvent): LogflareEvent => event;
 
 const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = {
@@ -89,7 +107,7 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
   },
   rest: (event) => {
     const request = postgrestRequest.exec(event.event_message);
-    const requestTime = request === null ? undefined : parsePostgrestTime(request[1] ?? "");
+    const requestTime = request === null ? undefined : parseLogTime(request[1] ?? "");
     if (request !== null && requestTime !== undefined)
       return {
         ...event,
@@ -104,7 +122,7 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
         },
       };
     const match = /^(.*): (.*)$/u.exec(event.event_message);
-    const timestamp = match === null ? undefined : parsePostgrestTime(match[1] ?? "");
+    const timestamp = match === null ? undefined : parseLogTime(match[1] ?? "");
     return match === null || timestamp === undefined
       ? event
       : {
@@ -151,6 +169,35 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
         ...event.metadata,
         host: "db-default",
         parsed: { timestamp: event.timestamp, error_severity: match?.[1] ?? "LOG" },
+      },
+    };
+  },
+  gateway: (event) => {
+    const match = gatewayRequest.exec(event.event_message);
+    const timestamp = match === null ? undefined : parseLogTime(match[2] ?? "");
+    if (match === null || timestamp === undefined) return event;
+    const [, client, , method, target = "", protocol, status, referer, userAgent] = match;
+    const decoded = unescapeLogValue(target);
+    const queryAt = decoded.indexOf("?");
+    const refererHeader = logValue(referer);
+    const userAgentHeader = logValue(userAgent);
+    return {
+      ...event,
+      timestamp,
+      metadata: {
+        ...event.metadata,
+        request: {
+          method,
+          path: queryAt < 0 ? decoded : decoded.slice(0, queryAt),
+          ...(queryAt < 0 ? {} : { search: decoded.slice(queryAt) }),
+          protocol,
+          headers: {
+            cf_connecting_ip: client,
+            ...(refererHeader === undefined ? {} : { referer: refererHeader }),
+            ...(userAgentHeader === undefined ? {} : { user_agent: userAgentHeader }),
+          },
+        },
+        response: { status_code: Number(status) },
       },
     };
   },

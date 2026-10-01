@@ -489,6 +489,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       },
       stop: unused,
       destroy: unused,
+      gateway: { readLogs: () => Stream.die("unused") },
       commands: { run: () => unused },
     };
     return Layer.succeed(StackApi, {

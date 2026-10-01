@@ -176,6 +176,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
+  gateway: { readLogs: () => Stream.die("unused") },
   commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },
