@@ -25,6 +25,7 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { reserveNativePort } from "../Ports.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -97,6 +98,10 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
       if (server.listening) server.close();
     });
   });
+
+// No saved stacks to consult outside the claim-interaction test below.
+const testReserveNativePort = (stackId: string, key: string, excluded: ReadonlySet<number>) =>
+  reserveNativePort(Effect.succeed([]), stackId, key, excluded);
 
 describe("ProcessRecipe launch cleanup", () => {
   for (const scenario of [
@@ -188,6 +193,7 @@ describe("ProcessRecipe launch cleanup", () => {
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
+            reserveNativePort: testReserveNativePort,
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
           const service = yield* makeService(recipe.definition, {
@@ -275,6 +281,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -385,6 +392,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -458,6 +466,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       client: yield* HttpClient.HttpClient,
       spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       container,
+      reserveNativePort: testReserveNativePort,
     },
     Realtime.makeSpec(),
   );
@@ -655,7 +664,15 @@ const nativeRestRecipe = Effect.fn(function* (
       runtime: "native",
       platform: { os: process.platform, arch: process.arch },
     },
-    { fs, path, crypto, client, spawner, container: undefined },
+    {
+      fs,
+      path,
+      crypto,
+      client,
+      spawner,
+      container: undefined,
+      reserveNativePort: testReserveNativePort,
+    },
     {
       ...spec,
       env: (_creation, endpoints) =>
@@ -924,7 +941,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: interceptingSpawner, container: undefined },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: interceptingSpawner,
+            container: undefined,
+            reserveNativePort: testReserveNativePort,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
@@ -955,6 +980,69 @@ describe("process recipe startup", () => {
         yield* runtime.stop;
       }),
     ).pipe(Effect.provide(platform)),
+  );
+
+  it.live(
+    "reserves a native backend port from the below-ephemeral range, never an OS-assigned one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const client = yield* HttpClient.HttpClient;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-range-" });
+          const cacheRoot = path.join(root, "cache");
+          yield* nativePoolerArtifact(cacheRoot);
+          const creation: Pooler.Creation = {
+            service: "pooler",
+            config: {
+              databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+              jwtSecret: "pooler-port-range-test-secret-with-more-than-32-characters",
+              tenant: "port-range-test",
+              poolMode: "transaction",
+            },
+          };
+          const recipe = yield* makeProcessRecipe(
+            creation,
+            {
+              stackId: "process-recipe-port-range",
+              instanceId: "instance",
+              root,
+              cacheRoot,
+              runtime: "native",
+              platform: { os: process.platform, arch: process.arch },
+            },
+            {
+              fs,
+              path,
+              crypto,
+              client,
+              spawner,
+              container: undefined,
+              reserveNativePort: testReserveNativePort,
+            },
+            Pooler.makeSpec(),
+          );
+          if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+          const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+          const runtime = yield* recipe.definition.launch({
+            id: "pooler",
+            config: creation,
+            scope,
+          });
+          yield* runtime.health;
+          const endpoints = yield* Ref.get(recipe.endpoints);
+          const endpoint = endpoints.get("http");
+          // A backend chosen from this range (Ports.ts's below-ephemeral 20000..32767 span)
+          // can never coincide with an OS-auto-assigned ephemeral port, so releasing the probe
+          // before the child binds cannot race an unrelated outgoing connection for the number.
+          expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
+          expect(endpoint?.port).toBeLessThan(32768);
+          yield* runtime.stop;
+        }),
+      ).pipe(Effect.provide(platform)),
   );
 
   it.live("stops after three consecutive native Pooler port collisions", () =>
@@ -998,6 +1086,7 @@ describe("process recipe startup", () => {
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
             container: undefined,
+            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
@@ -1125,7 +1214,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: deadlineSpawner, container: undefined },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: deadlineSpawner,
+            container: undefined,
+            reserveNativePort: testReserveNativePort,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
@@ -1187,6 +1284,7 @@ describe("process recipe startup", () => {
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
             container: undefined,
+            reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
         );
@@ -1284,7 +1382,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: failingSpawner, container: undefined },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: failingSpawner,
+            container: undefined,
+            reserveNativePort: testReserveNativePort,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);

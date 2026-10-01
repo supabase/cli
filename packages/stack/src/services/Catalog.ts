@@ -2,7 +2,9 @@ import { Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
+import { reserveNativePort } from "../Ports.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
+import type * as State from "../State.ts";
 import {
   makeDatabase,
   DatabaseConfig,
@@ -298,7 +300,7 @@ const databaseRecipe = (
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
-  (input: unknown, options: CatalogOptions) =>
+  (input: unknown, options: CatalogOptions, state?: State.Interface) =>
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
@@ -351,7 +353,17 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
             });
-      const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
+      const claims = state?.claims ?? Effect.succeed([]);
+      const deps: ProcessDependencies = {
+        fs,
+        path,
+        crypto,
+        client,
+        spawner,
+        container,
+        reserveNativePort: (stackId, key, excluded) =>
+          reserveNativePort(claims, stackId, key, excluded),
+      };
       switch (creation.service) {
         case "rest":
           return catalogRecipe(

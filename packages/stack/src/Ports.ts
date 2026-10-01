@@ -88,6 +88,101 @@ const resolveRequest = (
   return Effect.succeed({ saved, requested });
 };
 
+export interface NativePortReservation {
+  readonly port: number;
+  readonly server: Net.Server;
+}
+
+const closeNativePort = (server: Net.Server): Effect.Effect<void> =>
+  Effect.callback<void, never>((resume) => {
+    if (!server.listening) {
+      resume(Effect.void);
+      return Effect.void;
+    }
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+const bindNativePort = (
+  key: string,
+  port: number,
+): Effect.Effect<NativePortReservation, PortError> =>
+  Effect.callback<NativePortReservation, PortError>((resume) => {
+    const server = Net.createServer((socket) => socket.destroy());
+    const onError = (cause: Error) =>
+      resume(
+        Effect.fail(
+          new PortError({ key, message: "Unable to reserve native service port", cause }),
+        ),
+      );
+    server.once("error", onError);
+    server.listen({ host: "127.0.0.1", port }, () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        onError(new Error("Native service port reservation returned no address"));
+      } else {
+        resume(Effect.succeed({ port: address.port, server }));
+      }
+    });
+    return Effect.sync(() => {
+      server.off("error", onError);
+      if (server.listening) server.close();
+    });
+  });
+
+const emptyPortSet: ReadonlySet<number> = new Set();
+
+/**
+ * Scans the same below-ephemeral span as `acquire` for a backend port, skipping claimed and
+ * excluded ports; reuses `loopbackOccupied` so a wildcard listener a loopback-only bind would miss
+ * on macOS, BSD or Windows still rules out the candidate. Never persists one of its own.
+ */
+export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
+  (
+    claims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>,
+    stackId: string,
+    key: string,
+    excluded: ReadonlySet<number> = emptyPortSet,
+  ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        const stacks = yield* claims.pipe(
+          Effect.mapError(
+            (cause) => new PortError({ key, message: "Unable to read port claims", cause }),
+          ),
+        );
+        const claimed = new Set(stacks.flatMap((stack) => stack.ports.map((claim) => claim.port)));
+        const start = Math.abs(Hash.string(`${stackId}:${key}`)) % portSpan;
+        let failures = 0;
+        let lastFailure: PortError | undefined;
+        for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
+          const port = portBase + ((start + attempt * portStride) % portSpan);
+          if (claimed.has(port) || excluded.has(port)) continue;
+          if (yield* loopbackOccupied(port)) {
+            failures++;
+            lastFailure = new PortError({ key, message: `Port ${port} is already in use` });
+            continue;
+          }
+          const result = yield* Effect.exit(bindNativePort(key, port));
+          if (Exit.isSuccess(result)) return result.value;
+          const error = Cause.findErrorOption(result.cause);
+          if (Option.isNone(error)) return yield* Effect.failCause(result.cause);
+          failures++;
+          lastFailure = error.value;
+        }
+        return yield* new PortError({
+          key,
+          message:
+            lastFailure === undefined
+              ? "No native service port is available"
+              : `No native service port is available: ${lastFailure.message}`,
+          cause: lastFailure,
+        });
+      }),
+      ({ server }) => closeNativePort(server),
+    ),
+);
+
 /** Claims steer auto allocation away from saved stacks; live listeners and binds decide conflicts for fixed ports. */
 export const makePorts = (state: State.Interface, platform: NodeJS.Platform = process.platform) =>
   Effect.sync(() => {

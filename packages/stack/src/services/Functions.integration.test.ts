@@ -17,9 +17,14 @@ import {
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
+import { reserveNativePort } from "../Ports.ts";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+
+// No saved stacks to consult; this test never launches the native backend it configures.
+const testReserveNativePort = (stackId: string, key: string, excluded: ReadonlySet<number>) =>
+  reserveNativePort(Effect.succeed([]), stackId, key, excluded);
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -552,6 +557,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           client: yield* HttpClient.HttpClient,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           container,
+          reserveNativePort: testReserveNativePort,
         },
       );
       const scope = yield* Scope.make();
