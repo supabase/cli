@@ -21,7 +21,6 @@ import {
 } from "@supabase/stack/defaults";
 import { postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
-  planSupabaseComposition,
   StackError,
   type ServiceCreation,
   type ServiceCreationInput,
@@ -30,6 +29,7 @@ import {
   type StackCredentials,
   type Stack,
 } from "@supabase/stack/effect";
+import { planSupabaseComposition } from "@supabase/stack/testing";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -154,8 +154,18 @@ const instance = (
         resetData: Effect.die("unused"),
       };
     }
-    case "rest":
-      return { ...base, service: "rest" };
+    case "rest": {
+      let current = creation;
+      return {
+        ...base,
+        service: "rest",
+        restart: (input?: Parameters<ServiceInstances["rest"]["restart"]>[0]) =>
+          Effect.sync(() => {
+            if (input !== undefined) current = { ...current, ...input };
+          }),
+        status: Effect.sync(() => status(current)),
+      };
+    }
     case "auth":
       return { ...base, service: "auth" };
     case "realtime":
@@ -1442,6 +1452,159 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "names the full Postgres build, not major_version, when only the pinned build differs",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-pg-build-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "pg-build"\n[db]\nmajor_version = 17\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const database = fixture.members.find(({ service }) => service === "database");
+        if (database?.service !== "database") return yield* Effect.die("Database missing");
+        const observed = yield* database.status;
+        if (observed.config.service !== "database")
+          return yield* Effect.die("Database config missing");
+        const pinnedVersion = postgresVersion("17");
+        // A saved build the current catalog no longer pins (`postgresVersion` only normalizes a
+        // recognized alias): same major as the requested `17`, different full build.
+        yield* database.restart({
+          config: { ...observed.config.config, version: "17.0.0-stale-build" },
+        });
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining(
+            `Postgres build: saved 17.0.0-stale-build, requested ${pinnedVersion}`,
+          ),
+        });
+        if (error instanceof StackCommandStartError) {
+          expect(error.message).not.toContain("major_version");
+          expect(error.suggestion).not.toContain("Revert");
+          expect(error.suggestion).toContain(
+            "This CLI release starts a different Postgres build than the saved stack.",
+          );
+          expect(error.suggestion).toContain(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-artifact-version-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "artifact-version"\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
+        const restObserved = yield* rest.status;
+        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
+        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining("rest artifact version"),
+        });
+        if (error instanceof StackCommandStartError) {
+          expect(error.suggestion).not.toContain("Revert");
+          expect(error.suggestion).toContain(
+            "This CLI release starts a different rest artifact version than the saved stack.",
+          );
+          expect(error.suggestion).toContain(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "keeps the revert advice only for editable keys in a mixed editable/non-editable rejection",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-mixed-editable-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "mixed-editable"\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
+        const restObserved = yield* rest.status;
+        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
+        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
+        yield* fixture.stack.composition.stop;
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "mixed-editable"\n[studio]\nport = 12345\n',
+        );
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        if (error instanceof StackCommandStartError) {
+          expect(error.suggestion).toContain(
+            "Revert [studio] port to its saved value to keep the stack and its data",
+          );
+          expect(error.suggestion).not.toContain("rest artifact version");
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("uses plural grammar to revert several editable settings at once", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-plural-revert-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "plural-revert"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "plural-revert"\n[db]\nmajor_version = 15\n[studio]\nport = 12345\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      if (error instanceof StackCommandStartError)
+        expect(error.suggestion).toContain(
+          "Revert the settings listed to their saved values to keep the stack and its data",
+        );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1473,6 +1636,7 @@ describe("experimental stack start", () => {
           key: "[db] major_version",
           saved: "17",
           requested: "15",
+          editable: true,
         },
       ]);
       expect(envelope.recreate_command).toBe(
@@ -1511,6 +1675,7 @@ describe("experimental stack start", () => {
           key: "[db] major_version",
           saved: "17",
           requested: "15",
+          editable: true,
         },
       ]);
       expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);

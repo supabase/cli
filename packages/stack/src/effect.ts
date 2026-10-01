@@ -68,7 +68,6 @@ export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
 export type { CompositionConfig } from "./Orchestrator.ts";
-export { planSupabaseComposition };
 export type {
   CreationChange,
   PlannedInstance,
