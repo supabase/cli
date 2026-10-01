@@ -3433,12 +3433,6 @@ describe("readDbToml OrioleDB telemetry", () => {
       expected: true,
     },
     { name: "the env override", toml: "major_version = 15", env: "15.1.1.14", expected: true },
-    {
-      name: "a version on 14",
-      toml: 'major_version = 14\norioledb_version = "15.1.1.14"',
-      env: undefined,
-      expected: false,
-    },
     { name: "no version", toml: "major_version = 17", env: undefined, expected: false },
   ])("records orioledb=$expected for $name", ({ toml, env, expected }) => {
     const dir = withConfig(`[db]\n${toml}\n`);

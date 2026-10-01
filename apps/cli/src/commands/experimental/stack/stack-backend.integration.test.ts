@@ -89,17 +89,14 @@ stack = true
     );
   });
 
-  it.effect(
-    "selects no backend for an unrouted command even when the feature flag is enabled",
-    () => {
-      return withServices(
-        Effect.gen(function* () {
-          const root = yield* project("[experimental]\nstack = true\n");
-          expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
-        }),
-      );
-    },
-  );
+  it.effect("selects no backend for an unrouted command when stack is enabled", () => {
+    return withServices(
+      Effect.gen(function* () {
+        const root = yield* project("[experimental]\nstack = true\n");
+        expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
+      }),
+    );
+  });
 
   it.effect("routes command-specific start completion through the selected backend", () => {
     return withServices(
