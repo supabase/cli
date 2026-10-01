@@ -32,10 +32,11 @@ import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
 import * as State from "./State.ts";
-import { bindControl, makeRuntime } from "./StackHost.ts";
+import { bindControl, makeRuntime, runStackHost, StackHostError } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -1055,4 +1056,119 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
       expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("restores the saved document when a later startup step fails after a re-plan", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-restore-" });
+      const state = yield* stateFor(root);
+      const fixedPort = 24_613;
+      const saved: State.SavedStack = {
+        id: "stack",
+        lifetime: "detached",
+        identity: { projectRoot: root, branchContext: "main", stackName: "replan-restore" },
+        runtime: "native",
+        instances: [
+          {
+            id: "rest-1",
+            creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+          },
+        ],
+        composition: { members: [{ id: "rest-1", activation: "eager" }], dependencies: [] },
+        ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+      };
+      yield* state.save(saved);
+      const requestedAuto: ServiceCreationInput = {
+        service: "rest",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      };
+      // Claiming the re-planned port succeeds; a later, unrelated startup step then fails, and
+      // the restore must still cover it, not only a typed `claimEndpoints` conflict.
+      const failure = yield* runStackHost({
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        requestedCreations: [requestedAuto],
+        onReady: () =>
+          Effect.fail(
+            new StackHostError({ operation: "startup", message: "injected late failure" }),
+          ),
+      }).pipe(Effect.flip);
+      expect(failure.message).toContain("injected late failure");
+
+      const restored = yield* state.read("stack");
+      expect(restored?.ports).toEqual(saved.ports);
+      expect(restored?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
+        http: { port: fixedPort },
+      });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "leaves a restored claim unclaimed when another stack took its port during the failed re-plan",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-overlap-" });
+        const state = yield* stateFor(root);
+        const fixedPort = 24_617;
+        const saved: State.SavedStack = {
+          id: "stack",
+          lifetime: "detached",
+          identity: { projectRoot: root, branchContext: "main", stackName: "replan-overlap" },
+          runtime: "native",
+          instances: [
+            {
+              id: "rest-1",
+              creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+            },
+          ],
+          composition: { members: [{ id: "rest-1", activation: "eager" }], dependencies: [] },
+          ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+        };
+        yield* state.save(saved);
+        // Another stack already claims the exact port the failed re-plan's restore would
+        // otherwise re-establish.
+        const other: State.SavedStack = {
+          id: "other-stack",
+          lifetime: "detached",
+          identity: { projectRoot: root, branchContext: "main", stackName: "replan-overlap-other" },
+          runtime: "native",
+          instances: [],
+          composition: { members: [], dependencies: [] },
+          ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+        };
+        yield* state.save(other);
+        const requestedAuto: ServiceCreationInput = {
+          service: "rest",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        };
+        const failure = yield* runStackHost({
+          stateRoot: root,
+          cacheRoot: root,
+          stackId: "stack",
+          requestedCreations: [requestedAuto],
+          onReady: () =>
+            Effect.fail(
+              new StackHostError({ operation: "startup", message: "injected late failure" }),
+            ),
+        }).pipe(Effect.flip);
+        expect(failure.message).toContain("injected late failure");
+
+        // The intent still names the old port, so the next start retries it and hits the other
+        // stack's own claim as a normal port conflict; the claim itself is not re-established.
+        const restored = yield* state.read("stack");
+        expect(restored?.ports).toEqual([]);
+        expect(restored?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
+          http: { port: fixedPort },
+        });
+        expect(yield* state.read("other-stack")).toEqual(other);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

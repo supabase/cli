@@ -1731,6 +1731,7 @@ describe("db start stack backend", () => {
         stop: Effect.succeed([]),
         restart: Effect.succeed([]),
       },
+      startupEndpointChanges: Effect.succeed([]),
       stop: Effect.void,
       destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
       commands: { run: () => Effect.die("unused") },

@@ -418,9 +418,11 @@ export const stackAdapter = (client: Client) => {
             ),
             options,
           ),
-        plan: (creations, options) =>
+        plan: (creations, planOptions, options) =>
           client.run(
-            decodeCreations("plan", creations).pipe(Effect.flatMap(handle.composition.plan)),
+            decodeCreations("plan", creations).pipe(
+              Effect.flatMap((decoded) => handle.composition.plan(decoded, planOptions)),
+            ),
             options,
           ),
       },

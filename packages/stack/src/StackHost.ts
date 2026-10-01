@@ -40,12 +40,23 @@ import {
 } from "./HostProcess.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
-import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
+import {
+  StackError,
+  stackError,
+  StackRpc,
+  type EndpointPortChange,
+  type RunCommandPayload,
+} from "./Rpc.ts";
 import { makeHostGateway } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import {
+  prepareEndpointReplan,
+  restoreFailedEndpointReplan,
+} from "./composition/EndpointReplan.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -53,6 +64,12 @@ export interface StackHostOptions {
   readonly stackId: string;
   /** Registers this definition once the owner holds the lease; the stack must not exist. */
   readonly register?: State.SavedStack;
+  /**
+   * Re-plans changed endpoint ports against the saved state before the owner registers endpoint
+   * namespaces from it, while this process alone holds the lease; the owner's own normal endpoint
+   * binding then claims them.
+   */
+  readonly requestedCreations?: ReadonlyArray<ServiceCreationInput>;
   readonly release?: string;
   readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
@@ -166,6 +183,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     access: HostAccess,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
+    startupEndpointChanges: ReadonlyArray<EndpointPortChange> = [],
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
@@ -336,6 +354,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           readonly attachmentId: string;
           readonly bytes: Uint8Array | null;
         }) => attachments.input(attachmentId, bytes),
+        startupEndpointChanges: () => Effect.succeed(startupEndpointChanges),
       });
       const rpc = yield* RpcServer.toHttpEffect(StackRpc, { streamBufferSize: 16 }).pipe(
         Effect.provide(Layer.merge(StackRpc.toLayer(handlers), RpcSerialization.layerNdjson)),
@@ -421,8 +440,23 @@ export const runStackHost = Effect.fn("StackHost.run")(
             }),
           );
         const started = yield* Effect.gen(function* () {
-          const saved = yield* state.read(id);
-          if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
+          const registered = yield* state.read(id);
+          if (registered === undefined)
+            return yield* hostError("startup", "Stack is not registered");
+          // Re-plans a changed endpoint's port against the saved state while this process alone
+          // holds the lease, before any owner registers its endpoint namespaces from it; a
+          // concurrent launcher that loses the lease race never reaches here and simply attaches
+          // to whichever owner wins. `saved` already has the changed endpoints' old claims
+          // dropped; the document commits this below, as late as practical, and the owner's own
+          // normal endpoint binding claims the new ones through the same `Ports.acquire` path and
+          // checks a live composition bind already applies.
+          const preparation =
+            options.requestedCreations === undefined
+              ? undefined
+              : yield* prepareEndpointReplan(registered, options.requestedCreations).pipe(
+                  Effect.mapError((cause) => hostError("startup", cause)),
+                );
+          const saved = preparation?.saved ?? registered;
           const control = yield* bindControl();
           const dataRootPath = path.join(options.stateRoot, saved.id, "data");
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
@@ -457,54 +491,101 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
-          const endpoint: HostEndpoint = {
-            stackId: saved.id,
-            identity: saved.identity,
-            pid: process.pid,
-            port: control.port,
-            release: options.release ?? (yield* currentRelease),
-          };
-          const crypto = yield* Crypto.Crypto;
-          const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
-            byte.toString(16).padStart(2, "0"),
-          ).join("");
-          const access: HostAccess = { endpoint, secret };
-          const runtime = yield* makeRuntime(
-            owner,
-            access,
-            control.server,
-            control.closeConnections,
-          ).pipe(
-            Effect.provideService(
-              CommandRunner.Service,
-              Context.get(services, CommandRunner.Service),
-            ),
-          );
-          yield* runtime.serve;
-          yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-          yield* state.publishHolder(id, {
-            role: "owner",
-            secret,
-            port: endpoint.port,
-            pid: endpoint.pid,
-            release: endpoint.release,
-            lifetime: saved.lifetime,
-            startedAt: DateTime.formatIso(yield* DateTime.now),
-          });
-          if (saved.lifetime === "session")
-            yield* Effect.forkScoped(
-              creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
+          // The document is saved here, as late as practical, because the owner's own endpoint
+          // binding below reads it back through the same `Ports.acquire` path a live composition
+          // bind uses. From here through the end of startup, any failure or interruption restores
+          // the exact document read before the re-plan, while this process still alone holds the
+          // lease; a hard process death in this window is an accepted limitation, and the next
+          // successful start converges the saved state again.
+          const claimAndFinish = Effect.gen(function* () {
+            if (preparation !== undefined) yield* state.withLock(state.save(saved));
+            const startupEndpointChanges: ReadonlyArray<EndpointPortChange> =
+              preparation === undefined
+                ? []
+                : yield* owner.claimEndpoints(preparation.changedInstanceIds).pipe(
+                    Effect.mapError((cause) => hostError("startup", cause)),
+                    Effect.andThen(
+                      state.read(saved.id).pipe(
+                        Effect.mapError((cause) => hostError("startup", cause)),
+                        Effect.map((after): ReadonlyArray<EndpointPortChange> =>
+                          preparation.changedKeys.flatMap((change) => {
+                            const to = after?.ports.find((claim) => claim.key === change.key)?.port;
+                            return change.previousPort === undefined || to === undefined
+                              ? []
+                              : [
+                                  {
+                                    service: change.service,
+                                    endpoint: change.endpoint,
+                                    from: change.previousPort,
+                                    to,
+                                  },
+                                ];
+                          }),
+                        ),
+                      ),
+                    ),
+                  );
+            const endpoint: HostEndpoint = {
+              stackId: saved.id,
+              identity: saved.identity,
+              pid: process.pid,
+              port: control.port,
+              release: options.release ?? (yield* currentRelease),
+            };
+            const crypto = yield* Crypto.Crypto;
+            const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
+              byte.toString(16).padStart(2, "0"),
+            ).join("");
+            const access: HostAccess = { endpoint, secret };
+            const runtime = yield* makeRuntime(
+              owner,
+              access,
+              control.server,
+              control.closeConnections,
+              startupEndpointChanges,
+            ).pipe(
+              Effect.provideService(
+                CommandRunner.Service,
+                Context.get(services, CommandRunner.Service),
+              ),
             );
-          yield* options.onReady?.(access) ?? Effect.void;
-          yield* Effect.forkScoped(
-            sweepOrphans({
-              state,
-              stateRoot: options.stateRoot,
-              cacheRoot: options.cacheRoot,
-              ownerId: id,
-            }),
-          );
-          return runtime;
+            yield* runtime.serve;
+            yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
+            yield* state.publishHolder(id, {
+              role: "owner",
+              secret,
+              port: endpoint.port,
+              pid: endpoint.pid,
+              release: endpoint.release,
+              lifetime: saved.lifetime,
+              startedAt: DateTime.formatIso(yield* DateTime.now),
+            });
+            if (saved.lifetime === "session")
+              yield* Effect.forkScoped(
+                creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
+              );
+            yield* options.onReady?.(access) ?? Effect.void;
+            yield* Effect.forkScoped(
+              sweepOrphans({
+                state,
+                stateRoot: options.stateRoot,
+                cacheRoot: options.cacheRoot,
+                ownerId: id,
+              }),
+            );
+            return runtime;
+          });
+          return yield* preparation === undefined
+            ? claimAndFinish
+            : claimAndFinish.pipe(
+                Effect.onExit((exit) =>
+                  Exit.isSuccess(exit)
+                    ? Effect.void
+                    : restoreFailedEndpointReplan(state, registered, preparation.changedKeys).pipe(
+                        Effect.ignore,
+                      ),
+                ),
+              );
         }).pipe(
           Effect.raceFirst(
             Queue.take(events).pipe(

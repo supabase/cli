@@ -18,7 +18,9 @@ import {
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
 import {
+  apiRoute,
   resolveNativePostgresUser,
+  type EndpointPortChange,
   type Observation,
   type PlannedInstance,
   type ServiceCreation,
@@ -381,6 +383,12 @@ const selectedCreations = (
     return !exclusions.includes(capability);
   });
 
+/** Names a changed endpoint the way the connection summary does: `api`, or `service.endpoint`. */
+const endpointLabel = (change: EndpointPortChange) =>
+  change.endpoint === "http" && apiRoute(change.service) !== undefined
+    ? "api"
+    : `${change.service}.${change.endpoint}`;
+
 const isServing = (status: Pick<Observation, "lifecycle" | "health">) =>
   status.lifecycle === "running" && status.health === "healthy";
 
@@ -456,10 +464,51 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           ? output.info(postgresUser.message)
           : Effect.void;
     const configBeforeCreate =
-      target.id === undefined ? yield* loadStartConfig(target.projectRoot, fs, path) : undefined;
+      target.id === undefined || !target.hostRunning
+        ? yield* loadStartConfig(target.projectRoot, fs, path)
+        : undefined;
     if (target.id === undefined) yield* ensurePostgresUser;
     const stateRoot = path.join(settings.supabaseHome, "stacks");
     const cacheRoot = path.join(settings.supabaseHome, "cache", "stack");
+    const resolveRequested = (
+      stackId: string,
+      config: Effect.Success<ReturnType<typeof loadStartConfig>>["config"],
+    ) =>
+      Effect.gen(function* () {
+        const creations = yield* config.creations(stackId).pipe(
+          Effect.mapError(
+            (error) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: error.message,
+                cause: error,
+              }),
+          ),
+        );
+        return yield* Effect.forEach(
+          selectedCreations(creations, exclusions),
+          withProjectFunctionsEnv,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackCommandStartError({
+                reason: "invalid-config",
+                message: cause.message,
+                cause,
+              }),
+          ),
+        );
+      });
+    // The saved stack's owner is not running, so its requested creations travel into the owner's
+    // own startup: it re-plans and commits a changed endpoint's port while it alone holds the
+    // stack's lease, before it registers endpoint namespaces from the saved state. A concurrent
+    // start attaches to whichever owner wins that race instead of re-planning again. A running
+    // owner already bound its endpoints at its own startup and keeps today's behavior of applying
+    // endpoint changes only after stop and start.
+    const requestedForReplan =
+      target.id !== undefined && !target.hostRunning && configBeforeCreate !== undefined
+        ? yield* resolveRequested(target.id, configBeforeCreate.config)
+        : undefined;
     const startupComplete = yield* Ref.make(false);
     const stack = yield* Effect.acquireRelease(
       target.id === undefined
@@ -471,7 +520,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
             startOwner: true,
             ...(target.name === undefined ? {} : { name: target.name }),
           })
-        : stackApi.open({ id: target.id, stateRoot, cacheRoot, startOwner: true }),
+        : stackApi.open({
+            id: target.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            ...(requestedForReplan === undefined ? {} : { requestedCreations: requestedForReplan }),
+          }),
       (stack) =>
         Ref.get(startupComplete).pipe(
           Effect.flatMap((complete) =>
@@ -501,6 +556,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       },
       currentShellPlatform(),
     );
+    // Set once a fully stopped stack's owner reports the endpoint changes it applied at its own
+    // startup; a stack that was already running never re-plans, so this stays empty for it.
+    let endpointChanges: ReadonlyArray<EndpointPortChange> = [];
     const reportReady = (report: Effect.Success<ReturnType<typeof startReport>>, message: string) =>
       Effect.gen(function* () {
         const credentials = yield* summaryCredentials(stack.credentials.get, output.warn);
@@ -517,6 +575,15 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
               .filter(({ activation }) => activation === "lazy")
               .map(({ service }) => service),
             env,
+            ...(endpointChanges.length === 0
+              ? {}
+              : {
+                  endpoint_changes: endpointChanges.map((change) => ({
+                    endpoint: endpointLabel(change),
+                    from: change.from,
+                    to: change.to,
+                  })),
+                }),
           });
         if (message.length > 0) yield* output.success(message);
         yield* output.raw(
@@ -603,6 +670,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack is in a partial lifecycle state",
         suggestion: "Run supabase stack stop, then supabase stack start to recover the stack.",
       });
+    endpointChanges = yield* stack.startupEndpointChanges.pipe(Effect.mapError(stackError));
+    for (const change of endpointChanges)
+      yield* output.info(`${endpointLabel(change)}: ${change.from} → ${change.to}`);
     if (target.id !== undefined) yield* ensurePostgresUser;
     const shadowDatabase =
       composition.members.length === 0
@@ -616,25 +686,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       });
     const { config, keys, toml } =
       configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
-    const creations = yield* config.creations(stack.id).pipe(
-      Effect.mapError(
-        (error) =>
-          new StackCommandStartError({
-            reason: "invalid-config",
-            message: error.message,
-            cause: error,
-          }),
-      ),
-    );
-    const requested = yield* Effect.forEach(
-      selectedCreations(creations, exclusions),
-      withProjectFunctionsEnv,
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackCommandStartError({ reason: "invalid-config", message: cause.message, cause }),
-      ),
-    );
+    const requested = yield* resolveRequested(stack.id, config);
     if (
       requested.some(({ service }) => service === "studio") &&
       !requested.some(({ service }) => service === "rest")
@@ -700,7 +752,11 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         );
     const initialComposition = composition.members.length === 0;
     const serviceKindsChanged = !sameKinds(currentInstances, requested);
-    const planned = yield* stack.composition.plan(requested).pipe(Effect.mapError(stackError));
+    // `requested` is the whole desired composition (exclusions already applied), not a partial
+    // comparison, so an excluded sibling's saved port must not anchor a shared endpoint's port.
+    const planned = yield* stack.composition
+      .plan(requested, { requestKind: "complete" })
+      .pipe(Effect.mapError(stackError));
     const stackIdentity = {
       id: stack.id,
       ...(target.name === undefined ? {} : { name: target.name }),

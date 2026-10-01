@@ -283,6 +283,7 @@ const fixture = (
         stop: Effect.die("unused"),
         restart: Effect.die("unused"),
       },
+      startupEndpointChanges: Effect.die("unused"),
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
       commands: { run: () => Effect.die("unused") },

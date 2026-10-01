@@ -152,6 +152,15 @@ export const OwnerRpc = RpcGroup.make(
   Rpc.make("restartComposition", { success: Schema.Array(Observation), error: StackError }),
 );
 
+/** A changed endpoint the owner's own startup re-planned, with its bound port before and after. */
+export const EndpointPortChange = Schema.Struct({
+  service: Schema.String,
+  endpoint: Schema.String,
+  from: Schema.Int,
+  to: Schema.Int,
+});
+export interface EndpointPortChange extends Schema.Schema.Type<typeof EndpointPortChange> {}
+
 /** The private transport contract; lifecycle admission remains in the owner. */
 export const StackRpc = OwnerRpc.add(
   Rpc.make("runCommand", {
@@ -162,6 +171,10 @@ export const StackRpc = OwnerRpc.add(
   }),
   Rpc.make("commandInput", {
     payload: { attachmentId: Schema.String, bytes: Schema.NullOr(Schema.Uint8ArrayFromBase64) },
+    error: StackError,
+  }),
+  Rpc.make("startupEndpointChanges", {
+    success: Schema.Array(EndpointPortChange),
     error: StackError,
   }),
 );

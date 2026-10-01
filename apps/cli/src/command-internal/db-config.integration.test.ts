@@ -487,6 +487,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         stop: unused,
         restart: unused,
       },
+      startupEndpointChanges: unused,
       stop: unused,
       destroy: unused,
       commands: { run: () => unused },
