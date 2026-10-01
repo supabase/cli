@@ -38,7 +38,13 @@ The skill is authoritative for Effect coding practices when repository instructi
 Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
 `pnpm lint:effect:fix` from the repository root.
 
-Follow the [tracing conventions ADR](docs/adr/0027-cli-tracing-conventions.md) when adding spans.
+Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
+small read, child processes, containers, waits) or millisecond-scale work, give it a named span
+(`Effect.fn("Area.operation")`, or `Effect.withSpan("<command>.<phase>")` for handler phases) and
+annotate outcomes that help debugging, such as counts, cache hits, attempts, and exit codes. Keep
+`Effect.fnUntraced` for pure helpers and per-item loop bodies. Follow the
+[tracing conventions ADR](docs/adr/0027-cli-tracing-conventions.md) for naming, attribute rules,
+and what never to record.
 
 ## Commands, validation, and workflows
 
