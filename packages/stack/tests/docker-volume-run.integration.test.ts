@@ -8,6 +8,28 @@ const volumeExists = Effect.fn("DockerVolumeRunTest.volumeExists")((name: string
   runDocker(["volume", "inspect", name]).pipe(Effect.map((result) => result.code === 0)),
 );
 
+const createVolume = Effect.fn("DockerVolumeRunTest.createVolume")(
+  (name: string, labels: ReadonlyArray<string>) =>
+    runDocker(["volume", "create", ...labels.flatMap((label) => ["--label", label]), name]).pipe(
+      Effect.flatMap((result) =>
+        result.code === 0
+          ? Effect.void
+          : Effect.die(`docker volume create ${name} failed: ${result.output}`),
+      ),
+    ),
+);
+
+const removeVolume = Effect.fn("DockerVolumeRunTest.removeVolume")((name: string) =>
+  runDocker(["volume", "rm", name]).pipe(
+    Effect.flatMap((result) =>
+      result.code === 0 || /no such volume/iu.test(result.output)
+        ? Effect.void
+        : Effect.die(`docker volume rm ${name} failed: ${result.output}`),
+    ),
+    Effect.orDie,
+  ),
+);
+
 describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
   it.live("removes exactly the volumes labelled for this run", () =>
     Effect.scoped(
@@ -20,38 +42,19 @@ describe("test-run Docker volume cleanup", { timeout: 120_000 }, () => {
         const foreign = `sb-test-run-foreign-${suffix}`;
         const unlabelled = `sb-test-run-unlabelled-${suffix}`;
 
-        yield* runDocker([
-          "volume",
-          "create",
-          "--label",
-          "com.supabase.stack-managed=true",
-          "--label",
-          `com.supabase.stack-test-run=${runId}`,
-          owned,
-        ]);
-        yield* runDocker([
-          "volume",
-          "create",
-          "--label",
-          "com.supabase.stack-managed=true",
-          "--label",
-          `com.supabase.stack-test-run=${otherRunId}`,
-          foreign,
-        ]);
-        yield* runDocker([
-          "volume",
-          "create",
-          "--label",
-          "com.supabase.stack-managed=true",
-          unlabelled,
-        ]);
         yield* Effect.addFinalizer(() =>
-          Effect.forEach(
-            [owned, foreign, unlabelled],
-            (name) => runDocker(["volume", "rm", name]).pipe(Effect.ignore),
-            { discard: true },
-          ),
+          Effect.forEach([owned, foreign, unlabelled], removeVolume, { discard: true }),
         );
+        yield* createVolume(owned, [
+          "com.supabase.stack-managed=true",
+          `com.supabase.stack-test-run=${runId}`,
+        ]);
+        yield* createVolume(foreign, [
+          "com.supabase.stack-managed=true",
+          `com.supabase.stack-test-run=${otherRunId}`,
+        ]);
+        yield* createVolume(unlabelled, ["com.supabase.stack-managed=true"]);
+        expect(yield* volumeExists(owned)).toBe(true);
 
         yield* removeTestRunVolumes(runId);
 

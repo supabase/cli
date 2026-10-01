@@ -24,6 +24,7 @@ import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
+import { removeTestRunVolumes } from "../../tests/docker-volume-run.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 const postgresImage = (version: string) =>
@@ -623,6 +624,8 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const stackId = `storage-test-run-${yield* crypto.randomUUIDv4}`;
         const testRunId = `storage-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+        // This run id overrides the ambient one, so the shared run teardown never sees the volume.
+        yield* Effect.addFinalizer(() => removeTestRunVolumes(testRunId).pipe(Effect.orDie));
         const storage = yield* makeDockerDatabaseStorage({
           runtime: "docker",
           stackId,
@@ -657,8 +660,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           '{{ index .Labels "com.supabase.stack-test-run" }}',
           marker.volume,
         ]);
-        yield* storage.destroyData("17");
-        yield* docker(["volume", "rm", marker.volume]);
         expect(labels).toBe(testRunId);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

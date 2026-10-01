@@ -78,7 +78,12 @@ export async function setup(): Promise<(() => Promise<void>) | undefined> {
   process.env[stackTestRunEnvVar] = id;
   // oxlint-disable-next-line effecttsgo/async-function -- the returned teardown is Vitest's globalSetup contract, not application logic.
   return async () => {
-    await Effect.runPromise(removeTestRunVolumes(id).pipe(Effect.provide(NodeServices.layer)));
+    try {
+      await Effect.runPromise(removeTestRunVolumes(id).pipe(Effect.provide(NodeServices.layer)));
+    } finally {
+      // oxlint-disable-next-line effecttsgo/process-env -- releases ownership so a later setup in this process owns its own run.
+      if (process.env[stackTestRunEnvVar] === id) delete process.env[stackTestRunEnvVar];
+    }
   };
 }
 
