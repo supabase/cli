@@ -560,6 +560,32 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("reports up-to-date when the project already has the Data API disabled", () => {
+    const { layer, out, api } = setup({
+      toml: 'project_id = "test"\n[api]\nenabled = false\n',
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (a) => ({
+            ...a,
+            api: {
+              ...(a["api"] as Record<string, unknown>),
+              db_schema: "pg_pgrst_no_exposed_schemas",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Remote API config is up to date.");
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("stops a service when the user declines the prompt (exit 0)", () => {
     const { layer, out, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
