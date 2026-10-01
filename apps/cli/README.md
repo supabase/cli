@@ -105,11 +105,11 @@ The CLI is built on `effect/unstable/cli`.
 
 Important areas:
 
-- `src/shared/cli/` for shared runner logic, roots, and global flags
+- `src/shared/cli/` for shared runner logic and roots
 - `src/commands/` for the command tree
 - `src/shared/output/` for text / JSON / NDJSON output policies
 - `src/shared/runtime/` for TTY, stdin, browser, and process-control services
-- `src/shared/auth/` for login-related services
+- `src/auth/` for credential and platform API services; `src/shared/auth/` keeps the JWKS and keyring helpers
 
 The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.
 Managed ownership uses stable loopback `GET /owner` and session-fenced `POST /stop`; same-version
