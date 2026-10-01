@@ -4,6 +4,7 @@ import {
   buildRunPlan,
   compareSpans,
   deltaOf,
+  exitCodesDiffer,
   isolatedEnv,
   parseBenchArgs,
   summarizeSpanRun,
@@ -64,8 +65,13 @@ describe("buildRunPlan", () => {
       ["base", false],
       ["branch", false],
     ]);
-    expect(plan.filter((run) => !run.warmup && run.build === "base")).toHaveLength(2);
-    expect(plan.filter((run) => !run.warmup && run.build === "branch")).toHaveLength(2);
+  });
+});
+
+describe("exitCodesDiffer", () => {
+  it("flags builds that exit differently but not shared failures", () => {
+    expect(exitCodesDiffer([1, 1], [1, 1])).toBe(false);
+    expect(exitCodesDiffer([0, 0], [1, 0])).toBe(true);
   });
 });
 

@@ -160,7 +160,7 @@ function formatReport(report: TraceReport): string {
   return lines.join("\n");
 }
 
-/** Decodes a `SUPABASE_TRACE_FILE`'s OTLP/JSON lines into flat spans; reused by `bench-cli.ts`. */
+/** Decodes a `SUPABASE_TRACE_FILE`'s OTLP/JSON lines into flat spans. */
 export const readSpans = Effect.fnUntraced(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(file);

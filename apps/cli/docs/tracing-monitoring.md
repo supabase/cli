@@ -46,7 +46,7 @@ names with counts and total time, and failed spans. Pass `--top N` to change lis
 build against a branch build:
 
 ```sh
-bun apps/cli/scripts/bench-cli.ts --base dist/supabase-main --branch dist/supabase \
+bun apps/cli/scripts/bench-cli.ts --base /tmp/cli-base/apps/cli/dist/supabase --branch apps/cli/dist/supabase \
   --runs 10 --warmup 2 --command "--version" --command "status" --cwd-setup init --trace
 ```
 

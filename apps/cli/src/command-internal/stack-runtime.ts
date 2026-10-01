@@ -41,7 +41,12 @@ const engineReachable = (
 ) =>
   withProcessSpan(
     "StackRuntime.probeEngine",
-    { executable: probe.runtime, argCount: probe.args.length, subcommand: probe.args[0] },
+    {
+      executable: probe.runtime,
+      argCount: probe.args.length,
+      subcommand: probe.args[0],
+      hasFallback: true,
+    },
     (traceEnv) =>
       spawner.exitCode(
         ChildProcess.make(

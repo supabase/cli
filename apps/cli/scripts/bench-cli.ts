@@ -258,6 +258,16 @@ export function compareSpans(
   return comparisons.sort((a, b) => spanSortKey(b) - spanSortKey(a));
 }
 
+/** Whether the builds exited differently, which makes their timings measure different work. */
+export function exitCodesDiffer(
+  base: ReadonlyArray<number>,
+  branch: ReadonlyArray<number>,
+): boolean {
+  const codes = (values: ReadonlyArray<number>) =>
+    [...new Set(values)].sort((a, b) => a - b).join(",");
+  return codes(base) !== codes(branch);
+}
+
 interface BuildTimingSummary extends TimingSummary {
   readonly exitCodes: ReadonlyArray<number>;
 }
@@ -270,6 +280,7 @@ export interface CommandReport {
   readonly deltaPct: number;
   readonly spans: ReadonlyArray<SpanComparison> | undefined;
   readonly traceEmptyFor: ReadonlyArray<Build>;
+  readonly exitCodesDiffer: boolean;
 }
 
 interface RawSample {
@@ -318,6 +329,28 @@ const baseLaunchEnv = (supabaseHome: string, updateCheck: boolean): Record<strin
   ...(updateCheck ? {} : { SUPABASE_NO_UPDATE_NOTIFIER: "1" }),
 });
 
+/** A fresh project directory and `SUPABASE_HOME`, initialized when `--cwd-setup init` is set. */
+const prepareLaunch = (options: BenchOptions, binary: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-bench-cwd-" });
+    const supabaseHome = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-bench-home-" });
+    if (options.cwdSetupInit) {
+      const init = yield* runLaunch({
+        binary,
+        args: ["init"],
+        cwd: projectDir,
+        env: isolatedEnv(process.env, baseLaunchEnv(supabaseHome, options.updateCheck)),
+      });
+      if (init.exitCode !== 0) {
+        yield* Console.error(
+          `warning: ${binary} init exited ${init.exitCode} in ${projectDir}; the run may not reflect a real project`,
+        );
+      }
+    }
+    return { projectDir, supabaseHome };
+  });
+
 const runCommandBench = (
   options: BenchOptions,
   command: ReadonlyArray<string>,
@@ -339,25 +372,7 @@ const runCommandBench = (
 
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-bench-cwd-" });
-          const supabaseHome = yield* fs.makeTempDirectoryScoped({
-            prefix: "supabase-bench-home-",
-          });
-
-          if (options.cwdSetupInit) {
-            const init = yield* runLaunch({
-              binary,
-              args: ["init"],
-              cwd: projectDir,
-              env: isolatedEnv(process.env, baseLaunchEnv(supabaseHome, options.updateCheck)),
-            });
-            if (init.exitCode !== 0) {
-              yield* Console.error(
-                `warning: ${binary} init exited ${init.exitCode} in ${projectDir}; the timed run may not reflect a real project`,
-              );
-            }
-          }
-
+          const { projectDir, supabaseHome } = yield* prepareLaunch(options, binary);
           const result = yield* runLaunch({
             binary,
             args: command,
@@ -371,7 +386,7 @@ const runCommandBench = (
           exitCodes[planned.build].push(result.exitCode);
 
           // Tracing and profiling slow the launch they observe, so they run in an extra, untimed
-          // launch that both builds receive equally.
+          // launch in fresh directories that both builds receive equally.
           const traceFile = options.trace
             ? yield* fs.makeTempFileScoped({ prefix: "supabase-bench-trace-", suffix: ".jsonl" })
             : undefined;
@@ -386,12 +401,13 @@ const runCommandBench = (
             }
           }
           if (traceFile !== undefined || bunOptions !== undefined) {
+            const observed = yield* prepareLaunch(options, binary);
             yield* runLaunch({
               binary,
               args: command,
-              cwd: projectDir,
+              cwd: observed.projectDir,
               env: isolatedEnv(process.env, {
-                ...baseLaunchEnv(supabaseHome, options.updateCheck),
+                ...baseLaunchEnv(observed.supabaseHome, options.updateCheck),
                 ...(traceFile === undefined ? {} : { SUPABASE_TRACE_FILE: traceFile }),
                 ...(bunOptions === undefined ? {} : { BUN_OPTIONS: bunOptions }),
               }),
@@ -436,6 +452,7 @@ const runCommandBench = (
       deltaPct: delta.pct,
       spans,
       traceEmptyFor,
+      exitCodesDiffer: exitCodesDiffer(exitCodes.base, exitCodes.branch),
     };
     return { report, raw, cpuProfilePath };
   });
@@ -471,6 +488,9 @@ function formatCommandReport(commandReport: CommandReport): ReadonlyArray<string
     `  branch: median ${commandReport.branch.median}ms  min ${commandReport.branch.min}ms  max ${commandReport.branch.max}ms  p90 ${commandReport.branch.p90}ms  exits [${commandReport.branch.exitCodes.join(",")}]`,
     `  delta:  ${sign(commandReport.deltaMs)}${commandReport.deltaMs}ms (${sign(commandReport.deltaPct)}${commandReport.deltaPct}%)`,
   ];
+  if (commandReport.exitCodesDiffer) {
+    lines.push("  warning: exit codes differ between builds, so the timings are not comparable");
+  }
   if (commandReport.traceEmptyFor.length > 0) {
     lines.push(`  trace: no spans captured for ${commandReport.traceEmptyFor.join(", ")}`);
   }
