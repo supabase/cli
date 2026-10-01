@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Ref, Stdio } from "effect";
 import { Param } from "effect/unstable/cli";
 import {
   CommandRuntime,
@@ -23,6 +23,7 @@ import {
   PropDurationMs,
   PropExitCode,
   PropOutputFormat,
+  PropStackBackend,
 } from "../shared/telemetry/event-catalog.ts";
 import {
   failureTelemetryPropertiesForCause,
@@ -40,6 +41,11 @@ import {
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../command-internal/db-target-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
+import { StackBackendContext } from "../command-internal/stack-backend.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "./command-telemetry-attributes.ts";
 
 /**
  * Classifies a command that succeeded its Effect but recorded a nonzero exit code through
@@ -380,8 +386,18 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           flags,
         } as const;
 
-        const exit = yield* self.pipe(withAnalyticsContext(analyticsContext), Effect.exit);
+        const stackBackend = yield* Effect.serviceOption(StackBackendContext);
+        const attributes = yield* Ref.make<CommandTelemetryAttributeValues>({});
+
+        const exit = yield* self.pipe(
+          Effect.provideService(CommandTelemetryAttributes, {
+            record: (values) => Ref.update(attributes, (current) => ({ ...current, ...values })),
+          }),
+          withAnalyticsContext(analyticsContext),
+          Effect.exit,
+        );
         const finishedAt = yield* Clock.currentTimeMillis;
+        const recordedAttributes = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -434,6 +450,8 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
               ? resolvedOutputFormat.value
               : resolveOutputFormatForTelemetry(args, output.format),
+            ...(Option.isSome(stackBackend) ? { [PropStackBackend]: stackBackend.value.kind } : {}),
+            ...recordedAttributes,
             ...failureMetadata,
           })
           .pipe(

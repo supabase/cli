@@ -20,7 +20,11 @@ import {
   initializeStackDatabase,
   projectCatalogOverlay,
 } from "./stack-bootstrap.ts";
-import { automaticRuntimeNotice, selectStackRuntime } from "./stack-runtime.ts";
+import {
+  automaticRuntimeNotice,
+  recordStackRuntimeTelemetry,
+  selectStackRuntime,
+} from "./stack-runtime.ts";
 import { Output } from "../shared/output/output.service.ts";
 import type { PgConnInput } from "./db-connection.service.ts";
 
@@ -41,9 +45,12 @@ const databaseFor = (instances: StackInstances): DatabaseInstance | undefined =>
   instances.find((instance): instance is DatabaseInstance => instance.service === "database");
 
 const stackForProject = (api: StackApi["Service"], settings: Settings, path: Path.Path) =>
-  api
-    .find({ stateRoot: stateRoot(settings, path), projectRoot: settings.workdir })
-    .pipe(Effect.map(Option.getOrUndefined));
+  api.find({ stateRoot: stateRoot(settings, path), projectRoot: settings.workdir }).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.tap((found) =>
+      found === undefined ? Effect.void : recordStackRuntimeTelemetry(found.definition.runtime),
+    ),
+  );
 
 const openProjectStack = Effect.fn("StackLocalDatabase.openProject")(function* () {
   const api = yield* StackApi;

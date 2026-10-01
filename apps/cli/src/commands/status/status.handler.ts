@@ -28,7 +28,10 @@ import {
   linkedStateJsonField,
   resolveLinkedState,
 } from "../../command-internal/linked-state.ts";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import {
+  loadLocalProjectContext,
+  recordLocalProjectOrioleDbTelemetry,
+} from "../../command-internal/local-project-context.ts";
 import {
   StatusConfigLoadError,
   StatusDbInspectError,
@@ -136,6 +139,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
       cliSettings.workdir,
       (message) => new StatusConfigLoadError({ message }),
     );
+    yield* recordLocalProjectOrioleDbTelemetry(context);
 
     // 3. Config validation runs entirely before the health check/container listing below, so a
     // config error (`InvalidJwtSecretError`, a malformed `SUPABASE_*_PORT`/`_ENABLED` override, a

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
   StackApi,
   StackTargetError,
@@ -9,6 +9,10 @@ import {
   stackTargetResolverLayer,
 } from "./stack.shared.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 
 type TargetInput = {
   readonly projectRoot: string;
@@ -106,6 +110,22 @@ describe("stack target resolver", () => {
 
       expect(target).toMatchObject({ projectRoot: root, id, name: "feature" });
       expect(target.definition?.identity.stackName).toBe("feature");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("records the saved stack's runtime on the command event", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      yield* register({ projectRoot: root, runtime: "docker" });
+      const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
+
+      yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
+        }),
+      );
+
+      expect((yield* Ref.get(recorded)).stack_runtime).toBe("docker");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

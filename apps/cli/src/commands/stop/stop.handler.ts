@@ -15,7 +15,10 @@ import {
 import { dockerRemoveAll } from "../../command-internal/docker-remove-all.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
 import { resolveLocalConfigValues } from "../../command-internal/local-config-values.ts";
-import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
+import {
+  loadLocalProjectContext,
+  recordLocalProjectOrioleDbTelemetry,
+} from "../../command-internal/local-project-context.ts";
 import { validateWorkdirIsDirectory } from "../../command-internal/workdir-validation.ts";
 import type { StopFlags } from "./stop.command.ts";
 import {
@@ -53,6 +56,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
     cliSettings.workdir,
     (message) => new StopConfigLoadError({ message }),
   );
+  yield* recordLocalProjectOrioleDbTelemetry(context);
 
   // Runs full config validation before touching Docker, unlike the `--all`/`--project-id`
   // branches above which bypass config loading. `resolveLocalConfigValues` is reused purely for
