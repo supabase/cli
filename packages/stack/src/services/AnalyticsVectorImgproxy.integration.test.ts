@@ -1,8 +1,8 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Redacted } from "effect";
+import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, FileSystem, Layer, Redacted, Scope } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { makeService, type ServiceInstance } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
@@ -20,37 +20,58 @@ const dockerOptions = (root: string) => ({
   runtime: "docker" as const,
 });
 
+const secret = "catalog-optional-data-secret-with-at-least-32-chars";
+
+let scope: Scope.Closeable;
+let root: string;
+let database: ServiceInstance<any>;
+let databaseUrl: string;
+
 describe("service catalog", () => {
+  beforeAll(() => {
+    scope = Scope.makeUnsafe();
+    return Effect.gen(function* () {
+      const databaseRoot = yield* makeDockerDatabaseRoot("catalog-optional-data-");
+      const databaseRecipe = yield* makeServiceRecipe(
+        {
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("postgres"),
+            jwtSecret: Redacted.make(secret),
+            jwtExpiry: 3600,
+          },
+        },
+        dockerOptions(databaseRoot),
+      );
+      const databaseService = yield* makeService(databaseRecipe.definition, {
+        id: "database",
+        config: databaseRecipe.creation,
+      });
+      yield* databaseService.start;
+      yield* databaseService.ready;
+      const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
+      root = databaseRoot;
+      database = databaseService;
+      databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Scope.provide(scope),
+      Effect.runPromise,
+    );
+  }, 120_000);
+
+  afterAll(
+    () => database.stop.pipe(Effect.andThen(Scope.close(scope, Exit.void)), Effect.runPromise),
+    60_000,
+  );
+
   it.live(
-    "serves Analytics, Vector, and Imgproxy with their real endpoints",
+    "serves Analytics with its real endpoint",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* makeDockerDatabaseRoot("catalog-optional-data-");
-          const secret = "catalog-optional-data-secret-with-at-least-32-chars";
-          const databaseRecipe = yield* makeServiceRecipe(
-            {
-              service: "database",
-              config: {
-                version: "17",
-                databasePassword: Redacted.make("postgres"),
-                jwtSecret: Redacted.make(secret),
-                jwtExpiry: 3600,
-              },
-            },
-            dockerOptions(root),
-          );
-          const database = yield* makeService(databaseRecipe.definition, {
-            id: "database",
-            config: databaseRecipe.creation,
-          });
-          yield* database.start;
-          yield* database.ready;
-          const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
-          const databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
-
           const analyticsRecipe = yield* makeServiceRecipe(
             {
               service: "analytics",
@@ -65,13 +86,39 @@ describe("service catalog", () => {
           yield* analytics.start;
           yield* analytics.ready;
           const analyticsEndpoint = yield* analyticsRecipe.endpoint("http");
-          const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
           const analyticsResponse = yield* client.execute(
             HttpClientRequest.get(
               `http://${analyticsEndpoint.host}:${analyticsEndpoint.port}/health`,
             ),
           );
           expect(analyticsResponse.status).toBe(200);
+          yield* analytics.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "serves Vector against the owned Analytics endpoint",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const analyticsRecipe = yield* makeServiceRecipe(
+            {
+              service: "analytics",
+              config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
+            },
+            dockerOptions(root),
+          );
+          const analytics = yield* makeService(analyticsRecipe.definition, {
+            id: "analytics",
+            config: analyticsRecipe.creation,
+          });
+          yield* analytics.start;
+          yield* analytics.ready;
+          const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
 
           const vectorRecipe = yield* makeServiceRecipe(
             {
@@ -101,6 +148,20 @@ describe("service catalog", () => {
           );
           expect(vectorResponse.status).toBe(200);
 
+          yield* vector.stop;
+          yield* analytics.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "serves Imgproxy with its real endpoint",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
           const imageRoot = `${root}/images`;
           yield* fs.makeDirectory(imageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
@@ -120,11 +181,7 @@ describe("service catalog", () => {
             ),
           );
           expect(imgproxyResponse.status).toBe(200);
-
           yield* imgproxy.stop;
-          yield* vector.stop;
-          yield* analytics.stop;
-          yield* database.stop;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },
