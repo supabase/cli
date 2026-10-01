@@ -245,6 +245,7 @@ const debugConsoleTracer = Effect.fnUntraced(function* (base: Tracer.Tracer) {
 
 const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   const runtimeInfo = yield* RuntimeInfo;
+  const crypto = yield* Crypto.Crypto;
   const sinkModule = yield* Effect.promise(() => import("./otlp-trace-sink.ts"));
   const resource = {
     serviceVersion: CLI_VERSION,
@@ -252,7 +253,7 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
       os: runtimeInfo.platform,
       arch: runtimeInfo.arch,
       is_ci: yield* detectCi,
-      "service.instance.id": String(runtimeInfo.pid),
+      "service.instance.id": yield* Effect.orDie(crypto.randomUUIDv4),
     },
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>

@@ -15,8 +15,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { readSpans, type ReportSpan } from "./trace-report.ts";
 
 const USAGE =
-  'usage: bun scripts/bench-cli.ts --base <path> --branch <path> [--runs N] [--warmup N] [--command "<args>"]... [--cwd-setup init] [--trace] [--json] [--out <file>] [--cpu-prof]\n' +
-  "  --command splits on whitespace; it does not support shell quoting.";
+  'usage: bun scripts/bench-cli.ts --base <path> --branch <path> [--runs N] [--warmup N] [--command "<args>"]... [--cwd-setup init] [--trace] [--json] [--out <file>] [--cpu-prof] [--update-check]\n' +
+  "  --command splits on whitespace; it does not support shell quoting.\n" +
+  "  --update-check keeps the GitHub release check, which otherwise adds network time to every launch.";
 
 export type Build = "base" | "branch";
 
@@ -31,14 +32,27 @@ export interface BenchOptions {
   readonly json: boolean;
   readonly out: string | undefined;
   readonly cpuProf: boolean;
+  readonly updateCheck: boolean;
 }
 
 const DEFAULT_COMMANDS: ReadonlyArray<ReadonlyArray<string>> = [["--version"], ["--help"]];
 
 /** Parses argv into {@link BenchOptions}; throws on missing `--base`/`--branch` or bad numbers. */
 export function parseBenchArgs(argv: ReadonlyArray<string>): BenchOptions {
+  // `parseArgs` rejects a separate value that starts with `-`, but CLI commands usually do.
+  const args: Array<string> = [];
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]!;
+    const value = argv[index + 1];
+    if (arg === "--command" && value !== undefined) {
+      args.push(`--command=${value}`);
+      index++;
+    } else {
+      args.push(arg);
+    }
+  }
   const { values } = parseArgs({
-    args: [...argv],
+    args,
     options: {
       base: { type: "string" },
       branch: { type: "string" },
@@ -50,6 +64,7 @@ export function parseBenchArgs(argv: ReadonlyArray<string>): BenchOptions {
       json: { type: "boolean", default: false },
       out: { type: "string" },
       "cpu-prof": { type: "boolean", default: false },
+      "update-check": { type: "boolean", default: false },
     },
   });
 
@@ -84,6 +99,7 @@ export function parseBenchArgs(argv: ReadonlyArray<string>): BenchOptions {
     json: values.json ?? false,
     out: values.out,
     cpuProf: values["cpu-prof"] ?? false,
+    updateCheck: values["update-check"] ?? false,
   };
 }
 
@@ -295,10 +311,11 @@ const runLaunch = (params: {
     } satisfies LaunchResult;
   });
 
-const baseLaunchEnv = (supabaseHome: string): Record<string, string> => ({
+const baseLaunchEnv = (supabaseHome: string, updateCheck: boolean): Record<string, string> => ({
   SUPABASE_HOME: supabaseHome,
   DO_NOT_TRACK: "1",
   SUPABASE_NO_KEYRING: "1",
+  ...(updateCheck ? {} : { SUPABASE_NO_UPDATE_NOTIFIER: "1" }),
 });
 
 const runCommandBench = (
@@ -332,7 +349,7 @@ const runCommandBench = (
               binary,
               args: ["init"],
               cwd: projectDir,
-              env: isolatedEnv(process.env, baseLaunchEnv(supabaseHome)),
+              env: isolatedEnv(process.env, baseLaunchEnv(supabaseHome, options.updateCheck)),
             });
             if (init.exitCode !== 0) {
               yield* Console.error(
@@ -341,12 +358,25 @@ const runCommandBench = (
             }
           }
 
+          const result = yield* runLaunch({
+            binary,
+            args: command,
+            cwd: projectDir,
+            env: isolatedEnv(process.env, baseLaunchEnv(supabaseHome, options.updateCheck)),
+          });
+
+          if (planned.warmup) return;
+
+          samples[planned.build].push(result.wallMs);
+          exitCodes[planned.build].push(result.exitCode);
+
+          // Tracing and profiling slow the launch they observe, so they run in an extra, untimed
+          // launch that both builds receive equally.
           const traceFile = options.trace
             ? yield* fs.makeTempFileScoped({ prefix: "supabase-bench-trace-", suffix: ".jsonl" })
             : undefined;
-
           let bunOptions: string | undefined;
-          if (options.cpuProf && planned.build === "branch" && !planned.warmup) {
+          if (options.cpuProf && planned.build === "branch") {
             const alreadyProfiled = yield* Ref.getAndSet(profiled, true);
             if (!alreadyProfiled) {
               const profileDir = tmpdir();
@@ -355,22 +385,18 @@ const runCommandBench = (
               bunOptions = `--cpu-prof --cpu-prof-dir=${profileDir} --cpu-prof-name=${profileName}`;
             }
           }
-
-          const result = yield* runLaunch({
-            binary,
-            args: command,
-            cwd: projectDir,
-            env: isolatedEnv(process.env, {
-              ...baseLaunchEnv(supabaseHome),
-              ...(traceFile === undefined ? {} : { SUPABASE_TRACE_FILE: traceFile }),
-              ...(bunOptions === undefined ? {} : { BUN_OPTIONS: bunOptions }),
-            }),
-          });
-
-          if (planned.warmup) return;
-
-          samples[planned.build].push(result.wallMs);
-          exitCodes[planned.build].push(result.exitCode);
+          if (traceFile !== undefined || bunOptions !== undefined) {
+            yield* runLaunch({
+              binary,
+              args: command,
+              cwd: projectDir,
+              env: isolatedEnv(process.env, {
+                ...baseLaunchEnv(supabaseHome, options.updateCheck),
+                ...(traceFile === undefined ? {} : { SUPABASE_TRACE_FILE: traceFile }),
+                ...(bunOptions === undefined ? {} : { BUN_OPTIONS: bunOptions }),
+              }),
+            });
+          }
 
           const spans =
             traceFile === undefined ? undefined : summarizeSpanRun(yield* readSpans(traceFile));
@@ -466,7 +492,7 @@ function formatReport(report: Report): string {
   ];
   for (const commandReport of report.commands) lines.push(...formatCommandReport(commandReport));
   if (report.cpuProfilePath !== undefined) {
-    lines.push(`cpu profile (branch, first measured run): ${report.cpuProfilePath}`);
+    lines.push(`cpu profile (one untimed branch launch): ${report.cpuProfilePath}`);
   }
   return lines.join("\n");
 }

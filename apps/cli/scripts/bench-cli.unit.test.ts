@@ -5,6 +5,7 @@ import {
   compareSpans,
   deltaOf,
   isolatedEnv,
+  parseBenchArgs,
   summarizeSpanRun,
   summarizeTimings,
 } from "./bench-cli.ts";
@@ -20,6 +21,24 @@ const span = (name: string, startMs: number, endMs: number): ReportSpan => ({
   endMs,
   failed: false,
   errorType: undefined,
+});
+
+describe("parseBenchArgs", () => {
+  it("accepts commands that start with a dash and keeps update checks off by default", () => {
+    const options = parseBenchArgs([
+      "--base",
+      "/bin/a",
+      "--branch",
+      "/bin/b",
+      "--command",
+      "--version",
+      "--command",
+      "db diff --local",
+    ]);
+
+    expect(options.commands).toEqual([["--version"], ["db", "diff", "--local"]]);
+    expect(options.updateCheck).toBe(false);
+  });
 });
 
 describe("summarizeTimings", () => {

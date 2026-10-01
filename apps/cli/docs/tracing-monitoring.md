@@ -53,14 +53,18 @@ bun apps/cli/scripts/bench-cli.ts --base dist/supabase-main --branch dist/supaba
 It alternates launches (`base`, `branch`, `base`, `branch`, ...) so neither binary runs consistently
 warmer, discards the first `--warmup` pairs, and gives each launch an isolated `SUPABASE_HOME` and
 environment. For each command it reports the base and branch median, min, max, and p90 wall time in
-milliseconds, plus the branch-minus-base delta in ms and percent. With `--trace`, it also sets
-`SUPABASE_TRACE_FILE` per launch and reports, per span name, the median total duration and count for
+milliseconds, plus the branch-minus-base delta in ms and percent. With `--trace`, each measured
+launch is followed by an untimed launch with `SUPABASE_TRACE_FILE` set, so tracing never inflates
+the wall times, and the report adds, per span name, the median total duration and count for
 each build, sorted by the largest absolute delta; a span name present in only one build is flagged
 rather than compared. `--command` splits on whitespace and does not support shell quoting; repeat the
 flag for more than one command, and use `--cwd-setup init` when a command, such as `status`, needs to
 run inside an initialized project. Pass `--json` for a machine-readable report, `--out <file>` to
-also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of the first
-measured branch run (`BUN_OPTIONS=--cpu-prof`), printing its `.cpuprofile` path.
+also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of one untimed
+branch launch (`BUN_OPTIONS=--cpu-prof`), printing its `.cpuprofile` path. Launches set
+`SUPABASE_NO_UPDATE_NOTIFIER=1`, because the release check calls GitHub on every run outside a
+project; pass `--update-check` to include it. The extra traced launches add machine load, so take
+wall-time conclusions from a run without `--trace`.
 
 To build a base binary from another commit without disturbing this worktree:
 
@@ -92,7 +96,7 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 ## What a trace contains
 
 - Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`,
-  `service.instance.id` (the process id of the run).
+  `service.instance.id` (a random id per run).
 - `cli.run`: `process.boot_ms`, the time from process start to CLI entry.
 - Command span (`command.<path>`): `command`, `command_run_id`, `device_id`, `session_id`,
   `is_first_run`.
