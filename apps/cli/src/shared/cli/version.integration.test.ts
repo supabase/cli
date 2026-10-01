@@ -1,105 +1,81 @@
-import { describe, expect, test } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer } from "effect";
+import { Console, Effect, Layer, Schema, Stream } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
-import { vi } from "vitest";
 import { rootCommand } from "../../cli/root.ts";
+import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { CLI_VERSION } from "./version.ts";
 
-const formatLogArg = (value: unknown): string =>
-  typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
-
-const builtinLayer = (args: ReadonlyArray<string>) =>
+const builtinLayer = (args: ReadonlyArray<string>, console: Console.Console) =>
   Layer.mergeAll(
     CliOutput.layer(textCliOutputFormatter()),
     Layer.succeed(CliArgs, { args }),
-    BunServices.layer,
+    Layer.succeed(Console.Console, console),
+    mockOutput({ format: "text" }).layer,
+    emptyEnv(),
   );
 
-/**
- * Captures `console.log` while `run` executes. Spying on `console.log` alone is reliable here;
- * `run.integration.test.ts` explains why pairing it with a `console.error` spy is not.
- */
-async function captureLogs(run: () => Promise<void>): Promise<Array<string>> {
-  const logs: string[] = [];
-  const spy = vi.spyOn(console, "log").mockImplementation((first?: unknown, ...rest: unknown[]) => {
-    const line =
-      rest.length === 0
-        ? first === undefined
-          ? ""
-          : formatLogArg(first)
-        : [first, ...rest].map(formatLogArg).join(" ");
-    logs.push(line);
-  });
-  try {
-    await run();
-  } finally {
-    spy.mockRestore();
-  }
-  return logs;
-}
-
 describe("CLI --help (text)", () => {
-  test("source runs describe themselves as a development build", async () => {
-    // `Command.runWith` keeps handler/global-flag services in the effect type even when the
-    // built-in `--help`/`--version` exits early; only BunServices + CliOutput are needed here.
-    const logs = await captureLogs(() =>
-      Effect.runPromise(
-        Command.runWith(rootCommand, { version: CLI_VERSION })(["--help"]).pipe(
-          Effect.provide(builtinLayer(["--help"])),
-        ) as Effect.Effect<void>,
-      ),
-    );
-    const help = logs.join("\n");
-    expect(help).toContain("Supabase CLI (development build).");
-    expect(help).not.toContain("stable channel");
-  });
+  it.effect("source runs describe themselves as a development build", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      yield* Command.runWith(rootCommand, { version: CLI_VERSION })(["--help"]).pipe(
+        Effect.provide(builtinLayer(["--help"], console)),
+      );
+      const help = calls.join("\n");
+      expect(help).toContain("Supabase CLI (development build).");
+      expect(help).not.toContain("stable channel");
+    }),
+  );
 });
 
 describe("CLI --version (text)", () => {
-  test("CLI prints bare semver on stdout", async () => {
-    const version = "2.99.0-beta.1";
-    const logs = await captureLogs(() =>
-      Effect.runPromise(
-        Command.runWith(rootCommand, { version })(["--version"]).pipe(
-          Effect.provide(builtinLayer(["--version"])),
-        ) as Effect.Effect<void>,
-      ),
-    );
-    expect(logs.length).toBeGreaterThanOrEqual(1);
-    expect(logs[0]).toBe(version);
-    expect(logs[0]).not.toMatch(/supabase\s+v/i);
-  });
+  it.effect("CLI prints bare semver on stdout", () =>
+    Effect.gen(function* () {
+      const version = "2.99.0-beta.1";
+      const { console, calls } = fakeConsole();
+      yield* Command.runWith(rootCommand, { version })(["--version"]).pipe(
+        Effect.provide(builtinLayer(["--version"], console)),
+      );
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls[0]).toBe(`log:${version}`);
+      expect(calls[0]).not.toMatch(/supabase\s+v/i);
+    }),
+  );
 
-  test("source execution ignores a runtime version environment variable", async () => {
-    const bunExecutable = Bun.which("bun");
-    if (!bunExecutable) {
-      throw new Error("Bun executable not found");
-    }
+  it.live("source execution ignores a runtime version environment variable", () =>
+    Effect.gen(function* () {
+      const bunExecutable = yield* Effect.fromNullishOr(Bun.which("bun"));
+      const versionModule = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.String))(
+        fileURLToPath(new URL("./version.ts", import.meta.url)),
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          bunExecutable,
+          ["-e", `import { CLI_VERSION } from ${versionModule}; console.log(CLI_VERSION);`],
+          {
+            env: { SUPABASE_CLI_VERSION: "9.9.9" },
+            extendEnv: true,
+            stdin: "ignore",
+          },
+        ),
+      );
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          child.exitCode,
+          Stream.mkString(Stream.decodeText(child.stdout)),
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        ],
+        { concurrency: "unbounded" },
+      );
 
-    const versionModule = fileURLToPath(new URL("./version.ts", import.meta.url));
-    const child = Bun.spawn(
-      [
-        bunExecutable,
-        "-e",
-        `import { CLI_VERSION } from ${JSON.stringify(versionModule)}; console.log(CLI_VERSION);`,
-      ],
-      {
-        env: { ...process.env, SUPABASE_CLI_VERSION: "9.9.9" },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-
-    expect(exitCode, stderr).toBe(0);
-    expect(stdout.trim()).toBe("0.0.0-dev");
-  });
+      expect(exitCode, stderr).toBe(0);
+      expect(stdout.trim()).toBe("0.0.0-dev");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
