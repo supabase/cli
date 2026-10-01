@@ -21,6 +21,7 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import { accepts, type NativePortReservation, type PortError } from "../Ports.ts";
+import type * as State from "../State.ts";
 import {
   type ContainerError,
   type ContainerProcess,
@@ -160,9 +161,10 @@ export interface ProcessDependencies {
   readonly client: HttpClient.HttpClient;
   readonly spawner: ChildProcessSpawnerService["Service"];
   readonly container: ContainerRuntime | undefined;
+  readonly readPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>;
   readonly reserveNativePort: (
-    stackId: string,
     key: string,
+    claims: ReadonlyArray<State.StackClaims>,
     excluded: ReadonlySet<number>,
   ) => Effect.Effect<NativePortReservation, PortError, Scope.Scope>;
 }
@@ -447,15 +449,17 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         ) {
           const portScope = yield* Scope.fork(parent, "sequential");
           const excluded = yield* Ref.get(excludedByKey);
+          // Read once and share across this batch; a later retry attempt re-reads it.
+          const claims = yield* deps.readPortClaims.pipe(
+            Effect.mapError((cause) => serviceError("launch", cause)),
+          );
           const reservations = yield* Effect.forEach(
             portNames,
             ([name]) =>
-              deps.reserveNativePort(
-                options.stackId,
-                keyFor(name),
-                excluded.get(keyFor(name)) ?? new Set(),
-              ),
-            { concurrency: 1 },
+              deps.reserveNativePort(keyFor(name), claims, excluded.get(keyFor(name)) ?? new Set()),
+            // Each reservation holds its bound probe listener until the batch releases, so two
+            // endpoints never settle on the same port even when reserved concurrently.
+            { concurrency: "unbounded" },
           ).pipe(
             Scope.provide(portScope),
             Effect.mapError((cause) => serviceError("launch", cause)),

@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, Exit, Hash, Option, Scope } from "effect";
+import { Cause, Crypto, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import * as Net from "node:net";
 import type * as State from "./State.ts";
 
@@ -132,27 +132,26 @@ const bindNativePort = (
 
 const emptyPortSet: ReadonlySet<number> = new Set();
 
+/** Backend ports aren't persisted, so a random start buys nothing by staying stable across reopens. */
+export const randomPortSpanStart = (crypto: Crypto.Crypto): Effect.Effect<number> =>
+  crypto.randomIntBetween(0, portSpan, { halfOpen: true });
+
 /**
- * Scans the same below-ephemeral span as `acquire` for a backend port, skipping claimed and
- * excluded ports; reuses `loopbackOccupied` so a wildcard listener a loopback-only bind would miss
- * on macOS, BSD or Windows still rules out the candidate. Never persists one of its own.
+ * Scans the below-ephemeral span for a backend port, skipping claimed and excluded ports; reuses
+ * `loopbackOccupied` so a wildcard listener a loopback-only bind would miss on macOS, BSD or
+ * Windows still rules out the candidate. Never persists one of its own.
  */
 export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
   (
-    claims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>,
-    stackId: string,
+    claims: ReadonlyArray<State.StackClaims>,
     key: string,
+    randomStart: Effect.Effect<number>,
     excluded: ReadonlySet<number> = emptyPortSet,
   ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
     Effect.acquireRelease(
       Effect.gen(function* () {
-        const stacks = yield* claims.pipe(
-          Effect.mapError(
-            (cause) => new PortError({ key, message: "Unable to read port claims", cause }),
-          ),
-        );
-        const claimed = new Set(stacks.flatMap((stack) => stack.ports.map((claim) => claim.port)));
-        const start = Math.abs(Hash.string(`${stackId}:${key}`)) % portSpan;
+        const claimed = new Set(claims.flatMap((stack) => stack.ports.map((claim) => claim.port)));
+        const start = yield* randomStart;
         let failures = 0;
         let lastFailure: PortError | undefined;
         for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
@@ -269,6 +268,14 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
                 ? portBase + ((start + attempt * portStride) % portSpan)
                 : requested;
             if (requested === "auto" && claimed.has(port)) continue;
+            if (requested === "auto" && (yield* loopbackOccupied(port))) {
+              failures++;
+              lastFailure = new PortError({
+                key: request.key,
+                message: `Port ${port} is already in use`,
+              });
+              continue;
+            }
             const result = yield* Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
                 const scope = yield* Scope.fork(owner, "sequential");

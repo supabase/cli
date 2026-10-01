@@ -422,6 +422,9 @@ it.live("lets exactly one of two stacks sharing a saved port bind it when both s
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+// Fixed so a test can force two reservations to the same candidate; production uses randomPortSpanStart.
+const fixedStart = Effect.succeed(0);
+
 it.live("skips a native backend port claimed by another saved stack", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -430,7 +433,7 @@ it.live("skips a native backend port claimed by another saved stack", () =>
       const state = yield* makeTestState(root);
 
       const probeScope = yield* Scope.make();
-      const probe = yield* reserveNativePort(Effect.succeed([]), "backend", "pooler").pipe(
+      const probe = yield* reserveNativePort([], "pooler", fixedStart).pipe(
         Effect.provideService(Scope.Scope, probeScope),
       );
       yield* Scope.close(probeScope, Exit.void);
@@ -439,7 +442,7 @@ it.live("skips a native backend port claimed by another saved stack", () =>
         { key: "db/sql", host: "127.0.0.1", port: probe.port },
       ]);
 
-      const reserved = yield* reserveNativePort(state.claims, "backend", "pooler");
+      const reserved = yield* reserveNativePort(yield* state.claims, "pooler", fixedStart);
       expect(reserved.port).not.toBe(probe.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -449,7 +452,7 @@ it.live("skips a native backend port a wildcard listener holds", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const probeScope = yield* Scope.make();
-      const probe = yield* reserveNativePort(Effect.succeed([]), "wildcard-backend", "pooler").pipe(
+      const probe = yield* reserveNativePort([], "pooler", fixedStart).pipe(
         Effect.provideService(Scope.Scope, probeScope),
       );
       yield* Scope.close(probeScope, Exit.void);
@@ -457,7 +460,7 @@ it.live("skips a native backend port a wildcard listener holds", () =>
       // A wildcard bind is reachable through loopback, so a loopback-only probe would miss it.
       yield* bind("0.0.0.0", probe.port);
 
-      const reserved = yield* reserveNativePort(Effect.succeed([]), "wildcard-backend", "pooler");
+      const reserved = yield* reserveNativePort([], "pooler", fixedStart);
       expect(reserved.port).not.toBe(probe.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -467,18 +470,40 @@ it.live("excludes a port a previous attempt lost from the next reservation", () 
   Effect.scoped(
     Effect.gen(function* () {
       const firstScope = yield* Scope.make();
-      const first = yield* reserveNativePort(Effect.succeed([]), "retry-backend", "pooler").pipe(
+      const first = yield* reserveNativePort([], "pooler", fixedStart).pipe(
         Effect.provideService(Scope.Scope, firstScope),
       );
       yield* Scope.close(firstScope, Exit.void);
 
-      const second = yield* reserveNativePort(
-        Effect.succeed([]),
-        "retry-backend",
-        "pooler",
-        new Set([first.port]),
-      );
+      const second = yield* reserveNativePort([], "pooler", fixedStart, new Set([first.port]));
       expect(second.port).not.toBe(first.port);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("skips a public auto candidate a loopback listener already holds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const state = yield* makeTestState(root);
+      yield* saveStack(state, root, "stack");
+      const ports = yield* makePorts(state);
+      // A container-runtime stack's bind to the wildcard host would otherwise succeed here too.
+      const request = { stackId: "stack", key: "api", host: "0.0.0.0", port: "auto" as const };
+      const accept = (_host: string, port: number) => Effect.succeed(port);
+
+      const probeScope = yield* Scope.make();
+      const probe = yield* ports
+        .acquire(request, accept)
+        .pipe(Effect.provideService(Scope.Scope, probeScope));
+      yield* Scope.close(probeScope, Exit.void);
+      yield* ports.release("stack", "api");
+
+      yield* bind("127.0.0.1", probe.port);
+
+      const acquired = yield* ports.acquire(request, accept);
+      expect(acquired.port).not.toBe(probe.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

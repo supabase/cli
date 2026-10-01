@@ -2,7 +2,7 @@ import { Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
-import { reserveNativePort } from "../Ports.ts";
+import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
 import type * as State from "../State.ts";
 import {
@@ -353,7 +353,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
             });
-      const claims = state?.claims ?? Effect.succeed([]);
       const deps: ProcessDependencies = {
         fs,
         path,
@@ -361,8 +360,9 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         client,
         spawner,
         container,
-        reserveNativePort: (stackId, key, excluded) =>
-          reserveNativePort(claims, stackId, key, excluded),
+        readPortClaims: state?.claims ?? Effect.succeed([]),
+        reserveNativePort: (key, claims, excluded) =>
+          reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
       };
       switch (creation.service) {
         case "rest":

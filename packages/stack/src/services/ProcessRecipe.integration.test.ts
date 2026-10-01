@@ -24,8 +24,11 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only candidate start, not the injected Crypto service.
+import { randomInt as nodeRandomInt } from "node:crypto";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import { reserveNativePort } from "../Ports.ts";
+import type * as State from "../State.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -100,8 +103,13 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
   });
 
 // No saved stacks to consult outside the claim-interaction test below.
-const testReserveNativePort = (stackId: string, key: string, excluded: ReadonlySet<number>) =>
-  reserveNativePort(Effect.succeed([]), stackId, key, excluded);
+const testReadPortClaims = Effect.succeed([]);
+const testRandomStart = Effect.sync(() => nodeRandomInt(0, 1_000_000));
+const testReserveNativePort = (
+  key: string,
+  claims: ReadonlyArray<State.StackClaims>,
+  excluded: ReadonlySet<number>,
+) => reserveNativePort(claims, key, testRandomStart, excluded);
 
 describe("ProcessRecipe launch cleanup", () => {
   for (const scenario of [
@@ -193,6 +201,7 @@ describe("ProcessRecipe launch cleanup", () => {
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
@@ -281,6 +290,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          readPortClaims: testReadPortClaims,
           reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
@@ -392,6 +402,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          readPortClaims: testReadPortClaims,
           reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
@@ -466,6 +477,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       client: yield* HttpClient.HttpClient,
       spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       container,
+      readPortClaims: testReadPortClaims,
       reserveNativePort: testReserveNativePort,
     },
     Realtime.makeSpec(),
@@ -671,6 +683,7 @@ const nativeRestRecipe = Effect.fn(function* (
       client,
       spawner,
       container: undefined,
+      readPortClaims: testReadPortClaims,
       reserveNativePort: testReserveNativePort,
     },
     {
@@ -948,6 +961,7 @@ describe("process recipe startup", () => {
             client,
             spawner: interceptingSpawner,
             container: undefined,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
@@ -1021,6 +1035,7 @@ describe("process recipe startup", () => {
               client,
               spawner,
               container: undefined,
+              readPortClaims: testReadPortClaims,
               reserveNativePort: testReserveNativePort,
             },
             Pooler.makeSpec(),
@@ -1040,6 +1055,10 @@ describe("process recipe startup", () => {
           // before the child binds cannot race an unrelated outgoing connection for the number.
           expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
           expect(endpoint?.port).toBeLessThan(32768);
+          // Pooler reserves "http" and "sql" concurrently; they must never settle on the same port.
+          const sql = endpoints.get("sql");
+          expect(sql?.port).toBeDefined();
+          expect(sql?.port).not.toBe(endpoint?.port);
           yield* runtime.stop;
         }),
       ).pipe(Effect.provide(platform)),
@@ -1086,6 +1105,7 @@ describe("process recipe startup", () => {
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
             container: undefined,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
@@ -1221,6 +1241,7 @@ describe("process recipe startup", () => {
             client,
             spawner: deadlineSpawner,
             container: undefined,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
@@ -1284,6 +1305,7 @@ describe("process recipe startup", () => {
             client,
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
             container: undefined,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),
@@ -1389,6 +1411,7 @@ describe("process recipe startup", () => {
             client,
             spawner: failingSpawner,
             container: undefined,
+            readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           },
           Pooler.makeSpec(),

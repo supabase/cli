@@ -16,15 +16,23 @@ import {
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only candidate start, not the injected Crypto service.
+import { randomInt as nodeRandomInt } from "node:crypto";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { reserveNativePort } from "../Ports.ts";
 import { makeService } from "../Service.ts";
+import type * as State from "../State.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 
 // No saved stacks to consult; this test never launches the native backend it configures.
-const testReserveNativePort = (stackId: string, key: string, excluded: ReadonlySet<number>) =>
-  reserveNativePort(Effect.succeed([]), stackId, key, excluded);
+const testReadPortClaims = Effect.succeed([]);
+const testRandomStart = Effect.sync(() => nodeRandomInt(0, 1_000_000));
+const testReserveNativePort = (
+  key: string,
+  claims: ReadonlyArray<State.StackClaims>,
+  excluded: ReadonlySet<number>,
+) => reserveNativePort(claims, key, testRandomStart, excluded);
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -557,6 +565,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           client: yield* HttpClient.HttpClient,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           container,
+          readPortClaims: testReadPortClaims,
           reserveNativePort: testReserveNativePort,
         },
       );
