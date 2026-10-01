@@ -1,4 +1,5 @@
 import { Effect, type FileSystem, type Path } from "effect";
+import { randomUUID } from "node:crypto";
 
 /** The container mount target for an instance-scoped directory owned on the host. */
 export const containerInstancePath = "/instance";
@@ -36,6 +37,21 @@ export const ensureOwnedInstanceRoot = Effect.fn("InstanceRoot.ensureOwnedInstan
     if (existing !== marker)
       return yield* Effect.fail(onError("data", `${label} belongs to another instance`));
   });
+  // A direct exclusive create on `ownerFile` lets readers observe it mid-write (open and write
+  // are separate syscalls); writing it fully to a temp file first and hard-linking it into place
+  // keeps the exclusivity of `wx` without ever exposing a partial file.
+  const writeMarkerAtomically = Effect.suspend(() => {
+    const tempFile = path.join(parentRoot, `.${instanceId}.${ownerFileName}.${randomUUID()}.tmp`);
+    return fs.writeFileString(tempFile, marker, { mode: 0o600, flag: "wx" }).pipe(
+      Effect.andThen(() => fs.link(tempFile, ownerFile)),
+      Effect.catchIf(
+        (error) => error.reason._tag === "AlreadyExists",
+        () => Effect.void,
+      ),
+      Effect.ensuring(fs.remove(tempFile, { force: true }).pipe(Effect.ignore)),
+      Effect.mapError((cause) => onError("data", cause)),
+    );
+  });
   return Effect.gen(function* () {
     if (!isSafeInstanceId(instanceId))
       return yield* Effect.fail(onError("data", `${label} instance id is not a safe path segment`));
@@ -55,15 +71,8 @@ export const ensureOwnedInstanceRoot = Effect.fn("InstanceRoot.ensureOwnedInstan
       if (entries.length === 1 && entries[0] === ownerFileName) return yield* claimExistingMarker;
       return yield* Effect.fail(onError("data", `${label} is non-empty and unmarked`));
     }
-    yield* fs.writeFileString(ownerFile, marker, { mode: 0o600, flag: "wx" }).pipe(
-      // A concurrent first claim may win the exclusive create; the loser re-reads the marker
-      // instead of failing, since both wrote the same stack+instance marker.
-      Effect.catchIf(
-        (error) => error.reason._tag === "AlreadyExists",
-        () => claimExistingMarker,
-      ),
-      Effect.catchTag("PlatformError", (cause) => Effect.fail(onError("data", cause))),
-    );
+    yield* writeMarkerAtomically;
+    return yield* claimExistingMarker;
   });
 });
 
