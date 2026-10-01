@@ -75,7 +75,7 @@ describe("service catalog", () => {
   afterAll(
     () =>
       Fiber.interrupt(setupFiber).pipe(
-        Effect.andThen(() => (database === undefined ? Effect.void : Effect.ignore(database.stop))),
+        Effect.andThen(() => (database === undefined ? Effect.void : database.stop)),
         Effect.ensuring(Scope.close(scope, Exit.void)),
         Effect.runPromise,
       ),
