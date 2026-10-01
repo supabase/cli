@@ -37,6 +37,13 @@ export interface BenchOptions {
 
 const DEFAULT_COMMANDS: ReadonlyArray<ReadonlyArray<string>> = [["--version"], ["--help"]];
 
+/** Whether `--help`/`-h` is passed as a flag rather than as a `--command` value. */
+export function wantsHelp(argv: ReadonlyArray<string>): boolean {
+  return argv.some(
+    (arg, index) => (arg === "--help" || arg === "-h") && argv[index - 1] !== "--command",
+  );
+}
+
 /** Parses argv into {@link BenchOptions}; throws on missing `--base`/`--branch` or bad numbers. */
 export function parseBenchArgs(argv: ReadonlyArray<string>): BenchOptions {
   // `parseArgs` rejects a separate value that starts with `-`, but CLI commands usually do.
@@ -529,7 +536,7 @@ function formatReport(report: Report): string {
 const main = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   const argv = yield* stdio.args;
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (wantsHelp(argv)) {
     yield* Console.log(USAGE);
     return;
   }

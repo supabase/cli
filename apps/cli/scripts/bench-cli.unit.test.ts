@@ -7,6 +7,7 @@ import {
   exitCodesDiffer,
   isolatedEnv,
   parseBenchArgs,
+  wantsHelp,
   summarizeSpanRun,
   summarizeTimings,
 } from "./bench-cli.ts";
@@ -39,6 +40,13 @@ describe("parseBenchArgs", () => {
 
     expect(options.commands).toEqual([["--version"], ["db", "diff", "--local"]]);
     expect(options.updateCheck).toBe(false);
+  });
+});
+
+describe("wantsHelp", () => {
+  it("treats --help as a flag only when it is not a --command value", () => {
+    expect(wantsHelp(["--help"])).toBe(true);
+    expect(wantsHelp(["--base", "/a", "--branch", "/b", "--command", "--help"])).toBe(false);
   });
 });
 
