@@ -28,7 +28,7 @@ import { candidateDotenvFilenames } from "./project-environment.ts";
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** Bounds this pre-exit hook's latency. */
-const FETCH_TIMEOUT_MS = 3000;
+const FETCH_TIMEOUT_MS = 800;
 
 /** Recognized "true" spellings; anything else, including garbage, leaves the notifier on. */
 const PARSE_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
