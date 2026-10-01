@@ -23,9 +23,10 @@ describe("functions bootstrap owner", () => {
       const path = yield* Path.Path;
       const { fs, root, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-");
       const target = yield* owner.write({ content: "export default 1" });
-      expect(target).toContain(
-        path.join(root, "functions-one", "runtime", "functions", "index.ts"),
+      expect(path.dirname(path.dirname(target))).toContain(
+        path.join(root, "functions-one", "runtime", "functions"),
       );
+      expect(path.basename(target)).toBe("index.ts");
       expect(((yield* fs.stat(path.dirname(target))).mode ?? 0) & 0o777).toBe(0o700);
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
       expect(yield* fs.readFileString(target)).toBe("export default 1");
@@ -100,9 +101,9 @@ describe("functions bootstrap owner", () => {
         "functions-one",
         "runtime",
         "functions",
-        "index.ts",
       );
-      expect(target).toBe(expected);
+      expect(path.dirname(path.dirname(target))).toBe(expected);
+      expect(path.basename(target)).toBe("index.ts");
       expect(yield* fs.readFileString(target)).toBe("export default 2");
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
 

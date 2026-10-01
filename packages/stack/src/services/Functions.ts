@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -63,8 +63,10 @@ const FunctionsRuntimeConfigJson = Schema.fromJsonString(
   Schema.Record(Schema.String, FunctionSettings),
 );
 
+/** Fixed container mount point for `bootstrap.root`; `args` picks the generation underneath it. */
+const containerBootstrapRoot = "/__supabase_bootstrap";
+
 const makeSpec = (
-  functionsRoot: Ref.Ref<string | undefined>,
   bootstrap: FunctionsBootstrapOwner,
   path: Path.Path,
   fs: FileSystem.FileSystem,
@@ -174,12 +176,39 @@ const makeSpec = (
     }),
   args: (creation, endpoints, context) =>
     Effect.gen(function* () {
-      const override = yield* Ref.get(functionsRoot);
+      const published = yield* bootstrap
+        .locate({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceError({
+                operation: "launch",
+                message: "Unable to locate Functions bootstrap",
+                cause,
+              }),
+          ),
+        );
+      // Safe here: by the time `args` runs for a fresh launch, any previous container mounting an
+      // older generation has already been confirmed stopped, unlike `prepare`, which can run
+      // while that container is still live during a restart.
+      if (published !== undefined)
+        yield* bootstrap.pruneOthers(path.dirname(published)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServiceError({
+                operation: "launch",
+                message: "Unable to prune Functions bootstrap",
+                cause,
+              }),
+          ),
+        );
       const root = context.container
-        ? override === undefined
+        ? published === undefined
           ? "/__supabase_functions"
-          : "/__supabase_bootstrap"
-        : (override ?? creation.config.functionsRoot);
+          : `${containerBootstrapRoot}/${path.basename(path.dirname(published))}`
+        : published === undefined
+          ? creation.config.functionsRoot
+          : path.dirname(published);
       const http = endpoints.get("http");
       const inspector = endpoints.get("inspector");
       return [
@@ -193,22 +222,20 @@ const makeSpec = (
       ];
     }),
   mounts: (creation) =>
-    Effect.gen(function* () {
-      const override = yield* Ref.get(functionsRoot);
-      const files = creation.config.filesRoot;
-      const source = files ?? creation.config.functionsRoot;
-      const target = files === undefined ? "/__supabase_functions" : "/__supabase_project";
-      return [
-        { source, target, readOnly: true },
-        ...(override === undefined
-          ? []
-          : [{ source: override, target: "/__supabase_bootstrap", readOnly: true }]),
-      ];
-    }),
+    Effect.succeed([
+      {
+        source: creation.config.filesRoot ?? creation.config.functionsRoot,
+        target:
+          creation.config.filesRoot === undefined ? "/__supabase_functions" : "/__supabase_project",
+        readOnly: true,
+      },
+      { source: bootstrap.root, target: containerBootstrapRoot, readOnly: true },
+    ]),
   startupCommands: [],
+  // Prefetches the bootstrap so a later start need not pay for it; `args` locates independently.
   prepare: (creation) =>
     bootstrap.write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap }).pipe(
-      Effect.flatMap((target) => Ref.set(functionsRoot, path.dirname(target))),
+      Effect.asVoid,
       Effect.mapError(
         (cause) =>
           new ServiceError({
@@ -238,7 +265,6 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
     deps: ProcessDependencies,
   ): Effect.Effect<ProcessRecipeResult<Creation>, CatalogError> =>
     Effect.gen(function* () {
-      const functionsRoot = yield* Ref.make<string | undefined>(undefined);
       const stackId = yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
         Effect.mapError(
           (cause) =>
@@ -272,7 +298,7 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
         creation,
         options,
         deps,
-        makeSpec(functionsRoot, bootstrap, deps.path, deps.fs),
+        makeSpec(bootstrap, deps.path, deps.fs),
       );
     }),
 );

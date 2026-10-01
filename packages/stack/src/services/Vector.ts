@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path, Schema } from "effect";
+import { type Crypto, Effect, type FileSystem, type Path, Schema } from "effect";
 import { ServiceError } from "../Service.ts";
 import { type CatalogOptions, EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { requiredInput } from "./ServiceConfig.ts";
@@ -56,9 +56,17 @@ const defaultPipelineConfig = [
   "",
 ].join("\n");
 
-const containerPipelinePath = "/etc/vector/vector.yaml";
-const containerApiPath = "/etc/supabase/vector-api.yaml";
+/** Fixed mount point for `configRoot`; `args` names the generation to load underneath it. */
+const containerConfigDir = "/etc/supabase/vector";
 const temporaryPrefix = ".vector-write-";
+
+const hex = (bytes: Uint8Array): string =>
+  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+/** Matches only the content-addressed names this recipe itself generates in `configRoot`. */
+const generatedConfigName = /^vector-(?:api|pipeline)-[0-9a-f]{16}\.yaml$/u;
+const isGeneratedEntry = (name: string): boolean =>
+  generatedConfigName.test(name) || name.startsWith(temporaryPrefix);
 
 const writeAtomically = Effect.fn("Vector.writeAtomically")(
   function* (fs: FileSystem.FileSystem, path: Path.Path, target: string, content: string) {
@@ -84,19 +92,66 @@ const writeAtomically = Effect.fn("Vector.writeAtomically")(
   ),
 );
 
+/** Writes `content` to a path named after its digest; unchanged content is not rewritten. */
+const writeContentAddressed = Effect.fn("Vector.writeContentAddressed")(
+  function* (
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    crypto: Crypto.Crypto,
+    configRoot: string,
+    prefix: string,
+    content: string,
+  ) {
+    const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(content));
+    const target = path.join(configRoot, `${prefix}-${hex(digest).slice(0, 16)}.yaml`);
+    if (!(yield* fs.exists(target))) yield* writeAtomically(fs, path, target, content);
+    return target;
+  },
+  Effect.mapError((cause) =>
+    cause instanceof ServiceError
+      ? cause
+      : new ServiceError({ operation: "launch", message: "Unable to write Vector config", cause }),
+  ),
+);
+
+/** Removes stale recipe-generated files in `configRoot` except `keep`; a caller's own file never matches `isGeneratedEntry`. */
+const pruneGenerated = Effect.fn("Vector.pruneGenerated")(
+  function* (
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    configRoot: string,
+    keep: ReadonlySet<string>,
+  ) {
+    if (!(yield* fs.exists(configRoot))) return;
+    for (const entry of yield* fs.readDirectory(configRoot)) {
+      if (!isGeneratedEntry(entry)) continue;
+      const full = path.join(configRoot, entry);
+      if (keep.has(full)) continue;
+      yield* fs.remove(full, { recursive: true, force: true });
+    }
+  },
+  Effect.mapError(
+    (cause) =>
+      new ServiceError({ operation: "launch", message: "Unable to prune Vector config", cause }),
+  ),
+);
+
 const makeSpec = (
   instanceId: string,
   instanceRoot: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  crypto: Crypto.Crypto,
 ): ProcessRecipeSpec<Creation> => {
   const configRoot = path.join(instanceRoot, "runtime", "vector");
-  const apiConfigPath = path.join(configRoot, "vector-api.yaml");
-  const defaultPipelinePath = path.join(configRoot, "vector.yaml");
-  const renderedPipelinePath = path.join(configRoot, "vector.rendered.yaml");
-  /** What Vector actually loads: a caller's file is rendered to a recipe-owned copy first. */
-  const resolvedPipelinePath = (creation: Creation) =>
-    creation.config.configPath === undefined ? defaultPipelinePath : renderedPipelinePath;
+  const canonicalDirectory = (directory: string) =>
+    fs
+      .exists(directory)
+      .pipe(
+        Effect.flatMap((exists) =>
+          exists ? fs.realPath(directory) : Effect.succeed(path.resolve(directory)),
+        ),
+      );
   const ownedInstance = (operation: string) =>
     /^[a-zA-Z0-9_-]+$/u.test(instanceId)
       ? Effect.void
@@ -122,47 +177,71 @@ const makeSpec = (
           http === undefined
             ? undefined
             : `${context.container ? "0.0.0.0" : "127.0.0.1"}:${http.port}`;
-        yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(address));
-        if (creation.config.configPath !== undefined) {
-          const source = yield* fs.readFileString(creation.config.configPath).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServiceError({
-                  operation: "prepare",
-                  message: "Unable to read Vector configPath",
-                  cause,
-                }),
-            ),
-          );
-          const rendered = renderKnownPlaceholders(source, {
-            LOGFLARE_URL: creation.config.analyticsUrl,
-            LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey,
-          });
-          yield* writeAtomically(fs, path, renderedPipelinePath, rendered);
-        }
+        const apiTarget = yield* writeContentAddressed(
+          fs,
+          path,
+          crypto,
+          configRoot,
+          "vector-api",
+          apiConfigFor(address),
+        );
+        const callerPath = creation.config.configPath;
+        const pipelineTarget =
+          callerPath === undefined
+            ? yield* writeContentAddressed(
+                fs,
+                path,
+                crypto,
+                configRoot,
+                "vector-pipeline",
+                defaultPipelineConfig,
+              )
+            : yield* Effect.gen(function* () {
+                const source = yield* fs.readFileString(callerPath).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ServiceError({
+                        operation: "prepare",
+                        message: "Unable to read Vector configPath",
+                        cause,
+                      }),
+                  ),
+                );
+                const rendered = renderKnownPlaceholders(source, {
+                  LOGFLARE_URL: creation.config.analyticsUrl,
+                  LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey,
+                });
+                return yield* writeContentAddressed(
+                  fs,
+                  path,
+                  crypto,
+                  configRoot,
+                  "vector-pipeline",
+                  rendered,
+                );
+              });
+        // Safe here: a previous generation's container is confirmed stopped by the time `args`
+        // runs for a fresh launch; `prepare` can still run while that container is live.
+        yield* pruneGenerated(fs, path, configRoot, new Set([apiTarget, pipelineTarget]));
         return context.container
-          ? ["--config", containerPipelinePath, "--config", containerApiPath]
-          : ["--config", resolvedPipelinePath(creation), "--config", apiConfigPath];
+          ? [
+              "--config",
+              `${containerConfigDir}/${path.basename(pipelineTarget)}`,
+              "--config",
+              `${containerConfigDir}/${path.basename(apiTarget)}`,
+            ]
+          : ["--config", pipelineTarget, "--config", apiTarget];
       }),
-    mounts: (creation) =>
-      Effect.succeed([
-        { source: resolvedPipelinePath(creation), target: containerPipelinePath, readOnly: true },
-        { source: apiConfigPath, target: containerApiPath, readOnly: true },
-      ]),
+    mounts: () =>
+      Effect.succeed([{ source: configRoot, target: containerConfigDir, readOnly: true }]),
     startupCommands: [],
+    // Prefetches the default pipeline so a later start need not pay for it; `args` writes
+    // independently and does not depend on this having run.
     prepare: (creation) =>
       Effect.gen(function* () {
         yield* ownedInstance("prepare");
         const callerPath = creation.config.configPath;
         if (callerPath !== undefined) {
-          const canonical = (file: string) =>
-            fs
-              .exists(file)
-              .pipe(
-                Effect.flatMap((exists) =>
-                  exists ? fs.realPath(file) : Effect.succeed(path.resolve(file)),
-                ),
-              );
           const caller = yield* fs.realPath(callerPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -173,11 +252,7 @@ const makeSpec = (
                 }),
             ),
           );
-          const owned = yield* Effect.all([
-            canonical(apiConfigPath),
-            canonical(defaultPipelinePath),
-            canonical(renderedPipelinePath),
-          ]).pipe(
+          const ownedRoot = yield* canonicalDirectory(configRoot).pipe(
             Effect.mapError(
               (cause) =>
                 new ServiceError({
@@ -187,28 +262,30 @@ const makeSpec = (
                 }),
             ),
           );
-          if (owned.includes(caller))
+          if (path.dirname(caller) === ownedRoot && isGeneratedEntry(path.basename(caller)))
             return yield* new ServiceError({
               operation: "prepare",
               message: "Vector configPath must not point at a stack-owned Vector config file",
             });
+        } else {
+          yield* writeContentAddressed(
+            fs,
+            path,
+            crypto,
+            configRoot,
+            "vector-pipeline",
+            defaultPipelineConfig,
+          );
         }
-        // A safe placeholder until `args` writes the real address — the listening port isn't
-        // known until endpoints are reserved for an actual launch, which happens after `prepare`.
-        yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(undefined));
-        if (callerPath === undefined)
-          yield* writeAtomically(fs, path, defaultPipelinePath, defaultPipelineConfig);
       }),
-    // A caller configPath may live anywhere under the instance root, so only recipe files and empty directories go.
+    // A caller configPath may live anywhere under the instance root, including beside the
+    // recipe's own files, so only generated files and resulting empty directories go.
     removeData: () =>
       Effect.gen(function* () {
         yield* ownedInstance("destroy");
-        yield* fs.remove(apiConfigPath, { force: true });
-        yield* fs.remove(defaultPipelinePath, { force: true });
-        yield* fs.remove(renderedPipelinePath, { force: true });
         if (yield* fs.exists(configRoot))
           for (const entry of yield* fs.readDirectory(configRoot))
-            if (entry.startsWith(temporaryPrefix))
+            if (isGeneratedEntry(entry))
               yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
         for (const directory of [configRoot, path.dirname(configRoot), instanceRoot]) {
           if (!(yield* fs.exists(directory))) continue;
@@ -240,6 +317,7 @@ export const makeRecipe = Effect.fn("Vector.makeRecipe")(
         deps.path.join(options.root, options.instanceId),
         deps.fs,
         deps.path,
+        deps.crypto,
       ),
     ),
 );

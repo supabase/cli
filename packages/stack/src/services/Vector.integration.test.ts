@@ -94,7 +94,7 @@ describe("vector recipe", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-reject-" });
-        const owned = `${root}/vector/runtime/vector/vector-api.yaml`;
+        const owned = `${root}/vector/runtime/vector/vector-api-0123456789abcdef.yaml`;
         yield* fs.makeDirectory(`${root}/vector/runtime/vector`, { recursive: true });
         yield* fs.writeFileString(owned, "api:\n  enabled: true\n");
         yield* fs.symlink(owned, `${root}/alias.yaml`);
