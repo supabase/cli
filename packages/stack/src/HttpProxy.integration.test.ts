@@ -1092,10 +1092,10 @@ it.live("records each request once with the status the client was sent", () => {
       const statuses = [
         yield* get("/api/ok?select=*&apikey=sb_secret_x&Access_Token=jwt", {
           "user-agent": "proxy-test/1",
-          referer: "http://studio.test/logs",
+          referer: "http://127.0.0.1:54321/x?token=t1&select=*#access_token=frag&type=bearer",
         }),
-        yield* get("/api/missing"),
-        yield* get("/elsewhere"),
+        yield* get("/api/missing", { referer: "http://127.0.0.1:54321/y?apikey=sb_publishable_x" }),
+        yield* get("/elsewhere", { referer: "/relative?Access_Token=jwt" }),
         yield* get("/down/thing?token=t"),
       ];
       const recorded = yield* Queue.takeN(accesses, 4);
@@ -1110,12 +1110,23 @@ it.live("records each request once with the status the client was sent", () => {
           protocol: "HTTP/1.1",
           status: 200,
           bytes: 5,
-          referer: "http://studio.test/logs",
+          referer:
+            "http://127.0.0.1:54321/x?token=redacted&select=*#access_token=redacted&type=bearer",
           userAgent: "proxy-test/1",
           durationMillis: expect.any(Number),
         },
-        expect.objectContaining({ target: "/api/missing", status: 404, bytes: 4 }),
-        expect.objectContaining({ target: "/elsewhere", status: 404, bytes: 9 }),
+        expect.objectContaining({
+          target: "/api/missing",
+          status: 404,
+          bytes: 4,
+          referer: "http://127.0.0.1:54321/y?apikey=redacted",
+        }),
+        expect.objectContaining({
+          target: "/elsewhere",
+          status: 404,
+          bytes: 9,
+          referer: "/relative?Access_Token=redacted",
+        }),
         expect.objectContaining({ target: "/down/thing?token=redacted", status: 502, bytes: 11 }),
       ]);
       expect(yield* Queue.size(accesses)).toBe(0);
@@ -1280,4 +1291,52 @@ it.live("answers and releases targets while the access sink is stalled", () =>
       expect(yield* Queue.takeN(released, 20).pipe(Effect.timeout("5 seconds"))).toHaveLength(20);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeHttpClient.layerNodeHttp, NodeServices.layer))),
+);
+
+it.live("records and releases a request whose client resets after the full body was sent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const bodySent = yield* Deferred.make<void>();
+      const body = new Uint8Array(256 * 1024).fill(65);
+      const backend = createServer((request, response) => {
+        request.resume();
+        response.once("finish", () => Deferred.doneUnsafe(bodySent, Effect.void));
+        response.end(body);
+      });
+      const backendAddress = yield* listen(backend, {
+        beforeClose: () => backend.closeAllConnections(),
+      });
+      const released = yield* Deferred.make<void>();
+      const accesses = yield* Queue.unbounded<HttpAccess>();
+      const proxy = yield* makeHttpProxy({
+        host: "127.0.0.1",
+        port: 0,
+        onAccess: (access) => Queue.offer(accesses, access),
+      });
+      yield* proxy.setRoutes([
+        {
+          id: "api",
+          prefix: "/api",
+          target: Effect.acquireRelease(Effect.succeed(backendAddress), () =>
+            Deferred.succeed(released, undefined),
+          ),
+        },
+      ]);
+
+      // The client never reads; socket buffers decide how much of the body the proxy flushed
+      // before the reset, so the record holds either the whole body or no byte count.
+      const client = yield* rawClient(
+        proxy.port,
+        "GET /api/full HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      );
+      yield* Deferred.await(bodySent).pipe(Effect.timeout("5 seconds"));
+      client.resetAndDestroy();
+      const recorded = yield* Queue.take(accesses).pipe(Effect.timeout("5 seconds"));
+      yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));
+
+      expect(recorded).toMatchObject({ target: "/api/full", status: 200 });
+      expect([undefined, body.length]).toContain(recorded.bytes);
+      expect(yield* Queue.size(accesses)).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

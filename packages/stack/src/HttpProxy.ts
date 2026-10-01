@@ -47,7 +47,7 @@ export interface HttpAccess {
   readonly time: number;
   readonly client: string;
   readonly method: string;
-  /** The request path and query, with credential query values redacted. */
+  /** The request path and query, with credential query and fragment values redacted. */
   readonly target: string;
   readonly protocol: string;
   /**
@@ -58,6 +58,7 @@ export interface HttpAccess {
   readonly status: number;
   /** Body bytes of a response that finished; absent when it was cut short, and for upgrades. */
   readonly bytes?: number;
+  /** The Referer header, with credential query and fragment values redacted. */
   readonly referer?: string;
   readonly userAgent?: string;
   /** Until the response finished; for an upgrade, until the upstream handshake answered. */
@@ -153,11 +154,8 @@ const decodeQuery = (value: string) => {
 
 const credentialParameters = new Set(["apikey", "access_token", "token"]);
 
-const redactCredentials = (url: string) => {
-  const queryAt = url.indexOf("?");
-  if (queryAt < 0) return url;
-  const query = url
-    .slice(queryAt + 1)
+const redactPairs = (pairs: string) =>
+  pairs
     .split("&")
     .map((parameter) => {
       const separator = parameter.indexOf("=");
@@ -168,7 +166,19 @@ const redactCredentials = (url: string) => {
         : parameter;
     })
     .join("&");
-  return `${url.slice(0, queryAt)}?${query}`;
+
+/**
+ * Redacts credential values in a URL's query and fragment, where OAuth implicit grants put
+ * `access_token`. Edits the text in place, so relative and unparsable URLs work and the rest of
+ * the URL keeps its original encoding.
+ */
+const redactCredentials = (url: string) => {
+  const hashAt = url.indexOf("#");
+  const beforeHash = hashAt < 0 ? url : url.slice(0, hashAt);
+  const queryAt = beforeHash.indexOf("?");
+  const query = queryAt < 0 ? "" : `?${redactPairs(beforeHash.slice(queryAt + 1))}`;
+  const fragment = hashAt < 0 ? "" : `#${redactPairs(url.slice(hashAt + 1))}`;
+  return `${queryAt < 0 ? beforeHash : beforeHash.slice(0, queryAt)}${query}${fragment}`;
 };
 
 /** Captures a request's access fields while its socket is open; completes them once it settles. */
@@ -181,7 +191,7 @@ const accessFor = (request: IncomingMessage, time: number) => {
     method: request.method ?? "GET",
     target: redactCredentials(request.url ?? "/"),
     protocol: `HTTP/${request.httpVersion}`,
-    ...(referer === undefined ? {} : { referer }),
+    ...(referer === undefined ? {} : { referer: redactCredentials(referer) }),
     ...(userAgent === undefined ? {} : { userAgent }),
   };
   return (ended: number, status: number, bytes?: number): HttpAccess => ({
@@ -372,8 +382,9 @@ const forward = Effect.fn("HttpProxy.forward")(
         abandon(Effect.fail(errorFor(cause, incoming !== undefined)));
       const onClientGone = () => abandon(Effect.fail(new HttpProxyDisconnected()));
       const onFinish = () => finish(Effect.void);
+      // A close after `end()` but before `finish` means the client reset with writes still queued.
       const onResponseClose = () => {
-        if (!response.writableEnded) onClientGone();
+        if (!response.writableFinished) onClientGone();
       };
       outgoing = upstreamRequest(
         {
