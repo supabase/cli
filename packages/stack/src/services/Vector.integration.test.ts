@@ -119,4 +119,74 @@ describe("vector recipe", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
+
+  it.live(
+    "removes legacy fixed-name config files on destroy",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-legacy-" });
+          const configDir = `${root}/vector/runtime/vector`;
+          yield* fs.makeDirectory(configDir, { recursive: true });
+          for (const name of ["vector-api.yaml", "vector.yaml", "vector.rendered.yaml"])
+            yield* fs.writeFileString(`${configDir}/${name}`, "api:\n  enabled: false\n");
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "vector",
+              config: { analyticsUrl: "http://analytics" },
+              endpoints: { http: { port: "auto" } },
+            },
+            options(root, "docker"),
+          );
+          const vector = yield* makeService(recipe.definition, {
+            id: "vector",
+            config: recipe.creation,
+          });
+          yield* vector.start;
+          yield* vector.ready;
+          yield* vector.destroy;
+          for (const name of ["vector-api.yaml", "vector.yaml", "vector.rendered.yaml"])
+            expect(yield* fs.exists(`${configDir}/${name}`)).toBe(false);
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "keeps a caller pipeline named like a legacy config file on destroy",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-vector-legacy-caller-",
+          });
+          const pipeline = `${root}/vector/runtime/vector/vector.yaml`;
+          yield* fs.makeDirectory(`${root}/vector/runtime/vector`, { recursive: true });
+          yield* fs.writeFileString(
+            pipeline,
+            "sources:\n  s:\n    type: internal_logs\nsinks:\n  d:\n    type: blackhole\n    inputs: [s]\n",
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "vector",
+              config: { analyticsUrl: "http://analytics", configPath: pipeline },
+              endpoints: { http: { port: "auto" } },
+            },
+            options(root, "docker"),
+          );
+          const vector = yield* makeService(recipe.definition, {
+            id: "vector",
+            config: recipe.creation,
+          });
+          yield* vector.start;
+          yield* vector.ready;
+          yield* vector.destroy;
+          expect(yield* fs.exists(pipeline)).toBe(true);
+          expect(yield* fs.readFileString(pipeline)).toContain("internal_logs");
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
 });

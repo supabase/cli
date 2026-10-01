@@ -1,4 +1,5 @@
 import { type Crypto, Effect, type FileSystem, type Path, Schema } from "effect";
+import { contentDigestHex } from "../internal/content-digest.ts";
 import { ServiceError } from "../Service.ts";
 import { type CatalogOptions, EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { requiredInput } from "./ServiceConfig.ts";
@@ -60,81 +61,91 @@ const defaultPipelineConfig = [
 const containerConfigDir = "/etc/supabase/vector";
 const temporaryPrefix = ".vector-write-";
 
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-
-/** Matches only the content-addressed names this recipe itself generates in `configRoot`. */
+/** The content-addressed names this recipe publishes in `configRoot`. */
 const generatedConfigName = /^vector-(?:api|pipeline)-[0-9a-f]{16}\.yaml$/u;
+/** `generatedConfigName` plus this recipe's own staging prefix, for ownership and full cleanup. */
 const isGeneratedEntry = (name: string): boolean =>
   generatedConfigName.test(name) || name.startsWith(temporaryPrefix);
+/** Fixed names earlier releases wrote; `removeData` still cleans these up. */
+const legacyConfigNames = ["vector-api.yaml", "vector.yaml", "vector.rendered.yaml"];
 
-const writeAtomically = Effect.fn("Vector.writeAtomically")(
-  function* (fs: FileSystem.FileSystem, path: Path.Path, target: string, content: string) {
-    const directory = path.dirname(target);
-    yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
-    yield* Effect.acquireUseRelease(
-      fs.makeTempDirectory({ directory, prefix: temporaryPrefix }),
-      (temporaryDirectory) =>
-        Effect.gen(function* () {
-          const temporary = path.join(temporaryDirectory, path.basename(target));
-          yield* fs.writeFileString(temporary, content, { mode: 0o644 });
-          yield* fs.rename(temporary, target);
-        }),
-      (temporaryDirectory) =>
-        fs
-          .remove(temporaryDirectory, { recursive: true, force: true })
-          .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-    );
-  },
-  Effect.mapError(
-    (cause) =>
-      new ServiceError({ operation: "prepare", message: "Unable to write Vector config", cause }),
-  ),
-);
+const writeAtomically = Effect.fn("Vector.writeAtomically")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  target: string,
+  content: string,
+) {
+  const directory = path.dirname(target);
+  yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
+  yield* Effect.acquireUseRelease(
+    fs.makeTempDirectory({ directory, prefix: temporaryPrefix }),
+    (temporaryDirectory) =>
+      Effect.gen(function* () {
+        const temporary = path.join(temporaryDirectory, path.basename(target));
+        yield* fs.writeFileString(temporary, content, { mode: 0o644 });
+        // Content-addressed: an existing link means another writer already published identical
+        // bytes, so a race onto the same name is a success, not a conflict.
+        yield* fs.link(temporary, target).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.void,
+          ),
+        );
+      }),
+    (temporaryDirectory) =>
+      fs
+        .remove(temporaryDirectory, { recursive: true, force: true })
+        .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
+  );
+});
 
 /** Writes `content` to a path named after its digest; unchanged content is not rewritten. */
-const writeContentAddressed = Effect.fn("Vector.writeContentAddressed")(
-  function* (
-    fs: FileSystem.FileSystem,
-    path: Path.Path,
-    crypto: Crypto.Crypto,
-    configRoot: string,
-    prefix: string,
-    content: string,
-  ) {
-    const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(content));
-    const target = path.join(configRoot, `${prefix}-${hex(digest).slice(0, 16)}.yaml`);
+const writeContentAddressed = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  configRoot: string,
+  prefix: string,
+  content: string,
+  operation: string,
+): Effect.Effect<string, ServiceError> =>
+  Effect.gen(function* () {
+    const hash = yield* contentDigestHex(crypto, content);
+    const target = path.join(configRoot, `${prefix}-${hash}.yaml`);
     if (!(yield* fs.exists(target))) yield* writeAtomically(fs, path, target, content);
     return target;
-  },
-  Effect.mapError((cause) =>
-    cause instanceof ServiceError
-      ? cause
-      : new ServiceError({ operation: "launch", message: "Unable to write Vector config", cause }),
-  ),
-);
+  }).pipe(
+    Effect.withSpan("Vector.writeContentAddressed"),
+    Effect.mapError(
+      (cause) => new ServiceError({ operation, message: "Unable to write Vector config", cause }),
+    ),
+  );
 
-/** Removes stale recipe-generated files in `configRoot` except `keep`; a caller's own file never matches `isGeneratedEntry`. */
-const pruneGenerated = Effect.fn("Vector.pruneGenerated")(
-  function* (
-    fs: FileSystem.FileSystem,
-    path: Path.Path,
-    configRoot: string,
-    keep: ReadonlySet<string>,
-  ) {
+/**
+ * Removes stale published generations in `configRoot` except `keep`. Never touches staging
+ * entries (an in-flight writer may still own one) or a caller's own file alongside them.
+ */
+const pruneGenerated = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  configRoot: string,
+  keep: ReadonlySet<string>,
+  operation: string,
+): Effect.Effect<void, ServiceError> =>
+  Effect.gen(function* () {
     if (!(yield* fs.exists(configRoot))) return;
     for (const entry of yield* fs.readDirectory(configRoot)) {
-      if (!isGeneratedEntry(entry)) continue;
+      if (!generatedConfigName.test(entry)) continue;
       const full = path.join(configRoot, entry);
       if (keep.has(full)) continue;
       yield* fs.remove(full, { recursive: true, force: true });
     }
-  },
-  Effect.mapError(
-    (cause) =>
-      new ServiceError({ operation: "launch", message: "Unable to prune Vector config", cause }),
-  ),
-);
+  }).pipe(
+    Effect.withSpan("Vector.pruneGenerated"),
+    Effect.mapError(
+      (cause) => new ServiceError({ operation, message: "Unable to prune Vector config", cause }),
+    ),
+  );
 
 const makeSpec = (
   instanceId: string,
@@ -184,6 +195,7 @@ const makeSpec = (
           configRoot,
           "vector-api",
           apiConfigFor(address),
+          "launch",
         );
         const callerPath = creation.config.configPath;
         const pipelineTarget =
@@ -195,13 +207,14 @@ const makeSpec = (
                 configRoot,
                 "vector-pipeline",
                 defaultPipelineConfig,
+                "launch",
               )
             : yield* Effect.gen(function* () {
                 const source = yield* fs.readFileString(callerPath).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ServiceError({
-                        operation: "prepare",
+                        operation: "launch",
                         message: "Unable to read Vector configPath",
                         cause,
                       }),
@@ -218,11 +231,12 @@ const makeSpec = (
                   configRoot,
                   "vector-pipeline",
                   rendered,
+                  "launch",
                 );
               });
         // Safe here: a previous generation's container is confirmed stopped by the time `args`
         // runs for a fresh launch; `prepare` can still run while that container is live.
-        yield* pruneGenerated(fs, path, configRoot, new Set([apiTarget, pipelineTarget]));
+        yield* pruneGenerated(fs, path, configRoot, new Set([apiTarget, pipelineTarget]), "launch");
         return context.container
           ? [
               "--config",
@@ -275,18 +289,32 @@ const makeSpec = (
             configRoot,
             "vector-pipeline",
             defaultPipelineConfig,
+            "prepare",
           );
         }
       }),
     // A caller configPath may live anywhere under the instance root, including beside the
-    // recipe's own files, so only generated files and resulting empty directories go.
-    removeData: () =>
+    // recipe's own files, so a resolved match with it is never deleted.
+    removeData: (creation) =>
       Effect.gen(function* () {
         yield* ownedInstance("destroy");
+        const callerPath = creation.config.configPath;
+        const callerReal =
+          callerPath === undefined
+            ? undefined
+            : yield* fs
+                .realPath(callerPath)
+                .pipe(Effect.orElseSucceed(() => path.resolve(callerPath)));
         if (yield* fs.exists(configRoot))
-          for (const entry of yield* fs.readDirectory(configRoot))
-            if (isGeneratedEntry(entry))
-              yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
+          for (const entry of yield* fs.readDirectory(configRoot)) {
+            if (!isGeneratedEntry(entry) && !legacyConfigNames.includes(entry)) continue;
+            const full = path.join(configRoot, entry);
+            if (callerReal !== undefined) {
+              const fullReal = yield* fs.realPath(full).pipe(Effect.orElseSucceed(() => full));
+              if (fullReal === callerReal) continue;
+            }
+            yield* fs.remove(full, { recursive: true, force: true });
+          }
         for (const directory of [configRoot, path.dirname(configRoot), instanceRoot]) {
           if (!(yield* fs.exists(directory))) continue;
           if ((yield* fs.readDirectory(directory)).length > 0) return;

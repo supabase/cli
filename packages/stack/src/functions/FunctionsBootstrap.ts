@@ -1,6 +1,7 @@
 import { Crypto, Data, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
+import { contentDigestHex } from "../internal/content-digest.ts";
 import { StackIdSchema, type StackId } from "../identity/StackId.ts";
 
 export class FunctionsBootstrapError extends Data.TaggedError("FunctionsBootstrapError")<{
@@ -16,10 +17,6 @@ export interface FunctionsBootstrapOwner {
   readonly write: (input: {
     readonly content: string;
   }) => Effect.Effect<string, FunctionsBootstrapError>;
-  /** The path `write` would publish for `content`, without writing, if already published. */
-  readonly locate: (input: {
-    readonly content: string;
-  }) => Effect.Effect<string | undefined, FunctionsBootstrapError>;
   /**
    * Removes every published generation under this owner's root except `keep`. Safe only once a
    * previous generation's container is confirmed stopped, so callers must run this alongside
@@ -40,9 +37,6 @@ const failure = (message: string, fields: Readonly<Record<string, unknown>> = {}
   new FunctionsBootstrapError({ message, ...fields });
 
 const generationPrefix = "generation-";
-
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const mapFs = <A, R = never>(
   path: string,
@@ -83,22 +77,20 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
   // A fresh generation never collides with a path a running container might still reference, so
   // a freshly started container never bind-mounts a path a host's file-sharing cache might still
   // remember as deleted from a previous generation.
-  const targetFor = (content: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(content)).pipe(
-      Effect.map((digest) => {
-        const generation = path.join(root, `${generationPrefix}${hex(digest).slice(0, 16)}`);
-        return path.join(generation, "index.ts");
-      }),
+  const generationFor = (content: string) =>
+    contentDigestHex(crypto, content).pipe(
+      Effect.map((hash) => path.join(root, `${generationPrefix}${hash}`)),
     );
 
-  const locate = Effect.fn("FunctionsBootstrap.locate")(function* (input: {
-    readonly content: string;
-  }) {
-    const target = yield* mapFs(root, "hash functions bootstrap content", targetFor(input.content));
-    if (!(yield* mapFs(target, "check functions bootstrap file", fs.exists(target))))
-      return undefined;
-    return yield* mapFs(target, "resolve published functions bootstrap file", fs.realPath(target));
-  });
+  /** A generation is complete only once both its files are published together. */
+  const isCompleteGeneration = (generation: string) =>
+    fs
+      .exists(path.join(generation, "index.ts"))
+      .pipe(
+        Effect.flatMap((hasTarget) =>
+          hasTarget ? fs.exists(path.join(generation, "deno.json")) : Effect.succeed(false),
+        ),
+      );
 
   const write = Effect.fn("FunctionsBootstrap.write")(function* (input: {
     readonly content: string;
@@ -111,9 +103,19 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
       fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
     );
     yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
-    const target = yield* mapFs(root, "hash functions bootstrap content", targetFor(input.content));
-    const generation = path.dirname(target);
-    if (yield* mapFs(target, "check functions bootstrap file", fs.exists(target)))
+    const generation = yield* mapFs(
+      root,
+      "hash functions bootstrap content",
+      generationFor(input.content),
+    );
+    const target = path.join(generation, "index.ts");
+    if (
+      yield* mapFs(
+        generation,
+        "check functions bootstrap generation",
+        isCompleteGeneration(generation),
+      )
+    )
       return yield* mapFs(
         target,
         "resolve published functions bootstrap file",
@@ -162,11 +164,19 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
           fs.chmod(stagedTarget, 0o600),
         );
         // One rename publishes both files together, so a container mounting `generation` never
-        // observes the config file without its paired, already-written bootstrap file.
+        // observes one without the other. Content is identical for a given name, so a losing
+        // overlapping writer's failed rename onto an already-complete generation is a success.
         yield* mapFs(
           generation,
           "publish functions bootstrap generation",
           fs.rename(stage, generation),
+        ).pipe(
+          Effect.catch((cause) =>
+            isCompleteGeneration(generation).pipe(
+              Effect.orElseSucceed(() => false),
+              Effect.flatMap((complete) => (complete ? Effect.void : Effect.fail(cause))),
+            ),
+          ),
         );
         return yield* mapFs(
           target,
@@ -190,10 +200,11 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
           ? mapFs(root, "list functions bootstrap generations", fs.readDirectory(root)).pipe(
               Effect.flatMap((entries) =>
                 Effect.forEach(
-                  // Comparing basenames avoids a false mismatch when `root` and `keep` resolve
-                  // the same directory through a different symlink prefix (for example macOS's
-                  // `/var` -> `/private/var`), which would otherwise prune the live generation.
-                  entries.filter((entry) => entry !== path.basename(keep)),
+                  // Only completed generations are eligible, never a staging entry an in-flight
+                  // writer may still own; basenames avoid a false mismatch across symlinks.
+                  entries.filter(
+                    (entry) => entry.startsWith(generationPrefix) && entry !== path.basename(keep),
+                  ),
                   (entry) => {
                     const stale = path.join(root, entry);
                     return mapFs(
@@ -220,5 +231,5 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
     Effect.andThen(removeEmptyDirectory(path.dirname(path.dirname(root)))),
     Effect.withSpan("FunctionsBootstrap.cleanupAll"),
   );
-  return { root, write, locate, pruneOthers, cleanupAll };
+  return { root, write, pruneOthers, cleanupAll };
 });

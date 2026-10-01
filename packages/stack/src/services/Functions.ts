@@ -66,7 +66,7 @@ const FunctionsRuntimeConfigJson = Schema.fromJsonString(
 /** Fixed container mount point for `bootstrap.root`; `args` picks the generation underneath it. */
 const containerBootstrapRoot = "/__supabase_bootstrap";
 
-const makeSpec = (
+export const makeSpec = (
   bootstrap: FunctionsBootstrapOwner,
   path: Path.Path,
   fs: FileSystem.FileSystem,
@@ -177,38 +177,32 @@ const makeSpec = (
   args: (creation, endpoints, context) =>
     Effect.gen(function* () {
       const published = yield* bootstrap
-        .locate({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap })
+        .write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap })
         .pipe(
           Effect.mapError(
             (cause) =>
               new ServiceError({
                 operation: "launch",
-                message: "Unable to locate Functions bootstrap",
+                message: "Unable to publish Functions bootstrap",
                 cause,
               }),
           ),
         );
-      // Safe here: by the time `args` runs for a fresh launch, any previous container mounting an
-      // older generation has already been confirmed stopped, unlike `prepare`, which can run
-      // while that container is still live during a restart.
-      if (published !== undefined)
-        yield* bootstrap.pruneOthers(path.dirname(published)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServiceError({
-                operation: "launch",
-                message: "Unable to prune Functions bootstrap",
-                cause,
-              }),
-          ),
-        );
+      // Safe here: a previous generation's container is confirmed stopped by the time `args` runs
+      // for a fresh launch; `prepare` can still run while that container is live.
+      yield* bootstrap.pruneOthers(path.dirname(published)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceError({
+              operation: "launch",
+              message: "Unable to prune Functions bootstrap",
+              cause,
+            }),
+        ),
+      );
       const root = context.container
-        ? published === undefined
-          ? "/__supabase_functions"
-          : `${containerBootstrapRoot}/${path.basename(path.dirname(published))}`
-        : published === undefined
-          ? creation.config.functionsRoot
-          : path.dirname(published);
+        ? `${containerBootstrapRoot}/${path.basename(path.dirname(published))}`
+        : path.dirname(published);
       const http = endpoints.get("http");
       const inspector = endpoints.get("inspector");
       return [
@@ -232,7 +226,7 @@ const makeSpec = (
       { source: bootstrap.root, target: containerBootstrapRoot, readOnly: true },
     ]),
   startupCommands: [],
-  // Prefetches the bootstrap so a later start need not pay for it; `args` locates independently.
+  // Prefetches the bootstrap so a later start need not pay for it; `args` publishes idempotently.
   prepare: (creation) =>
     bootstrap.write({ content: creation.config.bootstrap ?? defaultFunctionsBootstrap }).pipe(
       Effect.asVoid,
