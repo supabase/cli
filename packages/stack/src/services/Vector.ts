@@ -22,9 +22,7 @@ export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
 /**
  * Vector has no API flag or env var, so the recipe loads this alongside the pipeline config.
- * `address` is templated directly into the file content at write time (not through Vector's own
- * `${VAR}` config interpolation, which 0.58 disabled by default) — this is the only stack-owned
- * config Vector loads that ever varied per launch, so no interpolation flag is needed at all.
+ * `address` is written into the file because Vector 0.58 disables `${VAR}` interpolation.
  */
 const apiConfigFor = (address: string | undefined): string =>
   address === undefined
@@ -32,13 +30,8 @@ const apiConfigFor = (address: string | undefined): string =>
     : `api:\n  enabled: true\n  address: "${address}"\n`;
 
 /**
- * Every `${VAR}` name the recipe's own `env` sets and documents for a pipeline config
- * (`Config.analyticsUrl`/`apiKey`, mirrored into `LOGFLARE_URL`/`LOGFLARE_PRIVATE_ACCESS_TOKEN`).
- * A caller-supplied pipeline (`Config.configPath`) may reference these the same way the recipe's
- * own API config used to. `renderKnownPlaceholders` substitutes only this closed, recipe-owned
- * set directly into the file at write time — never a caller's or the process's arbitrary
- * environment — so a caller config keeps working on Vector 0.58 without the recipe ever passing
- * `--dangerously-allow-env-var-interpolation` (which would expose every env var, not just these).
+ * Substitutes the recipe-owned `${VAR}` names a caller pipeline (`Config.configPath`) may use, so
+ * it runs without `--dangerously-allow-env-var-interpolation`, which exposes every env var.
  */
 const renderKnownPlaceholders = (
   content: string,

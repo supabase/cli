@@ -70,6 +70,25 @@ runtime checksum authority: **GitHub Releases, the S3 mirror, GHCR, and ECR Publ
 mirrors only** for both images and native archives. None of them is consulted for the expected
 hash — that comes only from the pin already committed to the catalog.
 
+### Invocations
+
+`.github/scripts/sync-artifacts-catalog.ts` has three modes:
+
+- **Manual** — `--service <svc> [--upstream <U> | --release <U>-r<N>]`. Refreshes one catalog
+  entry; see "Sync and the S3-staleness check" below.
+- **`plan-updates --service <svc> --output <path> [--format lines] [--expect-release <U>-r<N>]`**
+  — used by `slim-release-published.yml`. Runs `planSlimUpdates` (see "Hotfix and upgrade pickup"
+  below) against the service's committed releases and writes the resulting records only to
+  `--output`, never to stdout; any `::warning ::…` the planner emits goes to stdout instead, so
+  the workflow can read warnings there without risking mistaking one for a malformed record.
+  `--expect-release` guards against the releases API lagging behind the dispatch that triggered
+  this run (`waitForExpectedRelease`): before planning, `<service>-<release>` must already be a
+  listed tag, or this mode re-lists a bounded number of times before giving up.
+- **`validate-payload --service <svc> --upstream <U> --revision <N> --release <R>`** — used by the
+  same workflow, before anything else. Checks an untrusted dispatch payload against anchored
+  charsets and prints it back as `key=value` lines, so a value that fails validation never reaches
+  `$GITHUB_OUTPUT`.
+
 ### Sync and the S3-staleness check
 
 `.github/scripts/sync-artifacts-catalog.ts` writes those pins, in manual mode: given a service
@@ -79,35 +98,69 @@ release's `SHA256SUMS` for the archive and manifest sha256 per target, and resol
 digest with `regctl manifest head`. Before writing the pin, it downloads each target's S3 archive
 and manifest and hashes them against those same release sums. This exists because
 `publish-release` does not wait for the ECR/S3 mirror to finish, so a freshly committed
-revision's S3 copy can briefly lag. A missing object waits, bounded (`waitForExpectedRelease`'s
-retry helper, generalized); an object that exists with the wrong bytes fails the sync
-immediately — that's corruption, not lag, and means "run the mirror backfill", not "the CLI is
-broken". Hosts that reach GitHub are unaffected — GitHub is the primary mirror — but a host that
-can only reach S3 would otherwise fail verification with no fallback.
+revision's S3 copy can briefly lag. A missing object is waited for, bounded; an object that
+exists with the wrong bytes fails the sync immediately — that's corruption, not lag, and means
+"run the mirror backfill", not "the CLI is broken". Hosts that reach GitHub are unaffected —
+GitHub is the primary mirror — but a host that can only reach S3 would otherwise fail
+verification with no fallback.
 
 ### Hotfix and upgrade pickup
 
 The last step of slim-services' `publish-release` sends a `repository_dispatch`
 (`slim-release-published`) to the CLI repo with `{service, upstream_version, revision,
-release_version}`. `slim-release-published.yml` treats the dispatch as a trigger, not as the
-payload to apply: it reconciles the named service against every committed (published, non-draft)
-`<service>-...-r<N>` release it can currently see (`planSlimUpdates`), and opens or updates, per
-release line the service carries:
+release_version}`. The payload arrives with whatever authority holds the dispatch token, so
+`slim-release-published.yml` treats it as untrusted: `validate-payload` mode checks every field
+against an anchored charset before it is written to `$GITHUB_OUTPUT`, a branch name, or a PR
+title, and the workflow only ever passes those fields through `env:`, never interpolating them
+into a `run:` script. Release tag names come from the releases API too, so `planSlimUpdates`
+re-validates every value it emits against the same patterns before it can reach a branch name or
+PR title.
+
+The workflow treats the dispatch as a trigger, not as the payload to apply: it reconciles the
+named service against every committed (published, non-draft) `<service>-...-r<N>` release it can
+currently see (`planSlimUpdates`), and opens or updates, per release line the service carries, at
+most one of:
 
 - a **hotfix**, when the pinned upstream version has a higher committed revision — branch
   `slim-hotfix/<svc>[-<line>]`, title `chore(stack): pin <svc> <release_version>`;
 - an **upgrade**, when the newest committed upstream on that line is newer than the pinned one —
   branch `slim-bump/<svc>[-<line>]`, title `chore(stack): bump <svc> to <release_version>`.
 
-Both can be planned in the same run. Plan and apply run from the same checkout of the default
-branch in one job, so a re-run always recomputes from the latest develop: a stale plan can never
-be applied, and a superseded PR's branch is rewritten (force-pushed) in place rather than raced
-by a new one — the workflow deliberately never auto-closes a superseded PR. A backlog republish
-of an older upstream version naturally plans nothing. The fallback, if the push or PR step fails,
-is a documented manual `bun .github/scripts/sync-artifacts-catalog.ts --service <svc> --release
-<U>-r<N>` invocation, followed by `apps/cli/scripts/render-service-dockerfile.ts` — the release
-itself is already committed by then, so a failure here means "open the pull request by hand", not
-"republish".
+A line that upgrades skips its hotfix. Both PRs would edit the same catalog span, so once the
+upgrade merged, the `slim-hotfix/<svc>[-<line>]` PR would be left conflicting, and no later run
+revisits it because the pin has moved past that upstream. The planner instead emits a
+`::warning ::…` naming the skipped release and the manual `--release` invocation that pins it
+alone. Different lines stay independent, so one run can still plan both kinds: postgres can
+upgrade its 17 line while hotfixing its 15 line.
+
+The skip lasts as long as the upgrade is available: while its PR stays open, or if it is
+declined, every run skips the line's hotfix again, and only the manual `--release` invocation
+pins it. A hotfix PR opened before the upgrade appeared is left as is. Merge it before the
+upgrade and the upgrade PR conflicts until the next run for that service rewrites it; merge the
+upgrade first and the hotfix PR is superseded and must be closed by hand.
+
+A service with a single pin has a single line, which accepts any comparable newer upstream: a
+Studio year rollover or a postgrest major bump moves that line forward. Only a service with
+additional pins (postgres) assigns each release tag to a line by its leading version component. A
+tag on no carried line, or with a version that isn't comparable, is warned about and ignored
+rather than failing the run. Comparison strips a trailing `-sha-<hex>`, so two Studio builds dated
+the same day compare equal and never produce an upgrade; the manual `--release` path pins such a
+build.
+
+Plan and apply run from the same checkout of the default branch in one job, so a re-run always
+recomputes from the latest develop: a stale plan can never be applied, and a superseded PR's
+branch is rewritten (force-pushed) in place rather than raced by a new one — a superseded PR is
+never auto-closed. A backlog republish of an older upstream version naturally plans nothing. The
+fallback, if the push or PR step fails, is a documented manual `bun
+.github/scripts/sync-artifacts-catalog.ts --service <svc> --release <U>-r<N>` invocation, followed
+by `apps/cli/scripts/render-service-dockerfile.ts` — the release itself is already committed by
+then, so a failure here means "open the pull request by hand", not "republish".
+
+The app token (contents and pull-requests write) never reaches third-party code or disk: `git
+push` takes it only inside an explicit URL (`PUSH_REMOTE_URL` overrides it, so a dry run can
+target a local bare repository), and each `gh` call gets it inline. The sync script, the
+Dockerfile generator and the formatter all run with it unset, so a compromised transitive
+dependency of any of them cannot read it.
 
 ### Registry and bucket mirrors
 

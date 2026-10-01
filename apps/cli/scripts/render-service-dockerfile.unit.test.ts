@@ -21,8 +21,7 @@ describe("renderDockerfile against the real catalog and Dockerfile", () => {
   });
 
   // The Go tree still `go:embed`s its own copy for a dependency that hasn't been removed yet;
-  // this is the single place that keeps the two copies in sync (folded from the former
-  // dockerfile-go-sync.unit.test.ts), until apps/cli-go is deleted.
+  // this is the single place that keeps the two copies in sync until apps/cli-go is deleted.
   test("the Go tree's embedded Dockerfile is a byte copy of the TS-owned one", () => {
     const goDockerfile = readFileSync(GO_DOCKERFILE_PATH, "utf8");
     expect(goDockerfile).toBe(currentTsDockerfile);

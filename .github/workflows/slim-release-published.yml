@@ -1,23 +1,7 @@
 name: Slim Release Published
 
-# supabase/slim-services sends this dispatch after it mints an immutable release
-# `<service>-<upstream_version>-r<revision>`. The stack catalog
-# (packages/stack/src/Artifacts.ts) is the single version table for the service; this workflow
-# treats the dispatch as a trigger and reconciles the catalog against every committed
-# (published, non-draft) `<service>-...-r<N>` release, opening or updating one pull request per
-# hotfix and/or upgrade it finds (`.github/scripts/sync-artifacts-catalog.ts`'s `planSlimUpdates`).
-#
-# Plan and apply run from the same checkout of the default branch, in a single job: a re-run
-# always recomputes from the latest develop, so a stale plan can never be applied, and a
-# superseded PR's branch is rewritten in place (force-pushed) instead of racing a fresh one. A
-# backlog republish of an older upstream version naturally plans nothing.
-#
-# The payload arrives with whatever authority holds the dispatch token, so it is treated as
-# untrusted: fields are pattern- and shape-checked before use
-# (`validateSlimReleasePublishedPayload`), and never interpolated directly into a `run:` script
-# (only passed through `env:`). Release tag names come from an external API too, so every value
-# `planSlimUpdates` emits is re-validated against the same anchored patterns before it can reach a
-# branch name or PR title.
+# Reconciles the stack catalog against supabase/slim-services releases. See
+# docs/adr/0026-slim-artifact-mirrors.md, "Hotfix and upgrade pickup".
 
 on:
   repository_dispatch:
@@ -46,9 +30,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      # Installs the locked workspace dependencies the scripts need: `Artifacts.ts` imports
-      # `effect`, and `render-service-dockerfile.ts` imports `@supabase/stack/internal/artifacts`.
-      # Replaces the bare mise step the pre-single-table version of this workflow used.
+      # `Artifacts.ts` and `render-service-dockerfile.ts` import locked workspace dependencies.
       - name: Setup
         uses: ./.github/actions/setup
         with:
@@ -58,13 +40,7 @@ jobs:
         id: base
         run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
-      # Delegates to `validateSlimReleasePublishedPayload` (sync-artifacts-catalog.ts) so every
-      # field — including `upstream_version` and `release_version`, not just `service` and
-      # `revision` — is checked against an anchored charset before it is ever written to
-      # `$GITHUB_OUTPUT`, a branch name, or a PR title. A value that fails validation makes the
-      # script exit non-zero and print a single `::error ::…` line to stdout (the rejected value
-      # is JSON-escaped in that message, so it can never smuggle in a newline or workflow command),
-      # which this step re-echoes so it still surfaces as an annotation.
+      # Re-echoes a validate-payload failure so its `::error ::…` line surfaces as an annotation.
       - name: Validate payload
         id: validate
         env:
@@ -81,17 +57,7 @@ jobs:
           fi
           echo "$output" >>"$GITHUB_OUTPUT"
 
-      # Reconciles the service against every committed slim-services release (`planSlimUpdates`),
-      # not just the release that triggered this dispatch — this run is idempotent and safe to
-      # receive out of order. Records go only to `--output` (never stdout): each line is
-      # field-separated with `\x1f` (see `updateLine`), which a later step reads directly. Any
-      # `::warning ::…` the planner emits (an ignored tag, say) prints to this step's own stdout
-      # instead, so it can never be mistaken for a malformed record.
-      #
-      # `--expect-release` guards against the releases API lagging behind this very dispatch: it
-      # requires `<service>-<release_version>` to be a listed tag before planning runs at all,
-      # re-listing a bounded number of times first (`waitForExpectedRelease`). Without it, a slow
-      # API would make this run plan without the release that triggered it, and pass quietly.
+      # `--expect-release` waits for the releases API to list the release behind this dispatch.
       - name: Plan updates
         id: plan
         env:
@@ -134,18 +100,9 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # One branch per planned item, built fresh from the base commit recorded above (the default
-      # branch's head at the start of this run) — never from wherever a previous loop iteration
-      # left HEAD. Pins exactly the planned release (`--release`, never "highest at apply time"),
-      # so plan and pin agree by construction: a revision minted a second later arrives with its
-      # own dispatch, not by racing this one.
-      #
-      # The app token (contents + pull-requests write) never reaches third-party code or disk:
-      # `git push` takes it only as part of an explicit URL, computed once as `push_url`
-      # (overridable via `PUSH_REMOTE_URL`, the seam a dry run uses to target a local bare repo
-      # instead), and `gh` gets it inline per call. Every `bun`/`pnpm` command below — the sync
-      # script, the Dockerfile generator, the formatter — runs under `env -u APP_TOKEN` so a
-      # compromised transitive dependency of any of them (they import `effect`) can't read it.
+      # One branch per planned item, rebuilt from the recorded base commit, never from a previous
+      # iteration's HEAD; `--release` pins the planned release, never "highest at apply time".
+      # `bun`/`pnpm` run under `env -u APP_TOKEN`: only `git push` and `gh` ever see the app token.
       - name: Apply planned updates
         if: steps.plan.outputs.count != '0'
         env:
@@ -162,9 +119,8 @@ jobs:
           push_url="${PUSH_REMOTE_URL:-https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git}"
           manual_prefix="bun .github/scripts/sync-artifacts-catalog.ts --service ${SERVICE} --release"
 
-          # Read the records on fd 3, not stdin: every command the loop body runs (`bun`, `gh`,
-          # `git`) otherwise shares stdin with the `read`, and any of them consuming a byte of it
-          # would swallow the rest of the file's records.
+          # Reads records on fd 3, not stdin, so commands the loop runs (`bun`, `gh`, `git`) never
+          # consume bytes meant for `read`.
           while IFS=$'\x1f' read -r -u 3 kind branch title release from; do
             if [ -z "$kind" ] || [ -z "$branch" ] || [ -z "$title" ] || [ -z "$release" ] || [ -z "$from" ]; then
               echo "::error ::Malformed plan-updates line: kind='${kind}' branch='${branch}' title='${title}' release='${release}' from='${from}'."
@@ -200,10 +156,8 @@ jobs:
             else
               action="pins"
             fi
-            # Names the release this PR actually pins as the subject; the dispatch's triggering
-            # release (RELEASE_VERSION) can differ from it (a hotfix dispatch commonly also
-            # yields an unrelated upgrade on the same line), so it's only mentioned, not implied
-            # to be what changed.
+            # Names the release this PR actually pins, not necessarily RELEASE_VERSION: postgres
+            # can plan a hotfix on one line and an unrelated upgrade on another in one dispatch.
             body="$(printf 'This %s %s from %s to %s.\n\nhttps://github.com/supabase/slim-services/releases/tag/%s-%s\n\nPlanned after supabase/slim-services published %s. This branch is rewritten from %s whenever a newer relevant release arrives.\n' \
               "$action" "$SERVICE" "$from" "$release" "$SERVICE" "$release" "$RELEASE_VERSION" "$DEFAULT_BRANCH")"
 

@@ -1,43 +1,6 @@
 /**
- * Pins `packages/stack/src/Artifacts.ts` to committed `supabase/slim-services`
- * revisions (`<upstream>-r<N>`). Every entry is pinned by content: the GHCR
- * image digest, plus an archive and manifest sha256 per native target.
- *
- * The catalog is the single version table (supabase/cli#6883): the Dockerfile's
- * slim-capable lines are a generated view of it
- * (`apps/cli/scripts/render-service-dockerfile.ts`), never the other way
- * around. Updates land through two modes:
- *
- * Manual mode: refreshes one catalog entry, either to a specific committed
- * release (`--release`) or to the highest committed revision of a given
- * upstream version, or of its currently pinned upstream version when neither
- * is given. `--upstream` and `--release` are mutually exclusive.
- *
- *   bun .github/scripts/sync-artifacts-catalog.ts --service <service> [--upstream <U> | --release <U>-r<N>]
- *
- * Plan-updates mode (used by the `slim-release-published` dispatch workflow):
- * lists a service's committed slim-services releases and computes, per
- * release line, the hotfix and/or upgrade a workflow should apply. Pure
- * planning: `planSlimUpdates` takes the release tag list as an argument,
- * makes no network calls, and never logs — it returns `{ updates, warnings }`.
- * Records go only to `--output <path>` (never stdout); warnings print to
- * stdout as `::warning ::…` lines, so the two channels can't corrupt one
- * another when a caller redirects stdout separately from the records file.
- *
- *   bun .github/scripts/sync-artifacts-catalog.ts plan-updates --service <service> \
- *     --output <path> [--format lines] [--expect-release <U>-r<N>]
- *
- * `--expect-release` handles the releases API lagging behind the dispatch that triggered this
- * run: before planning, the listed committed tags must include `<service>-<release_version>`, or
- * this mode re-lists a bounded number of times before giving up (`waitForExpectedRelease`).
- *
- * Validate-payload mode (used by the same workflow, before anything else):
- * checks an untrusted `slim-release-published` dispatch payload against
- * anchored charsets and prints it back as `key=value` lines, so a value that
- * fails validation is never written to `$GITHUB_OUTPUT` in the first place.
- *
- *   bun .github/scripts/sync-artifacts-catalog.ts validate-payload --service <service> \
- *     --upstream <U> --revision <N> --release <R>
+ * Pins `packages/stack/src/Artifacts.ts` to committed `supabase/slim-services` revisions. See
+ * `docs/adr/0026-slim-artifact-mirrors.md` for the catalog model and this script's three modes.
  */
 
 import {
@@ -54,7 +17,7 @@ export const CATALOG_PATH = "packages/stack/src/Artifacts.ts";
 
 const SLIM_IMAGE_PREFIX = `${SOURCE_REGISTRY}/`;
 
-/** The three native targets the catalog pins per revision. Kept self-contained; see module docs. */
+/** Native targets the catalog pins per revision, in `Artifacts.ts`'s serialization order. */
 const NATIVE_TARGETS = ["darwin-arm64", "linux-amd64", "linux-arm64"] as const;
 type NativeTargetName = (typeof NATIVE_TARGETS)[number];
 
@@ -67,7 +30,7 @@ const RELEASE_DOWNLOAD_BASE = "https://github.com/supabase/slim-services/release
 /** Bounded retry for `waitForExpectedRelease`: 6 attempts, 10s apart, by default. */
 const EXPECT_RELEASE_ATTEMPTS = 6;
 const DEFAULT_EXPECT_RELEASE_INTERVAL_MS = 10_000;
-/** Bounded retry for the S3-mirror wait in `resolveRevisionPin`: ~10 min, covering a native upload of all three targets (`mirror-slim-image.yml`'s `upload-natives-s3`). */
+/** ~10 min for `resolveRevisionPin`'s S3-mirror wait: `upload-natives-s3` for all three targets. */
 const S3_WAIT_ATTEMPTS = 20;
 const DEFAULT_S3_WAIT_INTERVAL_MS = 30_000;
 const MAX_TIMER_DELAY_MS = 2 ** 31 - 1; // setTimeout's own ceiling.
@@ -109,12 +72,7 @@ type BoundedWaitOutcome<T> =
   | { readonly status: "timed-out" }
   | { readonly status: "failed"; readonly message: string };
 
-/**
- * Generic bounded retry-with-wait: `waitForExpectedRelease`'s release-visibility wait and
- * `resolveRevisionPin`'s S3-mirror wait both build on this. Calls `check` up to `attempts`
- * times, `wait`-ing `intervalMs` between, until it reports `"done"` or an unrecoverable
- * `"failed"` (never waited out). Exhausting every attempt on `"retry"` yields `"timed-out"`.
- */
+/** Calls `check` up to `attempts` times, waiting between, until it reports `done` or `failed`. */
 async function boundedWait<T>(
   check: () => Promise<BoundedCheck<T>>,
   wait: (ms: number) => Promise<void>,
@@ -196,20 +154,18 @@ export interface CatalogPinUpdate {
   readonly target: "default" | "additional";
 }
 
-/** Content pin for one resolved `<upstream>-r<N>` revision, ready to serialize into the catalog. */
+/** Content pin for one resolved `<upstream>-r<N>` revision, without its `upstreamImage`. */
 interface ResolvedPin {
   readonly upstreamVersion: string;
   readonly revision: number;
   readonly image: string;
-  /**
-   * The pin's `ArtifactPin.upstreamImage`. Populated by manual mode (`refreshCatalogPin`) via
-   * `resolveUpstreamImage` below, when `io` carries `fetchManifest`/`fetchProvenance`.
-   */
-  readonly upstreamImage?: string;
   readonly natives: Readonly<
     Record<NativeTargetName, { readonly archive: string; readonly manifest: string }>
   >;
 }
+
+/** A `ResolvedPin` plus its `ArtifactPin.upstreamImage`, ready to serialize into the catalog. */
+type CatalogPin = ResolvedPin & { readonly upstreamImage: string };
 
 export type RevisionResolution =
   | { readonly status: "resolved"; readonly pin: ResolvedPin }
@@ -234,20 +190,18 @@ export interface RevisionIo {
   /**
    * Raw contents of a native target's `.manifest.json` release asset, for a derived service's
    * `upstream_image` (or `source_image` on an image-derived build, e.g. postgrest's Linux
-   * targets). Optional: only manual mode's `upstreamImage` backfill (`resolveUpstreamImage`)
-   * calls this, so a test `io` that doesn't exercise that path can omit it.
+   * targets).
    */
-  readonly fetchManifest?: (
+  readonly fetchManifest: (
     service: string,
     releaseVersion: string,
     target: NativeTargetName,
   ) => Promise<string | undefined>;
   /**
    * Raw contents of a mirrored service's `<service>-<upstreamVersion>.oci-provenance.json`
-   * release asset, whose `source` field is the mirrored upstream image. Optional for the same
-   * reason as `fetchManifest`.
+   * release asset, whose `source` field is the mirrored upstream image.
    */
-  readonly fetchProvenance?: (
+  readonly fetchProvenance: (
     service: string,
     releaseVersion: string,
     upstreamVersion: string,
@@ -266,9 +220,8 @@ function desiredImage(service: string, releaseVersion: string, digest: string): 
  * manifest digest, and every native target's archive and manifest sha256, cross-checked against
  * the S3 mirror copy.
  *
- * With `requiredRevision` given, that exact revision must already be committed — this is what
- * pins exactly a planned release (`--release`), never "highest at apply time". Without it, the
- * highest committed revision of `upstream` is used (`--upstream`, and the hotfix/upgrade default).
+ * With `requiredRevision` given (`--release`), that revision must already be committed; it is
+ * never "highest at apply time". Without it, the highest committed revision of `upstream` is used.
  */
 export async function resolveRevisionPin(
   service: string,
@@ -449,7 +402,7 @@ function validateUpstreamImage(image: string, context: string): string {
  * manifest `upstream_image` (falling back to `source_image` for an image-derived build, e.g.
  * postgrest's Linux targets) — cross-checked across every native target, so a derived service
  * whose manifests disagree fails instead of silently picking one. Only manual mode
- * (`refreshCatalogPin`) calls this; `io` must carry `fetchManifest`/`fetchProvenance`.
+ * (`refreshCatalogPin`) calls this.
  */
 async function resolveUpstreamImage(
   service: string,
@@ -458,11 +411,6 @@ async function resolveUpstreamImage(
   io: RevisionIo,
 ): Promise<string> {
   if (MIRROR_MODE_SOURCE_SERVICES.has(service)) {
-    if (io.fetchProvenance === undefined) {
-      throw new InvalidPayloadError(
-        `${service} needs an io.fetchProvenance to resolve upstreamImage.`,
-      );
-    }
     const provenance = await io.fetchProvenance(service, releaseVersion, upstreamVersion);
     if (provenance === undefined) {
       throw new InvalidPayloadError(`${service}-${releaseVersion} has no oci-provenance asset.`);
@@ -476,9 +424,6 @@ async function resolveUpstreamImage(
     return validateUpstreamImage(normalizeUpstreamImage(source), `${service}-${releaseVersion}`);
   }
 
-  if (io.fetchManifest === undefined) {
-    throw new InvalidPayloadError(`${service} needs an io.fetchManifest to resolve upstreamImage.`);
-  }
   const values = new Set<string>();
   for (const target of NATIVE_TARGETS) {
     const manifest = await io.fetchManifest(service, releaseVersion, target);
@@ -513,14 +458,12 @@ async function resolveUpstreamImage(
  * text is written straight into TypeScript source that later gets imported, so an unescaped
  * quote or template expression in any field (release metadata included) would inject code.
  */
-function serializePin(pin: ResolvedPin): string {
+function serializePin(pin: CatalogPin): string {
   const natives = NATIVE_TARGETS.map((target) => {
     const native = pin.natives[target];
     return `${JSON.stringify(target)}: { archive: ${JSON.stringify(native.archive)}, manifest: ${JSON.stringify(native.manifest)} }`;
   }).join(", ");
-  const upstreamImage =
-    pin.upstreamImage === undefined ? "" : ` upstreamImage: ${JSON.stringify(pin.upstreamImage)},`;
-  return `{ upstreamVersion: ${JSON.stringify(pin.upstreamVersion)}, revision: ${pin.revision}, image: ${JSON.stringify(pin.image)},${upstreamImage} natives: { ${natives} } }`;
+  return `{ upstreamVersion: ${JSON.stringify(pin.upstreamVersion)}, revision: ${pin.revision}, image: ${JSON.stringify(pin.image)}, upstreamImage: ${JSON.stringify(pin.upstreamImage)}, natives: { ${natives} } }`;
 }
 
 interface PinSpan {
@@ -568,7 +511,7 @@ const PIN_UPSTREAM_VERSION = /upstreamVersion:\s*"([^"]+)"/;
 const PIN_REVISION = /revision:\s*(\d+)/;
 
 /**
- * Matches a resolved `ArtifactPin` object literal starting exactly at `index`. The span is found
+ * Matches a resolved `ArtifactPin` object literal that starts at `index`. The span is found
  * by bracket balance, then the version is pulled out with a loose field search — so a formatter's
  * whitespace, line breaks, trailing commas, or property order never break matching, only the
  * literal shape itself would.
@@ -729,7 +672,7 @@ const normalizeText = (text: string): string => text.replace(/\s+/g, " ").trim()
 function writePin(
   source: string,
   entry: Extract<SelectedEntry, { kind: "default" | "additional" }>,
-  pin: ResolvedPin,
+  pin: CatalogPin,
 ): { readonly source: string; readonly changed: boolean } {
   const desired = serializePin(pin);
   const current = source.slice(entry.span.start, entry.span.end);
@@ -821,24 +764,10 @@ export interface PlanSlimUpdatesResult {
 const SINGLE_LINE_KEY = "*";
 
 /**
- * The hotfix and/or upgrade a `slim-release-published` run should apply for `service`, computed
- * against `catalog`'s current pins and `releaseTags` (every committed — published, non-draft —
- * slim-services release tag; the caller filters drafts before calling this). Pure: no network, no
- * file I/O, no logging — every diagnostic comes back in `warnings` instead, so a caller (the CLI,
- * or a test) decides where it goes. This matters because `plan-updates` writes `updates` straight
- * into a file the workflow parses as records; a `console.log`'d warning on the same stdout the
- * workflow captures would corrupt that file instead of just being informational.
- *
- * Per release line (the default pin's line, plus one per additional pin — only postgres
- * has more than one) a **hotfix** fires when the pinned upstream has a committed revision higher
- * than the pinned one; an **upgrade** fires when the newest committed upstream on the line is
- * newer than the pinned one (ties, e.g. two Studio builds dated the same day, are not newer).
- * Both can fire in the same run. A service with no additional pins has exactly one line and
- * accepts any comparable upstream on it — a Studio year rollover or a postgrest major bump is
- * the same line moving forward, not a different one, so it is never filtered by `releaseLine`.
- * Only a service that does carry additional pins (postgres) filters a release tag to the line its
- * `releaseLine` names; a tag on no such line, or whose version isn't comparable, is warned about
- * and ignored — it never causes a plan-updates run to fail.
+ * The upgrade or hotfix each of `service`'s release lines should get, planned against `catalog`'s
+ * pins and the committed (non-draft) `releaseTags`; the rules are in ADR 0026, "Hotfix and upgrade
+ * pickup". Never logs: `plan-updates` writes `updates` to a file the workflow parses as records,
+ * so diagnostics come back in `warnings`.
  */
 export function planSlimUpdates(
   catalog: string,
@@ -907,14 +836,8 @@ export function planSlimUpdates(
     const sameUpstreamRevisions = candidates
       .filter((candidate) => candidate.upstream === pinned.upstream)
       .map((candidate) => candidate.revision);
-    if (sameUpstreamRevisions.length > 0) {
-      const highest = Math.max(...sameUpstreamRevisions);
-      if (highest > pinned.revision) {
-        updates.push(
-          buildUpdate("hotfix", service, line, hasLines, pinned, pinned.upstream, highest),
-        );
-      }
-    }
+    const hotfixRevision =
+      sameUpstreamRevisions.length > 0 ? Math.max(...sameUpstreamRevisions) : undefined;
 
     const highestRevisionByUpstream = new Map<string, number>();
     for (const candidate of candidates) {
@@ -940,9 +863,23 @@ export function planSlimUpdates(
         bestUpstream = upstream;
       }
     }
+
     if (bestUpstream !== undefined && compareVersions(bestUpstream, pinned.upstream) === 1) {
       const revision = highestRevisionByUpstream.get(bestUpstream) as number;
       updates.push(buildUpdate("upgrade", service, line, hasLines, pinned, bestUpstream, revision));
+      if (hotfixRevision !== undefined && hotfixRevision > pinned.revision) {
+        const skippedRelease = `${pinned.upstream}-r${hotfixRevision}`;
+        warnings.push(
+          workflowCommand(
+            "warning",
+            `${service} ${skippedRelease} hotfix skipped because this line is upgrading to ${bestUpstream}-r${revision}; run --service ${service} --release ${skippedRelease} to pin the hotfix alone.`,
+          ),
+        );
+      }
+    } else if (hotfixRevision !== undefined && hotfixRevision > pinned.revision) {
+      updates.push(
+        buildUpdate("hotfix", service, line, hasLines, pinned, pinned.upstream, hotfixRevision),
+      );
     }
   }
 
@@ -1009,7 +946,7 @@ export interface CatalogRefreshResult {
 }
 
 /**
- * Refreshes one catalog entry: to exactly the committed release named by `release` (`<U>-r<N>`,
+ * Refreshes one catalog entry: to the committed release named by `release` (`<U>-r<N>`,
  * required to already be committed — never "highest at apply time"), or to the highest committed
  * revision of `upstream` (or, when both are omitted, of the entry's currently pinned upstream
  * version). `upstream` and `release` are mutually exclusive. Pure aside from `io`: callers own
@@ -1059,20 +996,15 @@ export async function refreshCatalogPin(input: {
   if (resolution.status !== "resolved") {
     throw new InvalidPayloadError(resolution.message);
   }
-  // Manual mode also backfills `upstreamImage`, so a plain `io` (most tests) can still exercise
-  // revision resolution without stubbing the extra fetchers.
-  const pin =
-    input.io.fetchManifest === undefined && input.io.fetchProvenance === undefined
-      ? resolution.pin
-      : {
-          ...resolution.pin,
-          upstreamImage: await resolveUpstreamImage(
-            input.service,
-            `${resolution.pin.upstreamVersion}-r${resolution.pin.revision}`,
-            resolvedUpstream,
-            input.io,
-          ),
-        };
+  const pin: CatalogPin = {
+    ...resolution.pin,
+    upstreamImage: await resolveUpstreamImage(
+      input.service,
+      `${resolution.pin.upstreamVersion}-r${resolution.pin.revision}`,
+      resolvedUpstream,
+      input.io,
+    ),
+  };
   const written = writePin(input.catalog, entry, pin);
   if (!written.changed) return { source: input.catalog };
   return {

@@ -3,9 +3,9 @@ import { describe, expect, test, vi } from "vitest";
 import { renderDockerfile } from "./render-service-dockerfile.ts";
 
 // A minimal fixture catalog covering every slim-capable alias, so `renderDockerfile`'s
-// "every alias needs exactly one line" check is satisfied by default; each test only mutates
-// what it's exercising. `vi.mock` factories are hoisted above every other top-level statement,
-// so the fixture pins are built inline here rather than imported from an outer module.
+// one-line-per-alias check is satisfied by default; each test only mutates what it's
+// exercising. `vi.mock` factories are hoisted above every other top-level statement, so the
+// fixture pins are built inline here rather than imported from an outer module.
 vi.mock("@supabase/stack/internal/artifacts", () => {
   const nativePin = { archive: "a".repeat(64), manifest: "b".repeat(64) };
   const natives = { "darwin-arm64": nativePin, "linux-amd64": nativePin, "linux-arm64": nativePin };

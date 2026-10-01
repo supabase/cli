@@ -5,14 +5,7 @@ import { slimCatalogPin } from "../../src/shared/services/slim-images.ts";
 /** A regression to the docker.io fallback must fail an assertion built from this. */
 export const GHCR_SLIM_IMAGE_PATTERN = /^ghcr\.io\/supabase\/cli\/.+@sha256:[0-9a-f]{64}$/;
 
-/**
- * The catalog's own pinned image for `alias`'s (docker.io) `image` — read straight from
- * `catalogPins()`, independent of `toSlimImage`, so a test asserting against this actually
- * exercises the catalog lookup instead of passing whether or not it resolves (a default
- * Dockerfile tag is generated from the catalog, so it always matches a catalog pin). Only reuses `slimCatalogPin` for alias
- * and tag normalization (`v`-prefixing), not the catalog image lookup itself. Throws when
- * nothing is pinned, so a caller never silently falls back to a weaker assertion.
- */
+/** The catalog's pinned image for `alias`'s `image`, read independently of `toSlimImage`. */
 export function expectedPinnedImage(alias: string, image: string): string {
   const pin = slimCatalogPin(alias, image);
   if (pin === undefined) {

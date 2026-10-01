@@ -4,12 +4,7 @@ import { Config, ConfigProvider, Effect, Option } from "effect";
 const SLIM_IMAGES_ENV = "SUPABASE_USE_SLIM_IMAGES";
 const SLIM_IMAGE_PREFIX = "ghcr.io/supabase/cli/";
 
-/**
- * Maps embedded-Dockerfile aliases onto the slim service catalog. Aliases with
- * no slim build (kong, `pg14`, the `differ`/`migra`/`pgprove` job images) are
- * absent and keep their docker.io reference. OrioleDB tags are excluded in
- * `slimCatalogPin`.
- */
+/** Dockerfile alias to slim service; kong, `pg14`, and the job images have no slim build. */
 const SLIM_SERVICE_BY_ALIAS = {
   pg: "postgres",
   pg15: "postgres",
@@ -46,19 +41,12 @@ const V_PREFIXED_SERVICES: ReadonlySet<SlimServiceName> = new Set([
   "pooler",
 ]);
 
-/**
- * Reads the ambient slim-image flag for callers without an explicit project value: always the
- * process environment, never the active `ConfigProvider`. That lookup cannot fail.
- */
+/** The slim-image flag from the process environment, never the active `ConfigProvider`. */
 export const slimImagesEnabled = Effect.suspend(() =>
   Config.option(Config.string(SLIM_IMAGES_ENV)).parse(ConfigProvider.fromEnv()),
 ).pipe(Effect.map(Option.exists((value) => value === "true" || value === "1")), Effect.orDie);
 
-/**
- * Catalog-normalized slim tag under `ghcr.io/supabase/cli/<service>`. The
- * published slim catalog uses a `v` prefix for application services while
- * postgres, studio, and vector retain their unprefixed tags.
- */
+/** Catalog tag: `v`-prefixed for application services; postgres, studio, and vector stay bare. */
 function slimTagForService(service: SlimServiceName, rawTag: string): string {
   const tag = rawTag.trim();
   if (V_PREFIXED_SERVICES.has(service)) {
@@ -100,12 +88,7 @@ export function slimCatalogPin(alias: string, image: string): SlimCatalogPin | u
   return { service, version: slimTagForService(service, tag) };
 }
 
-/**
- * Looks up the pinned catalog image (with its published `@sha256` digest) for
- * `service` whose `upstreamVersion` equals `version`. Reads the same catalog
- * `apps/cli`'s stack-independent clients use, keyed by the slim-services
- * `sourceService` name (which matches this module's `SlimServiceName`).
- */
+/** Keyed by the slim-services `sourceService`, which matches `SlimServiceName`. */
 function catalogImageFor(service: SlimServiceName, upstreamVersion: string): string | undefined {
   for (const entry of catalogPins()) {
     if (entry.sourceService === service && entry.pin.upstreamVersion === upstreamVersion) {
@@ -116,17 +99,9 @@ function catalogImageFor(service: SlimServiceName, upstreamVersion: string): str
 }
 
 /**
- * Resolves the catalog's pinned slim image (repository, release version and
- * digest) whose `upstreamVersion` normalizes to `image`'s tag for `alias`.
- * This owns tag normalization (`v`-prefixing, `tagPrefix`, vector's `-alpine`
- * strip) via {@link slimCatalogPin}, so pins that differ only in prefix
- * between the two registries (`supavisor`, `logflare`) still match. Returns `undefined` whenever
- * no catalog pin matches `alias` and `image`'s tag — callers then keep the upstream (non-slim)
- * image instead of guessing a slim tag. That covers more than "no slim build": an alias with no
- * slim build at all (kong, `pg14`, the one-shot job images); an excluded tag on an alias that
- * does have one (an OrioleDB `pg` tag, which {@link slimCatalogPin} always excludes); and a tag
- * the catalog simply doesn't pin (an upstream version the catalog hasn't caught up to yet, or a
- * hosted-project override from `supabase link` that doesn't match the pinned upstream version).
+ * Resolves the catalog's pinned slim image matching `alias`'s normalized tag (via
+ * {@link slimCatalogPin}), or `undefined` when no catalog pin matches — callers then keep the
+ * upstream image instead of guessing a slim tag.
  */
 export function toSlimImage(alias: string, image: string): string | undefined {
   const pin = slimCatalogPin(alias, image);
