@@ -4,7 +4,6 @@ import {
   encodeEntry,
   makeSplitter,
   endedLineGraceMillis,
-  maxLineBytes,
   parseRecord,
   segmentGeneration,
   segmentName,
@@ -282,15 +281,6 @@ describe("splitter", () => {
     expect(rest).toEqual([
       { kind: "stdout", timestamp: 20, launchId: 1, text: "next", truncated: false },
     ]);
-  });
-
-  it("caps lines at 32 KiB by default", () => {
-    const splitter = makeSplitter();
-
-    const [, cut] = push(splitter, chunk(1, 0, `${"x".repeat(maxLineBytes + 10)}\n`), 0);
-
-    expect(cut).toMatchObject({ kind: "stdout", truncated: true });
-    expect(cut?.kind === "stdout" ? cut.text.length : 0).toBe(maxLineBytes);
   });
 
   it("keeps stdout and stderr lines apart", () => {

@@ -33,6 +33,8 @@ const SafeId = Schema.String.pipe(
 const SavedInstance = Schema.Struct({
   id: SafeId,
   creation: Schema.toCodecJson(ServiceCreation),
+  /** The latest launch id; the next owner continues after it, so launch ids keep increasing. */
+  launchId: Schema.optionalKey(Schema.Int),
 });
 interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
@@ -177,15 +179,12 @@ const checkId = (id: string): Effect.Effect<void, StateError> =>
     ? Effect.void
     : Effect.fail(stateError("identity", `Invalid state id: ${id}`));
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const retainedEntries = (
   entries: unknown,
   retired: (entry: Readonly<Record<string, unknown>>) => boolean,
 ): unknown =>
   Array.isArray(entries)
-    ? entries.filter((entry: unknown) => !(isRecord(entry) && retired(entry)))
+    ? entries.filter((entry: unknown) => !(Predicate.isReadonlyObject(entry) && retired(entry)))
     : entries;
 
 /**
@@ -195,11 +194,12 @@ const retainedEntries = (
 const withoutVectorInstances = (
   document: unknown,
 ): { readonly document: unknown; readonly removed: ReadonlyArray<string> } => {
-  if (!isRecord(document) || !Array.isArray(document.instances)) return { document, removed: [] };
+  if (!Predicate.isReadonlyObject(document) || !Array.isArray(document.instances))
+    return { document, removed: [] };
   const removed = document.instances.flatMap((instance: unknown) =>
-    isRecord(instance) &&
+    Predicate.isReadonlyObject(instance) &&
     typeof instance.id === "string" &&
-    isRecord(instance.creation) &&
+    Predicate.isReadonlyObject(instance.creation) &&
     instance.creation.service === "vector"
       ? [instance.id]
       : [],
@@ -212,7 +212,7 @@ const withoutVectorInstances = (
     document: {
       ...document,
       instances: retainedEntries(document.instances, (instance) => ids.has(instance.id)),
-      composition: isRecord(composition)
+      composition: Predicate.isReadonlyObject(composition)
         ? {
             ...composition,
             members: retainedEntries(composition.members, (member) => ids.has(member.id)),
@@ -671,6 +671,7 @@ const makeState = (
           if (
             entry === "vector.yaml" ||
             entry === "vector-api.yaml" ||
+            entry === "vector.rendered.yaml" ||
             entry.startsWith(".vector-write-")
           )
             yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
@@ -681,20 +682,29 @@ const makeState = (
           Effect.logWarning(`Unable to remove the files of Vector instance ${instanceId}`, cause),
         ),
       );
+    /** The saved document and its Vector instance ids, when it still holds one. */
+    const legacyVector = (target: string) =>
+      Effect.gen(function* () {
+        if (!(yield* fs.exists(target).pipe(retryTransientRead))) return undefined;
+        const text = yield* fs.readFileString(target).pipe(retryTransientRead);
+        const { removed } = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          text,
+        ).pipe(
+          Effect.map(withoutVectorInstances),
+          Effect.orElseSucceed(() => ({ removed: [] })),
+        );
+        return removed.length === 0 ? undefined : { text, removed };
+      });
     const migrate = Effect.fn("State.migrate")(function* (id: string) {
       yield* checkId(id);
+      const target = statePath(id);
+      // Only a document that still holds Vector takes the registry lock, to migrate it.
+      if ((yield* legacyVector(target)) === undefined) return;
       const removed = yield* withLock(
         Effect.gen(function* () {
-          const target = statePath(id);
-          if (!(yield* fs.exists(target).pipe(retryTransientRead))) return [];
-          const text = yield* fs.readFileString(target).pipe(retryTransientRead);
-          const { removed } = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-            text,
-          ).pipe(
-            Effect.map(withoutVectorInstances),
-            Effect.orElseSucceed(() => ({ removed: [] })),
-          );
-          if (removed.length === 0) return removed;
+          const legacy = yield* legacyVector(target);
+          if (legacy === undefined) return [];
+          const { text, removed } = legacy;
           const state = yield* decodeState(text, id, target);
           if (state.id !== id)
             return yield* stateError("identity", "State document identity does not match its path");

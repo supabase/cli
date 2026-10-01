@@ -44,6 +44,7 @@ import {
   publishProcessLogs,
   runtimeSessionFromContainer,
   launchOutputPublisher,
+  type LaunchOutput,
 } from "../runtime/Session.ts";
 import {
   ServiceError,
@@ -65,7 +66,7 @@ import {
   resolveNativePostgresUser,
   type PasswdEntry,
 } from "../runtime/postgres-user.ts";
-import { EndpointIntent, serviceCreation, type CatalogLog, type CatalogLogs } from "./Recipe.ts";
+import { EndpointIntent, serviceCreation, type CatalogLogs } from "./Recipe.ts";
 import {
   containerInstancePath,
   ensureOwnedInstanceRoot,
@@ -472,7 +473,7 @@ export const makeDatabase = (
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const client = yield* HttpClient.HttpClient;
-    const logs = yield* PubSub.sliding<CatalogLog>(256);
+    const logs = yield* PubSub.sliding<LaunchOutput>(256);
     const endpoint = yield* Ref.make<BackendEndpoint | undefined>(undefined);
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))

@@ -28,8 +28,9 @@ service configuration, artifacts, logs, or data are changed.
 `--tail N` (default 200, 0 prints none) keeps the newest N output lines across
 the selected services, with the `launch` and `lost` markers between them.
 `--since` accepts a duration before now (`30s`, `10m`, `1h30m`, `2d`), an
-ISO-8601 time, or `start`, which keeps each instance's records from its latest
-launch (all of them when retention removed that launch record). Records are
+ISO-8601 time, or `start`, which keeps the records of each instance's highest
+launch id, which keeps increasing across owner restarts (all of them when
+retention removed that launch record). Records are
 ordered by timestamp, service, instance, and file position. Timestamps are the
 owner's clock at each line's first byte. Lines end at `\n`, `\r\n`, or a lone
 `\r`, so carriage-return progress updates print as separate lines. History is
@@ -41,7 +42,9 @@ before printing anything and suggests running without `--follow`. It prints the
 history, then streams each instance's new records through the owner from the
 last record read, so no record is repeated or skipped between history and live
 output. With `--tail 0` no history is read and the owner starts each follow at
-its current end. The owner's log shipping to Analytics reads the persisted logs
+its current end. A selected instance the running owner does not serve is named
+in a warning and not followed; when it serves none of them, the command fails
+with status 1 after printing the history. The owner's log shipping to Analytics reads the persisted logs
 separately and does not affect this command.
 
 ## Output

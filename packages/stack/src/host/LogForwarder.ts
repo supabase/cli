@@ -3,13 +3,13 @@ import {
   Data,
   Duration,
   Effect,
+  FiberMap,
   FileSystem,
   Option,
   Path,
   Ref,
   Schedule,
   Schema,
-  Scope,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -52,6 +52,8 @@ interface Interface {
    * instance as the target.
    */
   readonly attach: (instance: ForwardedInstance | ForwardedStream) => Effect.Effect<void>;
+  /** Stops following an instance; returns once no cursor write of it can still land. */
+  readonly detach: (instanceId: string) => Effect.Effect<void>;
   /** Re-selects the shipping target after the composition changes. */
   readonly rebind: Effect.Effect<void>;
   /** Emits whether records are currently shipped; the current value first. */
@@ -61,7 +63,6 @@ interface Interface {
 export interface LogForwarderOptions {
   readonly composition: Effect.Effect<CompositionConfig>;
   readonly logs: LogStore.Interface;
-  readonly platform?: NodeJS.Platform;
 }
 
 interface Candidate {
@@ -155,7 +156,6 @@ const isBodyRejection = (error: unknown): boolean => {
  * Analytics sleeps are shipped after it wakes; shipping never wakes Analytics.
  */
 export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwarderOptions) {
-  const scope = yield* Scope.Scope;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
@@ -246,7 +246,6 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           directory,
           target: path.join(directory, cursorFile),
           content,
-          ...(options.platform === undefined ? {} : { platform: options.platform }),
         }),
       ),
     );
@@ -363,10 +362,12 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
               for (const { body, last } of bodies(pending)) {
                 yield* deliver(current, source, body);
                 yield* Ref.set(cursor, last.position);
+                // Detaching waits for a started write instead of leaving files in the directory.
                 yield* writeCursor(directory, last.position).pipe(
                   Effect.catch((error) =>
                     Effect.logDebug(`Log cursor of ${instanceId} was not saved`, error),
                   ),
+                  Effect.uninterruptible,
                 );
               }
             }),
@@ -382,38 +383,50 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       Stream.runDrain,
     );
 
+  /**
+   * Ships until the instance unregisters (`until`) or the store detaches its logs, which ends a
+   * session.
+   */
   const forward = (id: string, service: ShippedService, until: Effect.Effect<void>) =>
     Effect.gen(function* () {
-      const current = yield* serving;
-      // A stopped target pauses shipping; the cursor keeps the position to resume from.
-      yield* session(id, service, current).pipe(
-        Effect.catch((error) =>
-          (error._tag === "StaleTarget"
-            ? Effect.void
-            : Effect.logWarning(`Log shipping of ${id} paused`, error)
-          ).pipe(Effect.andThen(retargeted(current))),
-        ),
-        Effect.raceFirst(retargeted(current)),
-      );
-    }).pipe(Effect.forever, Effect.raceFirst(until));
+      while (true) {
+        const current = yield* serving;
+        // A stopped target pauses shipping; the cursor keeps the position to resume from.
+        const detached = yield* session(id, service, current).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            (error._tag === "StaleTarget"
+              ? Effect.void
+              : Effect.logWarning(`Log shipping of ${id} paused`, error)
+            ).pipe(Effect.andThen(retargeted(current)), Effect.as(false)),
+          ),
+          Effect.raceFirst(retargeted(current).pipe(Effect.as(false))),
+        );
+        if (detached) return yield* Effect.logDebug(`Log shipping of ${id} stopped with its logs`);
+      }
+    }).pipe(Effect.raceFirst(until));
 
+  const followers = yield* FiberMap.make<string>();
   const attach = Effect.fn("LogForwarder.attach")(function* (
     instance: ForwardedInstance | ForwardedStream,
   ) {
-    if (instance.service === "analytics") yield* Effect.forkIn(trackTarget(instance), scope);
+    if (instance.service === "analytics")
+      yield* FiberMap.run(followers, instance.id, trackTarget(instance));
     else if (isShippedService(instance.service))
-      yield* Effect.forkIn(
+      yield* FiberMap.run(
+        followers,
+        instance.id,
         forward(
           instance.id,
           instance.service,
           "observation" in instance ? unregistered(instance) : Effect.never,
         ),
-        scope,
       );
   });
 
   return {
     attach,
+    detach: (instanceId) => FiberMap.remove(followers, instanceId),
     rebind,
     shipping: SubscriptionRef.changes(target).pipe(
       Stream.map((current) => current !== undefined),

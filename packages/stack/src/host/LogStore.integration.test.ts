@@ -105,6 +105,10 @@ const replaceWrites = (
     ),
 });
 
+/** Reads persisted records offline, one instance after another in file order. */
+const persisted = (options: Parameters<typeof LogStore.streamStackLogs>[0]) =>
+  LogStore.streamStackLogs(options).pipe(Stream.runCollect);
+
 const lostCounts = (records: Iterable<LogRecord>) =>
   Array.from(records).flatMap(({ kind, launchId, stream, count }) =>
     kind === "lost" ? [{ launchId, stream, count }] : [],
@@ -182,7 +186,7 @@ describe("LogStore", () => {
       yield* Fiber.join(follower);
 
       expect(texts(seen)).toEqual(Array.from({ length: 1_000 }, (_, index) => `line ${index}`));
-      const offline = yield* LogStore.readStackLogs({ root });
+      const offline = yield* persisted({ root });
       expect(offline.map(({ position }) => position)).toEqual(seen.map(({ position }) => position));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -381,7 +385,7 @@ describe("LogStore", () => {
       yield* TestClock.adjust(200);
       yield* instance.publish({ ...instance.chunk(2, "after\n"), seq: 1 });
       const followed = yield* untilLast(reader, "after");
-      const offline = yield* LogStore.readStackLogs({ root });
+      const offline = yield* persisted({ root });
 
       const expectedLost = [
         { launchId: 1, stream: "stdout", count: 1 },
@@ -440,8 +444,7 @@ describe("LogStore", () => {
       const followed = yield* untilLast(reader, "after");
 
       expect(texts(followed)).toEqual(["whole", "after"]);
-      expect(texts(yield* LogStore.readStackLogs({ root }))).toEqual(["whole", "after"]);
-      expect(texts(yield* LogStore.readStackLogs({ root, tail: 3 }))).toEqual(["whole", "after"]);
+      expect(texts(yield* persisted({ root }))).toEqual(["whole", "after"]);
       expect(yield* fs.readFileString(torn)).toBe(content);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -465,7 +468,7 @@ describe("LogStore", () => {
       const segments = yield* fs.readDirectory(path.join(root, "auth", "rotate"));
       expect(segments.length).toBeGreaterThan(3);
       expect(texts(rest).at(-1)).toBe("rotating line 39");
-      const all = yield* LogStore.readStackLogs({ root });
+      const all = yield* persisted({ root });
       expect(texts(all)).toEqual(
         Array.from({ length: 40 }, (_, index) => `rotating line ${index}`),
       );
@@ -496,8 +499,10 @@ describe("LogStore", () => {
         yield* instance.publish(instance.chunk(1, `retained line ${index}\n`));
         yield* untilLast(progress, `retained line ${index}`);
       }
-      // Opening an end reader takes the writer lock, so the last rotation's retention finished.
-      yield* store.read("retention", { from: "end", follow: false }).pipe(Effect.asVoid);
+      // An empty tailed read takes the writer lock, so the last rotation's retention finished.
+      yield* store
+        .read("retention", { from: "oldest", tail: 0, follow: false })
+        .pipe(Effect.asVoid);
 
       const directory = path.join(root, "auth", "retention");
       const sizes = yield* Effect.forEach(yield* fs.readDirectory(directory), (name) =>
@@ -529,12 +534,12 @@ describe("LogStore", () => {
         yield* instance.publish(instance.chunk(1, `counted line ${index}\n`));
         yield* untilLast(progress, `counted line ${index}`);
       }
-      // Opening an end reader takes the writer lock, so the last rotation's retention finished.
-      yield* store.read("count", { from: "end", follow: false }).pipe(Effect.asVoid);
+      // An empty tailed read takes the writer lock, so the last rotation's retention finished.
+      yield* store.read("count", { from: "oldest", tail: 0, follow: false }).pipe(Effect.asVoid);
 
       const segments = yield* fs.readDirectory(path.join(root, "auth", "count"));
       expect(segments.length).toBeLessThanOrEqual(3);
-      expect(texts(yield* LogStore.readStackLogs({ root })).at(-1)).toBe("counted line 9");
+      expect(texts(yield* persisted({ root })).at(-1)).toBe("counted line 9");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -570,10 +575,6 @@ describe("LogStore", () => {
 
       expect(texts(history)).toEqual(["tailed line 17", "tailed line 18", "tailed line 19"]);
       expect(followed?.text).toBe("after tail");
-      expect(texts(yield* LogStore.readStackLogs({ root, tail: 2 }))).toEqual([
-        "tailed line 19",
-        "after tail",
-      ]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -592,7 +593,7 @@ describe("LogStore", () => {
       yield* fs.writeFileString(path.join(root, ".DS_Store"), "");
       yield* fs.writeFileString(path.join(root, "auth", ".DS_Store"), "");
 
-      const records = yield* LogStore.readStackLogs({ root });
+      const records = yield* persisted({ root });
 
       expect(texts(records)).toEqual(["kept line"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -612,15 +613,15 @@ describe("LogStore", () => {
         ...Array.from({ length: 60 }, (_, index) => instance.chunk(1, `batched line ${index}\n`)),
       );
       yield* untilLast(progress, "batched line 59");
-      // Opening an end reader takes the writer lock, so the last rotation's retention finished.
-      yield* store.read("big", { from: "end", follow: false }).pipe(Effect.asVoid);
+      // An empty tailed read takes the writer lock, so the last rotation's retention finished.
+      yield* store.read("big", { from: "oldest", tail: 0, follow: false }).pipe(Effect.asVoid);
 
       const directory = path.join(root, "auth", "big");
       const sizes = yield* Effect.forEach(yield* fs.readDirectory(directory), (name) =>
         fs.stat(path.join(directory, name)).pipe(Effect.map((info) => Number(info.size))),
       );
       expect(Math.max(...sizes)).toBeLessThanOrEqual(200);
-      const kept = texts(yield* LogStore.readStackLogs({ root }));
+      const kept = texts(yield* persisted({ root }));
       expect(kept.length).toBeGreaterThan(0);
       expect(kept.at(-1)).toBe("batched line 59");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -638,7 +639,7 @@ describe("LogStore", () => {
       );
       yield* opened.close;
 
-      const records = yield* LogStore.readStackLogs({ root });
+      const records = yield* persisted({ root });
       expect(texts(records)).toEqual(
         Array.from({ length: 1_000 }, (_, index) => `queued line ${index}`),
       );
@@ -663,15 +664,13 @@ describe("LogStore", () => {
       yield* instance.setLaunch(undefined);
       yield* untilLast(progress, "early partial");
 
-      const since = { since: 1_500, tail: 10 };
-      const offline = yield* LogStore.readStackLogs({ root, ...since });
       const live = yield* (yield* store.read("flushed", {
         from: "oldest",
         follow: false,
-        ...since,
+        since: 1_500,
+        tail: 10,
       })).pipe(Stream.runCollect);
 
-      expect(texts(offline)).toEqual(["later line"]);
       expect(texts(live)).toEqual(["later line"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -698,14 +697,12 @@ describe("LogStore", () => {
       yield* instance.setLaunch(undefined);
       yield* untilLast(progress, "early stderr");
 
-      const offline = yield* LogStore.readStackLogs({ root, tail: 1 });
       const live = yield* (yield* store.read("flushes", {
         from: "oldest",
         follow: false,
         tail: 1,
       })).pipe(Stream.runCollect);
 
-      expect(texts(offline)).toEqual(["latest"]);
       expect(texts(live)).toEqual(["latest"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -741,8 +738,8 @@ describe("LogStore", () => {
         yield* instance.publish(instance.chunk(1, `stuck line ${index}\n`));
         yield* untilLast(progress, `stuck line ${index}`);
       }
-      // Opening an end reader takes the writer lock, so the last rotation's retention finished.
-      yield* store.read("stuck", { from: "end", follow: false }).pipe(Effect.asVoid);
+      // An empty tailed read takes the writer lock, so the last rotation's retention finished.
+      yield* store.read("stuck", { from: "oldest", tail: 0, follow: false }).pipe(Effect.asVoid);
 
       const segments = yield* fs.readDirectory(path.join(root, "auth", "stuck"));
       const resumed = yield* (yield* store.read("stuck", {
@@ -815,7 +812,7 @@ describe("LogStore", () => {
         segmentName(1),
         segmentName(2),
       ]);
-      expect(texts(yield* LogStore.readStackLogs({ root }))).toEqual(["before", "after"]);
+      expect(texts(yield* persisted({ root }))).toEqual(["before", "after"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -841,7 +838,7 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads persisted records offline after the store closes, merged and tailed", () =>
+  it.effect("reads persisted records offline after the store closes, per instance", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-offline-");
       const opened = yield* openStore(root);
@@ -867,23 +864,16 @@ describe("LogStore", () => {
       yield* restReader.take(1);
       yield* opened.close;
 
-      const all = yield* LogStore.readStackLogs({ root });
-      const tailed = yield* LogStore.readStackLogs({ root, tail: 2 });
-      const recent = yield* LogStore.readStackLogs({ root, since: 2_000, instances: ["rest-1"] });
-      const streamed = yield* LogStore.streamStackLogs({ root, instances: ["rest-1"] }).pipe(
-        Stream.runCollect,
-      );
+      const all = yield* persisted({ root });
+      const restOnly = yield* persisted({ root, instances: ["rest-1"] });
+      const recent = yield* persisted({ root, since: 2_000, instances: ["rest-1"] });
 
-      expect(Array.from(streamed)).toEqual(all.filter(({ service }) => service === "rest"));
-      expect(all.map(({ service, kind }) => `${service}:${kind}`)).toEqual([
-        "rest:launch",
-        "rest:stdout",
-        "auth:launch",
-        "auth:stdout",
-        "rest:stdout",
+      expect(texts(all).toSorted()).toEqual(["auth second", "rest first", "rest third"]);
+      expect(restOnly.map(({ kind, text }) => [kind, text])).toEqual([
+        ["launch", undefined],
+        ["stdout", "rest first"],
+        ["stdout", "rest third"],
       ]);
-      expect(texts(all)).toEqual(["rest first", "auth second", "rest third"]);
-      expect(texts(tailed)).toEqual(["auth second", "rest third"]);
       expect(texts(recent)).toEqual(["rest third"]);
       expect(recent[0]).toMatchObject({ service: "rest", instanceId: "rest-1" });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -898,7 +888,9 @@ describe("LogStore", () => {
         const opened = yield* openStore(root);
         const instance = yield* fakeInstance("restart");
         yield* opened.store.attach(instance);
-        const reader = yield* collect(opened.store.read("restart", { from: "end", follow: true }));
+        const reader = yield* collect(
+          opened.store.read("restart", { from: "oldest", tail: 0, follow: true }),
+        );
         yield* instance.publish(instance.chunk(1, `${text}\n`));
         yield* reader.take(2);
         yield* opened.close;
@@ -909,13 +901,13 @@ describe("LogStore", () => {
         "0000000001.log",
         "0000000002.log",
       ]);
-      const records = yield* LogStore.readStackLogs({ root });
+      const records = yield* persisted({ root });
       expect(texts(records)).toEqual(["before restart", "after restart"]);
       expect(records.map(({ position }) => position?.generation)).toEqual([1, 1, 2, 2]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("tails only records written after an end reader subscribes", () =>
+  it.effect("follows only records written after an empty tailed read subscribes", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-end-");
       const { store } = yield* openStore(root);
@@ -925,7 +917,7 @@ describe("LogStore", () => {
       yield* instance.publish(instance.chunk(1, "old\n"));
       yield* history.take(2);
 
-      const reader = yield* collect(store.read("end", { from: "end", follow: true }));
+      const reader = yield* collect(store.read("end", { from: "oldest", tail: 0, follow: true }));
       yield* instance.publish(instance.chunk(1, "new\n"));
       const [record] = yield* reader.take(1);
 

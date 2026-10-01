@@ -184,6 +184,8 @@ export const makeService = <Config>(
   options: {
     readonly id: string;
     readonly config: Config;
+    /** Launch ids continue after this one. */
+    readonly lastLaunchId?: number;
     readonly coordinate?: (
       operation: ServiceAdmission,
       transition: Effect.Effect<void, ServiceError>,
@@ -194,7 +196,7 @@ export const makeService = <Config>(
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const revision = yield* Ref.make(0);
-    const launchCounter = yield* Ref.make(0);
+    const launchCounter = yield* Ref.make(options.lastLaunchId ?? 0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
     // stopNow clears observation.launchId while keeping the error, so readiness must not read that field.
     const launchError = yield* Ref.make<

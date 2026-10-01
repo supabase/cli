@@ -58,7 +58,7 @@ export interface LogWindow {
   readonly total: number;
 }
 
-export const tailWindow = (records: ReadonlyArray<StackLogRecord>, tail: number): LogWindow => {
+const tailWindow = (records: ReadonlyArray<StackLogRecord>, tail: number): LogWindow => {
   const total = records.filter(isLine).length;
   if (total <= tail) return { records, shown: total, total };
   let seen = 0;
@@ -85,19 +85,28 @@ const compareRecords = (left: StackLogRecord, right: StackLogRecord) =>
     right.position ?? right.resumeAt ?? origin,
   );
 
+interface Launch {
+  readonly id: number;
+  readonly timestamp: string;
+}
+
 interface InstanceTail {
   records: Array<StackLogRecord>;
   head: number;
   lines: number;
   total: number;
-  launched: string | undefined;
+  launch: Launch | undefined;
 }
 
+/** Launch ids increase per instance; a gap marker carries none, so its time decides. */
+const fromLaunch = (record: StackLogRecord, launch: Launch) =>
+  record.launchId === undefined
+    ? record.timestamp >= launch.timestamp
+    : record.launchId >= launch.id;
+
 /**
- * Collects the history window from records streamed per instance in file order, holding each
- * instance's newest `tail` lines in display order; `positions` holds each instance's last record
- * in file order, where a follow resumes. With `fromLatestLaunch`, an instance's records before its latest
- * `launch` record are dropped; an instance whose launch record was not retained keeps all of them.
+ * Collects each instance's newest `tail` lines and last position, optionally only the records of
+ * its highest launch.
  */
 export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) => {
   const instances = new Map<string, InstanceTail>();
@@ -109,20 +118,23 @@ export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) =>
       positions.set(record.instanceId, position);
     let state = instances.get(record.instanceId);
     if (state === undefined) {
-      state = { records: [], head: 0, lines: 0, total: 0, launched: undefined };
+      state = { records: [], head: 0, lines: 0, total: 0, launch: undefined };
       instances.set(record.instanceId, state);
     }
     if (fromLatestLaunch) {
-      if (record.kind === "launch") {
-        const launched = record.timestamp;
-        state.records = state.records
-          .slice(state.head)
-          .filter((kept) => kept.timestamp >= launched);
+      const latest = state.launch;
+      if (
+        record.kind === "launch" &&
+        record.launchId !== undefined &&
+        (latest === undefined || record.launchId > latest.id)
+      ) {
+        const launch = { id: record.launchId, timestamp: record.timestamp };
+        state.records = state.records.slice(state.head).filter((kept) => fromLaunch(kept, launch));
         state.head = 0;
         state.lines = state.records.filter(isLine).length;
         state.total = state.lines;
-        state.launched = launched;
-      } else if (state.launched !== undefined && record.timestamp < state.launched) return;
+        state.launch = launch;
+      } else if (latest !== undefined && !fromLaunch(record, latest)) return;
     }
     const line = isLine(record);
     if (line) state.total += 1;

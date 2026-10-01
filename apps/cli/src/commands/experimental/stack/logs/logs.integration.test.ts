@@ -17,7 +17,7 @@ import {
   Stream,
 } from "effect";
 import {
-  readStackLogs,
+  streamStackLogs,
   type LogRecord,
   type ReadLogsOptions,
   type SavedStack,
@@ -374,29 +374,24 @@ describe("stack logs", () => {
         (stack: { readonly stateRoot: string; readonly stackId: string }) =>
         (id: string, text: string) =>
           followingMail(id, (options) =>
-            Stream.unwrap(
-              readStackLogs({ ...stack, instances: [id] }).pipe(
-                Effect.orDie,
-                Effect.provide(BunServices.layer),
-                Effect.map((records) =>
-                  Stream.fromIterable([
-                    ...records.filter(
-                      ({ position }) =>
-                        options?.tail !== 0 &&
-                        (options?.from === undefined ||
-                          (position !== undefined &&
-                            position.byteOffset >= options.from.byteOffset)),
-                    ),
-                    {
-                      kind: "stdout" as const,
-                      timestamp: iso(t0 + 100),
-                      launchId: 1,
-                      text,
-                      position: { generation: 1, byteOffset: 1_000_000 },
-                    },
-                  ]),
-                ),
+            streamStackLogs({ ...stack, instances: [id] }).pipe(
+              Stream.orDie,
+              Stream.filter(
+                ({ position }) =>
+                  options?.tail !== 0 &&
+                  (options?.from === undefined ||
+                    (position !== undefined && position.byteOffset >= options.from.byteOffset)),
               ),
+              Stream.concat(
+                Stream.make({
+                  kind: "stdout" as const,
+                  timestamp: iso(t0 + 100),
+                  launchId: 1,
+                  text,
+                  position: { generation: 1, byteOffset: 1_000_000 },
+                }),
+              ),
+              Stream.provide(BunServices.layer),
             ),
           );
       const f = yield* fixture({
@@ -511,6 +506,53 @@ describe("stack logs", () => {
       expect(output.events).toEqual([
         expect.objectContaining({ service: "gateway", line: request, source: "live" }),
       ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("follows the services the running stack serves and names the others", () =>
+    Effect.gen(function* () {
+      const served = (text: string) =>
+        Stream.make({
+          kind: "stdout" as const,
+          timestamp: iso(t0),
+          launchId: 1,
+          text,
+          position: { generation: 1, byteOffset: 0 },
+        });
+      const f = yield* fixture({
+        instances: [mail("mail-a"), mail("mail-b")],
+        members: ["mail-a", "mail-b"],
+        running: true,
+        handles: () => [followingMail("mail-a", () => served("a live"))],
+      });
+
+      const { exit, output } = yield* f.run({ follow: true, tail: 0 }, "stream-json");
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["a live"]);
+      expect(output.messages).toContainEqual({
+        type: "warn",
+        message: "Not following mail (mail-b), which the running stack does not serve.",
+      });
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("fails --follow when the running stack serves none of the selected services", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [mail("mail-a")],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [],
+      });
+
+      const { exit } = yield* f.run({ follow: true, tail: 0 });
+
+      expect(failure(exit)).toMatchObject({
+        reason: "lifecycle",
+        message:
+          "The running stack serves none of the selected services, so there are no new lines to follow.",
+      });
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 

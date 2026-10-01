@@ -78,12 +78,12 @@ export function gray(text: string, stream: ColorStream = process.stderr): string
   return supportsColor(stream) ? styleText("gray", text, { validateStream: false }) : text;
 }
 
-/** Renders in bright magenta. */
+/** Renders in magenta. */
 export function magenta(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("magenta", text, { validateStream: false }) : text;
 }
 
-/** Renders in bright blue. */
+/** Renders in blue. */
 export function blue(text: string, stream: ColorStream = process.stderr): string {
   return supportsColor(stream) ? styleText("blue", text, { validateStream: false }) : text;
 }

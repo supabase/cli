@@ -17,7 +17,7 @@ import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import type { LogRecord } from "./host/LogRecord.ts";
-import { readStackLogs, StackError } from "./index.ts";
+import { StackError, streamStackLogs } from "./effect.ts";
 import * as LogStore from "./host/LogStore.ts";
 import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
@@ -95,7 +95,9 @@ describe("owner persisted logs", () => {
         expect(history).toContainEqual(followed);
         const directory = path.join(owner.logsRoot, "mail", mail.id);
         expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
-        const offline = yield* LogStore.readStackLogs({ root: owner.logsRoot });
+        const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+          Stream.runCollect,
+        );
         expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
           history.map(({ position }) => position),
         );
@@ -106,7 +108,7 @@ describe("owner persisted logs", () => {
     ).pipe(Effect.provide(services)),
   );
 
-  it.live("reads history through the public API after the owner stops", () =>
+  it.live("streams history through the public API after the owner stops", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -126,24 +128,56 @@ describe("owner persisted logs", () => {
         yield* owner.rpc.stopService({ id: mail.id });
         yield* Scope.close(ownerScope, Exit.void);
 
-        const records = yield* Effect.promise(() =>
-          readStackLogs({ stateRoot: owner.stateRoot, stackId: owner.stack.id }),
-        );
-        const rejected = (options: { readonly since?: string; readonly tail?: number }) =>
-          Effect.promise(() =>
-            readStackLogs({ stateRoot: owner.stateRoot, stackId: owner.stack.id, ...options }).then(
-              () => undefined,
-              (error: unknown) => error,
-            ),
-          );
-        const invalid = yield* Effect.forEach(
-          [{ since: "soon" }, { tail: -1 }, { tail: 1.5 }, { tail: Number.POSITIVE_INFINITY }],
-          rejected,
+        const selection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
+        const records = yield* streamStackLogs(selection).pipe(Stream.runCollect);
+        const invalid = yield* streamStackLogs({ ...selection, since: "soon" }).pipe(
+          Stream.runDrain,
+          Effect.flip,
         );
 
         expect(records[0]).toMatchObject({ kind: "launch", service: "mail", instanceId: mail.id });
         expect(records.map(({ text }) => text)).toContain(followed?.text);
-        for (const error of invalid) expect(error).toBeInstanceOf(StackError);
+        expect(invalid).toBeInstanceOf(StackError);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("continues an instance's launch ids after the owner restarts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-relaunch-" });
+        const firstRun = yield* Scope.make();
+        const owner = yield* openOwner("owner-logs-relaunch-", "native", { root }).pipe(
+          Scope.provide(firstRun),
+        );
+        const mail = yield* owner.rpc.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* owner.rpc.startService({ id: mail.id });
+        yield* owner.rpc.readyService({ id: mail.id });
+        yield* owner.rpc.stopService({ id: mail.id });
+        yield* Scope.close(firstRun, Exit.void);
+        const state = Context.get(
+          yield* Layer.build(State.layer({ root: owner.stateRoot })),
+          State.Service,
+        );
+        const saved = yield* state.read(owner.stack.id);
+        if (saved === undefined) return yield* Effect.die("stack state missing");
+        const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
+
+        yield* restarted.rpc.startService({ id: mail.id });
+        yield* restarted.rpc.readyService({ id: mail.id });
+        const records = yield* restarted.rpc
+          .readLogs({ id: mail.id, follow: false })
+          .pipe(Stream.runCollect);
+
+        expect(
+          records.filter(({ kind }) => kind === "launch").map(({ launchId }) => launchId),
+        ).toEqual([1, 2]);
       }),
     ).pipe(Effect.provide(services)),
   );

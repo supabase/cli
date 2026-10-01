@@ -12,10 +12,8 @@ export const LogPosition = Schema.Struct({
 export interface LogPosition extends Schema.Schema.Type<typeof LogPosition> {}
 
 /**
- * One log record: an output line, the first output of a launch, or chunks lost before they were
- * written, each identified by its `position`. A reader reports segments that retention deleted
- * before it reached them as a `lost` gap marker, which is not persisted and has `resumeAt`, the
- * position reading continues from, instead of a position.
+ * One output line, launch, or `lost` marker; a gap over deleted segments has `resumeAt` instead
+ * of `position`.
  */
 export const LogRecord = Schema.Struct({
   kind: Schema.Literals(["stdout", "stderr", "launch", "lost"]),
@@ -55,7 +53,7 @@ export type LogEntry =
     };
 
 /** Lines are cut at this many UTF-8 bytes. */
-export const maxLineBytes = 32 * 1024;
+const maxLineBytes = 32 * 1024;
 
 const encoder = new TextEncoder();
 

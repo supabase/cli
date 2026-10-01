@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Path, Schema } from "effect";
 import { create, open } from "./effect.ts";
 import * as State from "./State.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -75,6 +75,10 @@ const writeLegacyState = Effect.fn("test.writeLegacyState")(function* (
   yield* fs.makeDirectory(path.join(data, "vector", "runtime", "vector"), { recursive: true });
   yield* fs.writeFileString(path.join(data, "vector", "runtime", "vector", "vector.yaml"), "");
   yield* fs.writeFileString(path.join(data, "vector", "runtime", "vector", "vector-api.yaml"), "");
+  yield* fs.writeFileString(
+    path.join(data, "vector", "runtime", "vector", "vector.rendered.yaml"),
+    "rendered",
+  );
   yield* fs.writeFileString(path.join(data, "vector", "pipeline.yaml"), "caller");
   const owned = path.join(data, "vector-owned", "runtime", "vector");
   yield* fs.makeDirectory(path.join(owned, ".vector-write-1"), { recursive: true });
@@ -134,6 +138,28 @@ describe("saved Vector instance migration", () => {
 
       yield* state.migrate("legacy");
       expect(yield* fs.readFileString(file)).toBe(migrated);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("checks a state without Vector while another operation holds the registry lock", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-unlocked-" });
+      const state = yield* stateFor(root);
+      yield* writeLegacyState(root, "legacy", root);
+      yield* state.migrate("legacy");
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* state
+        .withLock(Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(held);
+
+      const checked = yield* state.migrate("legacy").pipe(Effect.exit);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+
+      expect(Exit.isSuccess(checked)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

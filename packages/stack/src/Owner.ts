@@ -321,15 +321,25 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
     }).pipe(Effect.provideContext(services));
 
-  const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
+  const persistCreation = (
+    entry: Pick<Entry, "id" | "creation">,
+    creation: ServiceCreation,
+    launchId?: number,
+  ) =>
     updateState((current) => ({
       ...current,
       instances: current.instances.map((instance) =>
-        instance.id === entry.id ? { ...instance, creation } : instance,
+        instance.id === entry.id
+          ? { ...instance, creation, ...(launchId === undefined ? {} : { launchId }) }
+          : instance,
       ),
     })).pipe(Effect.andThen(Ref.set(entry.creation, creation)));
 
-  const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
+  const register = Effect.fn("Owner.register")(function* (
+    id: string,
+    recipe: CatalogRecipe,
+    lastLaunchId?: number,
+  ) {
     if (Option.isSome(yield* orchestrator.get(id).pipe(Effect.option)))
       return yield* new Orchestrator.OrchestratorError({
         operation: "register",
@@ -342,7 +352,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       {
         ...recipe.definition,
         launch: (context) =>
-          persistCreation({ id, creation }, context.config).pipe(
+          persistCreation({ id, creation }, context.config, context.launchId).pipe(
             Effect.mapError(serviceError("state")),
             Effect.andThen(recipe.definition.launch(context)),
           ),
@@ -359,6 +369,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (
                 Effect.mapError(serviceError("state")),
               ),
             ),
+            // Shipping writes its cursor into the instance's logs, so it stops before they go.
+            Effect.andThen(forwarder.detach(id)),
             Effect.andThen(
               logStore
                 .remove({ service: initial.service, instanceId: id })
@@ -376,6 +388,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
       {
         id,
         config: initial,
+        ...(lastLaunchId === undefined ? {} : { lastLaunchId }),
         coordinate: (operation, transition) =>
           (drainingBlocks.includes(operation) ? rejectWhileDraining : Effect.void).pipe(
             Effect.andThen(orchestrator.admissionFor(id)(operation, transition)),
@@ -466,7 +479,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   });
 
   for (const saved of options.saved.instances)
-    yield* register(saved.id, yield* recipeFor(saved.creation, saved.id));
+    yield* register(saved.id, yield* recipeFor(saved.creation, saved.id), saved.launchId);
   yield* logStore.removeOrphans.pipe(
     Effect.catch((cause) => Effect.logWarning("Orphaned instance logs were not removed", cause)),
   );
