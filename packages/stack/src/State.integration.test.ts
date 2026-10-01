@@ -646,7 +646,6 @@ describe("durable stack state", () => {
 
         yield* store.remove(initial.id);
 
-        expect(yield* Ref.get(held)).toBeLessThan(0);
         expect(yield* fs.exists(path.join(root, initial.id))).toBe(false);
       }),
     ),

@@ -40,6 +40,7 @@ import {
   processExit as sharedProcessExit,
   publishProcessLogs,
   runtimeSessionFromContainer,
+  type LaunchOutput,
   type PublishOutput,
 } from "../runtime/Session.ts";
 import {
@@ -54,7 +55,6 @@ import {
   removeOwnedInstanceRoot,
 } from "./InstanceRoot.ts";
 import {
-  type CatalogLog,
   CatalogError,
   type CatalogOptions,
   type ProcessRecipeResult,
@@ -247,7 +247,7 @@ const outputDrainGrace = Duration.seconds(2);
 const startupOutputTailLines = 20;
 const startupOutputLineChars = 1_000;
 
-type StartupOutput = Readonly<Record<CatalogLog["stream"], ReadonlyArray<string>>>;
+type StartupOutput = Readonly<Record<LaunchOutput["stream"], ReadonlyArray<string>>>;
 
 const clipLine = (line: string) =>
   line.length > startupOutputLineChars
@@ -335,7 +335,7 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
 
   const consume = Effect.fnUntraced(function* (
     stream: Stream.Stream<Uint8Array, NativeProcessError>,
-    name: CatalogLog["stream"],
+    name: LaunchOutput["stream"],
     tail: Ref.Ref<ReadonlyArray<string>>,
   ) {
     const partial = yield* Ref.make("");
@@ -423,7 +423,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
     const prepared = yield* Ref.make<string | undefined>(undefined);
     const preparedRoot = yield* Ref.make<string | undefined>(undefined);
     const endpoints = yield* Ref.make<ReadonlyMap<string, ServiceEndpoint>>(new Map());
-    const logs = yield* PubSub.sliding<CatalogLog>(256);
+    const logs = yield* PubSub.sliding<LaunchOutput>(256);
     const instanceRoot = deps.path.join(options.root, options.instanceId);
     const ownedInstanceRoot = {
       fs: deps.fs,

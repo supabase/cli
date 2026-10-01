@@ -1,4 +1,4 @@
-import { DateTime, Option } from "effect";
+import { DateTime, Option, Predicate } from "effect";
 import type { ServiceCreation } from "../services/Catalog.ts";
 
 /** Logflare source per shipped service kind; Studio's Logs pages query these names. */
@@ -25,14 +25,11 @@ export interface LogflareEvent {
   readonly metadata: Record<string, unknown>;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
   if (!text.startsWith("{")) return undefined;
   try {
     const value: unknown = JSON.parse(text);
-    return isRecord(value) ? value : undefined;
+    return Predicate.isObject(value) ? value : undefined;
   } catch {
     return undefined;
   }

@@ -59,13 +59,12 @@ export interface LogStoreOptions {
   readonly retainBytes?: number;
   /** Oldest closed segments are deleted while an instance has more segments than this. */
   readonly retainSegments?: number;
-  readonly platform?: NodeJS.Platform;
 }
 
 /** Selects the records a read returns. */
 export interface ReadOptions {
-  /** `end` skips every record written before the read starts; a position resumes there. */
-  readonly from: "oldest" | "end" | LogPosition;
+  /** The oldest retained record, or a record position to resume at. */
+  readonly from: "oldest" | LogPosition;
   /** Epoch milliseconds; older records are skipped. */
   readonly since?: number;
   /** Returns only the last records of the history before following; requires `from: "oldest"`. */
@@ -469,14 +468,14 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       });
     const wake =
       options.follow && live !== undefined ? yield* PubSub.subscribe(live.wake) : undefined;
-    const start =
-      options.from === "oldest"
-        ? { generation: 0, byteOffset: 0 }
-        : options.from === "end"
-          ? live === undefined
-            ? { generation: 0, byteOffset: 0 }
-            : yield* live.lock.withPermits(1)(Ref.get(live.end))
-          : options.from;
+    const start = options.from === "oldest" ? { generation: 0, byteOffset: 0 } : options.from;
+    // An empty tail starts at the writer's end now, before the stream runs.
+    if (options.tail === 0 && live !== undefined) {
+      const end = yield* live.lock.withPermits(1)(Ref.get(live.end));
+      return options.follow
+        ? follow(directory, { cursor: end, listed: undefined }, options, live, wake)
+        : Stream.empty;
+    }
     if (options.tail === undefined)
       return follow(directory, { cursor: start, listed: undefined }, options, live, wake);
     return Stream.unwrap(
@@ -522,7 +521,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
   const rotateBytes = options.rotateBytes ?? defaultRotateBytes;
   const retainBytes = options.retainBytes ?? defaultRetainBytes;
   const retainSegments = options.retainSegments ?? defaultRetainSegments;
-  const retryShared = retrySharingViolation(options.platform);
+  const retryShared = retrySharingViolation();
 
   interface Attached extends Live {
     readonly service: string;
@@ -990,17 +989,16 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
   /** Deletes log directories whose instance is no longer attached, left by a failed removal. */
   const removeOrphans = Effect.fn("LogStore.removeOrphans")(function* () {
     const current = yield* Ref.get(instances);
-    for (const service of yield* listDirectories(fs, path, options.root))
-      for (const instanceId of yield* listDirectories(fs, path, path.join(options.root, service)))
-        if (!current.has(instanceId)) {
-          const directory = path.join(options.root, service, instanceId);
-          yield* fs.remove(directory, { recursive: true, force: true }).pipe(
-            retryShared,
-            Effect.catch((error) =>
-              Effect.logWarning(`Unable to remove orphaned logs ${directory}`, error),
-            ),
-          );
-        }
+    for (const { service, instanceId } of yield* persistedInstances(fs, path, options.root))
+      if (!current.has(instanceId)) {
+        const directory = path.join(options.root, service, instanceId);
+        yield* fs.remove(directory, { recursive: true, force: true }).pipe(
+          retryShared,
+          Effect.catch((error) =>
+            Effect.logWarning(`Unable to remove orphaned logs ${directory}`, error),
+          ),
+        );
+      }
   });
 
   const close = Effect.gen(function* () {
@@ -1026,7 +1024,7 @@ const persistedInstances = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   root: string,
-  instances: ReadonlyArray<string> | undefined,
+  instances?: ReadonlyArray<string>,
 ) {
   const selected: Array<{ readonly service: string; readonly instanceId: string }> = [];
   for (const service of yield* listDirectories(fs, path, root))
@@ -1057,44 +1055,3 @@ export const streamStackLogs = (options: {
       );
     }),
   );
-
-/** Reads persisted records of a stack's instances, merged by time, service, instance and position. */
-export const readStackLogs = Effect.fn("LogStore.readStackLogs")(function* (options: {
-  readonly root: string;
-  readonly instances?: ReadonlyArray<string>;
-  readonly since?: number;
-  readonly tail?: number;
-}) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const reader = makeReader(fs, path);
-  const selected = yield* persistedInstances(fs, path, options.root, options.instances);
-  const perInstance = yield* Effect.forEach(
-    selected,
-    ({ service, instanceId }) =>
-      reader
-        .history(
-          path.join(options.root, service, instanceId),
-          { generation: 0, byteOffset: 0 },
-          options,
-          undefined,
-        )
-        .pipe(
-          Effect.map(({ records }) =>
-            records.map((record): StackLogRecord => ({ ...record, service, instanceId })),
-          ),
-        ),
-    { concurrency: 4 },
-  );
-  const merged = perInstance.flat().toSorted(compareStackRecords);
-  return options.tail === undefined
-    ? merged
-    : merged.slice(Math.max(0, merged.length - options.tail));
-});
-
-/** Orders records by timestamp, service, instance and position. */
-const compareStackRecords = (left: StackLogRecord, right: StackLogRecord) =>
-  compareText(left.timestamp, right.timestamp) ||
-  compareText(left.service, right.service) ||
-  compareText(left.instanceId, right.instanceId) ||
-  compareRecords(left, right);

@@ -1,16 +1,9 @@
 import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 import type { StackLogRecord } from "@supabase/stack/effect";
-import { makeHistoryCollector, parseSince, tailWindow } from "./logs.format.ts";
+import { makeHistoryCollector, parseSince } from "./logs.format.ts";
 
 const now = Date.parse("2026-09-29T12:00:00.000Z");
-const record = (kind: StackLogRecord["kind"], text: string): StackLogRecord => ({
-  kind,
-  timestamp: "2026-09-29T10:00:00.000Z",
-  text,
-  service: "auth",
-  instanceId: "auth-a",
-});
 
 describe("parseSince", () => {
   it("subtracts compound durations from now", () => {
@@ -41,14 +34,18 @@ describe("makeHistoryCollector", () => {
     offset: number,
     kind: StackLogRecord["kind"],
     text = "",
+    launchId = 1,
   ): StackLogRecord => ({
     kind,
     timestamp: DateTime.formatIso(DateTime.makeUnsafe(now + offset)),
+    launchId,
     text,
     service: "auth",
     instanceId,
     position: { generation: 1, byteOffset: offset },
   });
+  const textsOf = (records: ReadonlyArray<StackLogRecord>) =>
+    records.filter(({ kind }) => kind !== "launch").map(({ text }) => text);
 
   it("keeps the newest lines across instances, counts every line, and tracks positions", () => {
     const collector = makeHistoryCollector(2, false);
@@ -82,41 +79,50 @@ describe("makeHistoryCollector", () => {
     expect(positions.get("a")).toEqual({ generation: 1, byteOffset: 40 });
   });
 
-  it("starts each instance at its latest launch and keeps instances without one", () => {
+  it("starts each instance at its highest launch and keeps instances without one", () => {
     const collector = makeHistoryCollector(10, true);
-    collector.push(at("a", 0, "launch"));
-    collector.push(at("a", 1, "stdout", "a old"));
-    collector.push(at("a", 5, "launch"));
-    collector.push(at("a", 3, "stderr", "a late old"));
-    collector.push(at("a", 6, "stdout", "a new"));
+    collector.push(at("a", 0, "launch", "", 1));
+    collector.push(at("a", 1, "stdout", "a old", 1));
+    collector.push(at("a", 5, "launch", "", 2));
+    collector.push(at("a", 3, "stderr", "a late old", 1));
+    collector.push(at("a", 6, "stdout", "a new", 2));
     collector.push(at("b", 2, "stdout", "b retained"));
 
     const { window } = collector.finish();
 
-    expect(window.records.filter(({ kind }) => kind !== "launch").map(({ text }) => text)).toEqual([
-      "b retained",
-      "a new",
-    ]);
+    expect(textsOf(window.records)).toEqual(["b retained", "a new"]);
     expect(window.total).toBe(2);
   });
-});
 
-describe("tailWindow", () => {
-  it("counts only output lines and keeps the markers between the shown lines", () => {
-    const records = [
-      record("launch", ""),
-      record("stdout", "one"),
-      record("launch", ""),
-      record("stderr", "two"),
-      record("lost", ""),
-      record("stdout", "three"),
-    ];
+  it("keeps the highest launch when an older launch's first output arrives after it", () => {
+    const collector = makeHistoryCollector(10, true);
+    collector.push(at("a", 10, "launch", "", 2));
+    collector.push(at("a", 11, "stdout", "second launch", 2));
+    collector.push(at("a", 20, "launch", "", 1));
+    collector.push(at("a", 21, "stdout", "delayed first launch", 1));
+    collector.push(at("a", 30, "stdout", "second launch again", 2));
 
-    const window = tailWindow(records, 2);
+    const { window } = collector.finish();
 
-    expect(window.records.map(({ kind }) => kind)).toEqual(["stderr", "lost", "stdout"]);
-    expect(window).toMatchObject({ shown: 2, total: 3 });
-    expect(tailWindow(records, 0)).toEqual({ records: [], shown: 0, total: 3 });
-    expect(tailWindow(records, 5).records).toBe(records);
+    expect(textsOf(window.records)).toEqual(["second launch", "second launch again"]);
+    expect(window.records.filter(({ kind }) => kind === "launch")).toHaveLength(1);
+  });
+
+  it("starts at the launch of the latest owner run, whose ids continue the earlier run's", () => {
+    const collector = makeHistoryCollector(10, true);
+    collector.push({ ...at("a", 0, "launch", "", 3), position: { generation: 1, byteOffset: 0 } });
+    collector.push({
+      ...at("a", 1, "stdout", "earlier run", 3),
+      position: { generation: 1, byteOffset: 40 },
+    });
+    collector.push({ ...at("a", 50, "launch", "", 4), position: { generation: 2, byteOffset: 0 } });
+    collector.push({
+      ...at("a", 51, "stdout", "restarted run", 4),
+      position: { generation: 2, byteOffset: 40 },
+    });
+
+    const { window } = collector.finish();
+
+    expect(textsOf(window.records)).toEqual(["restarted run"]);
   });
 });

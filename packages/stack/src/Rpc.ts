@@ -81,7 +81,7 @@ export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
 /** How many of the latest log records a read starts with. */
-export const LogTail = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const LogTail = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const SnapshotScope = Schema.Literals(snapshotScopes);
 
 export const CommandEvent = Schema.TaggedUnion({

@@ -44,12 +44,8 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
-import { LogTail, StackError, type Definition, type Observation } from "./Rpc.ts";
-import {
-  readStackLogs as readPersistedLogs,
-  sinceMillis,
-  streamStackLogs as streamPersistedLogs,
-} from "./host/LogStore.ts";
+import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
@@ -1039,36 +1035,17 @@ export const find = Effect.fn("Stack.find")(
 );
 
 /** Selects the persisted logs of a stack; its owner does not need to run. */
-export interface ReadStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
   readonly stackId: string;
   /** Instance ids to read; every instance with persisted logs by default. */
   readonly instances?: ReadonlyArray<string>;
   /** An ISO-8601 timestamp; older records are skipped. */
   readonly since?: string;
-  /** Returns only this many of the latest records across the selected instances. */
-  readonly tail?: number;
 }
-
-/** Reads a stack's persisted records ordered by timestamp, service, instance and position. */
-export const readStackLogs = Effect.fn("Stack.readStackLogs")(
-  function* (options: ReadStackLogsOptions) {
-    const path = yield* Path.Path;
-    const root = yield* State.stackLogsRoot(path, options.stateRoot, options.stackId);
-    return yield* readPersistedLogs({
-      root,
-      ...(options.instances === undefined ? {} : { instances: options.instances }),
-      ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
-      ...(options.tail === undefined
-        ? {}
-        : { tail: yield* Schema.decodeEffect(LogTail)(options.tail) }),
-    });
-  },
-  Effect.mapError((cause) => failure("readStackLogs", cause)),
-);
 
 /** Streams a stack's persisted records one instance after another, each in file order. */
 export const streamStackLogs = (
-  options: Omit<ReadStackLogsOptions, "tail">,
+  options: StreamStackLogsOptions,
 ): Stream.Stream<StackLogRecord, StackError, FileSystem.FileSystem | Path.Path> =>
   Stream.unwrap(
     Effect.gen(function* () {

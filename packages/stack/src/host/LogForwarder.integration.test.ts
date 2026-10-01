@@ -3,13 +3,17 @@ import { describe, expect, it } from "@effect/vitest";
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import {
   Clock,
+  Deferred,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
+  Logger,
   Path,
   PubSub,
   Queue,
+  References,
   Schema,
   Scope,
   Stream,
@@ -194,6 +198,8 @@ const startForwarder = (
 ) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
+    // Stops before the test's store and temp directory close, so no cursor write races removal.
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
     const forwarder = yield* LogForwarder.make({ composition, logs: store }).pipe(
       Scope.provide(scope),
     );
@@ -205,7 +211,7 @@ const startForwarder = (
         Stream.take(1),
         Stream.runDrain,
       );
-    return { awaitShipping, stop: Scope.close(scope, Exit.void) };
+    return { awaitShipping, detach: forwarder.detach, stop: Scope.close(scope, Exit.void) };
   });
 
 const fixture = (options: Omit<LogStore.LogStoreOptions, "root"> = {}) =>
@@ -242,9 +248,9 @@ describe("LogForwarder", () => {
         expect(caughtUp.apiKey).toBe("test-key");
         expect(messages(caughtUp)).toEqual(["while asleep 1", "while asleep 2"]);
         expect(messages(live)).toEqual(["while awake"]);
-        const persisted = (yield* LogStore.readStackLogs({ root })).filter(
-          (record) => record.kind === "stdout",
-        );
+        const persisted = (yield* LogStore.streamStackLogs({ root }).pipe(
+          Stream.runCollect,
+        )).filter((record) => record.kind === "stdout");
         expect([...caughtUp.events, ...live.events].map((event) => event.timestamp)).toEqual(
           persisted.map((record) => record.timestamp),
         );
@@ -254,6 +260,76 @@ describe("LogForwarder", () => {
           true,
         );
       }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("stops shipping quietly when the log store closes", () =>
+    Effect.gen(function* () {
+      const { store, sink, database, analytics } = yield* fixture();
+      const warnings: Array<unknown> = [];
+      const stopped = yield* Deferred.make<void>();
+      const captured = Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          if (logLevel === "Warn") warnings.push(message);
+          if (logLevel === "Debug" && String(message).includes("stopped"))
+            Deferred.doneUnsafe(stopped, Effect.void);
+        }),
+      ]);
+      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]).pipe(
+        Effect.provide(captured),
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+      );
+      yield* analytics.set(true);
+      yield* forwarder.awaitShipping(true);
+      yield* database.log("before removal");
+      const shipped = yield* sink.next;
+
+      yield* store.close;
+      yield* Deferred.await(stopped);
+      yield* forwarder.stop;
+
+      expect(messages(shipped)).toEqual(["before removal"]);
+      expect(warnings).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("detaches an instance only once its cursor write landed, so its logs can go", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, store, sink, database, analytics } = yield* fixture();
+      const renaming = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const injected: FileSystem.FileSystem = {
+        ...fs,
+        rename: (from, to) =>
+          to.endsWith("cursor.json")
+            ? Deferred.succeed(renaming, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.andThen(fs.rename(from, to)),
+              )
+            : fs.rename(from, to),
+      };
+      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]).pipe(
+        Effect.provideService(FileSystem.FileSystem, injected),
+      );
+      yield* analytics.set(true);
+      yield* forwarder.awaitShipping(true);
+      yield* database.log("before removal");
+      yield* sink.next;
+      yield* Deferred.await(renaming);
+
+      const directory = path.join(root, "database", "database");
+      const detaching = yield* Effect.forkChild(forwarder.detach("database"), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(detaching);
+      const cursorLanded = yield* fs.exists(path.join(directory, "cursor.json"));
+      yield* store.remove({ service: "database", instanceId: "database" });
+
+      expect(cursorLanded).toBe(true);
+      expect(yield* fs.exists(directory)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("resumes from its persisted cursor after the forwarder restarts", () =>
@@ -374,7 +450,7 @@ describe("LogForwarder", () => {
       yield* analytics.set(false);
       yield* forwarder.awaitShipping(false);
       for (let index = 0; index < 30; index++) yield* database.log(`asleep ${index}`);
-      const retained = (yield* LogStore.readStackLogs({ root })).filter(
+      const retained = (yield* LogStore.streamStackLogs({ root }).pipe(Stream.runCollect)).filter(
         (record) => record.kind === "stdout",
       );
 

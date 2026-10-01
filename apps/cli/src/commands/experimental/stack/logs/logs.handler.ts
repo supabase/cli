@@ -176,6 +176,20 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             handle,
           ]),
         );
+        const missing = selected
+          .filter(({ id }) => !handles.has(id))
+          .map(({ id, service }) => `${service} (${id})`);
+        if (missing.length === selected.length)
+          return yield* new StackCommandLogsError({
+            reason: "lifecycle",
+            message:
+              "The running stack serves none of the selected services, so there are no new lines to follow.",
+            suggestion: "Run supabase stack logs without --follow to read retained logs.",
+          });
+        if (missing.length > 0)
+          yield* output.warn(
+            `Not following ${missing.join(", ")}, which the running stack does not serve.`,
+          );
         const streams = selected.flatMap(({ id, service }) => {
           const handle = handles.get(id);
           if (handle === undefined) return [];

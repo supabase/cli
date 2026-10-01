@@ -58,10 +58,8 @@ export interface CatalogOptions {
   readonly hostGateway?: HostGateway;
 }
 
-export type CatalogLog = LaunchOutput;
-
 /** Subscribes to a recipe's launch output; chunks published before the subscription are missed. */
-export type CatalogLogs = Effect.Effect<PubSub.Subscription<CatalogLog>, never, Scope.Scope>;
+export type CatalogLogs = Effect.Effect<PubSub.Subscription<LaunchOutput>, never, Scope.Scope>;
 
 export interface CatalogRecipe<C> {
   readonly creation: C;
