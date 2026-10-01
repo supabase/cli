@@ -57,6 +57,21 @@ describe("debug-console exporter", () => {
     }),
   );
 
+  it.effect("caps long attribute output so each line stays readable", () =>
+    Effect.gen(function* () {
+      const span = yield* makeEndedSpan("command.status", {
+        "service.names":
+          "auth,rest,realtime,storage,imgproxy,kong,meta,studio,edge_runtime,logflare,vector,pooler",
+        "service.running_count": 12,
+      });
+
+      const line = yield* formatSpanForDebugConsole(span, yield* sanitizer);
+
+      expect(Option.getOrThrow(line)).toMatch(/…\n$/u);
+      expect(Option.getOrThrow(line).length).toBeLessThan(200);
+    }),
+  );
+
   it.effect("returns undefined for spans that have not ended", () =>
     Effect.gen(function* () {
       const span = {

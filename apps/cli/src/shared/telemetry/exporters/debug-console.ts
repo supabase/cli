@@ -3,6 +3,8 @@ import type { PlatformError, Tracer } from "effect";
 import type { TraceSanitizer } from "../trace-sanitize.ts";
 
 const MAX_PRINTED_DEPTH = 2;
+/** Keeps each console line readable; exporters still receive every attribute. */
+const MAX_PRINTED_ATTRIBUTES_LENGTH = 120;
 const JsonAttributesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
 function formatTimestamp(ms: number): Option.Option<string> {
@@ -52,10 +54,12 @@ export const formatSpanForDebugConsole = Effect.fnUntraced(function* (
   if (Option.isNone(time)) return Option.none<string>();
 
   const attrs = Object.fromEntries(sanitizer.attributeEntries(span.attributes));
+  const encoded =
+    Object.keys(attrs).length === 0 ? "" : yield* Schema.encodeEffect(JsonAttributesSchema)(attrs);
   const attrStr =
-    Object.keys(attrs).length === 0
+    encoded.length === 0
       ? ""
-      : ` ${yield* Schema.encodeEffect(JsonAttributesSchema)(attrs)}`;
+      : ` ${encoded.length > MAX_PRINTED_ATTRIBUTES_LENGTH ? `${encoded.slice(0, MAX_PRINTED_ATTRIBUTES_LENGTH - 1)}…` : encoded}`;
   const indent = "  ".repeat(Math.min(depth, MAX_PRINTED_DEPTH + 1));
   const marker = failed ? " failed" : "";
 

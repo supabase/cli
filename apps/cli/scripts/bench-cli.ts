@@ -491,6 +491,15 @@ function formatCommandReport(commandReport: CommandReport): ReadonlyArray<string
   if (commandReport.exitCodesDiffer) {
     lines.push("  warning: exit codes differ between builds, so the timings are not comparable");
   }
+  for (const build of ["base", "branch"] as const) {
+    const codes = commandReport[build].exitCodes;
+    const failed = codes.filter((code) => code !== 0).length;
+    if (failed > 0) {
+      lines.push(
+        `  warning: ${build} exited non-zero in ${failed}/${codes.length} runs, so its timings measure a failing invocation`,
+      );
+    }
+  }
   if (commandReport.traceEmptyFor.length > 0) {
     lines.push(`  trace: no spans captured for ${commandReport.traceEmptyFor.join(", ")}`);
   }
@@ -520,10 +529,26 @@ function formatReport(report: Report): string {
 const main = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   const argv = yield* stdio.args;
+  if (argv.includes("--help") || argv.includes("-h")) {
+    yield* Console.log(USAGE);
+    return;
+  }
   const options = yield* Effect.try({
     try: () => parseBenchArgs(argv),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  });
+    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+  }).pipe(
+    Effect.catch((message) =>
+      Console.error(message === USAGE ? USAGE : `${message}\n${USAGE}`).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            process.exitCode = 2;
+          }),
+        ),
+        Effect.as(undefined),
+      ),
+    ),
+  );
+  if (options === undefined) return;
 
   const profiled = yield* Ref.make(false);
   const commands: Array<CommandReport> = [];
