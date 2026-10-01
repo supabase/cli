@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Sink, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import { systemError } from "effect/PlatformError";
@@ -943,6 +943,96 @@ describe("native process group cleanup", () => {
           expect(yield* assertExited(groupId)).toBe(true);
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
+  );
+
+  it.effect.skipIf(process.platform === "win32")(
+    "does not settle kill until the launcher's exit is confirmed",
+    () =>
+      Effect.gen(function* () {
+        const exitCode = yield* Deferred.make<ExitCode>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(targetPid),
+              exitCode: Deferred.await(exitCode),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: (fd) =>
+                fd === 5
+                  ? Stream.succeed(new TextEncoder().encode(`${targetPid}\n`))
+                  : Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          ),
+        );
+        // A manually owned scope isolates the explicit kill call below from the
+        // scope-finalizer's own kill, which would otherwise race the assertion.
+        const processScope = yield* Scope.make();
+        const native: NativeProcess = yield* spawnNativeProcess(
+          { ...spec, gracefulStopTimeout: "20 millis" },
+          { command: "test-launcher", args: [] },
+        ).pipe(
+          Scope.provide(processScope),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const fiber = yield* Effect.forkChild(native.kill);
+        yield* TestClock.adjust("20 millis");
+        yield* Effect.yieldNow;
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137));
+        expect(yield* Fiber.join(fiber).pipe(Effect.exit)).toMatchObject({ _tag: "Success" });
+        yield* Scope.close(processScope, Exit.void);
+      }),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "forces the launcher and confirms its exit once the reap grace period lapses",
+    () =>
+      Effect.gen(function* () {
+        const exitCode = yield* Deferred.make<ExitCode>();
+        const forcedKillSignal = yield* Deferred.make<string | undefined>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(targetPid),
+              exitCode: Deferred.await(exitCode),
+              isRunning: Effect.succeed(true),
+              kill: (options) =>
+                Deferred.succeed(forcedKillSignal, options?.killSignal).pipe(
+                  Effect.andThen(Deferred.succeed(exitCode, ChildProcessSpawner.ExitCode(137))),
+                  Effect.asVoid,
+                ),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: (fd) =>
+                fd === 5
+                  ? Stream.succeed(new TextEncoder().encode(`${targetPid}\n`))
+                  : Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          ),
+        );
+        const processScope = yield* Scope.make();
+        const native: NativeProcess = yield* spawnNativeProcess(
+          { ...spec, gracefulStopTimeout: "20 millis" },
+          { command: "test-launcher", args: [] },
+        ).pipe(
+          Scope.provide(processScope),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const result = yield* native.kill.pipe(Effect.exit);
+        expect(result).toMatchObject({ _tag: "Success" });
+        expect(yield* Deferred.await(forcedKillSignal)).toBe("SIGKILL");
+        yield* Scope.close(processScope, Exit.void);
+      }),
   );
 
   it.live("keeps the shared exit observation alive after a canceled waiter", () =>

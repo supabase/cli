@@ -256,13 +256,29 @@ export const spawnNativeProcess = Effect.fn("NativeProcess.spawn")(function* (
         Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
       );
       if (Option.isNone(stopped)) {
-        const stillRunning = yield* handle.isRunning.pipe(
-          Effect.mapError((error) => mapProcessError(error, spec)),
-        );
-        if (stillRunning)
-          yield* handle
-            .kill({ killSignal: "SIGKILL" })
-            .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+        if (globalThis.process.platform === "win32") {
+          const stillRunning = yield* handle.isRunning.pipe(
+            Effect.mapError((error) => mapProcessError(error, spec)),
+          );
+          if (stillRunning)
+            yield* handle
+              .kill({ killSignal: "SIGKILL" })
+              .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+        } else {
+          // Kill the workload's group first so the still-alive launcher reaps
+          // its direct child itself; only force the launcher if it doesn't.
+          yield* cleanupProcessGroup();
+          const reaped = yield* handle.exitCode.pipe(
+            Effect.catch(() => Effect.void),
+            Effect.timeoutOption(spec.gracefulStopTimeout ?? "2 seconds"),
+          );
+          if (Option.isNone(reaped)) {
+            yield* handle
+              .kill({ killSignal: "SIGKILL" })
+              .pipe(Effect.mapError((error) => mapProcessError(error, spec)));
+            yield* handle.exitCode.pipe(Effect.catch(() => Effect.void));
+          }
+        }
       }
       if (globalThis.process.platform !== "win32") yield* cleanupProcessGroup();
     });
