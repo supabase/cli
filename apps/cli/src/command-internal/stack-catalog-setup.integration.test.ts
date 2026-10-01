@@ -20,7 +20,7 @@ import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import type { Command } from "@supabase/stack/commands";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
-import { destroyTestStack, removeStateRootVolume } from "../../tests/helpers/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "stack-catalog-setup-integration-secret";
@@ -36,9 +36,6 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-catalog-${runtime}-` });
-            const stateRoot = `${root}/state`;
-            if (runtime === "docker")
-              yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
             yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
             yield* fs.writeFileString(
               `${root}/supabase/roles.sql`,
@@ -46,7 +43,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
             );
             const stack = yield* create({
               projectRoot: root,
-              stateRoot,
+              stateRoot: `${root}/state`,
               cacheRoot,
               runtime,
             });

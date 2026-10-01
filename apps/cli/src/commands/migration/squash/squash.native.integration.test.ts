@@ -28,10 +28,7 @@ import { BundledPostgresClient } from "../../../command-internal/bundled-postgre
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { migrationSquash } from "./squash.handler.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";
-import {
-  destroyTestStack,
-  removeStateRootVolume,
-} from "../../../../tests/helpers/stack-cleanup.ts";
+import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -135,13 +132,10 @@ describe("managed migration squash", { timeout: 180_000 }, () => {
             Effect.gen(function* () {
               const fs = yield* FileSystem.FileSystem;
               const path = yield* Path.Path;
-              const stateRoot = path.join(root, "stacks");
-              if (runtime === "docker")
-                yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
               const api = yield* StackApi;
               const current = yield* api.create({
                 projectRoot: root,
-                stateRoot,
+                stateRoot: path.join(root, "stacks"),
                 cacheRoot: path.join(root, "cache"),
                 runtime,
               });

@@ -1,4 +1,5 @@
 import {
+  Config,
   Crypto,
   Effect,
   Exit,
@@ -108,8 +109,23 @@ const parseMajor = (version: string): number | undefined => {
 };
 
 /** Derives the shared Docker volume name from a state-root/daemon identity digest. */
-export const volumeNameFor = (stateDigest: string): string =>
-  `supabase-db-${stateDigest.slice(0, 32)}`;
+const volumeNameFor = (stateDigest: string): string => `supabase-db-${stateDigest.slice(0, 32)}`;
+
+const testRunLabelPattern = /^[A-Za-z0-9-]{1,64}$/u;
+
+/** Reads the optional test-run id through Effect `Config`, labelling volumes this run creates. */
+const testRunLabelArgs = Effect.fn("DockerDatabaseStorage.testRunLabelArgs")(function* () {
+  const testRun = yield* Config.option(Config.string("SUPABASE_STACK_TEST_RUN")).pipe(
+    Effect.mapError((cause) => errorFor("config", cause)),
+  );
+  if (Option.isNone(testRun)) return [];
+  if (!testRunLabelPattern.test(testRun.value))
+    return yield* errorFor(
+      "config",
+      `SUPABASE_STACK_TEST_RUN must match ${testRunLabelPattern.source}, got "${testRun.value}"`,
+    );
+  return ["--label", `com.supabase.stack-test-run=${testRun.value}`];
+});
 
 /** Owns the placement and lifecycle of one database's Docker data and snapshot namespaces. */
 export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")(
@@ -274,15 +290,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                       !validMarker.initialized &&
                       /(?:no such volume|not found)/iu.test(cause.message)
-                        ? engineCommand([
-                            "volume",
-                            "create",
-                            "--label",
-                            "com.supabase.stack-managed=true",
-                            "--label",
-                            `com.supabase.stack-state-root=${resolved.stateDigest}`,
-                            resolved.volume,
-                          ]).pipe(Effect.asVoid)
+                        ? testRunLabelArgs().pipe(
+                            Effect.flatMap((testRunLabel) =>
+                              engineCommand([
+                                "volume",
+                                "create",
+                                "--label",
+                                "com.supabase.stack-managed=true",
+                                "--label",
+                                `com.supabase.stack-state-root=${resolved.stateDigest}`,
+                                ...testRunLabel,
+                                resolved.volume,
+                              ]),
+                            ),
+                            Effect.asVoid,
+                          )
                         : Effect.fail(cause),
                     ),
                   );
@@ -320,15 +342,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* engineCommand(["volume", "inspect", resolved.volume]).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such volume|not found/iu.test(cause.message)
-                    ? engineCommand([
-                        "volume",
-                        "create",
-                        "--label",
-                        "com.supabase.stack-managed=true",
-                        "--label",
-                        `com.supabase.stack-state-root=${resolved.stateDigest}`,
-                        resolved.volume,
-                      ]).pipe(Effect.asVoid)
+                    ? testRunLabelArgs().pipe(
+                        Effect.flatMap((testRunLabel) =>
+                          engineCommand([
+                            "volume",
+                            "create",
+                            "--label",
+                            "com.supabase.stack-managed=true",
+                            "--label",
+                            `com.supabase.stack-state-root=${resolved.stateDigest}`,
+                            ...testRunLabel,
+                            resolved.volume,
+                          ]),
+                        ),
+                        Effect.asVoid,
+                      )
                     : Effect.fail(cause),
                 ),
                 Effect.asVoid,

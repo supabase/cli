@@ -12,7 +12,7 @@ import { DockerRun } from "./docker-run.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
-import { destroyTestStack, removeStateRootVolume } from "../../tests/helpers/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -24,13 +24,10 @@ describe("managed pg_dump against a live stack", { timeout: 180_000 }, () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "cli-pg-dump-" });
-          const stateRoot = `${root}/stacks`;
-          if (runtime === "docker")
-            yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
           const api = yield* StackApi;
           const stack = yield* api.create({
             projectRoot: root,
-            stateRoot,
+            stateRoot: `${root}/stacks`,
             cacheRoot: `${root}/cache`,
             runtime,
           });

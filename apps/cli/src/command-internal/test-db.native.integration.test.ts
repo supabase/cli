@@ -26,7 +26,7 @@ import { StackError } from "@supabase/stack/effect";
 import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { Stack } from "@supabase/stack/effect";
 import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
-import { destroyTestStack, removeStateRootVolume } from "../../tests/helpers/stack-cleanup.ts";
+import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
 const runtimes = ["native", "docker"] as const;
 const liveStackApi = stackApiLayer.pipe(Layer.provide(BunServices.layer));
@@ -70,14 +70,11 @@ describe("managed test db pgTAP", { timeout: 180_000 }, () => {
             "SELECT plan(1); SELECT fail('managed pgTAP failure'); SELECT * FROM finish();\n",
           );
 
-          const stateRoot = `${root}/stacks`;
-          if (runtime === "docker")
-            yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
           const api = yield* StackApi;
           const stack = yield* Effect.acquireRelease(
             api.create({
               projectRoot: root,
-              stateRoot,
+              stateRoot: `${root}/stacks`,
               cacheRoot: `${root}/cache`,
               runtime,
             }),

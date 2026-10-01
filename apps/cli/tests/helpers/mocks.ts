@@ -571,13 +571,21 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
   return snapshot;
 }
 
+/** A test run's volume-cleanup id; survives env replacement below unless a caller overrides it. */
+const stackTestRunEnvVar = "SUPABASE_STACK_TEST_RUN";
+
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
   return ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
-        const snapshot = applyProcessEnv(values);
+        const ambientTestRun = process.env[stackTestRunEnvVar];
+        const snapshot = applyProcessEnv(
+          stackTestRunEnvVar in values || ambientTestRun === undefined
+            ? values
+            : { [stackTestRunEnvVar]: ambientTestRun, ...values },
+        );
         return {
           provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           snapshot,

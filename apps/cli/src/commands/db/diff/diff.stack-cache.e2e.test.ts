@@ -5,10 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
-import {
-  destroyTestStack,
-  removeStateRootVolume,
-} from "../../../../tests/helpers/stack-cleanup.ts";
+import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS * 4 + 2 * 60_000;
@@ -39,14 +36,12 @@ const composeStack = Effect.fn("DbDiffStackCacheE2e.composeStack")(function* (
   home: string,
   runtime: "native" | "docker",
 ) {
-  const stateRoot = `${home}/stacks`;
   const stack = yield* createStack({
     projectRoot: root,
-    stateRoot,
+    stateRoot: `${home}/stacks`,
     cacheRoot: `${home}/cache/stack`,
     runtime,
   });
-  if (runtime === "docker") yield* Effect.addFinalizer(() => removeStateRootVolume(stateRoot));
   yield* Effect.addFinalizer(() => destroyTestStack(stack));
   const [database] = yield* stack.composition.supabase([
     {

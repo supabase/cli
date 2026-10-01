@@ -2,8 +2,6 @@ import type { Stack } from "@supabase/stack/effect";
 import { Cause, Effect, Exit } from "effect";
 import type { StackApi } from "../../src/command-internal/stack-api.ts";
 
-export { removeStateRootVolume } from "../../../../packages/stack/tests/docker-fixture.ts";
-
 /** Destroys a test stack, failing the test when teardown fails. */
 export const destroyTestStack = (stack: Stack): Effect.Effect<void, never> =>
   stack.destroy.pipe(Effect.orDie);
