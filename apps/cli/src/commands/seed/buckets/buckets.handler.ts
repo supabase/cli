@@ -3,12 +3,12 @@ import { Effect, FileSystem, Option } from "effect";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { changedLinkedLocalFlags } from "../../../command-internal/db-target-flags.ts";
 import { seedBucketsRun } from "../../../command-internal/seed-buckets.ts";
 import { requireExplicitWorkdirProject } from "../../../command-internal/workdir-project.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
-import { seedChangedTargetFlags } from "./buckets.flags.ts";
 import type { BucketsFlags } from "./buckets.command.ts";
 import {
   SeedMissingProjectConfigError,
@@ -47,7 +47,7 @@ export const seedBuckets = Effect.fn("seed.buckets")(function* (
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is
     // merged over the base config by `loadCliConfig`. `--linked` selects the
     // linked path whenever it's set, even `--linked=false`.
-    const setFlags = seedChangedTargetFlags(cliArgs.args);
+    const setFlags = changedLinkedLocalFlags(cliArgs.args);
     const isLinked = setFlags.includes("linked");
 
     // `--project-ref` never implies `--linked` and must not be silently

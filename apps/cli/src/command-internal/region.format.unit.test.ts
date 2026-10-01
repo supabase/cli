@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRegion } from "./backups.format.ts";
+import { formatRegion } from "./region.format.ts";
 
 describe("formatRegion", () => {
   it.each([

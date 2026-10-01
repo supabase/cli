@@ -28,11 +28,6 @@ export const StorageProjectRefFlagDef = Flag.string("project-ref").pipe(
   Flag.optional,
 );
 
-/** Names of `--linked`/`--local` flags that were explicitly passed, for the exclusivity check. */
-export function storageChangedTargetFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
-  return changedLinkedLocalFlags(args);
-}
-
 /**
  * Mutual-exclusion check for `--linked`/`--local`, rejected before the handler body
  * so it never fires `cli_command_executed`. Each leaf must call this before
@@ -41,7 +36,7 @@ export function storageChangedTargetFlags(args: ReadonlyArray<string>): Readonly
 export const assertStorageTargetsExclusive = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
 ) {
-  const setFlags = storageChangedTargetFlags(args);
+  const setFlags = changedLinkedLocalFlags(args);
   if (setFlags.length > 1) {
     return yield* new StorageMutuallyExclusiveFlagsError({
       message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,

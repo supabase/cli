@@ -9,7 +9,7 @@ import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { IdentityStitch, identityStitchLayer } from "../../../command-internal/identity-stitch.ts";

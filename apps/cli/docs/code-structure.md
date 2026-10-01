@@ -54,8 +54,8 @@ Shared concern files:
 
 ```text
 auth/
-  credentials.service.ts
-  credentials.layer.ts
+  command-credentials.service.ts
+  command-credentials.layer.ts
   errors.ts
 ```
 
@@ -136,6 +136,6 @@ Examples where comments are expected:
 
 - `telemetry/tracing.layer.ts`
 - `output/output.layer.ts`
-- `auth/credentials.layer.ts`
+- `auth/command-credentials.layer.ts`
 
 Consistency does not mean every service or layer file needs a header. The goal is high-signal comments on important boundaries.
