@@ -104,6 +104,7 @@ const debugSettings = (debug: Partial<Record<"debug" | "telemetryDebug", string>
 const runWithDebugConsole = Effect.fnUntraced(function* (
   debug: Partial<Record<"debug" | "telemetryDebug", string>>,
   program: Effect.Effect<void>,
+  options: { readonly enclosingRoot?: boolean } = {},
 ) {
   const written: Array<string> = [];
   const stderr = Sink.forEach((chunk: string | Uint8Array) =>
@@ -111,9 +112,12 @@ const runWithDebugConsole = Effect.fnUntraced(function* (
       written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
     }),
   );
-  yield* program.pipe(
-    withDebugConsole,
-    withTraceExport({ sink: Option.none() }, {}),
+  const consoled = withDebugConsole(program);
+  yield* (
+    options.enclosingRoot === true
+      ? consoled.pipe(Effect.withSpan("cli.run"), Effect.withTracerEnabled(true))
+      : consoled.pipe(withTraceExport({ sink: Option.none() }, {}))
+  ).pipe(
     Effect.provide(
       Layer.mergeAll(
         BunServices.layer,
@@ -151,6 +155,30 @@ describe("withDebugConsole", () => {
       expect(output).not.toContain("Depth.three (");
       expect(output).not.toContain("token=abc");
       expect(output).not.toContain("boom");
+    }),
+  );
+
+  it.effect("prints the same spans whether or not a root span encloses the console", () =>
+    Effect.gen(function* () {
+      const program = Effect.void.pipe(
+        Effect.withSpan("Depth.three"),
+        Effect.withSpan("Depth.two"),
+        Effect.withSpan("Depth.one"),
+        Effect.withSpan("Depth.zero"),
+      );
+      const printedSpans = (output: string) =>
+        output
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => line.replace(/^\[[^\]]+\] /u, "").replace(/ \(\d+ms\)/u, ""));
+
+      const standalone = yield* runWithDebugConsole({ debug: "1" }, program);
+      const enclosed = yield* runWithDebugConsole({ debug: "1" }, program, {
+        enclosingRoot: true,
+      });
+
+      expect(printedSpans(standalone)).toEqual(["    Depth.two", "  Depth.one", "Depth.zero"]);
+      expect(printedSpans(enclosed)).toEqual(printedSpans(standalone));
     }),
   );
 

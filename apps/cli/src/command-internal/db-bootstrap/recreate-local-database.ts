@@ -204,6 +204,7 @@ export const resetDisconnectClients = Effect.fn("DbBootstrap.disconnectClients")
     slotChecks += 1;
     return countReplicationSlots;
   }).pipe(
+    Effect.withTracerEnabled(false),
     Effect.retry({
       schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
       while: (error) => error.retryable,

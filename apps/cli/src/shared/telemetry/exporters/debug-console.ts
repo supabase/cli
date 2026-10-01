@@ -21,10 +21,16 @@ function formatTimestamp(ms: number): Option.Option<string> {
   );
 }
 
-function spanDepth(span: Tracer.Span): number {
+const isSameSpan = (span: Tracer.AnySpan, other: Option.Option<Tracer.AnySpan>): boolean =>
+  Option.isSome(other) &&
+  span.spanId === other.value.spanId &&
+  span.traceId === other.value.traceId;
+
+/** Counts ancestors below `root`, the span current where the console is installed. */
+function spanDepth(span: Tracer.Span, root: Option.Option<Tracer.AnySpan>): number {
   let depth = 0;
   let parent = span.parent;
-  while (Option.isSome(parent) && parent.value._tag === "Span") {
+  while (Option.isSome(parent) && parent.value._tag === "Span" && !isSameSpan(parent.value, root)) {
     depth += 1;
     parent = parent.value.parent;
   }
@@ -42,10 +48,11 @@ function spanFailed(span: Tracer.Span): boolean {
 export const formatSpanForDebugConsole = Effect.fnUntraced(function* (
   span: Tracer.Span,
   sanitizer: TraceSanitizer,
+  root: Option.Option<Tracer.AnySpan> = Option.none(),
 ) {
   const status = span.status;
   if (status._tag !== "Ended") return Option.none<string>();
-  const depth = spanDepth(span);
+  const depth = spanDepth(span, root);
   const failed = spanFailed(span);
   if (depth > MAX_PRINTED_DEPTH && !failed) return Option.none<string>();
 
@@ -71,11 +78,12 @@ export const formatSpanForDebugConsole = Effect.fnUntraced(function* (
 export function makeDebugConsoleExporter(
   write: (line: string) => Effect.Effect<void, PlatformError.PlatformError, never>,
   sanitizer: TraceSanitizer,
+  root: Option.Option<Tracer.AnySpan> = Option.none(),
 ): (
   span: Tracer.Span,
 ) => Effect.Effect<void, PlatformError.PlatformError | Schema.SchemaError, never> {
   return (span) =>
-    formatSpanForDebugConsole(span, sanitizer).pipe(
+    formatSpanForDebugConsole(span, sanitizer, root).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.void,

@@ -15,6 +15,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { ChildTracePropagation } from "../../shared/telemetry/spans.ts";
 import { spawnContainerCliWithRuntime, type ContainerRuntime } from "../container-cli.ts";
 import { DbConnection, type PgConnInput } from "../db-connection.service.ts";
 import { inspectContainerState } from "../docker-lifecycle.ts";
@@ -317,7 +318,7 @@ export function waitForHealthyServices(
           return yield* Effect.fail(new HealthCheckProbeError({ failures }));
         }
       },
-    );
+    ).pipe(Effect.withTracerEnabled(false), Effect.provideService(ChildTracePropagation, false));
 
     // A 1-second constant delay, capped at `timeoutSeconds` retries after the initial attempt.
     const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
@@ -451,6 +452,8 @@ export function waitForShadowReady(
       }
       yield* probeShadowConnect(connConfig);
     }).pipe(
+      Effect.withTracerEnabled(false),
+      Effect.provideService(ChildTracePropagation, false),
       Effect.tapError((failure) =>
         Effect.sync(() => {
           lastFailure = failure;

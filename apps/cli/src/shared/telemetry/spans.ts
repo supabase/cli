@@ -51,7 +51,9 @@ export function withChildTraceEnv(
   traceEnv: ChildTraceEnv,
 ): ChildProcess.CommandOptions | undefined {
   if (Object.keys(traceEnv).length === 0) return options;
-  if (options?.env === undefined) return { ...options, env: traceEnv, extendEnv: true };
+  if (options?.env === undefined) {
+    return { ...options, env: traceEnv, extendEnv: options?.extendEnv ?? true };
+  }
   return { ...options, env: { ...options.env, ...traceEnv } };
 }
 

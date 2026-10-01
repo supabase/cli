@@ -1,6 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, FileSystem, Layer, Logger, Option, Path } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Logger,
+  Option,
+  Path,
+} from "effect";
 import {
   VALID_REF,
   VALID_TOKEN,
@@ -175,6 +186,26 @@ describe("withTraceExport with a trace file", () => {
       const names = spansOf(yield* readBatches(tracePath)).map((span) => span.name);
       expect(names).toContain("cli.run");
       expect(names).toContain("Test.interrupted");
+    }).pipe(Effect.provide(runtime)),
+  );
+
+  it.live("flushes the batch when the traced run is interrupted from outside", () =>
+    Effect.gen(function* () {
+      const tracePath = yield* traceFilePath;
+      const started = yield* Deferred.make<void>();
+
+      const fiber = yield* Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.withSpan("Test.awaiting"),
+        withTraceExport(fileSink(tracePath), {}),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+
+      const names = spansOf(yield* readBatches(tracePath)).map((span) => span.name);
+      expect(names).toContain("cli.run");
+      expect(names).toContain("Test.awaiting");
     }).pipe(Effect.provide(runtime)),
   );
 

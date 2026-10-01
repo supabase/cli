@@ -393,7 +393,8 @@ const runCommandBench = (
           exitCodes[planned.build].push(result.exitCode);
 
           // Tracing and profiling slow the launch they observe, so they run in an extra, untimed
-          // launch in fresh directories that both builds receive equally.
+          // launch in fresh directories. Both builds get traced launches; only one branch launch
+          // is profiled.
           const traceFile = options.trace
             ? yield* fs.makeTempFileScoped({ prefix: "supabase-bench-trace-", suffix: ".jsonl" })
             : undefined;

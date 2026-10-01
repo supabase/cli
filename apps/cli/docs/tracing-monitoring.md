@@ -98,9 +98,10 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 
 - Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`,
   `service.instance.id` (a random id per run).
-- `cli.run`: `process.boot_ms`, the time from process start to CLI entry.
-- Command span (`command.<path>`): `command`, `command_run_id`, `device_id`, `session_id`,
-  `is_first_run`.
+- `cli.run`: `process.boot_ms`, the time from process start to CLI entry, and
+  `process.exit_code`, the code the CLI exits with.
+- Command span (`command.<path>`): `command` and `command_run_id`. When telemetry consent is
+  granted, also `device_id`, `session_id`, and `is_first_run`.
 - Layer spans such as `CliSettings.load`, `CliProjectContext.load`, and `ProjectLinkState.load`.
 - HTTP client spans with method, host, path, status, and allowlisted headers.
 - Process spans with the executable basename, argument count, exit code, and for docker or

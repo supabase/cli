@@ -770,7 +770,11 @@ export async function runCli<
       const processControl = yield* ProcessControl;
       const exitCode = yield* resolveTraceSettings.pipe(
         Effect.flatMap((settings) =>
-          withTraceExport(settings, { "process.boot_ms": bootMs })(runToExitCode(program)),
+          withTraceExport(settings, { "process.boot_ms": bootMs })(
+            runToExitCode(program).pipe(
+              Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+            ),
+          ),
         ),
         Effect.catchIf(
           (error) => error instanceof TraceExportConfigError,

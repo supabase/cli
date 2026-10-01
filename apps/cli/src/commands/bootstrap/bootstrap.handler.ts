@@ -253,7 +253,12 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           });
         }
       }
-    }).pipe(healthNotify, Effect.retry(retry), Effect.withSpan("bootstrap.waitHealthy"));
+    }).pipe(
+      Effect.withTracerEnabled(false),
+      healthNotify,
+      Effect.retry(retry),
+      Effect.withSpan("bootstrap.waitHealthy"),
+    );
 
     // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
     // for reference only and, unlike the push connection below, is never used to actually connect.

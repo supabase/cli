@@ -317,14 +317,16 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
 
 const annotateCommandSpan = Effect.fnUntraced(function* (commandRunId: string, command: string) {
   const telemetryRuntime = yield* Effect.serviceOption(TelemetryRuntime);
+  // Trace export needs no consent, so persistent identifiers are recorded only when it is granted.
   yield* Effect.annotateCurrentSpan({
     command_run_id: commandRunId,
     command,
-    ...(Option.isSome(telemetryRuntime) && {
-      device_id: telemetryRuntime.value.deviceId,
-      session_id: telemetryRuntime.value.sessionId,
-      is_first_run: telemetryRuntime.value.isFirstRun,
-    }),
+    ...(Option.isSome(telemetryRuntime) &&
+      telemetryRuntime.value.consent === "granted" && {
+        device_id: telemetryRuntime.value.deviceId,
+        session_id: telemetryRuntime.value.sessionId,
+        is_first_run: telemetryRuntime.value.isFirstRun,
+      }),
   });
 });
 

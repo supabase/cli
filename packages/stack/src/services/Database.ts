@@ -196,56 +196,65 @@ export const processExit = <E extends { readonly message: string }>(
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
   sharedProcessExit(exitCode, describePostgresExit, stderr);
 
-const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(
-  (
-    engine: "docker" | "podman",
-    id: string,
-    password: Redacted.Redacted<string>,
-    spawner: ChildProcessSpawnerService["Service"],
-  ) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const args = [
-          "exec",
-          "-i",
-          id,
-          "/opt/postgres/bin/psql",
-          "-h",
-          "/tmp",
-          "-p",
-          "5432",
-          "-U",
-          "supabase_admin",
-          "-d",
-          "postgres",
-          "-X",
-          "-v",
-          "ON_ERROR_STOP=1",
-        ];
-        yield* Effect.annotateCurrentSpan({
-          "process.executable.name": engine,
-          "process.arg_count": args.length,
-        });
-        const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
-        const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
-        const [, , , code] = yield* Effect.all(
-          [
-            Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
-            child.stdout.pipe(Stream.runDrain),
-            child.stderr.pipe(Stream.runDrain),
-            child.exitCode,
-          ],
-          { concurrency: "unbounded" },
-        );
-        yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
-        if (Number(code) !== 0)
-          return yield* errorFor("health", "Local database credential setup has not succeeded");
-      }),
-    ).pipe(
-      Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
-      Effect.retry(Schedule.spaced("250 millis")),
+const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(function* (
+  engine: "docker" | "podman",
+  id: string,
+  password: Redacted.Redacted<string>,
+  spawner: ChildProcessSpawnerService["Service"],
+) {
+  const args = [
+    "exec",
+    "-i",
+    id,
+    "/opt/postgres/bin/psql",
+    "-h",
+    "/tmp",
+    "-p",
+    "5432",
+    "-U",
+    "supabase_admin",
+    "-d",
+    "postgres",
+    "-X",
+    "-v",
+    "ON_ERROR_STOP=1",
+  ];
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": engine,
+    "process.arg_count": args.length,
+  });
+  // Each retry overwrites `process.exit_code`, so the span reports the last attempt's status.
+  const retryAttempts = yield* Ref.make(0);
+  return yield* Ref.update(retryAttempts, (count) => count + 1).pipe(
+    Effect.andThen(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
+          const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
+          const [, , , code] = yield* Effect.all(
+            [
+              Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
+              child.stdout.pipe(Stream.runDrain),
+              child.stderr.pipe(Stream.runDrain),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+          if (Number(code) !== 0)
+            return yield* errorFor("health", "Local database credential setup has not succeeded");
+        }),
+      ),
     ),
-);
+    Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
+    Effect.retry(Schedule.spaced("250 millis")),
+    Effect.ensuring(
+      Ref.get(retryAttempts).pipe(
+        Effect.flatMap((count) => Effect.annotateCurrentSpan({ "retry.attempt_count": count })),
+      ),
+    ),
+  );
+});
 
 /** Idempotent readiness reconciliation, so a session also re-runs it as its probe. */
 const health = Effect.fn("Database.health")(function* (

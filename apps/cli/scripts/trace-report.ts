@@ -117,10 +117,13 @@ export function analyzeTrace(spans: ReadonlyArray<ReportSpan>, top: number): Tra
   const repeatedByName = new Map<string, { count: number; totalMs: number }>();
   for (const span of spans) {
     const duration = span.endMs - span.startMs;
-    const childIntervals = (children.get(span.spanId) ?? []).map(
-      (child) =>
-        [Math.max(child.startMs, span.startMs), Math.min(child.endMs, span.endMs)] as const,
-    );
+    // A child entirely outside its parent clips to an inverted interval that covers nothing.
+    const childIntervals = (children.get(span.spanId) ?? [])
+      .map(
+        (child) =>
+          [Math.max(child.startMs, span.startMs), Math.min(child.endMs, span.endMs)] as const,
+      )
+      .filter(([start, end]) => end > start);
     const self = Math.max(0, duration - coveredMs(childIntervals));
     selfByName.set(span.name, (selfByName.get(span.name) ?? 0) + self);
     const entry = repeatedByName.get(span.name) ?? { count: 0, totalMs: 0 };
@@ -197,22 +200,49 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
   return spans;
 });
 
-const main = Effect.gen(function* () {
-  const stdio = yield* Stdio.Stdio;
-  const args = yield* stdio.args;
-  const json = args.includes("--json");
+const USAGE = "usage: bun scripts/trace-report.ts <trace-file> [--top N] [--json]";
+
+export interface TraceReportOptions {
+  readonly file: string;
+  readonly top: number;
+  readonly json: boolean;
+}
+
+/** Parses argv into {@link TraceReportOptions}; throws on a missing file or a bad `--top`. */
+export function parseTraceReportArgs(args: ReadonlyArray<string>): TraceReportOptions {
   const topIndex = args.indexOf("--top");
-  const top = topIndex === -1 ? 15 : Number(args[topIndex + 1] ?? 15);
+  const top = topIndex === -1 ? 15 : Number(args[topIndex + 1]);
+  if (!Number.isInteger(top) || top < 1) {
+    throw new Error("--top must be a positive integer");
+  }
   const file = args.find(
     (arg, index) => !arg.startsWith("--") && (topIndex === -1 || index !== topIndex + 1),
   );
-  if (file === undefined) {
-    return yield* Effect.fail(
-      new Error("usage: bun scripts/trace-report.ts <trace-file> [--top N] [--json]"),
-    );
-  }
-  const report = analyzeTrace(yield* readSpans(file), top);
-  yield* Console.log(json ? JSON.stringify(report, null, 2) : formatReport(report));
+  if (file === undefined) throw new Error(USAGE);
+  return { file, top, json: args.includes("--json") };
+}
+
+const main = Effect.gen(function* () {
+  const stdio = yield* Stdio.Stdio;
+  const args = yield* stdio.args;
+  const options = yield* Effect.try({
+    try: () => parseTraceReportArgs(args),
+    catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
+  }).pipe(
+    Effect.catch((message) =>
+      Console.error(message === USAGE ? USAGE : `${message}\n${USAGE}`).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            process.exitCode = 2;
+          }),
+        ),
+        Effect.as(undefined),
+      ),
+    ),
+  );
+  if (options === undefined) return;
+  const report = analyzeTrace(yield* readSpans(options.file), options.top);
+  yield* Console.log(options.json ? JSON.stringify(report, null, 2) : formatReport(report));
 });
 
 if (import.meta.main) {

@@ -219,11 +219,15 @@ const observedTracer = (
     context: base.context,
   });
 
-const debugConsoleTracer = Effect.fnUntraced(function* (base: Tracer.Tracer) {
+const debugConsoleTracer = Effect.fnUntraced(function* (
+  base: Tracer.Tracer,
+  root: Option.Option<Tracer.AnySpan>,
+) {
   const stdio = yield* Stdio.Stdio;
   const exportSpan = makeDebugConsoleExporter(
     (line) => Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.asVoid),
     yield* makeTraceSanitizer,
+    root,
   );
   const queue = yield* Queue.unbounded<Tracer.Span, Cause.Done>();
   const worker = yield* Queue.take(queue).pipe(
@@ -281,10 +285,11 @@ export const withDebugConsole = <A, E, R>(
       Option.exists(settings.telemetryDebug, (value) => value === "1");
     if (!enabled) return yield* effect;
     const base = yield* Effect.tracer;
+    const root = yield* Effect.option(Effect.currentParentSpan);
     return yield* Effect.acquireUseRelease(
       Scope.make(),
       (scope) =>
-        debugConsoleTracer(base).pipe(
+        debugConsoleTracer(base, root).pipe(
           Scope.provide(scope),
           Effect.flatMap((tracer) =>
             effect.pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true)),
@@ -311,38 +316,31 @@ export const withTraceExport =
     const sink = settings.sink.value;
     return Effect.gen(function* () {
       const parent = yield* externalParent;
-      const scope = yield* Scope.make();
-      const context = yield* Layer.buildWithScope(
-        Layer.effect(Tracer.Tracer, sinkTracer(sink)),
-        scope,
-      ).pipe(
-        Effect.catchCause((cause) => {
-          const reason = Cause.squash(cause);
-          return Scope.close(scope, Exit.failCause(cause)).pipe(
-            Effect.andThen(
-              Effect.fail(
+      return yield* Effect.acquireUseRelease(
+        Scope.make(),
+        (scope) =>
+          Layer.buildWithScope(Layer.effect(Tracer.Tracer, sinkTracer(sink)), scope).pipe(
+            Effect.catchCause((cause) => {
+              const reason = Cause.squash(cause);
+              return Effect.fail(
                 new TraceExportConfigError({
                   message: `Could not start trace export: ${reason instanceof Error ? reason.message : String(reason)}`,
                 }),
+              );
+            }),
+            Effect.flatMap((context) =>
+              effect.pipe(
+                Effect.withSpan("cli.run", {
+                  attributes,
+                  ...(Option.isSome(parent) ? { parent: parent.value } : {}),
+                }),
+                Effect.provideService(ChildTracePropagation, true),
+                Effect.provide(context),
               ),
             ),
-          );
-        }),
+          ),
+        (scope, exit) =>
+          Scope.close(scope, exit).pipe(Effect.interruptible, Effect.timeoutOption(FLUSH_TIMEOUT)),
       );
-      const exit = yield* effect.pipe(
-        Effect.withSpan("cli.run", {
-          attributes,
-          ...(Option.isSome(parent) ? { parent: parent.value } : {}),
-        }),
-        Effect.provideService(ChildTracePropagation, true),
-        Effect.provide(context),
-        Effect.exit,
-      );
-      yield* Scope.close(scope, exit).pipe(
-        Effect.interruptible,
-        Effect.timeoutOption(FLUSH_TIMEOUT),
-        Effect.uninterruptible,
-      );
-      return yield* exit;
     }).pipe(Effect.withTracerEnabled(true));
   };

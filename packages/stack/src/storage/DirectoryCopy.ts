@@ -135,7 +135,7 @@ const runExec = (
       }
       return text;
     }),
-  );
+  ).pipe(Effect.withSpan("DirectoryCopy.exec"));
 
 const findUnsupportedEntry = (
   source: string,
