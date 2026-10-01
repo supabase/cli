@@ -1,11 +1,12 @@
 import { Effect, Schema } from "effect";
 import { claimantOf } from "../Ports.ts";
+import type { EndpointPortChange } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import type * as State from "../State.ts";
 import { planEndpointReplan } from "./Supabase.ts";
 
 /** One changed endpoint's claim key and its port before the change, for reporting and restore. */
-interface ChangedEndpointKey {
+export interface ChangedEndpointKey {
   readonly key: string;
   readonly service: string;
   readonly endpoint: string;
@@ -85,3 +86,19 @@ export const restoreFailedEndpointReplan = Effect.fn("EndpointReplan.restore")(f
     }),
   );
 });
+
+/**
+ * The changed keys whose newly claimed port differs from its saved value, as reportable endpoint
+ * changes. An automatic re-plan that resolved back to its previous port is left out: persisting
+ * the updated intent still matters, but it is not a change worth reporting.
+ */
+export const reportedEndpointChanges = (
+  changedKeys: ReadonlyArray<ChangedEndpointKey>,
+  after: State.SavedStack | undefined,
+): ReadonlyArray<EndpointPortChange> =>
+  changedKeys.flatMap((change) => {
+    const to = after?.ports.find((claim) => claim.key === change.key)?.port;
+    return change.previousPort === undefined || to === undefined || change.previousPort === to
+      ? []
+      : [{ service: change.service, endpoint: change.endpoint, from: change.previousPort, to }];
+  });

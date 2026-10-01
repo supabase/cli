@@ -686,7 +686,9 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       });
     const { config, keys, toml } =
       configBeforeCreate ?? (yield* loadStartConfig(target.projectRoot, fs, path));
-    const requested = yield* resolveRequested(stack.id, config);
+    // Reuses the creations already resolved for the re-plan above instead of reading the
+    // Functions dotenv a second time; only a new or already-running stack has none yet.
+    const requested = requestedForReplan ?? (yield* resolveRequested(stack.id, config));
     if (
       requested.some(({ service }) => service === "studio") &&
       !requested.some(({ service }) => service === "rest")

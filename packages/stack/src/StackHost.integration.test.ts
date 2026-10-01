@@ -32,8 +32,15 @@ import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
 import * as State from "./State.ts";
-import { bindControl, makeRuntime, runStackHost, StackHostError } from "./StackHost.ts";
+import {
+  bindControl,
+  commitOrRestoreEndpointReplan,
+  makeRuntime,
+  runStackHost,
+  StackHostError,
+} from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
+import { captureLogs } from "../tests/logs.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
@@ -1058,17 +1065,17 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("restores the saved document when a later startup step fails after a re-plan", () =>
+it.live("keeps the re-planned document committed when a later startup step fails", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-restore-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-commit-" });
       const state = yield* stateFor(root);
       const fixedPort = 24_613;
       const saved: State.SavedStack = {
         id: "stack",
         lifetime: "detached",
-        identity: { projectRoot: root, branchContext: "main", stackName: "replan-restore" },
+        identity: { projectRoot: root, branchContext: "main", stackName: "replan-commit" },
         runtime: "native",
         instances: [
           {
@@ -1080,18 +1087,19 @@ it.live("restores the saved document when a later startup step fails after a re-
         ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
       };
       yield* state.save(saved);
-      const requestedAuto: ServiceCreationInput = {
+      const requestedFixed: ServiceCreationInput = {
         service: "rest",
         config: {},
-        endpoints: { http: { port: "auto" } },
+        endpoints: { http: { port: fixedPort + 1 } },
       };
-      // Claiming the re-planned port succeeds; a later, unrelated startup step then fails, and
-      // the restore must still cover it, not only a typed `claimEndpoints` conflict.
+      // The claim already committed, under the lease, before the owner ever served RPC or
+      // published its holder; a later, unrelated startup failure must not undo it, since an
+      // attached client could have persisted its own change in the meantime.
       const failure = yield* runStackHost({
         stateRoot: root,
         cacheRoot: root,
         stackId: "stack",
-        requestedCreations: [requestedAuto],
+        requestedCreations: [requestedFixed],
         onReady: () =>
           Effect.fail(
             new StackHostError({ operation: "startup", message: "injected late failure" }),
@@ -1099,28 +1107,30 @@ it.live("restores the saved document when a later startup step fails after a re-
       }).pipe(Effect.flip);
       expect(failure.message).toContain("injected late failure");
 
-      const restored = yield* state.read("stack");
-      expect(restored?.ports).toEqual(saved.ports);
-      expect(restored?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
-        http: { port: fixedPort },
+      const after = yield* state.read("stack");
+      expect(after?.ports.find((claim) => claim.key === "api")?.port).toBe(fixedPort + 1);
+      expect(after?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
+        http: { port: fixedPort + 1 },
       });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live(
-  "leaves a restored claim unclaimed when another stack took its port during the failed re-plan",
+  "does not let a later startup failure overwrite a mutation an attached client made after the re-plan committed",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-overlap-" });
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-host-replan-no-overwrite-",
+        });
         const state = yield* stateFor(root);
-        const fixedPort = 24_617;
+        const fixedPort = 24_623;
         const saved: State.SavedStack = {
           id: "stack",
           lifetime: "detached",
-          identity: { projectRoot: root, branchContext: "main", stackName: "replan-overlap" },
+          identity: { projectRoot: root, branchContext: "main", stackName: "replan-no-overwrite" },
           runtime: "native",
           instances: [
             {
@@ -1132,43 +1142,103 @@ it.live(
           ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
         };
         yield* state.save(saved);
-        // Another stack already claims the exact port the failed re-plan's restore would
-        // otherwise re-establish.
-        const other: State.SavedStack = {
-          id: "other-stack",
-          lifetime: "detached",
-          identity: { projectRoot: root, branchContext: "main", stackName: "replan-overlap-other" },
-          runtime: "native",
-          instances: [],
-          composition: { members: [], dependencies: [] },
-          ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
-        };
-        yield* state.save(other);
-        const requestedAuto: ServiceCreationInput = {
+        const requestedFixed: ServiceCreationInput = {
           service: "rest",
           config: {},
-          endpoints: { http: { port: "auto" } },
+          endpoints: { http: { port: fixedPort + 1 } },
         };
+        // `onReady` runs only after the owner serves RPC and publishes its holder, so building a
+        // client from the same `access` it receives stands in for a real client that attached in
+        // that window: its acknowledged mutation must survive the later injected failure, rather
+        // than being overwritten by a restore of the pre-re-plan document.
         const failure = yield* runStackHost({
           stateRoot: root,
           cacheRoot: root,
           stackId: "stack",
-          requestedCreations: [requestedAuto],
-          onReady: () =>
-            Effect.fail(
-              new StackHostError({ operation: "startup", message: "injected late failure" }),
+          requestedCreations: [requestedFixed],
+          onReady: (access) =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const client = yield* ownerClient(access);
+                yield* client.configureComposition({
+                  members: [{ id: "rest-1", activation: "lazy" }],
+                  dependencies: [],
+                });
+                return yield* new StackHostError({
+                  operation: "startup",
+                  message: "injected late failure",
+                });
+              }),
+            ).pipe(
+              Effect.mapError((cause) =>
+                cause instanceof StackHostError
+                  ? cause
+                  : new StackHostError({ operation: "startup", message: String(cause) }),
+              ),
+              Effect.provide(NodeHttpClient.layerNodeHttp),
             ),
         }).pipe(Effect.flip);
         expect(failure.message).toContain("injected late failure");
 
-        // The intent still names the old port, so the next start retries it and hits the other
-        // stack's own claim as a normal port conflict; the claim itself is not re-established.
-        const restored = yield* state.read("stack");
-        expect(restored?.ports).toEqual([]);
-        expect(restored?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
-          http: { port: fixedPort },
+        const after = yield* state.read("stack");
+        // The re-plan's new port claim stays committed...
+        expect(after?.instances.find(({ id }) => id === "rest-1")?.creation.endpoints).toEqual({
+          http: { port: fixedPort + 1 },
         });
-        expect(yield* state.read("other-stack")).toEqual(other);
+        // ...and so does the attached client's own acknowledged mutation.
+        expect(after?.composition.members).toEqual([{ id: "rest-1", activation: "lazy" }]);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("notes a restore failure in the startup error without losing the original message", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-host-replan-restore-fails-",
+      });
+      const state = yield* stateFor(root);
+      const fixedPort = 24_629;
+      const registered: State.SavedStack = {
+        id: "stack",
+        lifetime: "detached",
+        identity: { projectRoot: root, branchContext: "main", stackName: "replan-restore-fails" },
+        runtime: "native",
+        instances: [
+          {
+            id: "rest-1",
+            creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+          },
+        ],
+        composition: { members: [{ id: "rest-1", activation: "eager" }], dependencies: [] },
+        ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+      };
+      yield* state.save(registered);
+      // The restore's own lock is unavailable, deterministically, after the prepared document
+      // has already committed, without a real port conflict or process crash.
+      const failingState: State.Interface = {
+        ...state,
+        withLock: <A, E, R>(
+          _effect: Effect.Effect<A, E, R>,
+        ): Effect.Effect<A, E | State.StateError, R> =>
+          Effect.fail(new State.StateError({ operation: "withLock", message: "lock unavailable" })),
+      };
+      const logs: Array<string> = [];
+      const result = yield* commitOrRestoreEndpointReplan(
+        failingState,
+        registered,
+        [{ key: "api" }],
+        Effect.fail(
+          new StackHostError({ operation: "startup", message: "injected claim failure" }),
+        ),
+      ).pipe(Effect.flip, Effect.provide(captureLogs(["Error"])(logs)));
+
+      expect(result.message).toContain("injected claim failure");
+      expect(result.message).toContain("could not be restored");
+      expect(logs.some((line) => line.includes("Restoring the saved endpoint state failed"))).toBe(
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

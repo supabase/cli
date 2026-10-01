@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
 import type { SavedStack } from "../State.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
-import { prepareEndpointReplan } from "./EndpointReplan.ts";
+import { prepareEndpointReplan, reportedEndpointChanges } from "./EndpointReplan.ts";
 
 const fixedPort = 54_321;
 
@@ -88,3 +88,23 @@ it.effect("returns undefined when the incompatibility is not a pure endpoint rea
     expect(preparation).toBeUndefined();
   }),
 );
+
+it("leaves out a changed key whose automatic re-plan resolved back to its previous port", () => {
+  const changedKeys = [{ key: "api", service: "rest", endpoint: "http", previousPort: fixedPort }];
+  const after: SavedStack = {
+    ...savedStack(),
+    ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+  };
+  expect(reportedEndpointChanges(changedKeys, after)).toEqual([]);
+});
+
+it("reports a changed key whose claimed port differs from its previous one", () => {
+  const changedKeys = [{ key: "api", service: "rest", endpoint: "http", previousPort: fixedPort }];
+  const after: SavedStack = {
+    ...savedStack(),
+    ports: [{ key: "api", host: "127.0.0.1", port: fixedPort + 1 }],
+  };
+  expect(reportedEndpointChanges(changedKeys, after)).toEqual([
+    { service: "rest", endpoint: "http", from: fixedPort, to: fixedPort + 1 },
+  ]);
+});

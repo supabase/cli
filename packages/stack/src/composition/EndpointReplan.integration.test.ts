@@ -51,12 +51,7 @@ const claimIfFree = (state: State.Interface, stackId: string, port: number) =>
     }),
   );
 
-/**
- * Forces another stack's lock-protected claim on the restored port to commit before the restore's
- * own lock is taken, through a thin wrapper around the existing `State.Interface.withLock` seam:
- * no new production hook, no sleeps. Reading other stacks' claims inside that same lock, as the
- * fix does, then sees the committed claim; reading them before taking the lock does not.
- */
+/** The other stack's claim commits before the restore takes the registry lock, so the restore's read of other stacks' claims inside that lock already sees it. */
 it.live(
   "restores the saved document without overlapping a claim another stack committed first",
   () =>

@@ -54,6 +54,7 @@ import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import {
   prepareEndpointReplan,
+  reportedEndpointChanges,
   restoreFailedEndpointReplan,
 } from "./composition/EndpointReplan.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
@@ -400,6 +401,38 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
 
 type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
 
+/**
+ * Runs `commit`; if it fails or is interrupted, restores the saved endpoint state and re-fails
+ * with the original cause. If that restore itself fails, logs it and appends recovery guidance to
+ * the original failure's message instead of letting the restore failure replace or mask it.
+ */
+export const commitOrRestoreEndpointReplan = <A>(
+  state: State.Interface,
+  registered: State.SavedStack,
+  changedKeys: ReadonlyArray<{ readonly key: string }>,
+  commit: Effect.Effect<A, StackHostError>,
+): Effect.Effect<A, StackHostError> =>
+  commit.pipe(
+    Effect.catchCause((cause: Cause.Cause<StackHostError>) =>
+      Effect.gen(function* () {
+        const restoreExit = yield* restoreFailedEndpointReplan(state, registered, changedKeys).pipe(
+          Effect.exit,
+        );
+        if (Exit.isSuccess(restoreExit)) return yield* Effect.failCause(cause);
+        yield* Effect.logError(
+          "Restoring the saved endpoint state failed after a failed re-plan",
+          restoreExit.cause,
+        );
+        const failure = Cause.findErrorOption(cause);
+        if (Option.isNone(failure)) return yield* Effect.failCause(cause);
+        return yield* new StackHostError({
+          ...failure.value,
+          message: `${failure.value.message} The saved endpoint state could not be restored either: stop the stack, then start it again, or destroy it to recreate it.`,
+        });
+      }),
+    ),
+  );
+
 export const runStackHost = Effect.fn("StackHost.run")(
   (options: StackHostOptions): Effect.Effect<void, StackHostError, never> =>
     Effect.scoped(
@@ -493,99 +526,89 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const owner = Context.get(services, Owner.Service);
           // The document is saved here, as late as practical, because the owner's own endpoint
           // binding below reads it back through the same `Ports.acquire` path a live composition
-          // bind uses. From here through the end of startup, any failure or interruption restores
-          // the exact document read before the re-plan, while this process still alone holds the
-          // lease; a hard process death in this window is an accepted limitation, and the next
-          // successful start converges the saved state again.
-          const claimAndFinish = Effect.gen(function* () {
-            if (preparation !== undefined) yield* state.withLock(state.save(saved));
-            const startupEndpointChanges: ReadonlyArray<EndpointPortChange> =
-              preparation === undefined
-                ? []
-                : yield* owner.claimEndpoints(preparation.changedInstanceIds).pipe(
-                    Effect.mapError((cause) => hostError("startup", cause)),
-                    Effect.andThen(
-                      state.read(saved.id).pipe(
-                        Effect.mapError((cause) => hostError("startup", cause)),
-                        Effect.map((after): ReadonlyArray<EndpointPortChange> =>
-                          preparation.changedKeys.flatMap((change) => {
-                            const to = after?.ports.find((claim) => claim.key === change.key)?.port;
-                            return change.previousPort === undefined || to === undefined
-                              ? []
-                              : [
-                                  {
-                                    service: change.service,
-                                    endpoint: change.endpoint,
-                                    from: change.previousPort,
-                                    to,
-                                  },
-                                ];
-                          }),
-                        ),
-                      ),
-                    ),
-                  );
-            const endpoint: HostEndpoint = {
-              stackId: saved.id,
-              identity: saved.identity,
-              pid: process.pid,
-              port: control.port,
-              release: options.release ?? (yield* currentRelease),
-            };
-            const crypto = yield* Crypto.Crypto;
-            const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
-              byte.toString(16).padStart(2, "0"),
-            ).join("");
-            const access: HostAccess = { endpoint, secret };
-            const runtime = yield* makeRuntime(
-              owner,
-              access,
-              control.server,
-              control.closeConnections,
-              startupEndpointChanges,
-            ).pipe(
-              Effect.provideService(
-                CommandRunner.Service,
-                Context.get(services, CommandRunner.Service),
+          // bind uses. This commits before the owner serves RPC or publishes its holder below, so
+          // no attached client can race it: a failure here restores the exact document read before
+          // the re-plan, while this process still alone holds the lease; a hard process death in
+          // this window is an accepted limitation, and the next successful start converges the
+          // saved state again. A failure after this point must not trigger that restore, since by
+          // then a client may already have attached and persisted its own acknowledged change.
+          const commitReplan: Effect.Effect<
+            ReadonlyArray<EndpointPortChange>,
+            StackHostError
+          > = Effect.gen(function* () {
+            if (preparation !== undefined)
+              yield* state
+                .withLock(state.save(saved))
+                .pipe(Effect.mapError((cause) => hostError("startup", cause)));
+            if (preparation === undefined) return [];
+            return yield* owner.claimEndpoints(preparation.changedInstanceIds).pipe(
+              Effect.mapError((cause) => hostError("startup", cause)),
+              Effect.andThen(
+                state.read(saved.id).pipe(
+                  Effect.mapError((cause) => hostError("startup", cause)),
+                  Effect.map((after) => reportedEndpointChanges(preparation.changedKeys, after)),
+                ),
               ),
             );
-            yield* runtime.serve;
-            yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-            yield* state.publishHolder(id, {
-              role: "owner",
-              secret,
-              port: endpoint.port,
-              pid: endpoint.pid,
-              release: endpoint.release,
-              lifetime: saved.lifetime,
-              startedAt: DateTime.formatIso(yield* DateTime.now),
-            });
-            if (saved.lifetime === "session")
-              yield* Effect.forkScoped(
-                creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
-              );
-            yield* options.onReady?.(access) ?? Effect.void;
-            yield* Effect.forkScoped(
-              sweepOrphans({
-                state,
-                stateRoot: options.stateRoot,
-                cacheRoot: options.cacheRoot,
-                ownerId: id,
-              }),
-            );
-            return runtime;
           });
-          return yield* preparation === undefined
-            ? claimAndFinish
-            : claimAndFinish.pipe(
-                Effect.onExit((exit) =>
-                  Exit.isSuccess(exit)
-                    ? Effect.void
-                    : restoreFailedEndpointReplan(state, registered, preparation.changedKeys).pipe(
-                        Effect.ignore,
-                      ),
-                ),
-              );
+          const startupEndpointChanges: ReadonlyArray<EndpointPortChange> =
+            preparation === undefined
+              ? yield* commitReplan
+              : yield* commitOrRestoreEndpointReplan(
+                  state,
+                  registered,
+                  preparation.changedKeys,
+                  commitReplan,
+                );
+          const endpoint: HostEndpoint = {
+            stackId: saved.id,
+            identity: saved.identity,
+            pid: process.pid,
+            port: control.port,
+            release: options.release ?? (yield* currentRelease),
+          };
+          const crypto = yield* Crypto.Crypto;
+          const secret = Array.from(yield* crypto.randomBytes(32), (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("");
+          const access: HostAccess = { endpoint, secret };
+          const runtime = yield* makeRuntime(
+            owner,
+            access,
+            control.server,
+            control.closeConnections,
+            startupEndpointChanges,
+          ).pipe(
+            Effect.provideService(
+              CommandRunner.Service,
+              Context.get(services, CommandRunner.Service),
+            ),
+          );
+          yield* runtime.serve;
+          yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
+          yield* state.publishHolder(id, {
+            role: "owner",
+            secret,
+            port: endpoint.port,
+            pid: endpoint.pid,
+            release: endpoint.release,
+            lifetime: saved.lifetime,
+            startedAt: DateTime.formatIso(yield* DateTime.now),
+          });
+          if (saved.lifetime === "session")
+            yield* Effect.forkScoped(
+              creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
+            );
+          yield* options.onReady?.(access) ?? Effect.void;
+          yield* Effect.forkScoped(
+            sweepOrphans({
+              state,
+              stateRoot: options.stateRoot,
+              cacheRoot: options.cacheRoot,
+              ownerId: id,
+            }),
+          );
+          return runtime;
         }).pipe(
           Effect.raceFirst(
             Queue.take(events).pipe(
