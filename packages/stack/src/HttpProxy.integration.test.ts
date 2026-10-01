@@ -1109,7 +1109,7 @@ it.live("records each request once with the status the client was sent", () => {
             "http://127.0.0.1:54321/y?apikey=sb_publishable_x#refresh_token=r&provider_token=p",
         }),
         yield* get(
-          "/elsewhere?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT&next=http%3A%2F%2Flocalhost%3A3000%2F",
+          "/elsewhere?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT&return_to=https%3A%2F%2Fuser%3Asecret%40client%2Fcb&next=http%3A%2F%2Flocalhost%3A3000%2F",
           { referer: "https://user:password@studio.test/relative?Access_Token=jwt" },
         ),
         yield* get("/down/thing?token=t&redirect_to=https://client/cb?access_token=JWT"),
@@ -1139,7 +1139,8 @@ it.live("records each request once with the status the client was sent", () => {
             "http://127.0.0.1:54321/y?apikey=redacted#refresh_token=redacted&provider_token=redacted",
         }),
         expect.objectContaining({
-          target: "/elsewhere?redirect_to=redacted&next=http%3A%2F%2Flocalhost%3A3000%2F",
+          target:
+            "/elsewhere?redirect_to=redacted&return_to=redacted&next=http%3A%2F%2Flocalhost%3A3000%2F",
           status: 404,
           bytes: 9,
           referer: "https://redacted@studio.test/relative?Access_Token=redacted",

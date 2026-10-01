@@ -168,6 +168,9 @@ const credentialParameters = new Set([
 /** A credential pair inside a decoded value, such as a `redirect_to` URL carrying a token. */
 const nestedCredential = new RegExp(`(?:^|[?&#])(?:${[...credentialParameters].join("|")})=`, "iu");
 
+const userinfo = /^([a-z][a-z\d+.-]*:\/\/)[^/?#@]*@/iu;
+const nestedUserinfo = /[a-z][a-z\d+.-]*:\/\/[^/?#@]*@/iu;
+
 const redactPairs = (pairs: string) =>
   pairs
     .split("&")
@@ -175,14 +178,14 @@ const redactPairs = (pairs: string) =>
       const separator = parameter.indexOf("=");
       if (separator < 0) return parameter;
       const name = parameter.slice(0, separator);
+      const value = decodeQuery(parameter.slice(separator + 1));
       return credentialParameters.has(decodeQuery(name).toLowerCase()) ||
-        nestedCredential.test(decodeQuery(parameter.slice(separator + 1)))
+        nestedCredential.test(value) ||
+        nestedUserinfo.test(value)
         ? `${name}=redacted`
         : parameter;
     })
     .join("&");
-
-const userinfo = /^([a-z][a-z\d+.-]*:\/\/)[^/?#@]*@/iu;
 
 /**
  * Redacts an absolute URL's userinfo and credential values in its query and fragment, where
