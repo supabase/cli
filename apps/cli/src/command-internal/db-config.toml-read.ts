@@ -23,6 +23,7 @@ import {
   validateResolvedConfig,
 } from "./config-validate.ts";
 import { DbConfigLoadError } from "./db-config.errors.ts";
+import { recordOrioleDbTelemetry, selectsOrioleDb } from "./db-image.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { strToArr } from "./local-config-values.ts";
 import { ramInBytes } from "./size-units.ts";
@@ -1283,7 +1284,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     (remoteWins("db.orioledb_version") ? undefined : envOverride("SUPABASE_DB_ORIOLEDB_VERSION")) ??
     db?.["orioledb_version"];
   const orioledbVersion = expandString(orioledbVersionRaw);
-  if (Option.isSome(orioledbVersion) && (majorVersion === 15 || majorVersion === 17)) {
+  // The defaults-only fallback says nothing about the project's engine.
+  if (!ignoreConfigFile) {
+    yield* recordOrioleDbTelemetry(Option.getOrUndefined(orioledbVersion), majorVersion);
+  }
+  if (selectsOrioleDb(Option.getOrUndefined(orioledbVersion), majorVersion)) {
     // Warns (does not fail) when an S3 field still holds an unexpanded `env(VAR)`;
     // matches the established stderr line, with the env var name from the capture.
     const s3Fields = ["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const;

@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
-import { Effect, Exit, FileSystem, Layer, Path, Schema } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path, Ref, Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
 import { ServiceCreationInput } from "../../../../../../packages/stack/src/services/Catalog.ts";
 import { runtimeInfoLayer } from "../../../shared/runtime/runtime-info.layer.ts";
@@ -10,6 +10,10 @@ import { renderCliConfigTemplate } from "../../../shared/init/project-init.templ
 
 import { loadStackConfig } from "../../../command-internal/stack-config.ts";
 import { createStackConfigProject } from "../../../../tests/helpers/stack-config.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 
 const load = (projectRoot: string) =>
   loadStackConfig(projectRoot).pipe(
@@ -367,6 +371,35 @@ s3_host = "s3.example.test"
 `);
       const s3Config = yield* load(s3);
       expect(s3Config.source.experimental.s3_host).toBe("s3.example.test");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("records OrioleDB selection on the command event before rejecting it", () =>
+    Effect.gen(function* () {
+      const loadRecordingOrioleDb = (projectRoot: string) =>
+        Effect.gen(function* () {
+          const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
+          const exit = yield* load(projectRoot).pipe(
+            Effect.provideService(CommandTelemetryAttributes, {
+              record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
+            }),
+            Effect.exit,
+          );
+          return { exit, orioledb: (yield* Ref.get(recorded)).orioledb };
+        });
+
+      const orioledb = yield* project(`project_id = "stack-config-orioledb-telemetry"
+[db]
+orioledb_version = "15.1.1.14"
+`);
+      const rejected = yield* loadRecordingOrioleDb(orioledb);
+      expect(Exit.isFailure(rejected.exit)).toBe(true);
+      expect(rejected.orioledb).toBe(true);
+
+      const standard = yield* project(`project_id = "stack-config-standard-telemetry"\n`);
+      const accepted = yield* loadRecordingOrioleDb(standard);
+      expect(Exit.isSuccess(accepted.exit)).toBe(true);
+      expect(accepted.orioledb).toBe(false);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
