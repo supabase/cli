@@ -1112,7 +1112,9 @@ it.live("records each request once with the status the client was sent", () => {
           "/elsewhere?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT&return_to=https%3A%2F%2Fuser%3Asecret%40client%2Fcb&next=http%3A%2F%2Flocalhost%3A3000%2F",
           { referer: "https://user:password@studio.test/relative?Access_Token=jwt" },
         ),
-        yield* get("/down/thing?token=t&redirect_to=https://client/cb?access_token=JWT"),
+        yield* get(
+          "/down/thing?token=t&redirect_to=https://client/cb?access_token=JWT&back=https%253A%252F%252Fclient%252Fcb%253Faccess_token%253DJWT",
+        ),
       ];
       const recorded = yield* Queue.takeN(accesses, 4);
 
@@ -1146,7 +1148,7 @@ it.live("records each request once with the status the client was sent", () => {
           referer: "https://redacted@studio.test/relative?Access_Token=redacted",
         }),
         expect.objectContaining({
-          target: "/down/thing?token=redacted&redirect_to=redacted",
+          target: "/down/thing?token=redacted&redirect_to=redacted&back=redacted",
           status: 502,
           bytes: 11,
         }),

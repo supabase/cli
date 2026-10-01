@@ -152,6 +152,17 @@ const decodeQuery = (value: string) => {
   }
 };
 
+/** Decodes repeatedly so a nested URL encoded more than once still exposes its delimiters. */
+const decodeNested = (value: string) => {
+  let current = value;
+  for (let pass = 0; pass < 4; pass++) {
+    const next = decodeQuery(current);
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+};
+
 // Auth puts PKCE codes, OTP token hashes and OAuth tokens in redirect and verify URLs.
 const credentialParameters = new Set([
   "apikey",
@@ -178,7 +189,7 @@ const redactPairs = (pairs: string) =>
       const separator = parameter.indexOf("=");
       if (separator < 0) return parameter;
       const name = parameter.slice(0, separator);
-      const value = decodeQuery(parameter.slice(separator + 1));
+      const value = decodeNested(parameter.slice(separator + 1));
       return credentialParameters.has(decodeQuery(name).toLowerCase()) ||
         nestedCredential.test(value) ||
         nestedUserinfo.test(value)
