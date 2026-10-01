@@ -1031,13 +1031,21 @@ it.live("releases a waiting WebSocket target quietly when its client resets", ()
 /** Opens a raw client connection that has written `text`. */
 const rawClient = (port: number, text: string) =>
   Effect.acquireRelease(
-    Effect.callback<Socket>((resume) => {
+    Effect.callback<Socket, HttpProxyTestError>((resume) => {
       const socket = new Socket();
-      socket.on("error", () => undefined);
+      const onConnectError = (cause: Error) => {
+        socket.destroy();
+        resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause })));
+      };
+      socket.once("error", onConnectError);
       socket.connect(port, "127.0.0.1", () => {
+        socket.off("error", onConnectError);
+        // Tests reset these connections on purpose.
+        socket.on("error", () => undefined);
         socket.write(text);
         resume(Effect.succeed(socket));
       });
+      return Effect.sync(() => socket.destroy());
     }),
     (socket) => Effect.sync(() => socket.destroy()),
   );
@@ -1051,6 +1059,8 @@ const rawUpgrade = (port: number, path: string) =>
     Effect.flatMap((socket) =>
       Effect.callback<void>((resume) => {
         socket.once("close", () => resume(Effect.void));
+        // Drains any answer so an upstream's graceful end reaches the client as a close.
+        socket.resume();
         if (socket.destroyed) resume(Effect.void);
       }),
     ),
@@ -1098,8 +1108,11 @@ it.live("records each request once with the status the client was sent", () => {
           referer:
             "http://127.0.0.1:54321/y?apikey=sb_publishable_x#refresh_token=r&provider_token=p",
         }),
-        yield* get("/elsewhere", { referer: "/relative?Access_Token=jwt" }),
-        yield* get("/down/thing?token=t"),
+        yield* get(
+          "/elsewhere?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT&next=http%3A%2F%2Flocalhost%3A3000%2F",
+          { referer: "https://user:password@studio.test/relative?Access_Token=jwt" },
+        ),
+        yield* get("/down/thing?token=t&redirect_to=https://client/cb?access_token=JWT"),
       ];
       const recorded = yield* Queue.takeN(accesses, 4);
 
@@ -1126,12 +1139,16 @@ it.live("records each request once with the status the client was sent", () => {
             "http://127.0.0.1:54321/y?apikey=redacted#refresh_token=redacted&provider_token=redacted",
         }),
         expect.objectContaining({
-          target: "/elsewhere",
+          target: "/elsewhere?redirect_to=redacted&next=http%3A%2F%2Flocalhost%3A3000%2F",
           status: 404,
           bytes: 9,
-          referer: "/relative?Access_Token=redacted",
+          referer: "https://redacted@studio.test/relative?Access_Token=redacted",
         }),
-        expect.objectContaining({ target: "/down/thing?token=redacted", status: 502, bytes: 11 }),
+        expect.objectContaining({
+          target: "/down/thing?token=redacted&redirect_to=redacted",
+          status: 502,
+          bytes: 11,
+        }),
       ]);
       expect(yield* Queue.size(accesses)).toBe(0);
     }),
@@ -1155,6 +1172,24 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         connection.once("data", () => Deferred.doneUnsafe(upgradeReceived, Effect.void));
       });
       const silentAddress = yield* listen(silent);
+      // Answers with an interim 1xx before the final handshake status, in separate writes.
+      const interim = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", (chunk: Buffer) => {
+          const upgrading = chunk.toString("latin1").startsWith("GET /interim/upgrade ");
+          connection.write(
+            upgrading
+              ? "HTTP/1.1 103 Early Hints\r\nLink: </app.css>; rel=preload\r\n\r\n"
+              : "HTTP/1.1 100 Continue\r\n\r\n",
+          );
+          connection.end(
+            upgrading
+              ? "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+              : "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+          );
+        });
+      });
+      const interimAddress = yield* listen(interim);
       const accesses = yield* Queue.unbounded<HttpAccess>();
       const proxy = yield* makeHttpProxy({
         host: "127.0.0.1",
@@ -1164,6 +1199,7 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
       yield* proxy.setRoutes([
         { id: "ws", prefix: "/socket", target: Effect.succeed(backendAddress) },
         { id: "silent", prefix: "/silent", target: Effect.succeed(silentAddress) },
+        { id: "interim", prefix: "/interim", target: Effect.succeed(interimAddress) },
         {
           id: "down",
           prefix: "/down",
@@ -1197,6 +1233,16 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
       expect(yield* Queue.take(accesses)).toMatchObject({ target: "/elsewhere", status: 404 });
       yield* rawUpgrade(proxy.port, "/down");
       expect(yield* Queue.take(accesses)).toMatchObject({ target: "/down", status: 502 });
+      yield* rawUpgrade(proxy.port, "/interim/forbidden");
+      expect(yield* Queue.take(accesses)).toMatchObject({
+        target: "/interim/forbidden",
+        status: 403,
+      });
+      yield* rawUpgrade(proxy.port, "/interim/upgrade");
+      expect(yield* Queue.take(accesses)).toMatchObject({
+        target: "/interim/upgrade",
+        status: 101,
+      });
 
       const leaving = yield* rawClient(proxy.port, upgradeRequest("/silent"));
       yield* Deferred.await(upgradeReceived);
@@ -1327,13 +1373,21 @@ it.live("records and releases a request whose client resets after the full body 
         },
       ]);
 
-      // The client never reads; socket buffers decide how much of the body the proxy flushed
-      // before the reset, so the record holds either the whole body or no byte count.
+      // The client stops reading after its first bytes; socket buffers decide how much of the
+      // body the proxy flushed before the reset, so the record holds the whole body or no count.
       const client = yield* rawClient(
         proxy.port,
         "GET /api/full HTTP/1.1\r\nHost: localhost\r\n\r\n",
       );
-      yield* Deferred.await(bodySent).pipe(Effect.timeout("5 seconds"));
+      const firstBytes = Effect.callback<void>((resume) => {
+        client.once("data", () => {
+          client.pause();
+          resume(Effect.void);
+        });
+      });
+      yield* Effect.all([firstBytes, Deferred.await(bodySent)], { concurrency: "unbounded" }).pipe(
+        Effect.timeout("5 seconds"),
+      );
       client.resetAndDestroy();
       const recorded = yield* Queue.take(accesses).pipe(Effect.timeout("5 seconds"));
       yield* Deferred.await(released).pipe(Effect.timeout("5 seconds"));

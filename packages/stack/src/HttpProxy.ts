@@ -165,6 +165,9 @@ const credentialParameters = new Set([
   "provider_refresh_token",
 ]);
 
+/** A credential pair inside a decoded value, such as a `redirect_to` URL carrying a token. */
+const nestedCredential = new RegExp(`(?:^|[?&#])(?:${[...credentialParameters].join("|")})=`, "iu");
+
 const redactPairs = (pairs: string) =>
   pairs
     .split("&")
@@ -172,24 +175,31 @@ const redactPairs = (pairs: string) =>
       const separator = parameter.indexOf("=");
       if (separator < 0) return parameter;
       const name = parameter.slice(0, separator);
-      return credentialParameters.has(decodeQuery(name).toLowerCase())
+      return credentialParameters.has(decodeQuery(name).toLowerCase()) ||
+        nestedCredential.test(decodeQuery(parameter.slice(separator + 1)))
         ? `${name}=redacted`
         : parameter;
     })
     .join("&");
 
+const userinfo = /^([a-z][a-z\d+.-]*:\/\/)[^/?#@]*@/iu;
+
 /**
- * Redacts credential values in a URL's query and fragment, where OAuth implicit grants put
- * `access_token`. Edits the text in place, so relative and unparsable URLs work and the rest of
- * the URL keeps its original encoding.
+ * Redacts an absolute URL's userinfo and credential values in its query and fragment, where
+ * OAuth implicit grants put `access_token`. Edits the text in place, so relative and unparsable
+ * URLs work and the rest of the URL keeps its original encoding.
  */
 const redactCredentials = (url: string) => {
   const hashAt = url.indexOf("#");
   const beforeHash = hashAt < 0 ? url : url.slice(0, hashAt);
   const queryAt = beforeHash.indexOf("?");
+  const base = (queryAt < 0 ? beforeHash : beforeHash.slice(0, queryAt)).replace(
+    userinfo,
+    "$1redacted@",
+  );
   const query = queryAt < 0 ? "" : `?${redactPairs(beforeHash.slice(queryAt + 1))}`;
   const fragment = hashAt < 0 ? "" : `#${redactPairs(url.slice(hashAt + 1))}`;
-  return `${queryAt < 0 ? beforeHash : beforeHash.slice(0, queryAt)}${query}${fragment}`;
+  return `${base}${query}${fragment}`;
 };
 
 /** Captures a request's access fields while its socket is open; completes them once it settles. */
@@ -470,6 +480,8 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
 );
 
 const statusLine = /^HTTP\/\d(?:\.\d)? (\d{3})\b/u;
+/** Upstream bytes read for the handshake status before giving up on finding one. */
+const answerLimit = 8 * 1024;
 
 const upgrade = Effect.fn("HttpProxy.upgrade")(
   (
@@ -519,13 +531,30 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         const onClientClose = () => (Deferred.isDoneUnsafe(handshake) ? onClose() : onClientGone());
         const onClientEnd = () => upstream.end();
         const onUpstreamEnd = () => client.end();
-        // Reads the handshake status off the bytes relayed to the client.
+        // Reads the final handshake status off the bytes relayed to the client, skipping interim
+        // 1xx responses such as 100 Continue (RFC 9110 section 15.2).
         const onAnswer = (chunk: Buffer) => {
           answer += chunk.toString("latin1");
-          if (!answer.includes("\r\n") && answer.length < 64) return;
-          upstream.off("data", onAnswer);
-          const status = statusLine.exec(answer)?.[1];
-          if (status !== undefined) Deferred.doneUnsafe(handshake, Effect.succeed(Number(status)));
+          while (true) {
+            const lineEnd = answer.indexOf("\r\n");
+            if (lineEnd < 0) {
+              if (answer.length >= answerLimit) upstream.off("data", onAnswer);
+              return;
+            }
+            const status = Number(statusLine.exec(answer.slice(0, lineEnd))?.[1] ?? Number.NaN);
+            if (status >= 100 && status < 200 && status !== 101) {
+              const headEnd = answer.indexOf("\r\n\r\n");
+              if (headEnd < 0) {
+                if (answer.length >= answerLimit) upstream.off("data", onAnswer);
+                return;
+              }
+              answer = answer.slice(headEnd + 4);
+              continue;
+            }
+            upstream.off("data", onAnswer);
+            if (!Number.isNaN(status)) Deferred.doneUnsafe(handshake, Effect.succeed(status));
+            return;
+          }
         };
         upstream.on("data", onAnswer);
         client.on("error", onClientGone);
@@ -575,6 +604,14 @@ export const makeHttpProxy = (options: {
         Effect.gen(function* () {
           const complete = accessFor(request, yield* Clock.currentTimeMillis);
           const sent: Sent = { bytes: 0, clientLeft: false };
+          // Timed when the response settles, before the target's release runs.
+          const settled =
+            onAccess === undefined
+              ? undefined
+              : yield* responseSettled(response).pipe(
+                  Effect.andThen(Clock.currentTimeMillis),
+                  Effect.forkChild({ startImmediately: true }),
+                );
           // The access record waits outside this scope, so it never holds the target's activity.
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -606,12 +643,12 @@ export const makeHttpProxy = (options: {
               }
             }),
           );
-          if (onAccess === undefined) return;
-          yield* responseSettled(response);
+          if (onAccess === undefined || settled === undefined) return;
+          const ended = yield* Fiber.join(settled);
           const delivered = response.writableFinished && !sent.clientLeft;
           yield* onAccess(
             complete(
-              yield* Clock.currentTimeMillis,
+              ended,
               response.headersSent ? response.statusCode : 499,
               delivered ? sent.bytes : undefined,
             ),

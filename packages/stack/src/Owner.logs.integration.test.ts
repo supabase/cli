@@ -156,6 +156,8 @@ describe("owner persisted logs", () => {
         const client = yield* HttpClient.HttpClient;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-gateway-" });
         const firstScope = yield* Scope.make();
+        // Closes the first owner if the test fails before the restart closes it.
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
         const first = yield* openOwner("owner-logs-gateway-", "native", { root }).pipe(
           Scope.provide(firstScope),
         );
