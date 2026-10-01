@@ -14,6 +14,12 @@ describe("redactCredentials", () => {
       redacted: "/auth/v1/verify?code=redacted&token_hash=redacted&type=signup",
     },
     {
+      case: "redacts S3 presigned URL signatures and session tokens",
+      url: "/storage/v1/s3/b/o.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AK%2F20261001%2Flocal%2Fs3%2Faws4_request&X-Amz-Expires=60&X-Amz-Security-Token=st&X-Amz-Signature=abc",
+      redacted:
+        "/storage/v1/s3/b/o.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=redacted&X-Amz-Expires=60&X-Amz-Security-Token=redacted&X-Amz-Signature=redacted",
+    },
+    {
       case: "redacts fragment credentials of an absolute URL",
       url: "http://127.0.0.1:54321/x?token=t1&select=*#access_token=frag&type=bearer",
       redacted:

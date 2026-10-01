@@ -44,9 +44,10 @@ PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string 
 persisted and shipped to Analytics. The shared API port also records one nginx combined line plus
 duration (`... "GET /rest/v1/todos?select=* HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms`) per request
 and WebSocket upgrade under `logs/gateway/gateway/`, with the same retention; credential query and
-fragment values (`apikey`, `token`, `token_hash`, `code`, and access, refresh, ID, and provider
-tokens), in the request target and the Referer, are written as `redacted`, as are values that
-themselves carry such a pair (a `redirect_to` URL with a token) and URL userinfo.
+fragment values (`apikey`, `token`, `token_hash`, `code`, access, refresh, ID, and provider
+tokens, and the `X-Amz-Signature`, `X-Amz-Credential`, and `X-Amz-Security-Token` of S3
+presigned URLs), in the request target and the Referer, are written as `redacted`, as are values
+that themselves carry such a pair (a `redirect_to` URL with a token) and URL userinfo.
 When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
 members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
 under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep.

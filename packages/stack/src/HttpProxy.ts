@@ -163,7 +163,8 @@ const decodeNested = (value: string) => {
   return current;
 };
 
-// Auth puts PKCE codes, OTP token hashes and OAuth tokens in redirect and verify URLs.
+// Auth puts PKCE codes, OTP token hashes and OAuth tokens in redirect and verify URLs; S3
+// presigned URLs carry their SigV4 signature, credential scope and session token.
 const credentialParameters = [
   "apikey",
   "access_token",
@@ -174,6 +175,9 @@ const credentialParameters = [
   "id_token",
   "provider_token",
   "provider_refresh_token",
+  "x-amz-signature",
+  "x-amz-credential",
+  "x-amz-security-token",
 ];
 const scheme = String.raw`[a-z][a-z\d+.-]*`;
 
