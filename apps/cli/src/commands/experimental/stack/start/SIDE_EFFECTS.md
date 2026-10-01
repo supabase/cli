@@ -31,6 +31,10 @@ credentials when present. Starting with Studio creates `supabase/snippets/`, whe
 snippets.
 Email template `content_path` values and third-party identity providers remain unsupported: they
 require template serving and shared external JWKS verification respectively.
+`db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) runs the catalog's OrioleDB build of that
+version instead of the stock major. Loading fails unless the catalog pins that OrioleDB version and
+`db.major_version` matches its major; the error lists the pinned OrioleDB versions. The
+`experimental.s3_*` OrioleDB settings are not forwarded.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
@@ -89,7 +93,10 @@ Removed services remain saved and stopped so including them again can reuse them
 instance of a newly included service is reused when its endpoints and versions still match. The
 project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
 version fails before modifying the stopped composition, naming the changed setting and suggesting
-`supabase stack destroy` to recreate the stack.
+`supabase stack destroy` to recreate the stack. Switching between stock PostgreSQL and OrioleDB is
+an artifact version change. Initialized database data is reused only on its own release line (major
+plus stock or OrioleDB); data without a readiness marker can prove only its major, so it is never
+reused for OrioleDB.
 
 ## First startup and retries
 

@@ -515,4 +515,39 @@ describe("stack shadow databases", () => {
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,
   );
+
+  it.live("refuses an unpinned OrioleDB version before creating a shadow stack", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-orioledb-" });
+      const output = mockOutput();
+      const roots: string[] = [];
+      const setup = {
+        ...input(fs, path, root),
+        db: { major_version: 17, orioledb_version: "17.0.0.000", settings: {} },
+      };
+
+      const error = yield* stackWithShadowDatabase(setup, () => Effect.void, {
+        runtime: "native",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            recordingApi(roots, []),
+            stackCatalogSetupLayer,
+            dbConnectionLayer,
+            runtimeInfoLayer,
+            mockCommandSettings({ workdir: root, supabaseHome: root }),
+            output.layer,
+          ),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.message).toContain(
+        "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact",
+      );
+      expect(roots).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

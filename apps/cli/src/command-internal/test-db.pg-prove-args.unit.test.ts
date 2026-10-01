@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { Option } from "effect";
 
-import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { buildPgProveArgs, pgProveMajor } from "./test-db.pg-prove-args.ts";
 
 describe("buildPgProveArgs", () => {
   test("defaults to <workdir>/supabase/tests when no paths are given", () => {
@@ -93,5 +93,18 @@ describe("buildPgProveArgs", () => {
       debug: true,
     });
     expect(result.cmd.at(-1)).toBe("--verbose");
+  });
+});
+
+describe("pgProveMajor", () => {
+  test("maps stock major aliases and OrioleDB builds to their PostgreSQL major", () => {
+    expect(pgProveMajor("15")).toBe(15);
+    expect(pgProveMajor("17")).toBe(17);
+    expect(pgProveMajor("17.11.0.002-orioledb")).toBe(17);
+  });
+
+  test("rejects majors without a catalog pg_prove", () => {
+    expect(pgProveMajor("14")).toBeUndefined();
+    expect(pgProveMajor("16.4.1.000-orioledb")).toBeUndefined();
   });
 });

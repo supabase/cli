@@ -8,7 +8,17 @@ import {
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
-import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
+import {
+  Crypto,
+  Effect,
+  Data,
+  FileSystem,
+  Path,
+  Redacted,
+  Result,
+  Schema,
+  SchemaIssue,
+} from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
@@ -17,6 +27,7 @@ import { CLI_VERSION } from "../shared/cli/version.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
 import { parseFileSizeLimit } from "./storage-bucket-config.ts";
+import { stackDatabaseVersion } from "./stack-database-version.ts";
 
 import {
   decryptAuthSecret,
@@ -730,7 +741,6 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -855,6 +865,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
+      const databaseVersionResult = stackDatabaseVersion(validatedConfig.db);
+      if (Result.isFailure(databaseVersionResult))
+        return yield* new StackConfigError({ message: databaseVersionResult.failure });
+      const databaseVersion = databaseVersionResult.success;
 
       const externalProviders = yield* Effect.try({
         try: () =>
@@ -1145,7 +1159,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             {
               service: "database",
               config: {
-                version: String(validatedConfig.db.major_version),
+                version: databaseVersion,
                 ...(jwtSecret === undefined ? {} : { jwtSecret }),
                 jwtExpiry: validatedConfig.auth.jwt_expiry,
                 settings: validatedConfig.db.settings,

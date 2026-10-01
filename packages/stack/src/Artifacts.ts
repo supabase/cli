@@ -562,10 +562,38 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
   };
 });
 
-/** Resolves a PostgreSQL major alias against the pinned database artifacts. */
+const ORIOLEDB_SUFFIX = "-orioledb";
+
+/** PostgreSQL major of a database artifact version or major alias. */
+export const postgresMajor = (version: string): string => version.split(".")[0] ?? version;
+
+/** Whether a database artifact version is an OrioleDB build. */
+export const isOrioledbVersion = (version: string): boolean => version.endsWith(ORIOLEDB_SUFFIX);
+
+/**
+ * Release line of a database artifact version: its PostgreSQL major plus engine variant, such as
+ * `17` or `17-orioledb`. Initialized data is reusable only within one line.
+ */
+export const postgresLine = (version: string): string =>
+  isOrioledbVersion(version)
+    ? `${postgresMajor(version)}${ORIOLEDB_SUFFIX}`
+    : postgresMajor(version);
+
+/** Database artifact version of a `db.orioledb_version` value. */
+export const orioledbPostgresVersion = (orioledbVersion: string): string =>
+  `${orioledbVersion}${ORIOLEDB_SUFFIX}`;
+
+/** `db.orioledb_version` values the catalog pins an OrioleDB artifact for. */
+export const orioledbVersions = (): ReadonlyArray<string> =>
+  Object.keys(definitions.database.pins)
+    .filter(isOrioledbVersion)
+    .map((version) => version.slice(0, -ORIOLEDB_SUFFIX.length));
+
+/** Resolves a PostgreSQL major alias against the pinned stock database artifacts. */
 export const postgresVersion = (version: string): string =>
-  Object.keys(definitions.database.pins).find((candidate) => candidate.split(".")[0] === version) ??
-  version;
+  Object.keys(definitions.database.pins).find(
+    (candidate) => !isOrioledbVersion(candidate) && postgresMajor(candidate) === version,
+  ) ?? version;
 
 /** Service kinds in artifact catalog order. */
 export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.keys(definitions);
@@ -573,7 +601,7 @@ export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.key
 /**
  * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
  * pin `resolveArtifact` picks when no version is requested (postgres's 17.x line today); every
- * other pin (postgres's 15.x additional line) carries `isDefault: false`.
+ * other pin (postgres's 15.x and OrioleDB lines) carries `isDefault: false`.
  */
 export const catalogPins = (): ReadonlyArray<{
   readonly service: ServiceKind;

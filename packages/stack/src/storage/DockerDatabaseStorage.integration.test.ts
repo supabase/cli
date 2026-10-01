@@ -80,7 +80,8 @@ const fakeHelperEngine = () => {
         ? Effect.succeed(handle(0, "abcdef0123456789"))
         : Effect.succeed(handle(1, "", `Unable to find image '${image ?? ""}' locally`));
     }
-    if (args[0] === "exec" || args[0] === "rm") return Effect.succeed(handle(0, "done"));
+    if (args[0] === "exec") return Effect.succeed(handle(0));
+    if (args[0] === "rm") return Effect.succeed(handle(0, "done"));
     return Effect.succeed(handle(1, "", `unexpected engine command: ${args[0] ?? ""}`));
   });
   return { commands, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
@@ -965,6 +966,130 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "refuses uninitialized volume data from another engine line and resumes it on its own",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const helperImage = yield* postgresImage("17");
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-line-" });
+          const storageRoot = path.join(root, "state", "stack", "data");
+          const cacheRoot = path.join(root, "cache");
+          const instanceRoot = path.join(storageRoot, "line");
+          yield* fs.makeDirectory(instanceRoot, { recursive: true });
+          yield* fs.makeDirectory(cacheRoot, { recursive: true });
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const storage = yield* makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId: `storage-line-${yield* crypto.randomUUIDv4}`,
+            instanceId: "line",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container: yield* makeContainerRuntime({ engine: "docker", root }),
+            spawner,
+          });
+          let volume: string | undefined;
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              yield* storage.destroyData("17").pipe(Effect.ignore);
+              if (volume !== undefined) yield* docker(["volume", "rm", volume]).pipe(Effect.ignore);
+            }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          );
+          yield* storage.prepare("17");
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+            yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+          );
+          volume = marker.volume;
+          if (marker.backend !== "docker" || volume === undefined)
+            return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+          yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            `printf 17 > ${quote(`/store/${marker.namespace}/data/PG_VERSION`)}`,
+          ]);
+
+          const failure = yield* storage.prepare("17.11.0.002-orioledb").pipe(Effect.flip);
+          expect(failure.message).toContain(
+            "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack",
+          );
+          yield* storage.prepare("17");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "refuses uninitialized host data from another engine line and resumes it on its own",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-host-line-" });
+          const storageRoot = path.join(root, "state", "stack", "data");
+          const cacheRoot = path.join(root, "cache");
+          const instanceRoot = path.join(storageRoot, "line");
+          yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
+          yield* fs.makeDirectory(cacheRoot, { recursive: true });
+          // A recorded host marker keeps the bind-mount backend even on volume-capable engines.
+          yield* fs.writeFileString(
+            path.join(instanceRoot, ".supabase-database-storage.json"),
+            yield* Schema.encodeEffect(Schema.fromJsonString(Marker))({
+              backend: "host",
+              namespace: "instance-storage-host-line-line",
+              cacheNamespace: `cache-${"0".repeat(32)}`,
+              initialized: false,
+            }),
+            { mode: 0o600 },
+          );
+          yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const storage = yield* makeDockerDatabaseStorage({
+            runtime: "docker",
+            stackId: "storage-host-line",
+            instanceId: "line",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container: yield* makeContainerRuntime({ engine: "docker", root }),
+            spawner,
+          });
+          yield* Effect.addFinalizer(() =>
+            storage
+              .destroyData("17")
+              .pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.ignore,
+              ),
+          );
+
+          const failure = yield* storage.prepare("17.11.0.002-orioledb").pipe(Effect.flip);
+          expect(failure.message).toContain(
+            "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack",
+          );
+          yield* storage.prepare("17");
+          expect(yield* fs.readFileString(path.join(instanceRoot, "data", "PG_VERSION"))).toBe(
+            "17\n",
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("handles root-owned host data through helper operations", () =>

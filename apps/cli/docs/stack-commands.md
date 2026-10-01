@@ -160,8 +160,9 @@ Other values are rejected. The override is applied before reading the project co
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit and Vector. PostgreSQL uses the selected major version (15 or 17); invalid configuration
-or an unsupported PostgreSQL major warns with the cause and uses catalog defaults. This inventory describes the
+Mailpit and Vector. PostgreSQL uses the selected major version (15 or 17), or the catalog's
+OrioleDB build when `db.orioledb_version` is set; invalid configuration, an unsupported PostgreSQL
+major, or an OrioleDB version the catalog does not pin warns with the cause and uses catalog defaults. This inventory describes the
 CLI catalog, not running containers, downloaded images, or service health. The Docker and native
 stack runtimes use the same catalog versions, though a running stack launched by another CLI
 version or using mirrored images may differ. Legacy version pins and slim-image overrides do not
@@ -175,8 +176,9 @@ and without the stack flag. Blank `supabase bootstrap` uses the same scaffold.
 
 When the flag is on, `--local` targets of the `db`, `migration`, `test db`, `gen types`, and
 `inspect` families use the project stack and provision a throwaway shadow database owned by the
-stack runtime. Top-level `supabase pull` uses the same stack shadow
-as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
+stack runtime. The shadow runs the project's resolved database version, the OrioleDB build when
+`db.orioledb_version` is set, and its baseline cache is keyed by that version. Top-level
+`supabase pull` uses the same stack shadow as `db pull`. Linked and `--db-url` targets stay on the Management API for engine selection.
 A `--db-url` that matches `config.toml` host and port is still rewritten like a published
 stack target for dump's tool container. Compose names (`supabase_db_*`, `supabase_network_*`,
 `db:5432`) are not used. The stack backend requires the in-process pg-delta engine;

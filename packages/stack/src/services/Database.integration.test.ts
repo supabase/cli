@@ -156,6 +156,47 @@ describe("database component", { timeout: 180_000 }, () => {
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
+  it.live("refuses initialized data from another engine line before preparing an artifact", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-line-" });
+        const recipe = yield* makeDatabase({
+          stackId: "database-line-test",
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const prepare = recipe.definition.prepare;
+        if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
+        const instanceRoot = path.join(root, "database");
+        const orioledb: DatabaseConfig = { ...config, version: "17.11.0.002-orioledb" };
+        yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+
+        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+          "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack",
+        );
+
+        const marker = (version: string) =>
+          fs.writeFileString(
+            path.join(instanceRoot, ".supabase-database-ready.json"),
+            JSON.stringify({ version, runtime: "native", profile: "supabase" }),
+          );
+        yield* marker("17.11.0.002");
+        expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
+          "Initialized database artifact/runtime does not match the requested configuration; run supabase stack destroy to recreate the stack",
+        );
+        yield* marker("17.11.0.002-orioledb");
+        expect((yield* Effect.flip(prepare(config))).message).toContain(
+          "Initialized database artifact/runtime does not match the requested configuration; run supabase stack destroy to recreate the stack",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
   it.live("requires passwords from non-superusers on the native socket", () =>
     Effect.scoped(
       Effect.gen(function* () {

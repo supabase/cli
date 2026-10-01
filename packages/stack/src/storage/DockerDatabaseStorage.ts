@@ -13,7 +13,12 @@ import {
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import {
+  isOrioledbVersion,
+  postgresMajor,
+  postgresVersion,
+  resolveArtifact,
+} from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import { composeProjectFor } from "../runtime/ContainerName.ts";
@@ -808,6 +813,19 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             options.fs.writeFileString(markerPath, encoded, { mode: 0o600 }),
           ),
         );
+      // PG_VERSION records only the major; without a ready marker the data counts as the stock line.
+      const checkInitialized = Effect.fnUntraced(function* (pgVersion: string, version: string) {
+        if (pgVersion.trim() !== postgresMajor(version))
+          return yield* errorFor(
+            "prepare",
+            "Initialized PostgreSQL major does not match the requested configuration",
+          );
+        if (isOrioledbVersion(version) && !(yield* options.fs.exists(readyMarkerPath)))
+          return yield* errorFor(
+            "prepare",
+            "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack",
+          );
+      });
       const setup = Effect.fn("DockerDatabaseStorage.prepare")((version: string) =>
         Effect.gen(function* () {
           yield* selected;
@@ -825,11 +843,16 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ],
                 version,
               );
-              if (major.trim() !== majorVersion(version))
-                return yield* errorFor(
-                  "prepare",
-                  "Initialized PostgreSQL major does not match the requested configuration",
-                );
+              yield* checkInitialized(major, version);
+            } else if (yield* options.fs.exists(data)) {
+              // An interrupted first start can leave initdb output behind without readiness.
+              const major = yield* runHelper(
+                "set -eu; if [ -f /instance/data/PG_VERSION ]; then cat /instance/data/PG_VERSION; fi",
+                [{ source: options.instanceRoot, target: "/instance", readOnly: false }],
+                version,
+                true,
+              );
+              if (major.trim() !== "") yield* checkInitialized(major, version);
             } else {
               yield* options.fs.makeDirectory(data, { recursive: true, mode: 0o700 });
             }
@@ -843,22 +866,18 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               version,
             );
-            if (major.trim() !== majorVersion(version))
-              return yield* errorFor(
-                "prepare",
-                "Initialized PostgreSQL major does not match the requested configuration",
-              );
+            yield* checkInitialized(major, version);
           } else {
-            yield* runHelper(
-              `set -eu; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
+            const major = yield* runHelper(
+              `set -eu; if [ -f ${shellQuote(`${store}/data/PG_VERSION`)} ]; then cat ${shellQuote(`${store}/data/PG_VERSION`)}; fi; mkdir -p ${shellQuote(`${store}/data`)} ${shellQuote(`${cache}/entries`)} ${shellQuote(`${cache}/stages`)}; chown -R 100:101 ${shellQuote(`${store}/data`)}`,
               [{ source: marker.volume ?? "", target: "/store", readOnly: false, type: "volume" }],
               version,
+              true,
             );
+            if (major.trim() !== "") yield* checkInitialized(major, version);
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );
-      const majorVersion = (version: string) => version.split(".")[0] ?? version;
-
       const mount = (_version: string) =>
         selected.pipe(
           Effect.flatMap(() => getMarker),
@@ -890,7 +909,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (marker.backend === "docker") {
               const versionFile = `/store/${marker.namespace}/data/PG_VERSION`;
               yield* runHelper(
-                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
+                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(postgresMajor(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
                 snapshotPaths(marker).mounts,
                 version,
               );

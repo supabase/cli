@@ -23,6 +23,8 @@ import { HttpClient } from "effect/unstable/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,
+  postgresLine,
+  postgresMajor,
   postgresVersion,
   resolveArtifact,
   type PreparedNativeArtifact,
@@ -646,6 +648,7 @@ export const makeDatabase = (
 
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
+        const requested = postgresVersion(input.version);
         const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
         const hasMarker = yield* fs.exists(markerPath);
         if (hasMarker) {
@@ -653,21 +656,24 @@ export const makeDatabase = (
             .readFileString(markerPath)
             .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
           if (
-            marker.version.split(".")[0] !== postgresVersion(input.version).split(".")[0] ||
+            postgresLine(marker.version) !== postgresLine(requested) ||
             marker.runtime !== options.runtime
           )
             return yield* errorFor(
               "prepare",
-              "Initialized database artifact/runtime does not match the requested configuration",
+              "Initialized database artifact/runtime does not match the requested configuration; run supabase stack destroy to recreate the stack",
             );
         }
         const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
         if (!hasMarker && options.runtime === "native" && (yield* fs.exists(versionPath))) {
+          // PG_VERSION records only the major, so unmarked data counts as the stock line.
           const initialized = (yield* fs.readFileString(versionPath)).trim();
-          if (initialized !== postgresVersion(input.version).split(".")[0])
+          if (initialized !== postgresLine(requested))
             return yield* errorFor(
               "prepare",
-              "Initialized PostgreSQL major does not match the requested configuration",
+              initialized === postgresMajor(requested)
+                ? "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack"
+                : "Initialized PostgreSQL major does not match the requested configuration",
             );
         }
         yield* prepareArtifact(input);

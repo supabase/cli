@@ -52,9 +52,42 @@ describe("filesForDeclarativeShadowLoad", () => {
       },
     ]);
   });
+
+  it("loads an image-installed orioledb declaration idempotently and leaves other SQL as written", () => {
+    const orioledb = {
+      name: "_cluster/extensions/orioledb.sql",
+      sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
+    };
+    const alreadyIdempotent = {
+      name: "public/01.sql",
+      sql: "create extension if not exists orioledb;\nCREATE EXTENSION pgcrypto;",
+    };
+    expect(filesForDeclarativeShadowLoad([orioledb, alreadyIdempotent], false)).toEqual([
+      {
+        name: orioledb.name,
+        sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
+      },
+      alreadyIdempotent,
+    ]);
+  });
 });
 
 describe("prepareDeclarativeShadow", () => {
+  it.live("keeps an image-installed orioledb instead of dropping it", () => {
+    const queries: string[] = [];
+    const client = fakeShadowClient((sql) => {
+      queries.push(sql);
+      return Promise.resolve({ rows: [] });
+    });
+    return Effect.gen(function* () {
+      const prep = yield* prepareDeclarativeShadow(client, [
+        { name: "_cluster/extensions/orioledb.sql", sql: 'CREATE EXTENSION "orioledb";' },
+      ]);
+      expect(prep.restorePgjwt).toBe(false);
+      expect(queries).toEqual([]);
+    });
+  });
+
   it.live("skips the shadow when declarations omit image-default extensions", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
