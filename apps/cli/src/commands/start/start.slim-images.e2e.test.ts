@@ -313,6 +313,11 @@ describe("supabase start slim images (e2e)", () => {
           env: { ...DOCKER_IO_ENV, SUPABASE_YES: "1" },
         });
         requireCliSuccess(created, "functions new");
+        // The template imports from live jsr/npm; new.stack.e2e.test.ts covers that resolution.
+        yield* fs.writeFileString(
+          path.join(projectDir, "supabase", "functions", "hello", "index.ts"),
+          'Deno.serve(async (req) => Response.json({ message: "Hello " + (await req.json()).name + "!" }));\n',
+        );
         yield* overridePorts(projectDir);
         const config = yield* fs.readFileString(path.join(projectDir, "supabase", "config.toml"));
         const apiPort = readSectionPort(config, "api");
