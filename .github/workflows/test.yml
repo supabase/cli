@@ -3,8 +3,10 @@ name: Test
 # Release-notes PRs (head ref `release-notes/*`) only add markdown under
 # `release-notes/` and are published via approval — skip the full CI suite.
 #
-# Default path: ready (non-draft) PRs targeting `develop`, plus the merge queue.
-# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
+# Default path: ready (non-draft) PRs targeting `develop` or `main`, plus the
+# merge queue. PRs into `main` from `develop` are the scheduled promotion and
+# skip the suite: that head already passed through the merge queue. Hotfix PRs
+# into `main` run it. `run-ci.yml` calls this workflow for drafts and stacked PRs.
 on:
   pull_request:
     types:
@@ -15,6 +17,7 @@ on:
       - converted_to_draft
     branches:
       - develop
+      - main
   merge_group:
     types:
       - checks_requested
@@ -45,6 +48,7 @@ jobs:
   check:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -80,6 +84,7 @@ jobs:
   test-unit:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -103,6 +108,7 @@ jobs:
   test-integration:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -126,6 +132,7 @@ jobs:
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -178,6 +185,7 @@ jobs:
     if: |
       always() &&
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -201,6 +209,7 @@ jobs:
   test-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -272,6 +281,7 @@ jobs:
   test-stack-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
@@ -311,6 +321,7 @@ jobs:
     if: |
       always() &&
       !startsWith(github.head_ref, 'release-notes/') &&
+      !(github.base_ref == 'main' && github.head_ref == 'develop') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
