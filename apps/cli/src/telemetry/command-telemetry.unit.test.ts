@@ -16,6 +16,8 @@ import {
   PropErrorFingerprint,
   PropErrorKind,
   PropHasSuggestion,
+  PropOrioleDb,
+  PropStackBackend,
   PropSuggestedCommand,
   PropSuggestionType,
   PropWorkflow,
@@ -25,6 +27,8 @@ import { ConfigDiffLoadConfigError } from "../commands/config/diff/diff.errors.t
 import { DbDumpRunError } from "../commands/db/dump/dump.errors.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { withCommandTelemetry } from "./command-telemetry.ts";
+import { recordCommandTelemetry } from "./command-telemetry-attributes.ts";
+import { stackBackendLayer } from "../command-internal/stack-backend.ts";
 import {
   QUERY_OUTPUT_FORMATS,
   InvalidOutputFormatError,
@@ -113,6 +117,33 @@ describe("withCommandTelemetry", () => {
           for (const property of FAILURE_PROPERTY_NAMES) {
             expect(event?.properties).not.toHaveProperty(property);
           }
+          expect(event?.properties).not.toHaveProperty(PropStackBackend);
+          expect(event?.properties).not.toHaveProperty(PropOrioleDb);
+        }),
+      ),
+    );
+  });
+
+  it.live("keeps attributes recorded by a failing command on its event", () => {
+    const analytics = mockContextualAnalytics();
+
+    return recordCommandTelemetry({ [PropOrioleDb]: true }).pipe(
+      Effect.andThen(Effect.fail(new DbDumpRunError({ message: "dump failed" }))),
+      withCommandTelemetry(),
+      Effect.provide(stackBackendLayer("legacy")),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--local"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "dump"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          const properties = analytics.captured[0]?.properties;
+          expect(properties?.exit_code).toBe(1);
+          expect(properties?.[PropStackBackend]).toBe("legacy");
+          expect(properties?.[PropOrioleDb]).toBe(true);
         }),
       ),
     );

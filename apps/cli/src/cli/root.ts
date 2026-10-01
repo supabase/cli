@@ -245,7 +245,9 @@ export const rootCommandForFeatures = (
             : outputLayerFor(outputFormat);
 
           return Layer.mergeAll(
-            stackBackendLayer(options.stackBackend ?? "legacy"),
+            options.stackBackend === undefined
+              ? Layer.empty
+              : stackBackendLayer(options.stackBackend),
             outputLayer,
             makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
           );

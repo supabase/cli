@@ -3,7 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path } from "effect";
 import { respondToComplete } from "../../../cli/complete.ts";
 import { rootCommandForFeatures } from "../../../cli/root.ts";
-import { StackRoutingError, resolveStackBackend } from "../../../command-internal/stack-backend.ts";
+import {
+  type StackBackend,
+  StackRoutingError,
+  resolveStackBackend,
+} from "../../../command-internal/stack-backend.ts";
 
 const resolve = (input: Parameters<typeof resolveStackBackend>[0]) =>
   resolveStackBackend(input).pipe(Effect.provide(BunServices.layer));
@@ -21,7 +25,7 @@ const project = (config: string, format: "toml" | "json" = "toml") =>
 const withServices = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(BunServices.layer));
 
-const completionFlags = (backend: "legacy" | "stack", command: string) =>
+const completionFlags = (backend: StackBackend | undefined, command: string) =>
   respondToComplete(rootCommandForFeatures({ stackBackend: backend }), [
     "__complete",
     command,
@@ -85,14 +89,17 @@ stack = true
     );
   });
 
-  it.effect("keeps an unrouted command on legacy even when the feature flag is enabled", () => {
-    return withServices(
-      Effect.gen(function* () {
-        const root = yield* project("[experimental]\nstack = true\n");
-        expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBe("legacy");
-      }),
-    );
-  });
+  it.effect(
+    "selects no backend for an unrouted command even when the feature flag is enabled",
+    () => {
+      return withServices(
+        Effect.gen(function* () {
+          const root = yield* project("[experimental]\nstack = true\n");
+          expect(yield* resolve({ args: ["link"], cwd: root, env: {} })).toBeUndefined();
+        }),
+      );
+    },
+  );
 
   it.effect("routes command-specific start completion through the selected backend", () => {
     return withServices(
@@ -321,7 +328,7 @@ stack = true
         expect(
           yield* resolve({ args: ["__complete", "functions", "serve", "--"], cwd: root, env: {} }),
         ).toBe("stack");
-        expect(yield* resolve({ args: ["functions", "list"], cwd: root, env: {} })).toBe("legacy");
+        expect(yield* resolve({ args: ["functions", "list"], cwd: root, env: {} })).toBeUndefined();
       }),
     ),
   );
