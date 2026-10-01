@@ -3437,7 +3437,8 @@ describe("readDbToml OrioleDB telemetry", () => {
   ])("records orioledb=$expected for $name", ({ toml, env, expected }) => {
     const dir = withConfig(`[db]\n${toml}\n`);
     const previous = process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
-    if (env !== undefined) process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = env;
+    if (env === undefined) delete process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+    else process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = env;
     return recordedAfterRead(dir).pipe(
       Effect.tap((recorded) => Effect.sync(() => expect(recorded.orioledb).toBe(expected))),
       Effect.ensuring(
