@@ -7,8 +7,10 @@ import {
 import { loadCliConfig } from "@supabase/config/internal";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 
+import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
 import { getHostname } from "./hostname.ts";
+import { envOverride, envOverrideMajorVersion } from "./local-config-values.ts";
 import { resolveProjectEnvironmentValues } from "./project-environment.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 
@@ -97,3 +99,20 @@ export const loadLocalProjectContext = <E>(
 
     return { config, projectEnvValues, loaded, hostname, projectId };
   });
+
+/** Records OrioleDB selection for commands whose only local config read is this context. */
+export const recordLocalProjectOrioleDbTelemetry = (context: LocalProjectContext) =>
+  Effect.try(() => ({
+    version: envOverride(
+      "SUPABASE_DB_ORIOLEDB_VERSION",
+      context.config.db.orioledb_version,
+      context.projectEnvValues,
+    ),
+    majorVersion: envOverrideMajorVersion(
+      context.config.db.major_version,
+      context.projectEnvValues,
+    ),
+  })).pipe(
+    Effect.flatMap(({ version, majorVersion }) => recordOrioleDbTelemetry(version, majorVersion)),
+    Effect.ignore,
+  );

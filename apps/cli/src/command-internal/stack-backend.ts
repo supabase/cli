@@ -55,17 +55,18 @@ export class StackBackendContext extends Context.Service<
 export const stackBackendLayer = (kind: StackBackend) =>
   Layer.succeed(StackBackendContext, { kind });
 
-/** Handlers default to legacy when tests omit the root-provided backend service. */
+/** Handlers default to legacy when no backend was routed for the command. */
 export const currentStackBackend: Effect.Effect<{ readonly kind: StackBackend }, never, never> =
   Effect.serviceOption(StackBackendContext).pipe(
     Effect.map((value) => Option.getOrElse(value, () => ({ kind: "legacy" as const }))),
   );
 
+/** Resolves the backend, or `undefined` for commands that `experimental.stack` does not route. */
 export const resolveStackBackend = (input: {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | undefined>>;
-}): Effect.Effect<StackBackend, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
+}): Effect.Effect<StackBackend | undefined, StackRoutingError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // Completion passes the final token as the cursor word, so it is not part of
     // the resolved command path.
@@ -73,7 +74,7 @@ export const resolveStackBackend = (input: {
       input.args[0] === "__complete" || input.args[0] === "__completeNoDesc"
         ? input.args.slice(0, -1)
         : input.args;
-    if (hasRootVersionFlag(routingArgs)) return "legacy";
+    if (hasRootVersionFlag(routingArgs)) return undefined;
 
     const commandPath = extractCommandPath(routingArgs);
     const completePath =
@@ -87,7 +88,7 @@ export const resolveStackBackend = (input: {
       !STACK_BACKEND_COMMANDS.has(command) &&
       !isFunctionsServePath(completePath)
     )
-      return "legacy";
+      return undefined;
 
     const enabled = yield* resolveExperimentalFeature({
       feature: "stack",

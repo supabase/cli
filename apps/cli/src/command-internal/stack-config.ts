@@ -65,6 +65,7 @@ import {
   strToArr,
 } from "./local-config-values.ts";
 import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
@@ -861,6 +862,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
             message: path === undefined ? "invalid config" : `invalid config at ${path}`,
           });
         }),
+      );
+      yield* recordOrioleDbTelemetry(
+        validatedConfig.db.orioledb_version,
+        validatedConfig.db.major_version,
       );
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
