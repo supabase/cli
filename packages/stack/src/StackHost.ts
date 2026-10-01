@@ -402,9 +402,12 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
 type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
 
 /**
- * Runs `commit`; if it fails or is interrupted, restores the saved endpoint state and re-fails
- * with the original cause. If that restore itself fails, logs it and appends recovery guidance to
- * the original failure's message instead of letting the restore failure replace or mask it.
+ * Runs `commit` interruptibly; on any unsuccessful exit, including interruption, restores the
+ * saved endpoint state uninterruptibly before re-failing, so an external interrupt reaching this
+ * window still leaves the saved document consistent instead of holding new intents with missing
+ * or partial claims. If that restore itself fails, logs it and, only for a genuine typed failure
+ * (never for an interruption, which carries no message to extend), fails with that failure's
+ * message extended with recovery guidance, instead of letting the restore failure mask it.
  */
 export const commitOrRestoreEndpointReplan = <A>(
   state: State.Interface,
@@ -412,25 +415,25 @@ export const commitOrRestoreEndpointReplan = <A>(
   changedKeys: ReadonlyArray<{ readonly key: string }>,
   commit: Effect.Effect<A, StackHostError>,
 ): Effect.Effect<A, StackHostError> =>
-  commit.pipe(
-    Effect.catchCause((cause: Cause.Cause<StackHostError>) =>
-      Effect.gen(function* () {
-        const restoreExit = yield* restoreFailedEndpointReplan(state, registered, changedKeys).pipe(
-          Effect.exit,
-        );
-        if (Exit.isSuccess(restoreExit)) return yield* Effect.failCause(cause);
-        yield* Effect.logError(
-          "Restoring the saved endpoint state failed after a failed re-plan",
-          restoreExit.cause,
-        );
-        const failure = Cause.findErrorOption(cause);
-        if (Option.isNone(failure)) return yield* Effect.failCause(cause);
-        return yield* new StackHostError({
-          ...failure.value,
-          message: `${failure.value.message} The saved endpoint state could not be restored either: stop the stack, then start it again, or destroy it to recreate it.`,
-        });
-      }),
-    ),
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const exit = yield* restore(commit).pipe(Effect.exit);
+      if (Exit.isSuccess(exit)) return exit.value;
+      const restoreExit = yield* restoreFailedEndpointReplan(state, registered, changedKeys).pipe(
+        Effect.exit,
+      );
+      if (Exit.isSuccess(restoreExit)) return yield* Effect.failCause(exit.cause);
+      yield* Effect.logError(
+        "Restoring the saved endpoint state failed after a failed re-plan",
+        restoreExit.cause,
+      );
+      const failure = Cause.findErrorOption(exit.cause);
+      if (Option.isNone(failure)) return yield* Effect.failCause(exit.cause);
+      return yield* new StackHostError({
+        ...failure.value,
+        message: `${failure.value.message} The saved endpoint state could not be restored either: stop the stack, then start it again, or destroy it to recreate it.`,
+      });
+    }),
   );
 
 export const runStackHost = Effect.fn("StackHost.run")(

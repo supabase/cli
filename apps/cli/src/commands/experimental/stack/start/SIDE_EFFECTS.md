@@ -93,14 +93,16 @@ is re-planned there while the new owner alone holds the stack's lease, before it
 namespaces from the saved state: as late as practical, just before its own normal endpoint binding
 claims the newly requested port, or a freshly chosen automatic one, it saves the updated endpoint
 intent with the old port claim dropped, reusing every check a live composition bind already applies.
-Any failure or interruption of that owner startup from that save onward, not only a claim conflict,
-restores the saved state and claims as they read before the re-plan, except a claim whose old port
-another stack took in the meantime, which is left unclaimed so the next start reports it as a
-normal port conflict instead of overlapping that stack's claim; a hard process death in this window
-is an accepted limitation, and the next successful start converges the saved state again. This
-rollback covers owner startup only: it ends once owner startup succeeds, and does not cover a later
-failure during the CLI's own database preparation (see First startup and retries below). A
-concurrent start attaches to whichever owner wins that race instead of re-planning again. If the
+The rollback covers only this save-and-claim commit, which finishes before the owner serves RPC or
+publishes its holder: a failure or interruption there, not only a claim conflict, restores the saved
+state and claims as they read before the re-plan, except a claim whose old port another stack took in
+the meantime, which is left unclaimed so the next start reports it as a normal port conflict instead
+of overlapping that stack's claim; a hard process death in this window is an accepted limitation, and
+the next successful start converges the saved state again. A later startup failure, once that commit
+succeeds, keeps the committed (consistent) state instead of rolling it back, since an attached client
+may already have persisted its own change by then; the next start reuses it. This includes a failure
+during the CLI's own database preparation (see First startup and retries below). A concurrent start
+attaches to whichever owner wins that race instead of re-planning again. If the
 saved stack's owner exits between this command's liveness check and the moment it opens the stack,
 the freshly spawned replacement owner boots without the requested creations and this start falls
 back to today's rejection; every later start now sees that replacement owner as running and skips

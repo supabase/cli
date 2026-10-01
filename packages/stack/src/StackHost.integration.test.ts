@@ -1242,3 +1242,61 @@ it.live("notes a restore failure in the startup error without losing the origina
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
+
+it.live(
+  "restores the saved document when an external interrupt lands during the claim after the prepared document was saved",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-replan-interrupt-" });
+        const state = yield* stateFor(root);
+        const fixedPort = 24_637;
+        const registered: State.SavedStack = {
+          id: "stack",
+          lifetime: "detached",
+          identity: { projectRoot: root, branchContext: "main", stackName: "replan-interrupt" },
+          runtime: "native",
+          instances: [
+            {
+              id: "rest-1",
+              creation: { service: "rest", config: {}, endpoints: { http: { port: fixedPort } } },
+            },
+          ],
+          composition: { members: [{ id: "rest-1", activation: "eager" }], dependencies: [] },
+          ports: [{ key: "api", host: "127.0.0.1", port: fixedPort }],
+        };
+        yield* state.save(registered);
+        const prepared: State.SavedStack = {
+          ...registered,
+          instances: [
+            {
+              id: "rest-1",
+              creation: { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+            },
+          ],
+          ports: [],
+        };
+        const entered = yield* Deferred.make<void>();
+        // Mirrors the real sequence: the prepared document, with the old claim already dropped,
+        // is saved first, then the claim itself pauses, standing in for the window an external
+        // interrupt can land in before the owner's own endpoint binding ever completes.
+        const commit = state.save(prepared).pipe(
+          Effect.mapError(
+            (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+          ),
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Effect.never),
+        );
+        const claiming = yield* Effect.forkScoped(
+          commitOrRestoreEndpointReplan(state, registered, [{ key: "api" }], commit),
+        );
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(claiming);
+
+        const restored = yield* state.read("stack");
+        expect(restored?.ports).toEqual(registered.ports);
+        expect(restored?.instances).toEqual(registered.instances);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
