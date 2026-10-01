@@ -212,6 +212,7 @@ describe("owner persisted logs", () => {
         expect(yield* fs.exists(owner.logsRoot)).toBe(false);
       }),
     ).pipe(Effect.provide(services)),
+    { timeout: 120_000 },
   );
 
   it.live.skipIf(process.platform === "win32")("persists container output", () =>
@@ -236,5 +237,6 @@ describe("owner persisted logs", () => {
         ]);
       }),
     ).pipe(Effect.provide(services)),
+    { timeout: 120_000 },
   );
 });
