@@ -20,8 +20,9 @@ Tracing answers observability questions such as:
 This path is span-based. It is intentionally separate from PostHog analytics, which is event-based
 and optimized for product questions rather than operational traces.
 
-The tracing implementation is currently owned by the `Tracing` service and
-[`src/shared/telemetry/tracing.layer.ts`](../src/shared/telemetry/tracing.layer.ts).
+The tracing implementation lives in
+[`src/shared/telemetry/tracing.layer.ts`](../src/shared/telemetry/tracing.layer.ts), which provides
+Effect's `Tracer` service.
 
 ## What Happens Today
 

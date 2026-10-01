@@ -28,7 +28,7 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    container is created on this path.
 4. Print `Starting database...` (fresh volume) or `Starting database from backup...`
    (existing volume — despite the wording, unrelated to `--from-backup`; see
-   `command-internal/db-bootstrap/messages.ts`).
+   `command-internal/db-bootstrap/start-database.ts`).
 5. Resolve the Postgres image (version-pin-aware) and create + start the container.
    `--from-backup` set: a THIRD entrypoint variant (`buildPostgresStartContainerSpec`'s
    `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a ported
