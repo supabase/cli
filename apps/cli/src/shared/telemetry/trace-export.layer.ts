@@ -248,7 +248,12 @@ const sinkTracer = Effect.fnUntraced(function* (sink: TraceSink) {
   const sinkModule = yield* Effect.promise(() => import("./otlp-trace-sink.ts"));
   const resource = {
     serviceVersion: CLI_VERSION,
-    attributes: { os: runtimeInfo.platform, arch: runtimeInfo.arch, is_ci: yield* detectCi },
+    attributes: {
+      os: runtimeInfo.platform,
+      arch: runtimeInfo.arch,
+      is_ci: yield* detectCi,
+      "service.instance.id": String(runtimeInfo.pid),
+    },
   };
   const make = (url: string, headers: Redacted.Redacted<Readonly<Record<string, string>>>) =>
     sinkModule.makeOtlpTracer({ url, headers, resource });

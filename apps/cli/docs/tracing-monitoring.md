@@ -40,6 +40,36 @@ The report prints the heaviest path from `cli.run`, the top span names by self t
 names with counts and total time, and failed spans. Pass `--top N` to change list lengths and
 `--json` for machine-readable output. The file appends across runs; delete it to start fresh.
 
+## Benchmarking
+
+`apps/cli/scripts/bench-cli.ts` compares wall time between two CLI binaries, for example a release
+build against a branch build:
+
+```sh
+bun apps/cli/scripts/bench-cli.ts --base dist/supabase-main --branch dist/supabase \
+  --runs 10 --warmup 2 --command "--version" --command "status" --cwd-setup init --trace
+```
+
+It alternates launches (`base`, `branch`, `base`, `branch`, ...) so neither binary runs consistently
+warmer, discards the first `--warmup` pairs, and gives each launch an isolated `SUPABASE_HOME` and
+environment. For each command it reports the base and branch median, min, max, and p90 wall time in
+milliseconds, plus the branch-minus-base delta in ms and percent. With `--trace`, it also sets
+`SUPABASE_TRACE_FILE` per launch and reports, per span name, the median total duration and count for
+each build, sorted by the largest absolute delta; a span name present in only one build is flagged
+rather than compared. `--command` splits on whitespace and does not support shell quoting; repeat the
+flag for more than one command, and use `--cwd-setup init` when a command, such as `status`, needs to
+run inside an initialized project. Pass `--json` for a machine-readable report, `--out <file>` to
+also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of the first
+measured branch run (`BUN_OPTIONS=--cpu-prof`), printing its `.cpuprofile` path.
+
+To build a base binary from another commit without disturbing this worktree:
+
+```sh
+mkdir /tmp/cli-base && git archive <sha> | tar -x -C /tmp/cli-base
+rm -f /tmp/cli-base/mise.toml /tmp/cli-base/mise.lock # if mise refuses the untrusted config
+(cd /tmp/cli-base && pnpm install && pnpm exec turbo run supabase#build)
+```
+
 ## Grafana, Tempo, or Jaeger
 
 Run a local OpenTelemetry stack, for example Grafana's all-in-one image:
@@ -61,7 +91,8 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 
 ## What a trace contains
 
-- Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`.
+- Resource: `service.name=supabase-cli`, `service.version`, `os`, `arch`, `is_ci`,
+  `service.instance.id` (the process id of the run).
 - `cli.run`: `process.boot_ms`, the time from process start to CLI entry.
 - Command span (`command.<path>`): `command`, `command_run_id`, `device_id`, `session_id`,
   `is_first_run`.

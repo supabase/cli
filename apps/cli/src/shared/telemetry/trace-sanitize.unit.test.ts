@@ -240,6 +240,7 @@ describe("trace data", () => {
           attributes: [
             { key: "service.name", value: { stringValue: "supabase-cli" } },
             { key: "os", value: { stringValue: "darwin" } },
+            { key: "service.instance.id", value: { stringValue: "4242" } },
             { key: "deployment.owner", value: { stringValue: "alice@example.com" } },
           ],
         },
@@ -250,7 +251,7 @@ describe("trace data", () => {
       sanitizeTraceData(withResource).resourceSpans[0]!.resource.attributes.map(
         (attribute) => attribute.key,
       ),
-    ).toEqual(["service.name", "os"]);
+    ).toEqual(["service.name", "os", "service.instance.id"]);
   });
 
   it("exports exception events with only the error type and drops the status message", () => {

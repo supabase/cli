@@ -17,6 +17,7 @@ const RESOURCE_ATTRIBUTE_KEPT: ReadonlySet<string> = new Set([
   "os",
   "arch",
   "is_ci",
+  "service.instance.id",
   "telemetry.sdk.name",
   "telemetry.sdk.language",
   "telemetry.sdk.version",
