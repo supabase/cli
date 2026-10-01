@@ -883,11 +883,11 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 	// Update image versions
 	switch c.Db.MajorVersion {
 	case 13:
-		c.Db.Image = pg15
+		c.Db.Image = Images.Pg15
 	case 14:
-		c.Db.Image = pg14
+		c.Db.Image = Images.Pg14
 	case 15:
-		c.Db.Image = pg15
+		c.Db.Image = Images.Pg15
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {

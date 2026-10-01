@@ -27277,6 +27277,10 @@
                       "type": "string",
                       "description": "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier."
                     },
+                    "custom_dns_name": {
+                      "type": "string",
+                      "description": "The custom DNS name configured on the AWS VPC Lattice resource configuration."
+                    },
                     "resource_access_manager_resource_config_id": {
                       "description": "ID of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
                       "type": "string"
@@ -27295,7 +27299,8 @@
                     "status",
                     "shared_at",
                     "database_type",
-                    "database_identifier"
+                    "database_identifier",
+                    "custom_dns_name"
                   ]
                 }
               },
@@ -27400,6 +27405,10 @@
                     "type": "string",
                     "description": "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier."
                   },
+                  "custom_dns_name": {
+                    "type": "string",
+                    "description": "The custom DNS name configured on the AWS VPC Lattice resource configuration."
+                  },
                   "resource_access_manager_resource_config_id": {
                     "description": "ID of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
                     "type": "string"
@@ -27418,7 +27427,8 @@
                   "status",
                   "shared_at",
                   "database_type",
-                  "database_identifier"
+                  "database_identifier",
+                  "custom_dns_name"
                 ]
               }
             },

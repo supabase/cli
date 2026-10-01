@@ -1,16 +1,54 @@
 import { describe, expect, it, test } from "@effect/vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import { afterEach, beforeEach, vi } from "vitest";
 import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
+import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
+  mergeRemoteServiceVersions,
   parseDockerfileServiceImages,
   postgresImageForDbMajorVersion,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
+
+// `catalogPins` defaults to an auth-only fixture; the real-catalog tests swap in the original.
+const { mockCatalogPins } = vi.hoisted(() => ({ mockCatalogPins: vi.fn() }));
+
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => ({
+    ...actual,
+    catalogPins: mockCatalogPins,
+  })),
+);
+
+const { catalogPins: actualCatalogPins } = await vi.importActual<
+  typeof import("@supabase/stack/internal/artifacts")
+>("@supabase/stack/internal/artifacts");
+
+const FIXTURE_DIGEST = "260e94edb8d402555791146fcf70b8e90efdc6a81877a04e5aa26f0f416a5dd7";
+const FIXTURE_NATIVE_PIN = { archive: FIXTURE_DIGEST, manifest: FIXTURE_DIGEST };
+const FIXTURE_CATALOG_PINS = [
+  {
+    service: "auth",
+    sourceService: "auth",
+    pin: {
+      upstreamVersion: "v2.197.0",
+      revision: 0,
+      image: `ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:${FIXTURE_DIGEST}`,
+      natives: {
+        "darwin-arm64": FIXTURE_NATIVE_PIN,
+        "linux-amd64": FIXTURE_NATIVE_PIN,
+        "linux-arm64": FIXTURE_NATIVE_PIN,
+      },
+    },
+  },
+];
+
+mockCatalogPins.mockImplementation(() => FIXTURE_CATALOG_PINS);
 
 const ACCESS_TOKEN = Redacted.make(`sbp_${"a".repeat(40)}`);
 const PROJECT_REF = "abcdefghijklmnopqrst";
@@ -75,26 +113,104 @@ describe("services shared", () => {
     ]);
   });
 
-  test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
-    expect(postgresImageForDbMajorVersion(13, false)).toBe("supabase/postgres:15.8.1.085");
-    expect(postgresImageForDbMajorVersion(15, false)).toBe("supabase/postgres:15.8.1.085");
-    expect(postgresImageForDbMajorVersion(13, true)).toBe("supabase/postgres:15.14.1.167");
-    expect(postgresImageForDbMajorVersion(15, true)).toBe("supabase/postgres:15.14.1.167");
+  test("resolves PG13/14/15 from the Dockerfile's pg15/pg14 stages, regardless of the slim flag", () => {
+    const pg15 = dockerfileServiceImageRaw("pg15");
+    const pg14 = dockerfileServiceImageRaw("pg14");
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
+    // Always the raw docker.io reference; slim translation is a separate, downstream concern
+    // (`toSlimImage`/`slimImageForCurrentPin`), so this function itself doesn't read the flag.
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
   });
 
-  test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {
-    expect(listLocalServiceVersions({ slim: true }).map((row) => row.name)).toEqual([
-      "ghcr.io/supabase/cli/postgres",
-      "ghcr.io/supabase/cli/auth",
-      "ghcr.io/supabase/cli/postgrest",
-      "ghcr.io/supabase/cli/realtime",
-      "ghcr.io/supabase/cli/storage",
-      "ghcr.io/supabase/cli/edge-runtime",
-      "ghcr.io/supabase/cli/studio",
-      "ghcr.io/supabase/cli/pgmeta",
-      "ghcr.io/supabase/cli/analytics",
-      "ghcr.io/supabase/cli/pooler",
-    ]);
+  describe("against the real slim-services catalog", () => {
+    beforeEach(() => {
+      mockCatalogPins.mockImplementation(actualCatalogPins);
+    });
+
+    afterEach(() => {
+      mockCatalogPins.mockImplementation(() => FIXTURE_CATALOG_PINS);
+    });
+
+    test("lists slim images with versions derived from the catalog's default pins", () => {
+      const expectedNames = [
+        "postgres",
+        "auth",
+        "postgrest",
+        "realtime",
+        "storage",
+        "edge-runtime",
+        "studio",
+        "pgmeta",
+        "analytics",
+        "pooler",
+      ];
+      const rows = listLocalServiceVersions({ slim: true });
+
+      expect(rows.map((row) => row.name)).toEqual(
+        expectedNames.map((service) => `ghcr.io/supabase/cli/${service}`),
+      );
+
+      for (const row of rows) {
+        const service = row.name.replace("ghcr.io/supabase/cli/", "");
+        const defaultPin = actualCatalogPins().find(
+          (entry) => entry.sourceService === service && entry.isDefault,
+        );
+        expect(defaultPin).toBeDefined();
+        expect(row.local).toBe(defaultPin?.pin.upstreamVersion);
+        expect(row.remote).toBe("");
+      }
+    });
+
+    test("slim-translates a serviceVersions override to a non-default catalog pin", () => {
+      const nonDefaultPostgresPin = actualCatalogPins().find(
+        (entry) => entry.sourceService === "postgres" && !entry.isDefault,
+      );
+      if (nonDefaultPostgresPin === undefined) {
+        throw new Error("Expected the catalog to carry a non-default postgres pin.");
+      }
+      const version = nonDefaultPostgresPin.pin.upstreamVersion;
+
+      // The Dockerfile's `pg` stage pins the default line, not this one — establishing that the
+      // override below actually changes the resolved version instead of matching it by accident.
+      expect(dockerfileServiceImageRaw("pg").split(":").at(-1)).not.toBe(version);
+
+      expect(
+        listLocalServiceVersions({
+          slim: true,
+          serviceVersions: { postgres: version },
+        }),
+      ).toContainEqual({
+        name: "ghcr.io/supabase/cli/postgres",
+        local: version,
+        remote: "",
+      });
+    });
+  });
+
+  test("slim-translates a version override that matches a catalog pin", () => {
+    expect(
+      listLocalServiceVersions({ slim: true, serviceVersions: { auth: "v2.197.0" } }),
+    ).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      // The catalog's release version (`v2.197.0-r0`) is a Dockerfile/manifest tag; the row shows
+      // the upstream version so a `supabase services` mismatch check compares upstream to upstream.
+      local: "v2.197.0",
+      remote: "",
+    });
+  });
+
+  test("keeps a version override that isn't in the catalog on docker.io", () => {
+    expect(
+      listLocalServiceVersions({ slim: true, serviceVersions: { storage: "v1.70.3" } }),
+    ).toContainEqual({
+      name: "supabase/storage-api",
+      local: "v1.70.3",
+      remote: "",
+    });
   });
 
   test("keeps historical pins on docker.io when slimCurrentPinOnly is set", () => {
@@ -122,16 +238,6 @@ describe("services shared", () => {
     ).toContainEqual({ name: "supabase/gotrue", local: "v2.151.0", remote: "" });
   });
 
-  test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
-    expect(
-      listLocalServiceVersions({ slim: true, serviceVersions: { storage: "v1.70.3" } }),
-    ).toContainEqual({
-      name: "ghcr.io/supabase/cli/storage",
-      local: "v1.70.3",
-      remote: "",
-    });
-  });
-
   // Explicit overrides keep their registry; a serviceVersions pin still rewrites the tag.
   test("leaves explicit image overrides on docker.io when SUPABASE_USE_SLIM_IMAGES is set", () => {
     const rows = listLocalServiceVersions({
@@ -150,6 +256,27 @@ describe("services shared", () => {
         { name: "supabase/edge-runtime", local: "v1.68.4", remote: "" },
       ]),
     );
+  });
+
+  // A digest-carrying override paired with a serviceVersions pin exercises the same
+  // `replaceImageTag` used for the plain-tag case above; it must drop the stale digest
+  // rather than splice the new tag into it (`…-r0@sha256:<pin>`).
+  test("rewrites the tag on a digest-carrying image override, dropping the stale digest", () => {
+    const rows = listLocalServiceVersions({
+      slim: true,
+      imageOverrides: {
+        postgres:
+          "ghcr.io/supabase/cli/postgres:17.6.1.173-r0@sha256:24e96b8d5daf90f67a62b5593d3008446744007e0a57e302d269c02a4e459e8f",
+      },
+      normalizeVersionTags: false,
+      serviceVersions: { postgres: "17.6.1.200" },
+    });
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/postgres",
+      local: "17.6.1.200",
+      remote: "",
+    });
   });
 
   test("can preserve raw local service version overrides", () => {
@@ -500,5 +627,21 @@ describe("services shared", () => {
         { name: "supabase/gotrue", local: "v2.189.0", remote: "v2.189.0" },
       ]),
     ).toContain("supabase/postgres:17.6.1.132 => 17.6.1.200");
+  });
+
+  test("compares upstream versions for a slim catalog pin, not the release tag", () => {
+    const rows = mergeRemoteServiceVersions(
+      { auth: "v2.197.0" },
+      { slim: true, serviceVersions: { auth: "v2.197.0" } },
+    );
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      local: "v2.197.0",
+      remote: "v2.197.0",
+    });
+    // The pinned image's release tag (`v2.197.0-r0@sha256:…`) never surfaces as a mismatch
+    // against the upstream-only remote version.
+    expect(renderServicesWarning(rows)).toBeUndefined();
   });
 });

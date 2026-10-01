@@ -10929,6 +10929,10 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         description:
           "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
       }),
+      custom_dns_name: Schema.String.annotate({
+        description:
+          "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
+      }),
       resource_access_manager_resource_config_id: Schema.optionalKey(
         Schema.String.annotate({
           description:
@@ -12897,6 +12901,10 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
         database_identifier: Schema.String.annotate({
           description:
             "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
+        }),
+        custom_dns_name: Schema.String.annotate({
+          description:
+            "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
         }),
         resource_access_manager_resource_config_id: Schema.optionalKey(
           Schema.String.annotate({

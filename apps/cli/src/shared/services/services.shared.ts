@@ -10,11 +10,18 @@ import {
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
 import {
+  dockerfileServiceImageRaw,
   dockerfileServiceImages,
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
-import { slimImageForAlias, slimImageForCurrentPin } from "./slim-images.ts";
+import {
+  imageRepository,
+  imageTag,
+  replaceImageTag,
+  slimImageForAlias,
+  slimImageForCurrentPin,
+} from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -116,33 +123,23 @@ export function localServiceImagesFromDockerfile(
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
-export const POSTGRES_FALLBACK_IMAGE_PG14 = "supabase/postgres:14.1.0.89";
-/** Flag-off PG13/15 docker.io pin. */
-export const POSTGRES_FALLBACK_IMAGE_PG15 = "supabase/postgres:15.8.1.085";
-/** Published slim PG15 pin; flag-on majors 13/15 slim-translate this, not 15.8. */
-export const POSTGRES_FALLBACK_IMAGE_PG15_SLIM = "supabase/postgres:15.14.1.167";
-
-export function postgresImageForDbMajorVersion(
-  majorVersion: number,
-  slim: boolean,
-): string | undefined {
+/**
+ * Resolves PG13/14/15 against the Dockerfile's `pg15`/`pg14` stages — the single version table,
+ * generated (`pg15`) or hand-pinned (`pg14`, no slim build) from the stack catalog. Always the
+ * raw docker.io reference; slim translation happens downstream via the same `toSlimImage("pg",
+ * …)` path every other slim-capable service uses, since a slim-capable service's Dockerfile tag
+ * always matches a catalog upstream version by construction.
+ */
+export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
   switch (majorVersion) {
     case 13:
     case 15:
-      return slim ? POSTGRES_FALLBACK_IMAGE_PG15_SLIM : POSTGRES_FALLBACK_IMAGE_PG15;
+      return dockerfileServiceImageRaw("pg15");
     case 14:
-      return POSTGRES_FALLBACK_IMAGE_PG14;
+      return dockerfileServiceImageRaw("pg14");
     default:
       return undefined;
   }
-}
-
-function replaceImageTag(image: string, tag: string): string {
-  const index = image.lastIndexOf(":");
-  if (index === -1) {
-    return image;
-  }
-  return `${image.slice(0, index + 1)}${tag.trim()}`;
 }
 
 /** Applies that service's image-tag prefix when the version does not already start with it. */
@@ -183,9 +180,11 @@ function localServiceImagesForOptions(
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
+    // `slim-images.ts`'s `replaceImageTag` doesn't trim (its own callers already do), so this
+    // path — the only one that skips `tagForServiceVersion`'s trim — trims here.
     const pin = normalizeVersionTags
       ? tagForServiceVersion(service.localService, version)
-      : version;
+      : version.trim();
     if (override === undefined && slim) {
       return {
         ...service,
@@ -216,17 +215,26 @@ export interface ServiceVersionRow {
   readonly remote: string;
 }
 
+/** A release tag's `-r<N>` suffix, matching the slim-services revision grammar. */
+const RELEASE_REVISION_SUFFIX = /^(?<upstream>.+)-r(?:0|[1-9][0-9]*)$/;
+
+/** Strips a slim release tag's `-r<N>` suffix, if any, back to its upstream version. */
+export function upstreamVersionFromTag(tag: string): string {
+  return RELEASE_REVISION_SUFFIX.exec(tag)?.groups?.upstream ?? tag;
+}
+
 function toServiceVersionRow(
   service: ServiceImageSpec,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ): ServiceVersionRow {
-  const tagSeparator = service.image.lastIndexOf(":");
-  if (tagSeparator === -1) {
+  // `@`-aware (via `imageTag`/`imageRepository`): a slim catalog pin's image carries a
+  // `@sha256:…` digest after the tag.
+  const name = imageRepository(service.image);
+  const tag = imageTag(service.image);
+  if (name === undefined || tag === undefined) {
     throw new Error(`Invalid service image entry: ${service.image}`);
   }
-
-  const name = service.image.slice(0, tagSeparator);
-  const local = service.image.slice(tagSeparator + 1);
+  const local = upstreamVersionFromTag(tag);
 
   return {
     name,

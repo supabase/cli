@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../../tests/helpers/slim-images.ts";
 import { resolvePinnedImage } from "./pinned-image.ts";
 
 const currentTag = (alias: string) => dockerfileServiceImageRaw(alias).split(":")[1] ?? "";
@@ -24,10 +27,10 @@ describe("resolvePinnedImage", () => {
   });
 
   it("resolves slim images when the flag is on and the pin is current", () => {
-    expect(resolvePinnedImage("gotrue", "auth", {}, true)).toBe(toSlimImage("gotrue", currentAuth));
-    expect(resolvePinnedImage("gotrue", "auth", { auth: currentAuthTag }, true)).toBe(
-      toSlimImage("gotrue", currentAuth),
-    );
+    const pinned = expectedPinnedImage("gotrue", currentAuth);
+    expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
+    expect(resolvePinnedImage("gotrue", "auth", {}, true)).toBe(pinned);
+    expect(resolvePinnedImage("gotrue", "auth", { auth: currentAuthTag }, true)).toBe(pinned);
   });
 
   it("keeps a historical pin on docker.io", () => {
@@ -43,21 +46,18 @@ describe("resolvePinnedImage", () => {
   });
 
   it("normalizes a current pooler pin onto the slim tag scheme", () => {
+    const pinned = expectedPinnedImage("supavisor", currentPooler);
+    expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
     expect(resolvePinnedImage("supavisor", "pooler", { pooler: currentPoolerTag }, true)).toBe(
-      toSlimImage("supavisor", currentPooler),
+      pinned,
     );
-    expect(
-      resolvePinnedImage(
-        "supavisor",
-        "pooler",
-        {
-          pooler: currentPoolerTag.startsWith("v")
-            ? currentPoolerTag.slice(1)
-            : `v${currentPoolerTag}`,
-        },
-        true,
-      ),
-    ).toBe(toSlimImage("supavisor", currentPooler));
+    // The opposite `v`-prefix variant of the same pin still counts as current
+    // (`pinMatchesCurrentImage` normalizes both before comparing), so it resolves to the very same
+    // catalog-pinned slim image.
+    const altPoolerTag = currentPoolerTag.startsWith("v")
+      ? currentPoolerTag.slice(1)
+      : `v${currentPoolerTag}`;
+    expect(resolvePinnedImage("supavisor", "pooler", { pooler: altPoolerTag }, true)).toBe(pinned);
   });
 
   it("keeps a historical postgres pin on docker.io", () => {
@@ -68,7 +68,7 @@ describe("resolvePinnedImage", () => {
       "supabase/postgres:17.4.1.1",
     );
     expect(resolvePinnedImage("pg", "postgres", { postgres: currentPostgresTag }, true)).toBe(
-      toSlimImage("pg", currentPostgres),
+      expectedPinnedImage("pg", currentPostgres),
     );
   });
 });

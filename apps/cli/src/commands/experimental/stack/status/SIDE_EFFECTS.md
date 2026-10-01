@@ -37,7 +37,8 @@ Text output starts with one line naming the stack, its readiness, runtime, and
 project directory, noting when the owner is unavailable. It then prints the
 connection summary shared with `stack start`: the API, REST, Functions,
 Studio, MCP, Mailpit, and database URLs that the composition members expose, the
-saved publishable and secret keys, and a services table with each service's
+saved publishable and secret keys, the Storage S3 URL, access keys, and region
+when the Storage member enables the S3 protocol, and a services table with each service's
 state, health, and activation; sleeping lazy services are marked as starting on
 first request. Service errors follow the tables, and config drift ends the
 output as one muted line unless the configuration drifted. Stack and service IDs appear only
@@ -66,11 +67,15 @@ or compare project configuration. Text output emits dotenv assignments;
 JSON and stream-JSON output emit a plain variable map under a successful result.
 Unavailable optional credentials and endpoints are omitted. The exported
 variable set is `API_URL`, `REST_URL`, `FUNCTIONS_URL`, `DB_URL`, `STUDIO_URL`,
-`MCP_URL`, `MAILPIT_URL`, `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`, and
-`SERVICE_ROLE_KEY`; `REST_URL` and `FUNCTIONS_URL` are `<API_URL>/rest/v1` and
-`<API_URL>/functions/v1`, present only when their member is a composition
-member with an HTTP endpoint. `ANON_KEY` and `SERVICE_ROLE_KEY` are emitted
-from the required saved database JWT secret.
+`MCP_URL`, `MAILPIT_URL`, `PUBLISHABLE_KEY`, `SECRET_KEY`, `ANON_KEY`,
+`SERVICE_ROLE_KEY`, `STORAGE_S3_URL`, `S3_PROTOCOL_ACCESS_KEY_ID`,
+`S3_PROTOCOL_ACCESS_KEY_SECRET`, and `S3_PROTOCOL_REGION`; `REST_URL` and
+`FUNCTIONS_URL` are `<API_URL>/rest/v1` and `<API_URL>/functions/v1`, present
+only when their member is a composition member with an HTTP endpoint.
+`STORAGE_S3_URL` is `<API_URL>/storage/v1/s3`, and it and the S3 access keys
+and region come from the Storage member's saved configuration when its S3
+protocol is enabled. `ANON_KEY` and `SERVICE_ROLE_KEY` are emitted from the
+required saved database JWT secret.
 
 `--override-name` renames an exported variable, accepting repeated flags or a
 comma-separated list of `EXPORTED_VARIABLE=VALID_ENV_NAME` entries. It requires

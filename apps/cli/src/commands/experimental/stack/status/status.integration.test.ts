@@ -71,6 +71,18 @@ const functions: ServiceCreation = {
   },
   endpoints: { http: { port: 54321 } },
 };
+const storage = (s3ProtocolEnabled: boolean): ServiceCreation => ({
+  service: "storage",
+  config: {
+    filePath: "/project/supabase/.temp/stack-uploads",
+    jwtSecret,
+    s3ProtocolEnabled,
+    s3AccessKeyId: "local-access-key",
+    s3SecretAccessKey: "local-secret-key",
+    s3Region: "local",
+  },
+  endpoints: { http: { port: 54321 } },
+});
 const flags = (input?: Partial<StackStatusFlags>): StackStatusFlags => ({
   stack: Option.none(),
   stackId: Option.none(),
@@ -580,6 +592,88 @@ it.live("omits MCP_URL when Studio is not a composition member", () =>
       env: Readonly<Record<string, string>>;
     };
     expect(result.env).not.toHaveProperty("MCP_URL");
+  }),
+);
+
+const storageServices = (creation: ServiceCreation) => {
+  return [
+    makeService({
+      id: "database-id",
+      creation: database,
+      statusCalls: { value: 0 },
+      observation: makeObservation("database-id", database, {
+        lifecycle: "running",
+        health: "healthy",
+        endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+      }),
+    }),
+    makeService({
+      id: "storage-id",
+      creation,
+      statusCalls: { value: 0 },
+      observation: makeObservation("storage-id", creation, {
+        lifecycle: "running",
+        health: "healthy",
+        endpoints: [{ name: "http", protocol: "http", host: "127.0.0.1", port: 54321 }],
+      }),
+    }),
+  ];
+};
+
+it.live("reports the Storage S3 endpoint and access keys through the gateway", () =>
+  Effect.gen(function* () {
+    const text = yield* runStatus({ services: storageServices(storage(true)), reachable: true });
+    yield* text.effect;
+    expect(text.out.stdoutText).toMatch(/URL +│ http:\/\/127\.0\.0\.1:54321\/storage\/v1\/s3 +│/u);
+    expect(text.out.stdoutText).toMatch(/Access Key +│ local-access-key +│/u);
+    expect(text.out.stdoutText).toMatch(/Secret Key +│ local-secret-key +│/u);
+    expect(text.out.stdoutText).toMatch(/Region +│ local +│/u);
+    const env = yield* runStatus({
+      services: storageServices(storage(true)),
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* env.effect;
+    expect(env.out.stdoutText).toContain("STORAGE_S3_URL='http://127.0.0.1:54321/storage/v1/s3'");
+    expect(env.out.stdoutText).toContain("S3_PROTOCOL_ACCESS_KEY_ID='local-access-key'");
+    expect(env.out.stdoutText).toContain("S3_PROTOCOL_ACCESS_KEY_SECRET='local-secret-key'");
+    expect(env.out.stdoutText).toContain("S3_PROTOCOL_REGION='local'");
+  }),
+);
+
+it.live("omits Storage S3 details when the S3 protocol is disabled", () =>
+  Effect.gen(function* () {
+    const text = yield* runStatus({ services: storageServices(storage(false)), reachable: true });
+    yield* text.effect;
+    expect(text.out.stdoutText).toMatch(/Project URL +│ http:\/\/127\.0\.0\.1:54321 +│/u);
+    expect(text.out.stdoutText).not.toContain("Storage (S3)");
+    const env = yield* runStatus({
+      services: storageServices(storage(false)),
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* env.effect;
+    expect(env.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
+    expect(env.out.stdoutText).not.toContain("S3_PROTOCOL_");
+    expect(env.out.stdoutText).not.toContain("STORAGE_S3_URL");
+  }),
+);
+
+it.live("omits Storage S3 details for a Storage member saved without S3 keys", () =>
+  Effect.gen(function* () {
+    const env = yield* runStatus({
+      services: storageServices({
+        service: "storage",
+        config: { filePath: "/project/supabase/.temp/stack-uploads", jwtSecret },
+        endpoints: { http: { port: 54321 } },
+      }),
+      reachable: true,
+      flags: flags({ env: true }),
+    });
+    yield* env.effect;
+    expect(env.out.stdoutText).toContain("API_URL='http://127.0.0.1:54321'");
+    expect(env.out.stdoutText).not.toContain("S3_PROTOCOL_");
+    expect(env.out.stdoutText).not.toContain("STORAGE_S3_URL");
   }),
 );
 

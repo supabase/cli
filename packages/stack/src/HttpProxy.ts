@@ -1,7 +1,8 @@
-import { Data, Effect, FiberSet, Ref, Schedule, Scope } from "effect";
+import { Data, Effect, FiberSet, Ref, Scope } from "effect";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
+  Agent,
   createServer,
   request as upstreamRequest,
   type IncomingMessage,
@@ -73,6 +74,10 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 const hasBody = (request: IncomingMessage) =>
   request.headers["transfer-encoding"] !== undefined ||
   Number(request.headers["content-length"] ?? 0) > 0;
+
+// A write can commit before its connection resets, so only safe, bodyless requests are resent.
+const isReplayable = (request: IncomingMessage) =>
+  safeMethods.has(request.method ?? "GET") && !hasBody(request);
 
 const headersFor = (headers: IncomingMessage["headers"]) =>
   Object.fromEntries(
@@ -225,30 +230,24 @@ const connectInterruptibly = Effect.fn("HttpProxy.connect")((address: BackendAdd
   }),
 );
 
-// Mirrors nginx `proxy_next_upstream error`: a backend that drops a fresh connection before
-// answering gets one more attempt, but only when nothing sent to the client or upstream would
-// need replaying.
-const retryOnce = (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
-  Schedule.recurs(1).pipe(
-    Schedule.setInputType<HttpProxyError | HttpProxyDisconnected>(),
-    Schedule.while(
-      ({ input }) =>
-        input._tag === "HttpProxyError" &&
-        input.responded === false &&
-        !response.destroyed &&
-        safeMethods.has(request.method ?? "GET") &&
-        !hasBody(request),
-    ),
-    Schedule.tap(({ input }) =>
-      Effect.logWarning(
-        `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
-        input,
-      ),
-    ),
-  );
+// Mirrors nginx `proxy_next_upstream error`: a backend that drops a connection before answering
+// gets one more attempt, but only when nothing sent to the client or upstream would need replaying.
+const isRetryable =
+  (request: IncomingMessage, response: ServerResponse) =>
+  (error: HttpProxyError | HttpProxyDisconnected) =>
+    error._tag === "HttpProxyError" &&
+    error.responded === false &&
+    !response.destroyed &&
+    isReplayable(request);
 
 const forward = Effect.fn("HttpProxy.forward")(
-  (request: IncomingMessage, response: ServerResponse, route: HttpRoute, backend: BackendAddress) =>
+  (
+    request: IncomingMessage,
+    response: ServerResponse,
+    route: HttpRoute,
+    backend: BackendAddress,
+    agent: Agent | false,
+  ) =>
     Effect.callback<void, HttpProxyError | HttpProxyDisconnected>((resume) => {
       let outgoing: ReturnType<typeof upstreamRequest> | undefined;
       let incoming: IncomingMessage | undefined;
@@ -287,9 +286,7 @@ const forward = Effect.fn("HttpProxy.forward")(
           host: "path" in backend ? undefined : backend.host,
           port: "path" in backend ? undefined : backend.port,
           socketPath: "path" in backend ? backend.path : undefined,
-          // A reused upstream connection can be reset by a just-woken backend, and a body
-          // cannot be replayed.
-          agent: false,
+          agent,
           method: request.method,
           path: pathFor(request, route),
           // Bun ends a streamed upstream response early when the request says Connection: close.
@@ -326,11 +323,16 @@ const forward = Effect.fn("HttpProxy.forward")(
 );
 
 const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
-  (request: IncomingMessage, response: ServerResponse, route: HttpRoute) =>
+  (request: IncomingMessage, response: ServerResponse, route: HttpRoute, agent: Agent) =>
     Effect.gen(function* () {
       const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
-      yield* forward(request, response, route, backend).pipe(
-        Effect.retry(retryOnce(request, response, route)),
+      yield* forward(request, response, route, backend, isReplayable(request) ? agent : false).pipe(
+        Effect.catchIf(isRetryable(request, response), (error) =>
+          Effect.logWarning(
+            `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
+            error,
+          ).pipe(Effect.andThen(forward(request, response, route, backend, false))),
+        ),
       );
     }),
 );
@@ -405,6 +407,12 @@ export const makeHttpProxy = (options: {
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
     const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
+    // Sockets per upstream stay unbounded so long-lived streamed responses never queue requests.
+    // Idle sockets close before Node upstreams' default 5 s keep-alive timeout can race a reuse.
+    const agent = yield* Effect.acquireRelease(
+      Effect.sync(() => new Agent({ keepAlive: true, timeout: 4_000 })),
+      (value) => Effect.sync(() => value.destroy()),
+    );
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
     const server = createServer((request, response) => {
@@ -422,7 +430,7 @@ export const makeHttpProxy = (options: {
               response.statusCode = 404;
               response.end("Not Found");
             } else {
-              yield* proxyRequest(request, response, route).pipe(
+              yield* proxyRequest(request, response, route, agent).pipe(
                 Effect.tapError((cause) =>
                   cause._tag === "HttpProxyDisconnected"
                     ? Effect.void

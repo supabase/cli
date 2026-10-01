@@ -24,6 +24,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
+import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -48,12 +49,21 @@ import * as Pooler from "./Pooler.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
-  readonly version: "v16.2";
+  readonly version: string;
 };
+
+// The real catalog's default postgrest pin, not hardcoded — `makeProcessRecipe` resolves this
+// through the real catalog, which would otherwise fail once a bump moves past a literal.
+const postgrestVersion = catalogPins().find(
+  (entry) => entry.sourceService === "postgrest" && entry.isDefault,
+)?.pin.upstreamVersion;
+if (postgrestVersion === undefined) {
+  throw new Error("no default postgrest catalog pin found");
+}
 
 const creation: TestCreation = {
   service: "rest",
-  version: "v16.2",
+  version: postgrestVersion,
   config: {},
 };
 
@@ -459,6 +469,7 @@ const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
   artifact: {
+    readonly service: ServiceKind;
     readonly name: string;
     readonly executablePath: string;
     readonly files: Readonly<Record<string, string>>;
@@ -475,8 +486,9 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
+  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
   const request: ArtifactRequest = {
-    key: `slim-services/${artifact.name}/${target}`,
+    key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
@@ -506,7 +518,8 @@ const nativeFixtureArtifact = Effect.fn(function* (
 
 const nativeRestArtifact = (cacheRoot: string, program = "") =>
   nativeFixtureArtifact(cacheRoot, {
-    name: "postgrest/v16.2",
+    service: "rest",
+    name: "postgrest",
     executablePath: "bin/postgrest",
     files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
   });
@@ -530,7 +543,8 @@ const nativePoolerArtifact = (cacheRoot: string) => {
     `});\n`;
   const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
   return nativeFixtureArtifact(cacheRoot, {
-    name: "pooler/v2.9.12",
+    service: "pooler",
+    name: "pooler",
     executablePath: "bin/server",
     files: { "bin/server": server, "bin/prepare": oneShot, "bin/provision-tenant": oneShot },
   });

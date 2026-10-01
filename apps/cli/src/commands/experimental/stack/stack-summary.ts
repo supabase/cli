@@ -35,6 +35,14 @@ export interface StackServiceView {
   readonly error?: string | undefined;
 }
 
+/** S3 protocol endpoint and local access keys of the Storage member. */
+interface StackStorageS3 {
+  readonly url: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly region: string;
+}
+
 /** Connection URLs derived from the observed composition members. */
 export interface StackConnections {
   readonly api?: string;
@@ -44,6 +52,7 @@ export interface StackConnections {
   readonly mcp?: string;
   readonly mailpit?: string;
   readonly database?: string;
+  readonly s3?: StackStorageS3;
 }
 
 export const serviceState = (observation: Observation | undefined): StackServiceState => {
@@ -79,6 +88,26 @@ const stackDatabaseUrl = (observation: Observation | undefined): string | undefi
   });
 };
 
+const stackStorageS3 = (
+  storageUrl: string | undefined,
+  observation: Observation | undefined,
+): StackStorageS3 | undefined => {
+  if (storageUrl === undefined || observation?.config.service !== "storage") return undefined;
+  const { s3ProtocolEnabled, s3AccessKeyId, s3SecretAccessKey, s3Region } =
+    observation.config.config;
+  return s3ProtocolEnabled === false ||
+    s3AccessKeyId === undefined ||
+    s3SecretAccessKey === undefined ||
+    s3Region === undefined
+    ? undefined
+    : {
+        url: `${storageUrl}/s3`,
+        accessKeyId: s3AccessKeyId,
+        secretAccessKey: s3SecretAccessKey,
+        region: s3Region,
+      };
+};
+
 /** Derives connection URLs; callers pass composition members only. */
 export const stackConnections = (
   members: ReadonlyArray<Pick<StackServiceView, "service" | "observation">>,
@@ -104,6 +133,10 @@ export const stackConnections = (
   const database = stackDatabaseUrl(
     members.find(({ service }) => service === "database")?.observation,
   );
+  const s3 = stackStorageS3(
+    routed("storage"),
+    members.find(({ service }) => service === "storage")?.observation,
+  );
   return {
     ...(api === undefined ? {} : { api }),
     ...(rest === undefined ? {} : { rest }),
@@ -114,6 +147,7 @@ export const stackConnections = (
     ...(api !== undefined && studio !== undefined ? { mcp: `${api}/mcp` } : {}),
     ...(mailpit === undefined ? {} : { mailpit }),
     ...(database === undefined ? {} : { database }),
+    ...(s3 === undefined ? {} : { s3 }),
   };
 };
 
@@ -142,6 +176,12 @@ export const connectionEnv = (
     values.ANON_KEY = credentials.anonKey;
     values.SERVICE_ROLE_KEY = credentials.serviceRoleKey;
   }
+  if (connections.s3 !== undefined) {
+    values.STORAGE_S3_URL = connections.s3.url;
+    values.S3_PROTOCOL_ACCESS_KEY_ID = connections.s3.accessKeyId;
+    values.S3_PROTOCOL_ACCESS_KEY_SECRET = connections.s3.secretAccessKey;
+    values.S3_PROTOCOL_REGION = connections.s3.region;
+  }
   return values;
 };
 
@@ -160,6 +200,10 @@ const connectionValues = (
     [names.dbUrl, connections.database],
     [names.publishableKey, credentials?.publishableKey],
     [names.secretKey, credentials?.secretKey],
+    [names.storageS3Url, connections.s3?.url],
+    [names.storageS3AccessKeyId, connections.s3?.accessKeyId],
+    [names.storageS3SecretAccessKey, connections.s3?.secretAccessKey],
+    [names.storageS3Region, connections.s3?.region],
   ];
   return {
     names,

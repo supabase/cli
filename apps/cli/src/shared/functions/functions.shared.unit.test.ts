@@ -3,6 +3,10 @@ import { Effect } from "effect";
 
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../../tests/helpers/slim-images.ts";
+import {
   DENO1_EDGE_RUNTIME_VERSION,
   edgeRuntimeImage,
   resolveEdgeRuntimeVersionPin,
@@ -22,10 +26,10 @@ describe("edgeRuntimeImage", () => {
     );
   });
 
-  it("rewrites the current Dockerfile tag onto the slim ghcr.io image when the flag is on", () => {
-    expect(edgeRuntimeImage(currentEdgeRuntimeTag, true)).toBe(
-      `ghcr.io/supabase/cli/edge-runtime:${currentEdgeRuntimeTag}`,
-    );
+  it("rewrites the current Dockerfile tag onto the catalog-pinned slim ghcr.io image when the flag is on", () => {
+    const pinned = expectedPinnedImage("edgeruntime", rawEdgeRuntimeImage);
+    expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
+    expect(edgeRuntimeImage(currentEdgeRuntimeTag, true)).toBe(pinned);
   });
 
   it("keeps a historical pin on docker.io when the flag is on", () => {

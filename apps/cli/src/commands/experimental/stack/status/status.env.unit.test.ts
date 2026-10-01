@@ -95,7 +95,7 @@ describe("stack environment overrides", () => {
     }),
   );
 
-  it.effect("accepts every current variable name and rejects removed S3_PROTOCOL names", () =>
+  it.effect("accepts every current variable name and rejects removed ones", () =>
     Effect.gen(function* () {
       for (const name of [
         "API_URL",
@@ -110,17 +110,15 @@ describe("stack environment overrides", () => {
         "SECRET_KEY",
         "ANON_KEY",
         "SERVICE_ROLE_KEY",
+        "STORAGE_S3_URL",
+        "S3_PROTOCOL_ACCESS_KEY_ID",
+        "S3_PROTOCOL_ACCESS_KEY_SECRET",
+        "S3_PROTOCOL_REGION",
       ]) {
         const names = yield* stackEnvOverrides([`${name}=RENAMED_${name}`]);
         expect(names.get(name)).toBe(`RENAMED_${name}`);
       }
-      for (const removed of [
-        "S3_PROTOCOL_ACCESS_KEY_ID",
-        "S3_PROTOCOL_ACCESS_KEY_SECRET",
-        "S3_PROTOCOL_REGION",
-        "S3_PROTOCOL_URL",
-        "JWT_SECRET",
-      ]) {
+      for (const removed of ["S3_PROTOCOL_URL", "JWT_SECRET"]) {
         const error = yield* stackEnvOverrides([`${removed}=RENAMED`]).pipe(Effect.flip);
         expect(error.reason).toBe("flags");
       }

@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../../tests/helpers/slim-images.ts";
 import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";
@@ -248,13 +251,20 @@ describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
   });
 
   it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
-    expect(imageFor("gotrue", true)).toBe(toSlimImage("gotrue", currentGotrue));
-    expect(imageFor("logflare", true)).toBe(toSlimImage("logflare", currentLogflare));
-    expect(imageFor("vector", true)).toBe(toSlimImage("vector", currentVector));
-    expect(imageFor("supavisor", true, { pooler: currentPoolerTag })).toBe(
-      toSlimImage("supavisor", currentPooler),
-    );
+    const gotruePinned = expectedPinnedImage("gotrue", currentGotrue);
+    const logflarePinned = expectedPinnedImage("logflare", currentLogflare);
+    const vectorPinned = expectedPinnedImage("vector", currentVector);
+    const poolerPinned = expectedPinnedImage("supavisor", currentPooler);
+    for (const pinned of [gotruePinned, logflarePinned, vectorPinned, poolerPinned]) {
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
+    }
+    expect(imageFor("gotrue", true)).toBe(gotruePinned);
+    expect(imageFor("logflare", true)).toBe(logflarePinned);
+    expect(imageFor("vector", true)).toBe(vectorPinned);
+    expect(imageFor("supavisor", true, { pooler: currentPoolerTag })).toBe(poolerPinned);
+    // Deliberate fallback: a historical pin the catalog doesn't carry stays on docker.io.
     expect(imageFor("supavisor", true, { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    // Deliberate fallback: kong has no slim build at all.
     expect(imageFor("kong", true)).toBe("library/kong:2.8.1");
   });
 });

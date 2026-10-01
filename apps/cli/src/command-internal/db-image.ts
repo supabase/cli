@@ -74,7 +74,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
     return { image, configImage: image };
   }
   const slim = yield* slimImagesEnabled;
-  const currentRaw = postgresImageForDbMajorVersion(majorVersion, slim) ?? pgImageRaw();
+  const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
     const versionPath = path.join(workdir, "supabase", ".temp", "postgres-version");
