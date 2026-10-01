@@ -5,6 +5,21 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Effect, FileSystem, Schema, Stdio } from "effect";
 
+const KeyValues = Schema.Array(
+  Schema.Struct({
+    key: Schema.String,
+    value: Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
+  }),
+);
+
+const stringAttribute = (attributes: typeof KeyValues.Type | undefined, key: string) =>
+  attributes?.find((attribute) => attribute.key === key)?.value.stringValue;
+
+/** Labels container CLI spans with their verb so `pull` and `run` report separately. */
+export function reportSpanName(name: string, subcommand: string | undefined): string {
+  return subcommand === undefined ? name : `${name} (${subcommand})`;
+}
+
 const OtlpSpan = Schema.Struct({
   traceId: Schema.String,
   spanId: Schema.String,
@@ -13,18 +28,9 @@ const OtlpSpan = Schema.Struct({
   startTimeUnixNano: Schema.String,
   endTimeUnixNano: Schema.String,
   status: Schema.Struct({ code: Schema.Number }),
+  attributes: Schema.optional(KeyValues),
   events: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        name: Schema.String,
-        attributes: Schema.Array(
-          Schema.Struct({
-            key: Schema.String,
-            value: Schema.Struct({ stringValue: Schema.optional(Schema.String) }),
-          }),
-        ),
-      }),
-    ),
+    Schema.Array(Schema.Struct({ name: Schema.String, attributes: KeyValues })),
   ),
 });
 
@@ -175,14 +181,14 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
             traceId: span.traceId,
             spanId: span.spanId,
             parentSpanId: span.parentSpanId,
-            name: span.name,
+            name: reportSpanName(span.name, stringAttribute(span.attributes, "process.subcommand")),
             startMs: nanosToMs(span.startTimeUnixNano),
             endMs: nanosToMs(span.endTimeUnixNano),
             failed: span.status.code === STATUS_ERROR,
-            errorType: span.events
-              ?.find((event) => event.name === "exception")
-              ?.attributes.find((attribute) => attribute.key === "exception.type")?.value
-              .stringValue,
+            errorType: stringAttribute(
+              span.events?.find((event) => event.name === "exception")?.attributes,
+              "exception.type",
+            ),
           });
         }
       }

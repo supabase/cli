@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeTrace, type ReportSpan } from "./trace-report.ts";
+import { analyzeTrace, reportSpanName, type ReportSpan } from "./trace-report.ts";
 
 const span = (
   spanId: string,
@@ -49,5 +49,14 @@ describe("analyzeTrace", () => {
 
     expect(report.repeated).toEqual([{ name: "Db.query", count: 2, totalMs: 80 }]);
     expect(report.failures).toEqual([{ name: "Db.query", errorType: "SqlError" }]);
+  });
+});
+
+describe("reportSpanName", () => {
+  it("separates container CLI verbs and leaves other spans unchanged", () => {
+    expect(reportSpanName("ContainerCli.spawn", "image inspect")).toBe(
+      "ContainerCli.spawn (image inspect)",
+    );
+    expect(reportSpanName("Db.query", undefined)).toBe("Db.query");
   });
 });
