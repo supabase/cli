@@ -35,6 +35,7 @@ import {
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
@@ -899,7 +900,7 @@ const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntime
     // `edgeRuntimeImage` applies the tag verbatim; a `.temp/edge-runtime-version`
     // pin flows through unmodified. Registry mapping + pull-with-retry happens
     // per-container, right before `ensureDockerNetwork` (see the caller).
-    rawImage: edgeRuntimeImage(edgeRuntimeVersion),
+    rawImage: edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled),
     projectEnvValues: context.projectEnvValues,
   };
 });

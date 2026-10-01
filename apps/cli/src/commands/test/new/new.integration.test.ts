@@ -9,6 +9,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { TestNewInvalidNameError } from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 import { testNew } from "./new.handler.ts";
 
@@ -186,6 +188,88 @@ describe("test new integration", () => {
       if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("creates test files under subdirectories that stay inside the tests directory", () => {
+    const { layer, out, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* testNew(flags("sub/foo"));
+      yield* testNew(flags("sub/../foo"));
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "sub", "foo_test.sql"))).toBe(
+        true,
+      );
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "foo_test.sql"))).toBe(true);
+      expect(out.stdoutText).toContain("supabase/tests/sub/foo_test.sql");
+      expect(out.stdoutText).toContain("supabase/tests/foo_test.sql");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a name that escapes the tests directory and writes nothing", () => {
+    const { layer, telemetry, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Escapes into a fresh directory inside this test's own temp root, so a guard
+      // that ran after makeDirectory would leave `nested/` behind.
+      const exit = yield* Effect.exit(testNew(flags("../../nested/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(TestNewInvalidNameError);
+          expect(failure.value.message).toContain("must not escape the supabase/tests directory");
+        }
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(yield* fs.exists(path.join(workdir, "nested"))).toBe(false);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests"))).toBe(false);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("follows an existing symlink to a shared test directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const testsDir = path.join(workdir, "supabase", "tests");
+      const sharedDir = path.join(workdir, "shared-tests");
+      yield* fs.makeDirectory(testsDir, { recursive: true });
+      yield* fs.makeDirectory(sharedDir);
+      yield* fs.symlink(sharedDir, path.join(testsDir, "shared"));
+
+      yield* testNew(flags("shared/pet"));
+
+      expect(yield* fs.readFileString(path.join(sharedDir, "pet_test.sql"))).toBe(PGTAP_TEMPLATE);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const exit = yield* Effect.exit(testNew(flags("../tests2/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests2"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sanitizes control characters in an invalid-name diagnostic", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const error = yield* testNew(flags("../../\u001b[2Jbad\r\n\t\u009bname")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewInvalidNameError);
+      expect(error.message).toContain('invalid test name: "../../[2Jbad name"');
     }).pipe(Effect.provide(layer));
   });
 

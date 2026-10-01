@@ -14,6 +14,7 @@ import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effe
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import {
@@ -139,11 +140,12 @@ export interface StartDbSetupImages {
  */
 function resolveDbSetupImages(
   serviceVersionOverrides: LocalServiceVersionOverrides,
+  slim: boolean,
 ): StartDbSetupImages {
   return {
-    realtime: resolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
-    storage: resolvePinnedImage("storage", "storage", serviceVersionOverrides),
-    auth: resolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
+    realtime: resolvePinnedImage("realtime", "realtime", serviceVersionOverrides, slim),
+    storage: resolvePinnedImage("storage", "storage", serviceVersionOverrides, slim),
+    auth: resolvePinnedImage("gotrue", "auth", serviceVersionOverrides, slim),
   };
 }
 
@@ -169,7 +171,7 @@ export const resolveDbSetupPrelude = <E>(setup: {
     const output = yield* Output;
     yield* output.raw("Initialising schema...\n", "stderr");
     const jwks = setup.majorVersion >= 15 && setup.realtimeEnabledForSetup ? yield* setup.jwks : "";
-    const images = resolveDbSetupImages(setup.serviceVersionOverrides);
+    const images = resolveDbSetupImages(setup.serviceVersionOverrides, yield* slimImagesEnabled);
     return { jwks, images };
   });
 

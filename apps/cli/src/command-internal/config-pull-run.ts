@@ -681,7 +681,7 @@ export const planConfigPullRun = Effect.fn("ConfigPull.plan")(function* (
         }),
     ),
   );
-  yield* fetching?.clear() ?? Effect.void;
+  yield* fetching?.clear ?? Effect.void;
 
   // Normalizes and classifies the response through the config family's shared
   // typed/defect boundary (ADR 0021).

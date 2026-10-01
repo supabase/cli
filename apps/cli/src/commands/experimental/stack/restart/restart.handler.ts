@@ -84,7 +84,7 @@ export const stackRestart = Effect.fn("experimental.stack.restart")(function* (
     const observations = yield* stack.composition.restart.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? task.clear()
+          ? task.clear
           : Cause.hasInterruptsOnly(exit.cause)
             ? task.cancel()
             : task.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),

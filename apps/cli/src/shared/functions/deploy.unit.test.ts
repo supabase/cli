@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { BunServices } from "@effect/platform-bun";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +13,9 @@ import {
   type ResolvedDeployFunctionConfig,
 } from "./deploy.ts";
 import { FunctionImportNotDirectoryError } from "./deploy.errors.ts";
+
+const runBuildDockerBinds = (...args: Parameters<typeof buildDockerBinds>) =>
+  Effect.runPromise(buildDockerBinds(...args).pipe(Effect.provide(BunServices.layer)));
 
 /**
  * `../../` from `<root>/supabase/functions/hello/deno.json`'s directory lands at
@@ -114,7 +119,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -140,7 +145,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     try {
       let caught: unknown;
       try {
-        await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+        await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
           onWarning: async () => {},
         });
       } catch (error) {
@@ -170,7 +175,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -195,7 +200,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -217,7 +222,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -249,7 +254,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -274,7 +279,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     await writeVendorIndexFile(root);
 
     try {
-      await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      await runBuildDockerBinds("test-project", functionsDir, outputDir, config);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -292,7 +297,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -318,14 +323,14 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     try {
       let threwWithoutOption = false;
       try {
-        await buildDockerBinds("test-project", functionsDir, outputDir, config);
+        await runBuildDockerBinds("test-project", functionsDir, outputDir, config);
       } catch {
         threwWithoutOption = true;
       }
       expect(threwWithoutOption).toBe(true);
 
       const warnings: Array<string> = [];
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -353,7 +358,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -386,7 +391,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     await writeFile(scopeDependency, 'export const dependency = "scope";\n');
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config);
       const hostPaths = binds.map((bind) => bind.hostPath);
 
       expect(hostPaths).toContain(scopeEntrypoint);
@@ -414,7 +419,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       await writeFile(scopeEntrypoint, 'export { util } from "./util.ts";\n');
       await writeFile(scopeDependency, 'export const util = "thing";\n');
 
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -455,7 +460,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       const warnings: Array<string> = [];
 
       try {
-        const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+        const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
           onWarning: async (message) => {
             warnings.push(message);
           },
@@ -489,7 +494,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -515,7 +520,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -545,7 +550,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -576,7 +581,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },
@@ -611,7 +616,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
     const warnings: Array<string> = [];
 
     try {
-      await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+      await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
         },

@@ -24,7 +24,7 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-import { prepareNativeArtifact } from "../Artifacts.ts";
+import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -49,12 +49,21 @@ import * as Pooler from "./Pooler.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
-  readonly version: "v16.2";
+  readonly version: string;
 };
+
+// The real catalog's default postgrest pin, not hardcoded — `makeProcessRecipe` resolves this
+// through the real catalog, which would otherwise fail once a bump moves past a literal.
+const postgrestVersion = catalogPins().find(
+  (entry) => entry.sourceService === "postgrest" && entry.isDefault,
+)?.pin.upstreamVersion;
+if (postgrestVersion === undefined) {
+  throw new Error("no default postgrest catalog pin found");
+}
 
 const creation: TestCreation = {
   service: "rest",
-  version: "v16.2",
+  version: postgrestVersion,
   config: {},
 };
 
@@ -246,10 +255,13 @@ describe("ProcessRecipe launch cleanup", () => {
             }),
           ),
         );
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-native-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativeRestArtifact(cacheRoot);
         const nativeOptions: CatalogOptions = {
           ...options,
-          root: yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-native-" }),
-          cacheRoot: "/tmp/supabase-stack-artifacts",
+          root,
+          cacheRoot,
           runtime: "native",
         };
         const nativeSpec: ProcessRecipeSpec<TestCreation> = {
@@ -294,17 +306,8 @@ describe("ProcessRecipe launch cleanup", () => {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const testScope = yield* Scope.Scope;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-order-" });
-        const cacheRoot = "/tmp/supabase-stack-artifacts";
-        const artifact = yield* prepareNativeArtifact(
-          { service: "rest", version: "v16.2" },
-          cacheRoot,
-        ).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(HttpClient.HttpClient, client),
-        );
+        const cacheRoot = path.join(root, "cache");
+        const artifact = yield* nativeRestArtifact(cacheRoot);
         const nativeOptions: CatalogOptions = {
           ...options,
           root,
@@ -367,7 +370,7 @@ describe("ProcessRecipe launch cleanup", () => {
             }),
           startupCommands: [
             {
-              nativeExecutable: path.relative(path.join(artifact.root, "bin"), process.execPath),
+              nativeExecutable: path.relative(path.join(artifact.path, "bin"), process.execPath),
               args: [
                 "-e",
                 `import net from "node:net"; const server = net.createServer(); server.once("error", () => process.exit(17)); server.listen(Number(process.env.PORT), "127.0.0.1", () => server.close((error) => process.exit(error ? 18 : 0)));`,
@@ -466,6 +469,7 @@ const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const nativeFixtureArtifact = Effect.fn(function* (
   cacheRoot: string,
   artifact: {
+    readonly service: ServiceKind;
     readonly name: string;
     readonly executablePath: string;
     readonly files: Readonly<Record<string, string>>;
@@ -482,8 +486,9 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
+  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
   const request: ArtifactRequest = {
-    key: `slim-services/${artifact.name}/${target}`,
+    key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
@@ -508,8 +513,16 @@ const nativeFixtureArtifact = Effect.fn(function* (
       ),
   };
   const store = yield* makeArtifactStore({ cacheRoot, source });
-  yield* store.prepare(request);
+  return yield* store.prepare(request);
 });
+
+const nativeRestArtifact = (cacheRoot: string, program = "") =>
+  nativeFixtureArtifact(cacheRoot, {
+    service: "rest",
+    name: "postgrest",
+    executablePath: "bin/postgrest",
+    files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
+  });
 
 const nativePoolerArtifact = (cacheRoot: string) => {
   const server =
@@ -530,7 +543,8 @@ const nativePoolerArtifact = (cacheRoot: string) => {
     `});\n`;
   const oneShot = `#!${process.execPath}\nprocess.exit(0);\n`;
   return nativeFixtureArtifact(cacheRoot, {
-    name: "pooler/v2.9.12",
+    service: "pooler",
+    name: "pooler",
     executablePath: "bin/server",
     files: { "bin/server": server, "bin/prepare": oneShot, "bin/provision-tenant": oneShot },
   });
@@ -631,11 +645,7 @@ const nativeRestRecipe = Effect.fn(function* (
   const crypto = yield* Crypto.Crypto;
   const client = yield* HttpClient.HttpClient;
   const cacheRoot = path.join(root, "cache");
-  yield* nativeFixtureArtifact(cacheRoot, {
-    name: "postgrest/v16.2",
-    executablePath: "bin/postgrest",
-    files: { "bin/postgrest": `#!${process.execPath}\n${program}` },
-  });
+  yield* nativeRestArtifact(cacheRoot, program);
   return yield* makeProcessRecipe(
     creation,
     {

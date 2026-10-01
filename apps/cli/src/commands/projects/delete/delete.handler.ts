@@ -101,7 +101,7 @@ export const projectsDelete = Effect.fn("projects.delete")(function* (flags: Pro
         }),
       ),
     );
-    yield* deleting?.clear() ?? Effect.void;
+    yield* deleting?.clear ?? Effect.void;
 
     // No per-ref keyring credential delete: the access token is stored under the profile
     // name, not the ref, so there is nothing to remove here.

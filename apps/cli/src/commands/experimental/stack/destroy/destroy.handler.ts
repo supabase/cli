@@ -73,17 +73,22 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         message: "Destroying a stack requires confirmation; rerun with --yes.",
         suggestion: "Pass --yes when running non-interactively or in a machine-readable format.",
       });
-    const confirmed = yield* promptYesNo(
-      output,
-      yes,
-      `Permanently destroy stack ${target.id} at ${target.projectRoot} and its owned data? Storage upload files will be preserved.`,
-      false,
-    );
-    if (!confirmed)
-      return yield* new StackCommandDestroyError({
-        reason: "cancelled",
-        message: "Stack destruction was not confirmed.",
-      });
+    const scope = `stack ${target.id} at ${target.projectRoot} and its owned data`;
+    const preserved = "Storage upload files will be preserved.";
+    if (yes) yield* output.raw(`Permanently destroying ${scope}. ${preserved}\n`, "stderr");
+    else {
+      const confirmed = yield* promptYesNo(
+        output,
+        false,
+        `Permanently destroy ${scope}? ${preserved}`,
+        false,
+      );
+      if (!confirmed)
+        return yield* new StackCommandDestroyError({
+          reason: "cancelled",
+          message: "Stack destruction was not confirmed.",
+        });
+    }
     const stack = yield* api
       .open({
         id: target.id,
@@ -95,7 +100,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const result = yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? destroying.clear()
+          ? destroying.clear
           : Cause.hasInterruptsOnly(exit.cause)
             ? destroying.cancel()
             : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
@@ -103,7 +108,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       Effect.mapError(destroyError),
     );
     yield* Effect.annotateCurrentSpan({
-      "stack.confirmed": confirmed,
+      "stack.prompted": !yes,
       "stack.runtime_cleanup": result.runtimeCleanup,
     });
     if (result.runtimeCleanup === "skipped")

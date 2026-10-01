@@ -17,12 +17,11 @@ import {
 import { createServer, type Server } from "node:http";
 import { zstdCompress } from "node:zlib";
 import { FetchHttpClient } from "effect/unstable/http";
-import { prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
-import { makeArtifactStore, type ArtifactRequest } from "./ArtifactStore.ts";
+import { catalogPins, prepareNativeArtifact, resolveArtifact } from "../Artifacts.ts";
+import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
 import {
   makeSlimServicesSource,
-  slimServicesChecksum,
   type SlimServicesArtifact,
   type ZstdDecompressor,
 } from "./SlimServicesSource.ts";
@@ -34,15 +33,31 @@ const waitForAbort = (signal?: AbortSignal | null): Promise<never> =>
 const waitForRelease = (released: Deferred.Deferred<void>): Promise<void> =>
   Effect.runPromise(Deferred.await(released));
 
+const manifestBytes = (version: string, service = "demo"): Uint8Array =>
+  new TextEncoder().encode(JSON.stringify({ service, version, target: "linux-amd64" }));
+
+const demoManifest = manifestBytes("v1.0.0-r0");
+
+/** Passes every manifest check except its pin. */
+const commandManifest = new TextEncoder().encode(
+  JSON.stringify({
+    service: "demo",
+    version: "v1.0.0-r0",
+    target: "linux-amd64",
+    cmd: ["bin/evil"],
+  }),
+);
+
 const artifact: SlimServicesArtifact = {
   provider: "supabase/slim-services",
   service: "demo",
-  version: "v1.0.0",
-  releaseTag: "demo-v1.0.0",
+  version: "v1.0.0-r0",
+  releaseTag: "demo-v1.0.0-r0",
   target: "linux-amd64",
   archive: "tar.zst",
-  assetName: "demo-v1.0.0-linux-amd64",
-  checksums: [{ kind: "sha256sums", url: "https://example.test/SHA256SUMS" }],
+  assetName: "demo-v1.0.0-r0-linux-amd64",
+  sha256: "0".repeat(64),
+  manifestSha256: "0".repeat(64),
   mirrors: [
     {
       downloadUrl: "https://example.test/demo.tar.zst",
@@ -52,6 +67,34 @@ const artifact: SlimServicesArtifact = {
   requiredRuntimePaths: ["bin/demo"],
   executablePath: "bin/demo",
 };
+
+const releaseMirror = {
+  downloadUrl: "https://release.test/demo-v1.0.0-r0-linux-amd64.tar.zst",
+  manifestUrl: "https://release.test/demo-v1.0.0-r0-linux-amd64.manifest.json",
+};
+const bucketMirror = {
+  downloadUrl: "https://bucket.test/demo-v1.0.0-r0-linux-amd64.tar.zst",
+  manifestUrl: "https://bucket.test/demo-v1.0.0-r0-linux-amd64.manifest.json",
+};
+
+const sha256Of = Effect.fn(function* (bytes: Uint8Array) {
+  const crypto = yield* Crypto.Crypto;
+  return digestHex(yield* crypto.digest("SHA-256", bytes));
+});
+
+/** Pins `base` to the digests of the given archive and manifest bytes. */
+const pinned = Effect.fn(function* (
+  archive: Uint8Array,
+  manifest: Uint8Array = demoManifest,
+  base: SlimServicesArtifact = artifact,
+) {
+  return {
+    ...base,
+    sha256: yield* sha256Of(archive),
+    manifestSha256: yield* sha256Of(manifest),
+  } satisfies SlimServicesArtifact;
+});
+
 const request: ArtifactRequest = {
   key: "demo/v1",
   requiredRuntimePaths: ["bin/demo"],
@@ -138,59 +181,62 @@ const withFetch = <A, E, R>(fetcher: FetchLike, effect: Effect.Effect<A, E, R>) 
     Effect.provideService(FetchHttpClient.Fetch, fetcher),
   );
 
-const registryChecksum = {
-  kind: "oci",
-  registry: "registry.test",
-  repository: "supabase/cli/demo",
-  tag: "v1.0.0-native-linux-amd64",
-} as const;
+/** Serves each host's manifest and archive, answers 403 elsewhere, and records every URL. */
+const serving =
+  (
+    hosts: Readonly<
+      Record<string, { readonly archive: Uint8Array; readonly manifest: Uint8Array }>
+    >,
+    requested: Array<string> = [],
+  ): FetchLike =>
+  (input) => {
+    const url = requestUrl(input);
+    requested.push(url);
+    const host = hosts[new URL(url).host];
+    if (host === undefined) return Promise.resolve(new Response("", { status: 403 }));
+    return Promise.resolve(
+      new Response(url.endsWith(".manifest.json") ? host.manifest : host.archive),
+    );
+  };
 
-/** Anonymous registry token and native manifest; the manifest requires the issued token. */
-const registryResponse = (
-  input: Parameters<typeof fetch>[0],
-  init: Parameters<typeof fetch>[1],
-  archiveSha256: string,
-  registry = "registry.test",
-  repository = "supabase/cli/demo",
-  tag = "v1.0.0-native-linux-amd64",
-): Response | undefined => {
-  const url = requestUrl(input);
-  if (url === `https://${registry}/token?scope=repository:${repository}:pull&service=${registry}`)
-    return new Response(JSON.stringify({ token: "anonymous" }));
-  if (url !== `https://${registry}/v2/${repository}/manifests/${tag}`) return undefined;
-  if (new Headers(init?.headers).get("authorization") !== "Bearer anonymous")
-    return new Response("", { status: 401 });
-  return new Response(
-    JSON.stringify({
-      layers: [
-        {
-          mediaType: "application/vnd.supabase.slim.archive.v1.tar+zstd",
-          digest: `sha256:${archiveSha256}`,
-        },
-        {
-          mediaType: "application/vnd.supabase.slim.checksum.v1",
-          digest: `sha256:${"f".repeat(64)}`,
-        },
-      ],
-    }),
-  );
-};
+const fixtureSource = (content: string): ArtifactSource => ({
+  checksum: () => Effect.succeed("0".repeat(64)),
+  materialize: (entry, destination) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const file of entry.requiredRuntimePaths) {
+        yield* fs.makeDirectory(`${destination}/${file.slice(0, file.lastIndexOf("/"))}`, {
+          recursive: true,
+        });
+        yield* fs.writeFileString(`${destination}/${file}`, content);
+        yield* fs.chmod(`${destination}/${file}`, 0o755);
+      }
+    }).pipe(
+      Effect.mapError(
+        (cause) => new PreparationError({ message: "Unable to write cache fixture", cause }),
+      ),
+    ),
+});
 
 describe("slim-services artifact source", () => {
   it.live("follows release redirects through the supplied Node HTTP client", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
         const server = yield* Effect.acquireRelease(
           Effect.tryPromise({
             try: () =>
               // oxlint-disable-next-line effecttsgo/new-promise -- node server listen exposes a callback lifecycle.
               new Promise<Server>((resolve, reject) => {
                 const value = createServer((request, response) => {
-                  if (request.url === "/redirect") {
+                  const url = request.url ?? "";
+                  if (url.startsWith("/redirect/")) {
                     response.statusCode = 302;
-                    response.setHeader("location", "/checksums");
+                    response.setHeader("location", url.slice("/redirect".length));
+                    response.end();
+                    return;
                   }
-                  response.end("a".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n");
+                  response.end(url.endsWith(".manifest.json") ? demoManifest : archive);
                 });
                 value.once("error", reject);
                 value.listen(0, "127.0.0.1", () => resolve(value));
@@ -207,50 +253,62 @@ describe("slim-services artifact source", () => {
         const address = server.address();
         if (address === null || typeof address === "string")
           return yield* Effect.die("redirect server did not expose a port");
-        const redirected: SlimServicesArtifact = {
+        const origin = `http://127.0.0.1:${address.port}/redirect`;
+        const redirected = yield* pinned(archive, demoManifest, {
           ...artifact,
-          checksums: [{ kind: "sha256sums", url: `http://127.0.0.1:${address.port}/redirect` }],
-        };
-        const checksum = yield* slimServicesChecksum(redirected);
-        expect(checksum).toBe("a".repeat(64));
+          mirrors: [
+            {
+              downloadUrl: `${origin}/demo.tar.zst`,
+              manifestUrl: `${origin}/demo.manifest.json`,
+            },
+          ],
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-redirect-",
+        });
+        yield* makeSlimServicesSource(() => redirected).materialize(
+          request,
+          destination,
+          redirected.sha256,
+        );
+        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
   );
 
-  it.live("verifies checksums and extracts a manifest-matched archive using injected fetch", () =>
+  it.live("prepares a pinned archive and manifest without fetching any checksum", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const checksums = expected + "  demo-v1.0.0-linux-amd64.tar.zst\n";
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS")) return Promise.resolve(new Response(checksums));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
-        expect(yield* withFetch(fetcher, slimServicesChecksum(artifact))).toBe(expected);
-        const source = makeSlimServicesSource(() => artifact);
+        const demo = yield* pinned(archive);
+        const requested: string[] = [];
+        const fetcher = serving({ "example.test": { archive, manifest: demoManifest } }, requested);
         const fs = yield* FileSystem.FileSystem;
-        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-source-" });
-        yield* withFetch(fetcher, source.materialize(request, destination, expected));
-        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-store-" });
+        const store = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: makeSlimServicesSource(() => demo),
+        });
+
+        const prepared = yield* withFetch(fetcher, store.prepare(request));
+        expect(prepared.outcome).toBe("downloaded");
+        expect(prepared.sha256).toBe(demo.sha256);
+        expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
+        expect(requested).toEqual([demo.mirrors[0].manifestUrl, demo.mirrors[0].downloadUrl]);
+
+        const cached = yield* withFetch(fetcher, store.prepare(request));
+        expect(cached.outcome).toBe("cached");
+        expect(requested).toHaveLength(2);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
-  it.live("retries a gateway error on the checksum and a truncated archive transfer", () =>
+  it.live("retries a gateway error on the manifest and a truncated archive transfer", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const demo = yield* pinned(archive);
         const attempts = new Map<string, number>();
         const count = (url: string): number => {
           const next = (attempts.get(url) ?? 0) + 1;
@@ -266,17 +324,9 @@ describe("slim-services artifact source", () => {
           });
         const flaky: FetchLike = (input) => {
           const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(
-              count(url) === 1
-                ? new Response("", { status: 504 })
-                : new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`),
-            );
           if (url.endsWith("manifest.json"))
             return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
+              count(url) === 1 ? new Response("", { status: 504 }) : new Response(demoManifest),
             );
           return Promise.resolve(
             count(url) === 1 ? new Response(truncated()) : new Response(archive),
@@ -284,78 +334,68 @@ describe("slim-services artifact source", () => {
         };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-retry-" });
-        const source = makeSlimServicesSource(() => artifact, { backoff: immediate });
-        expect(yield* withFetch(flaky, source.checksum(request))).toBe(expected);
-        expect(attempts.get("https://example.test/SHA256SUMS")).toBe(2);
-        yield* withFetch(flaky, source.materialize(request, destination, expected));
+        const source = makeSlimServicesSource(() => demo, { backoff: immediate });
+        yield* withFetch(flaky, source.materialize(request, destination, demo.sha256));
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
-        expect(attempts.get(artifact.mirrors[0].downloadUrl)).toBe(2);
+        expect(attempts.get(demo.mirrors[0].manifestUrl)).toBe(2);
+        expect(attempts.get(demo.mirrors[0].downloadUrl)).toBe(2);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
   it.live("spends five attempts on a persistent gateway error and one on a missing asset", () =>
-    Effect.gen(function* () {
-      let gateway = 0;
-      const exhausted = yield* withFetch(() => {
-        gateway += 1;
-        return Promise.resolve(new Response("", { status: 504 }));
-      }, slimServicesChecksum(artifact, immediate).pipe(Effect.exit));
-      expect(errorOf(exhausted)).toBeInstanceOf(PreparationError);
-      expect(gateway).toBe(5);
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const source = makeSlimServicesSource(() => artifact, { backoff: immediate });
 
-      let missing = 0;
-      const failed = yield* withFetch(() => {
-        missing += 1;
-        return Promise.resolve(new Response("", { status: 404 }));
-      }, slimServicesChecksum(artifact, immediate).pipe(Effect.exit));
-      expect(errorOf(failed)).toBeInstanceOf(PreparationError);
-      expect(missing).toBe(1);
-    }),
+        let gateway = 0;
+        const exhausted = yield* withFetch(
+          () => {
+            gateway += 1;
+            return Promise.resolve(new Response("", { status: 504 }));
+          },
+          source
+            .materialize(
+              request,
+              yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-gateway-" }),
+              artifact.sha256,
+            )
+            .pipe(Effect.exit),
+        );
+        expect(errorOf(exhausted)).toBeInstanceOf(PreparationError);
+        expect(gateway).toBe(5);
+
+        let missing = 0;
+        const failed = yield* withFetch(
+          () => {
+            missing += 1;
+            return Promise.resolve(new Response("", { status: 404 }));
+          },
+          source
+            .materialize(
+              request,
+              yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-missing-" }),
+              artifact.sha256,
+            )
+            .pipe(Effect.exit),
+        );
+        expect(errorOf(failed)).toBeInstanceOf(PreparationError);
+        expect(missing).toBe(1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 
   it.live("prepares the artifact from the next mirror when the release host is blocked", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const mirrored: SlimServicesArtifact = {
+        const mirrored = yield* pinned(archive, demoManifest, {
           ...artifact,
-          checksums: [
-            { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
-            registryChecksum,
-          ],
-          mirrors: [
-            {
-              downloadUrl: "https://release.test/demo-v1.0.0-linux-amd64.tar.zst",
-              manifestUrl: "https://release.test/demo-v1.0.0-linux-amd64.manifest.json",
-            },
-            {
-              downloadUrl: "https://bucket.test/demo-v1.0.0-linux-amd64.tar.zst",
-              manifestUrl: "https://bucket.test/demo-v1.0.0-linux-amd64.manifest.json",
-            },
-          ],
-        };
-        const blocked = new Set<string>();
-        const bucket: string[] = [];
-        const fetcher: FetchLike = (input, init) => {
-          const url = requestUrl(input);
-          if (url.startsWith("https://release.test/")) {
-            blocked.add(url);
-            return Promise.resolve(new Response("", { status: 403 }));
-          }
-          const registry = registryResponse(input, init, expected);
-          if (registry !== undefined) return Promise.resolve(registry);
-          bucket.push(url);
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+          mirrors: [releaseMirror, bucketMirror],
+        });
+        const requested: string[] = [];
+        const fetcher = serving({ "bucket.test": { archive, manifest: demoManifest } }, requested);
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-fallback-" });
         const store = yield* makeArtifactStore({
@@ -365,100 +405,140 @@ describe("slim-services artifact source", () => {
         const prepared = yield* withFetch(fetcher, store.prepare(request));
         expect(prepared.outcome).toBe("downloaded");
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
-        expect([...blocked]).toEqual([
-          "https://release.test/SHA256SUMS",
-          "https://release.test/demo-v1.0.0-linux-amd64.manifest.json",
-        ]);
-        expect(bucket).toEqual([
-          "https://bucket.test/demo-v1.0.0-linux-amd64.manifest.json",
-          "https://bucket.test/demo-v1.0.0-linux-amd64.tar.zst",
+        expect(requested).toEqual([
+          releaseMirror.manifestUrl,
+          bucketMirror.manifestUrl,
+          bucketMirror.downloadUrl,
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
-  it.live("names every failed checksum source in the aggregated error", () =>
-    Effect.gen(function* () {
-      const mirrored: SlimServicesArtifact = {
-        ...artifact,
-        checksums: [
-          { kind: "sha256sums", url: "https://release.test/SHA256SUMS" },
-          registryChecksum,
-        ],
-      };
-      const requested: string[] = [];
-      const failed = yield* withFetch((input) => {
-        requested.push(requestUrl(input));
-        return Promise.resolve(new Response("", { status: 403 }));
-      }, slimServicesChecksum(mirrored, immediate).pipe(Effect.exit));
-      expect(errorOf(failed)?.message).toBe(
-        "Unable to resolve the slim-services checksum: https://release.test/SHA256SUMS " +
-          "(Unable to download https://release.test/SHA256SUMS: HTTP 403); " +
-          "registry.test/supabase/cli/demo:v1.0.0-native-linux-amd64 (Unable to download " +
-          "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test: HTTP 403)",
-      );
-      expect(errorOf(failed)).toMatchObject({
-        service: artifact.service,
-        version: artifact.version,
-      });
-      expect(requested).toEqual([
-        "https://release.test/SHA256SUMS",
-        "https://registry.test/token?scope=repository:supabase/cli/demo:pull&service=registry.test",
-      ]);
-    }),
-  );
-
-  it.live("accepts a fallback archive only when it matches the checksum", () =>
+  it.live("falls through to the next mirror when the primary serves a tampered archive", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
         const tampered = yield* compress(tar("bin/demo", "evil"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const mirrored = (fallback: Uint8Array): SlimServicesArtifact => ({
+        const mirrored = yield* pinned(archive, demoManifest, {
           ...artifact,
-          mirrors: [
-            {
-              downloadUrl: "https://release.test/demo.tar.zst",
-              manifestUrl: "https://release.test/demo.manifest.json",
-            },
-            {
-              downloadUrl: `https://bucket.test/${fallback === archive ? "good" : "bad"}.tar.zst`,
-              manifestUrl: "https://bucket.test/demo.manifest.json",
-            },
-          ],
+          mirrors: [releaseMirror, bucketMirror],
         });
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(url.endsWith("good.tar.zst") ? archive : tampered));
-        };
+        const requested: string[] = [];
+        const fetcher = serving(
+          {
+            "release.test": { archive: tampered, manifest: demoManifest },
+            "bucket.test": { archive, manifest: demoManifest },
+          },
+          requested,
+        );
         const fs = yield* FileSystem.FileSystem;
-
-        const recovered = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-recover-" });
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-archive-" });
         yield* withFetch(
           fetcher,
-          makeSlimServicesSource(() => mirrored(archive)).materialize(request, recovered, expected),
+          makeSlimServicesSource(() => mirrored).materialize(request, destination, mirrored.sha256),
         );
-        expect(yield* fs.readFileString(`${recovered}/bin/demo`)).toBe("demo");
+        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
+        expect(requested).toEqual([
+          releaseMirror.manifestUrl,
+          releaseMirror.downloadUrl,
+          bucketMirror.manifestUrl,
+          bucketMirror.downloadUrl,
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 
-        const rejected = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-reject-" });
+  it.live("falls through to the next mirror when the primary serves a tampered manifest", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const mirrored = yield* pinned(archive, demoManifest, {
+          ...artifact,
+          mirrors: [releaseMirror, bucketMirror],
+        });
+        const requested: string[] = [];
+        const fetcher = serving(
+          {
+            "release.test": { archive, manifest: commandManifest },
+            "bucket.test": { archive, manifest: demoManifest },
+          },
+          requested,
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-manifest-",
+        });
+        yield* withFetch(
+          fetcher,
+          makeSlimServicesSource(() => mirrored).materialize(request, destination, mirrored.sha256),
+        );
+        expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
+        expect(requested).toEqual([
+          releaseMirror.manifestUrl,
+          bucketMirror.manifestUrl,
+          bucketMirror.downloadUrl,
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("names every mirror and its mismatch when none serves the pinned bytes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const tampered = yield* compress(tar("bin/demo", "evil"));
+        const tamperedManifest = manifestBytes("v1.0.0-r0", "evil");
+        const mirrored = yield* pinned(archive, demoManifest, {
+          ...artifact,
+          mirrors: [releaseMirror, bucketMirror],
+        });
+        const fetcher = serving({
+          "release.test": { archive: tampered, manifest: demoManifest },
+          "bucket.test": { archive, manifest: tamperedManifest },
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-reject-" });
         const failed = yield* withFetch(
           fetcher,
-          makeSlimServicesSource(() => mirrored(tampered))
-            .materialize(request, rejected, expected)
+          makeSlimServicesSource(() => mirrored)
+            .materialize(request, destination, mirrored.sha256)
             .pipe(Effect.exit),
         );
-        const message = errorOf(failed)?.message;
-        expect(message).toContain("Unable to download the slim-services archive");
-        expect(message).toContain("https://release.test/demo.tar.zst");
-        expect(message).toContain("https://bucket.test/bad.tar.zst");
-        expect(yield* fs.exists(`${rejected}/bin/demo`)).toBe(false);
+        expect(errorOf(failed)?.message).toBe(
+          "Unable to download the slim-services archive: " +
+            `${releaseMirror.downloadUrl} (Unable to download slim-services archive: ` +
+            `expected ${mirrored.sha256}, got ${yield* sha256Of(tampered)}); ` +
+            `${bucketMirror.downloadUrl} (Slim-services manifest does not match its pin: ` +
+            `expected ${mirrored.manifestSha256}, got ${yield* sha256Of(tamperedManifest)})`,
+        );
+        expect(yield* fs.exists(`${destination}/bin/demo`)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("rejects a manifest that names the upstream version instead of the release", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const upstreamManifest = manifestBytes("v1.0.0");
+        const demo = yield* pinned(archive, upstreamManifest);
+        const requested: string[] = [];
+        const fetcher = serving(
+          { "example.test": { archive, manifest: upstreamManifest } },
+          requested,
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-version-" });
+        const failed = yield* withFetch(
+          fetcher,
+          makeSlimServicesSource(() => demo)
+            .materialize(request, destination, demo.sha256)
+            .pipe(Effect.exit),
+        );
+        expect(errorOf(failed)?.message).toBe(
+          "Slim-services manifest does not match the catalog artifact",
+        );
+        expect(requested).toEqual([demo.mirrors[0].manifestUrl]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
@@ -467,26 +547,14 @@ describe("slim-services artifact source", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("../outside", "unsafe"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
-        const source = makeSlimServicesSource(() => artifact);
+        const demo = yield* pinned(archive);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
         const failed = yield* withFetch(
-          fetcher,
-          source.materialize(request, destination, expected).pipe(Effect.exit),
+          serving({ "example.test": { archive, manifest: demoManifest } }),
+          makeSlimServicesSource(() => demo)
+            .materialize(request, destination, demo.sha256)
+            .pipe(Effect.exit),
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
@@ -503,48 +571,21 @@ describe("slim-services artifact source", () => {
             { name: "bin/current", link: "demo" },
           ]),
         );
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+        const demo = yield* pinned(archive);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-links-" });
         yield* withFetch(
-          fetcher,
-          makeSlimServicesSource(() => artifact).materialize(request, destination, expected),
+          serving({ "example.test": { archive, manifest: demoManifest } }),
+          makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
         );
         expect(yield* fs.readFileString(`${destination}/bin/current`)).toBe("demo");
 
         const malformed = yield* compress(new Uint8Array([1, 2, 3]));
-        const malformedDigest = digestHex(yield* crypto.digest("SHA-256", malformed));
-        const malformedFetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(
-              new Response(malformedDigest + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
-            );
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(malformed));
-        };
+        const malformedDemo = yield* pinned(malformed);
         const failed = yield* withFetch(
-          malformedFetcher,
-          makeSlimServicesSource(() => artifact)
-            .materialize(request, destination, malformedDigest)
+          serving({ "example.test": { archive: malformed, manifest: demoManifest } }),
+          makeSlimServicesSource(() => malformedDemo)
+            .materialize(request, destination, malformedDemo.sha256)
             .pipe(Effect.exit),
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
@@ -561,28 +602,15 @@ describe("slim-services artifact source", () => {
             { name: "bin/escape", link: "../../outside" },
           ]),
         );
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+        const demo = yield* pinned(archive);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({
           prefix: "slim-services-link-escape-",
         });
         const failed = yield* withFetch(
-          fetcher,
-          makeSlimServicesSource(() => artifact)
-            .materialize(request, destination, expected)
+          serving({ "example.test": { archive, manifest: demoManifest } }),
+          makeSlimServicesSource(() => demo)
+            .materialize(request, destination, demo.sha256)
             .pipe(Effect.exit),
         );
         expect(errorOf(failed)).toBeInstanceOf(PreparationError);
@@ -594,20 +622,12 @@ describe("slim-services artifact source", () => {
   it.live("interrupts an in-flight download without publishing a staging artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const demo = yield* pinned(new Uint8Array());
         const started = yield* Deferred.make<void>();
         let signal: AbortSignal | undefined;
         const fetcher: FetchLike = (input, init) => {
-          const url = requestUrl(input);
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(
-              new Response("0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
-            );
+          if (requestUrl(input).endsWith("manifest.json"))
+            return Promise.resolve(new Response(demoManifest));
           signal = init?.signal ?? undefined;
           Deferred.doneUnsafe(started, Effect.void);
           return waitForAbort(signal);
@@ -619,11 +639,7 @@ describe("slim-services artifact source", () => {
         const fiber = yield* Effect.forkChild(
           withFetch(
             fetcher,
-            makeSlimServicesSource(() => artifact).materialize(
-              request,
-              destination,
-              "0".repeat(64),
-            ),
+            makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
           ),
           { startImmediately: true },
         );
@@ -635,39 +651,25 @@ describe("slim-services artifact source", () => {
     ),
   );
 
-  it.live("rejects a streamed checksum mismatch before publishing and retries cleanly", () =>
+  it.live("rejects an archive that misses its pin before publishing and retries cleanly", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        let validChecksum = false;
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(
-              new Response(
-                `${validChecksum ? expected : "0".repeat(64)}  demo-v1.0.0-linux-amd64.tar.zst\n`,
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+        const demo = yield* pinned(archive);
+        let current: SlimServicesArtifact = { ...demo, sha256: "0".repeat(64) };
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({
           prefix: "slim-services-store-integrity-",
         });
-        const source = makeSlimServicesSource(() => artifact);
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const store = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: makeSlimServicesSource(() => current),
+        });
+        const fetcher = serving({ "example.test": { archive, manifest: demoManifest } });
         const failed = yield* withFetch(fetcher, store.prepare(request).pipe(Effect.exit));
         expect(Exit.isFailure(failed)).toBe(true);
         expect(yield* fs.exists(`${root}/demo/v1`)).toBe(false);
-        validChecksum = true;
+        current = demo;
         const prepared = yield* withFetch(fetcher, store.prepare(request));
         expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -677,21 +679,13 @@ describe("slim-services artifact source", () => {
   it.live("cancels a streamed response after transfer starts and removes its staging file", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const demo = yield* pinned(new Uint8Array());
         const started = yield* Deferred.make<void>();
         let signal: AbortSignal | undefined;
         let canceled = false;
         const fetcher: FetchLike = (input, init) => {
-          const url = requestUrl(input);
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(
-              new Response("0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
-            );
+          if (requestUrl(input).endsWith("manifest.json"))
+            return Promise.resolve(new Response(demoManifest));
           signal = init?.signal ?? undefined;
           let pulls = 0;
           const released = Deferred.makeUnsafe<void>();
@@ -718,11 +712,7 @@ describe("slim-services artifact source", () => {
         const fiber = yield* Effect.forkChild(
           withFetch(
             fetcher,
-            makeSlimServicesSource(() => artifact).materialize(
-              request,
-              destination,
-              "0".repeat(64),
-            ),
+            makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
           ),
           { startImmediately: true },
         );
@@ -739,8 +729,7 @@ describe("slim-services artifact source", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const demo = yield* pinned(archive);
         const started = yield* Deferred.make<void>();
         let destroyed = false;
         const decompressor: ZstdDecompressor = {
@@ -752,27 +741,15 @@ describe("slim-services artifact source", () => {
               });
             }),
         };
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-zstd-" });
         const fiber = yield* Effect.forkChild(
           withFetch(
-            fetcher,
-            makeSlimServicesSource(() => artifact, { decompressor }).materialize(
+            serving({ "example.test": { archive, manifest: demoManifest } }),
+            makeSlimServicesSource(() => demo, { decompressor }).materialize(
               request,
               destination,
-              expected,
+              demo.sha256,
             ),
           ),
           { startImmediately: true },
@@ -790,114 +767,106 @@ describe("slim-services artifact source", () => {
       Effect.gen(function* () {
         const longName = `bin/${"long-function-name-".repeat(8)}.js`;
         const archive = yield* compress(paxTar(longName));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS"))
-            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+        const demo = yield* pinned(archive);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-pax-" });
         yield* withFetch(
-          fetcher,
-          makeSlimServicesSource(() => artifact).materialize(request, destination, expected),
+          serving({ "example.test": { archive, manifest: demoManifest } }),
+          makeSlimServicesSource(() => demo).materialize(request, destination, demo.sha256),
         );
         expect(yield* fs.exists(`${destination}/${longName}`)).toBe(true);
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
-  );
-
-  it.live("publishes the extracted slim artifact through the verified store", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const archive = yield* compress(tar("bin/demo", "demo"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const checksums = `${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`;
-        let checksumRequests = 0;
-        const fetcher: FetchLike = (input) => {
-          const url = requestUrl(input);
-          if (url.endsWith("SHA256SUMS")) {
-            checksumRequests += 1;
-            return Promise.resolve(new Response(checksums));
-          }
-          if (url.endsWith("manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
-        const source = makeSlimServicesSource(() => artifact);
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-store-" });
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const prepared = yield* withFetch(fetcher, store.prepare(request));
-        expect(prepared.outcome).toBe("downloaded");
-        expect(yield* fs.readFileString(`${prepared.path}/bin/demo`)).toBe("demo");
-        expect(yield* fs.exists(`${prepared.path}/.artifact.json`)).toBe(true);
-        expect(checksumRequests).toBe(1);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 });
 
 describe("native artifact catalog", () => {
-  it.live("verifies an S3 download against GHCR when GitHub release assets are blocked", () =>
+  const linux = { os: "linux", arch: "x64" };
+  const s3 = "supabase-cli-artifacts.s3.us-east-1.amazonaws.com";
+
+  it.live(
+    "requests release-versioned assets from GitHub, then S3, and rejects unpinned bytes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { version, releaseVersion } = yield* resolveArtifact({ service: "rest" });
+          expect(releaseVersion).toMatch(/-r(0|[1-9][0-9]*)$/u);
+          expect(releaseVersion.startsWith(`${version}-r`)).toBe(true);
+          const asset = `postgrest-${releaseVersion}-linux-amd64`;
+          const archive = yield* compress(tar("bin/postgrest", "postgrest"));
+          const manifest = manifestBytes(releaseVersion, "postgrest");
+          const requested: string[] = [];
+          const fetcher = serving(
+            { "github.com": { archive, manifest }, [s3]: { archive, manifest } },
+            requested,
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-catalog-" });
+          const failed = yield* withFetch(
+            fetcher,
+            prepareNativeArtifact({ service: "rest" }, cacheRoot, linux).pipe(Effect.exit),
+          );
+          const github = `https://github.com/supabase/slim-services/releases/download/postgrest-${releaseVersion}`;
+          const bucket = `https://${s3}/postgrest/${releaseVersion}`;
+          expect(requested).toEqual([
+            `${github}/${asset}.manifest.json`,
+            `${bucket}/${asset}.manifest.json`,
+          ]);
+          const message = errorOf(failed)?.message ?? "";
+          expect(message).toContain(
+            `${github}/${asset}.tar.zst (Slim-services manifest does not match its pin`,
+          );
+          expect(message).toContain(
+            `${bucket}/${asset}.tar.zst (Slim-services manifest does not match its pin`,
+          );
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
+  );
+
+  it.live("keys the native cache by release version and ignores a legacy upstream entry", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { version } = yield* resolveArtifact({ service: "rest" });
-        const asset = `postgrest-${version}-linux-amd64`;
-        const archive = yield* compress(tar("bin/postgrest", "postgrest"));
-        const crypto = yield* Crypto.Crypto;
-        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
-        const served: string[] = [];
-        const fetcher: FetchLike = (input, init) => {
-          const url = requestUrl(input);
-          if (url.startsWith("https://github.com/"))
-            return Promise.resolve(new Response("", { status: 403 }));
-          served.push(url);
-          const registry = registryResponse(
-            input,
-            init,
-            expected,
-            "ghcr.io",
-            "supabase/cli/postgrest",
-            `${version}-native-linux-amd64`,
-          );
-          if (registry !== undefined) return Promise.resolve(registry);
-          if (url.endsWith(".manifest.json"))
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ service: "postgrest", version, target: "linux-amd64" }),
-              ),
-            );
-          return Promise.resolve(new Response(archive));
-        };
+        const resolved = yield* resolveArtifact({ service: "rest" });
         const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-catalog-" });
-        const prepared = yield* withFetch(
-          fetcher,
-          prepareNativeArtifact({ service: "rest" }, cacheRoot, { os: "linux", arch: "x64" }),
+        const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-cache-" });
+        const requested: string[] = [];
+        const seed = (version: string, content: string) =>
+          makeArtifactStore({ cacheRoot, source: fixtureSource(content) }).pipe(
+            Effect.flatMap((store) =>
+              withFetch(
+                serving({}, requested),
+                store.prepare({
+                  key: `slim-services/postgrest/${version}/linux-amd64`,
+                  requiredRuntimePaths: resolved.requiredRuntimePaths,
+                  executablePath: resolved.executablePath,
+                }),
+              ),
+            ),
+          );
+        const prepare = withFetch(
+          serving({}, requested),
+          prepareNativeArtifact({ service: "rest" }, cacheRoot, linux),
         );
-        expect(yield* fs.readFileString(prepared.executable)).toBe("postgrest");
-        const bucket = `https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/postgrest/${version}`;
-        expect(served).toEqual([
-          "https://ghcr.io/token?scope=repository:supabase/cli/postgrest:pull&service=ghcr.io",
-          `https://ghcr.io/v2/supabase/cli/postgrest/manifests/${version}-native-linux-amd64`,
-          `${bucket}/${asset}.manifest.json`,
-          `${bucket}/${asset}.tar.zst`,
-        ]);
+
+        yield* seed(resolved.version, "legacy");
+        expect(Exit.isFailure(yield* prepare.pipe(Effect.exit))).toBe(true);
+        expect(requested).not.toEqual([]);
+
+        const seeded = yield* seed(resolved.releaseVersion, "pinned");
+        requested.length = 0;
+        const prepared = yield* prepare;
+        expect(prepared.root).toBe(seeded.path);
+        expect(yield* fs.readFileString(prepared.executable)).toBe("pinned");
+        expect(requested).toEqual([]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
+
+  it("catalog has no placeholder pins", () => {
+    const digests = catalogPins().flatMap(({ pin }) => [
+      pin.image.slice(pin.image.lastIndexOf(":") + 1),
+      ...Object.values(pin.natives).flatMap((native) => [native.archive, native.manifest]),
+    ]);
+    expect(digests).not.toContain("0".repeat(64));
+  });
 });

@@ -18,13 +18,22 @@ agent sandboxes that allow `*.amazonaws.com`.
 Objects are addressed as
 
 ```
-https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/<service>-<version>-<target>.tar.zst
-https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/<service>-<version>-<target>.manifest.json
-https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<version>/<service>-<version>-<target>.SHA256SUMS
+https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<release-version>/<service>-<release-version>-<target>.tar.zst
+https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<release-version>/<service>-<release-version>-<target>.manifest.json
+https://supabase-cli-artifacts.s3.us-east-1.amazonaws.com/<service>/<release-version>/<service>-<release-version>-<target>.SHA256SUMS
 ```
 
-which keeps the GitHub release asset names, so the `SHA256SUMS` lines match the archive name
-without rewriting.
+where `<release-version>` is the immutable `<upstream>-r<N>` slim-services revision, which keeps
+the GitHub release asset names so the `SHA256SUMS` lines match the archive name without
+rewriting.
+
+This bucket, like GHCR and ECR, is a byte mirror only — it is never a checksum authority. The
+CLI does not fetch `SHA256SUMS` (from here or from GitHub) at runtime: it pins each target's
+archive and manifest sha256 directly in `packages/stack/src/Artifacts.ts`, written by
+`.github/scripts/sync-artifacts-catalog.ts` after that script has already verified this bucket's
+copy against the release's committed `SHA256SUMS` (see
+[ADR 0026](../../docs/adr/0026-slim-artifact-mirrors.md)). A stale object here fails that sync,
+not a CLI download.
 
 ## How it deploys
 

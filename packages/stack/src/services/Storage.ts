@@ -1,4 +1,9 @@
 import { Effect, Schema } from "effect";
+import {
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+} from "../Defaults.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { databaseConnection, requiredInput, localJwtSecret, serviceJwt } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec, type StartupCommand } from "./ProcessRecipe.ts";
@@ -13,6 +18,9 @@ export const Config = Schema.Struct({
   imgproxyUrl: Schema.optionalKey(Schema.String),
   fileSizeLimit: Schema.optionalKey(Schema.String),
   s3ProtocolEnabled: Schema.optionalKey(Schema.Boolean),
+  s3AccessKeyId: Schema.optionalKey(Schema.String),
+  s3SecretAccessKey: Schema.optionalKey(Schema.String),
+  s3Region: Schema.optionalKey(Schema.String),
   vectorEnabled: Schema.optionalKey(Schema.Boolean),
   vectorDatabaseUrl: Schema.optionalKey(Schema.String),
   vectorMaxBuckets: Schema.optionalKey(Schema.Finite),
@@ -26,6 +34,9 @@ export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("storage", Config, Endpoints);
 
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
+
+/** Path prefix the stack gateway strips before forwarding a request to Storage. */
+export const apiPath = "/storage/v1";
 
 export const initializationCommand = {
   args: [],
@@ -58,8 +69,11 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         AUTH_JWT_SECRET: jwt,
         PGRST_JWT_SECRET: jwt,
         ...(creation.config.jwks === undefined ? {} : { JWT_JWKS: creation.config.jwks }),
+        // The Storage image sets NODE_ENV=production, which forces https into TUS upload URLs.
+        NODE_ENV: "development",
         TENANT_ID: "stub",
         REGION: "local",
+        STORAGE_S3_REGION: creation.config.s3Region ?? DEFAULT_LOCAL_S3_REGION,
         GLOBAL_S3_BUCKET: "stub",
         STORAGE_BACKEND: "file",
         DB_HOST: db.host,
@@ -69,6 +83,13 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DB_NAME: db.database,
         FILE_STORAGE_BACKEND_PATH: filePath,
         STORAGE_FILE_BACKEND_PATH: filePath,
+        TUS_URL_PATH: `${apiPath}/upload/resumable`,
+        S3_PROTOCOL_PREFIX: apiPath,
+        S3_PROTOCOL_ACCESS_KEY_ID: creation.config.s3AccessKeyId ?? DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+        S3_PROTOCOL_ACCESS_KEY_SECRET:
+          creation.config.s3SecretAccessKey ?? DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+        UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
+        SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
         ...(creation.config.s3ProtocolEnabled === undefined
           ? {}
           : { S3_PROTOCOL_ENABLED: String(creation.config.s3ProtocolEnabled) }),
@@ -95,7 +116,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           ? {}
           : {
               IMGPROXY_URL: creation.config.imgproxyUrl,
-              ENABLE_IMAGE_TRANSFORMATION: "true",
+              IMAGE_TRANSFORMATION_ENABLED: "true",
             }),
       };
     }),

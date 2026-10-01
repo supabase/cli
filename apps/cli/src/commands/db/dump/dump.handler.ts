@@ -220,12 +220,16 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                 ? undefined
                 : envNetworkId,
           );
-    const stackPublishedTarget = backend.kind === "stack" && isLocal && managedStack === undefined;
+    // Loopback inside a bridge-networked tool container is the container itself; stack
+    // targets are published by a host-side proxy that the Docker VM loopback never sees.
+    // A managed stack runs pg_dump through its own command runtime against its own endpoint.
+    const rewriteLoopbackTarget =
+      backend.kind === "stack" ? managedStack === undefined : !dumpUsesHostNetwork;
     const dumpConn = useNativeClient
       ? connType === "local"
         ? dumpConnForHostClient(conn)
         : conn
-      : stackPublishedTarget
+      : rewriteLoopbackTarget
         ? {
             ...conn,
             host: rewriteDumpHostForToolContainer(conn.host, {
@@ -379,7 +383,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
                       file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
                     projectEnvValues: projectEnv,
                     client: dumpClient,
-                    forceHostNetwork: stackPublishedTarget,
+                    forceHostNetwork: backend.kind === "stack",
                   });
                 }),
               ),
@@ -403,7 +407,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
               : (chunk) => output.rawBytes(chunk),
             projectEnvValues: projectEnv,
             client: dumpClient,
-            forceHostNetwork: stackPublishedTarget,
+            forceHostNetwork: backend.kind === "stack",
           });
 
     // 7b. IPv6 → IPv4-pooler retry, shared with `db pull`: a linked dump can reach the

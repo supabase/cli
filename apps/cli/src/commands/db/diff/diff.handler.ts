@@ -7,7 +7,7 @@ import {
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
 import { GoProxy } from "../../../command-internal/go-proxy.service.ts";
-import { detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { branchClause, detectGitBranch } from "../../../shared/git/git-branch.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
@@ -23,6 +23,10 @@ import type { DbConnType } from "../../../command-internal/db-target-flags.ts";
 import { getHostname } from "../../../command-internal/hostname.ts";
 import { makeDir } from "../../../command-internal/make-dir.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "../../../command-internal/postgres-client.run.ts";
 import { toPostgresURL } from "../../../command-internal/postgres-url.ts";
 import { schemaToCsvField } from "../../../command-internal/schema-flags.ts";
 import { findDropStatements } from "../../../command-internal/sql-split.ts";
@@ -628,13 +632,20 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                 setup: shadowBase.setup,
               });
               yield* emitStatus("Diffing local database with current migrations...");
+              const differHost = (host: string) =>
+                toolContainerUsesHostNetwork(shadowBase.networkId)
+                  ? host
+                  : rewriteDumpHostForToolContainer(host, {
+                      platform: runtimeInfo.platform,
+                      usesHostNetwork: false,
+                    });
               return yield* diffSchemaPgAdmin({
                 // `source`/`target` are inverted relative to the migra/pg-delta path below:
                 // `source` is the user's db, `target` is the shadow.
-                source: targetUrl,
+                source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
                 // Hardcoded, not built via `toPostgresURL`: this ignores
                 // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
-                target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
+                target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
                 schema: flags.schema,
                 projectEnvValues: cfg.projectEnv,
                 projectId: shadowBase.projectId,
@@ -733,9 +744,9 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // Detect the branch from the resolved workdir, not the caller's CWD, so
       // `supabase --workdir … db diff` reports the project's branch, not the
       // directory the command was invoked from.
-      const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
+      const branch = yield* detectGitBranch(cliSettings.workdir);
       yield* output.raw(
-        `Finished ${aqua("supabase db diff")} on branch ${aqua(branch)}.\n\n`,
+        `Finished ${aqua("supabase db diff")}${branchClause(branch, aqua)}.\n\n`,
         "stderr",
       );
     }

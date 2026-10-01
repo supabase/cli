@@ -290,7 +290,7 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       Effect.tapError(() => setting?.fail() ?? Effect.void),
       Effect.catch(mapSetError),
     );
-    yield* setting?.clear() ?? Effect.void;
+    yield* setting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Finished supabase secrets set.", {

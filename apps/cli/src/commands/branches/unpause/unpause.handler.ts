@@ -46,6 +46,6 @@ export const branchesUnpause = Effect.fn("branches.unpause")(function* (
       Effect.tapError(() => restoring?.fail() ?? Effect.void),
       Effect.catch(mapUnpauseError),
     );
-    yield* restoring?.clear() ?? Effect.void;
+    yield* restoring?.clear ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

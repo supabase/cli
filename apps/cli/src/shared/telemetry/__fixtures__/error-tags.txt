@@ -302,7 +302,6 @@ HealthCheckTimeoutError
 HostPostgresClientError
 ImagePrepullError
 InitConfigExistsError
-InitExperimentalRequiredError
 InitParseSettingsError
 InspectCsvqError
 InspectMutuallyExclusiveFlagsError
@@ -580,6 +579,7 @@ TestDbMutuallyExclusiveFlagsError
 TestDbNoTestsError
 TestDbRunError
 TestNewFileExistsError
+TestNewInvalidNameError
 TestNewWriteError
 TraceExportConfigError
 UnknownComputeExposureError

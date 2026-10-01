@@ -82,7 +82,7 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
       Effect.tapError(() => unsetting?.fail() ?? Effect.void),
       Effect.catch(mapUnsetError),
     );
-    yield* unsetting?.clear() ?? Effect.void;
+    yield* unsetting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Finished supabase secrets unset.", {

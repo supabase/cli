@@ -113,7 +113,7 @@ func TestInitConfig(t *testing.T) {
 		assert.NoError(t, err)
 		content, err := afero.ReadFile(fsys, ConfigPath)
 		assert.NoError(t, err)
-		assert.Contains(t, string(content), "15.1.0.150")
+		assert.Contains(t, string(content), "17.11.0.002")
 	})
 
 	t.Run("fails if config exists and no overwrite", func(t *testing.T) {

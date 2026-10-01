@@ -21,7 +21,7 @@ import {
   postgresVersion,
   resolveArtifact,
 } from "../Artifacts.ts";
-import { makeContainerRuntime } from "../runtime/Container.ts";
+import { makeContainerRuntime, type HostGateway } from "../runtime/Container.ts";
 import { spawnNativeProcess } from "../runtime/NativeProcess.ts";
 import { awaitCommandOutput, type CommandOutputResult } from "../runtime/CommandOutput.ts";
 import type { CommandInvocation as CommandInvocationType } from "../Commands.ts";
@@ -75,6 +75,8 @@ const makeCommandRunner = (options: {
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";
+  /** Shares one host-gateway probe with the host's other container runtimes. */
+  readonly hostGateway?: HostGateway;
 }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -90,6 +92,7 @@ const makeCommandRunner = (options: {
             engine: options.runtime,
             root: options.root,
             imageMirrors: slimImageMirrors,
+            ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
           });
     const jobsRoot = path.join(options.root, "jobs");
     yield* fs
@@ -306,4 +309,6 @@ export const layer = (options: {
   readonly root: string;
   readonly cacheRoot: string;
   readonly runtime: "native" | "docker" | "podman";
+  /** Shares one host-gateway probe with the host's other container runtimes. */
+  readonly hostGateway?: HostGateway;
 }) => Layer.effect(Service, makeCommandRunner(options).pipe(Effect.map(Service.of)));

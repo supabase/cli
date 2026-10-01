@@ -124,6 +124,8 @@ interface SetupOpts {
   // Raw argv seen by the handler (CliArgs). Only consulted when both `--declarative`
   // and `--use-pg-delta` are present, to replay pflag's last-occurrence-wins ordering.
   readonly args?: ReadonlyArray<string>;
+  readonly networkId?: string;
+  readonly platform?: NodeJS.Platform;
   // `CommandSettings.projectId`; defaults to `Option.some("test")`. Pass
   // `Option.none()` to exercise the config.toml/workdir-basename fallback
   // (`resolveLocalProjectId`).
@@ -483,13 +485,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, false),
     Layer.succeed(DnsResolverFlag, "native"),
-    Layer.succeed(NetworkIdFlag, Option.none()),
+    Layer.succeed(NetworkIdFlag, Option.fromUndefinedOr(opts.networkId)),
     Layer.succeed(PgDeltaSslProbe, {
       requireSsl: () => Effect.succeed(false),
       requireSslForHost: () => Effect.succeed(false),
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
-    mockRuntimeInfo(),
+    mockRuntimeInfo(opts.platform === undefined ? {} : { platform: opts.platform }),
     workdirFiles,
   );
   return {
@@ -1623,6 +1625,38 @@ describe("db pull", () => {
       );
     },
   );
+
+  it.effect("points a named-network pg_dump container at the host for a loopback target", () => {
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/.env": "SUPABASE_NETWORK_ID=dotenv-net\n",
+      },
+      remoteVersions: [],
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags({ local: Option.some(true) }));
+      expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
+      expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("host.docker.internal");
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+  });
+
+  it.effect("keeps a loopback target for a Linux pg_dump container on --network-id host", () => {
+    const s = setup(tmp.current, {
+      networkId: "host",
+      platform: "linux",
+      remoteVersions: [],
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags({ local: Option.some(true) }));
+      expect(s.dumpCalls[0]?.env["PGHOST"]).toBe("127.0.0.1");
+    }).pipe(Effect.provide(s.layer), (body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
+  });
 
   it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
     // An explicit `--yes=false` wins over the SUPABASE_YES env — a piped `n` still

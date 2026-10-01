@@ -178,10 +178,11 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
 
 const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: string) {
   const path = yield* Path.Path;
-  const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(searchFrom)).pipe(Effect.orDie);
-  if (gitRoot === undefined) {
+  const gitRootOption = yield* findGitRootPath(searchFrom);
+  if (Option.isNone(gitRootOption)) {
     return Option.none<boolean>();
   }
+  const gitRoot = gitRootOption.value;
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relative = path.relative(gitRoot, filePath).replaceAll("\\", "/");

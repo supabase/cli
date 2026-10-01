@@ -87,7 +87,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
         Effect.mapError(
           (error) =>
             new StackCommandPrepareError({
-              reason: "runtime",
+              reason: error.reason === "native-unsupported" ? "flags" : "runtime",
               message: error.message,
               suggestion: error.suggestion,
               cause: error,
@@ -161,7 +161,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
     ).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
-          ? task.clear()
+          ? task.clear
           : Option.match(Cause.findErrorOption(exit.cause), {
               onNone: () => (Cause.hasInterruptsOnly(exit.cause) ? task.cancel() : task.fail()),
               onSome: (error) => task.fail(error.message),

@@ -47,7 +47,7 @@ export const branchesDelete = Effect.fn("branches.delete")(function* (flags: Bra
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
       Effect.catch(mapDeleteError),
     );
-    yield* deleting?.clear() ?? Effect.void;
+    yield* deleting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Deleted preview branch", { project_ref: branchRef });

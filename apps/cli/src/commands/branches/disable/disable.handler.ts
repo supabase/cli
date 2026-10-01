@@ -40,7 +40,7 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
       Effect.tapError(() => disabling?.fail() ?? Effect.void),
       Effect.catch(mapDisableError),
     );
-    yield* disabling?.clear() ?? Effect.void;
+    yield* disabling?.clear ?? Effect.void;
 
     // Established behavior: this message writes to STDOUT.
     if (output.format === "json" || output.format === "stream-json") {

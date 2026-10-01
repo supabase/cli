@@ -1,13 +1,10 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { buildRealtimeContainerSpec, type RealtimeContainerSpecInput } from "./realtime.service.ts";
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
 describe("buildRealtimeContainerSpec", () => {
   const input: RealtimeContainerSpecInput = {
+    slim: false,
     projectId: "proj",
     networkId: "supabase_network_proj",
     image: "supabase/realtime:v2",
@@ -68,9 +65,9 @@ describe("buildRealtimeContainerSpec", () => {
   });
 
   test("uses wget for the healthcheck on a slim realtime image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildRealtimeContainerSpec({
       ...input,
+      slim: true,
       image: "ghcr.io/supabase/cli/realtime:v2.130.0",
     });
     expect(spec.healthcheck?.test).toEqual([

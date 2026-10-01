@@ -337,7 +337,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     const packaged = yield* packageComputeDirectory(compute.sourceDir, exclude).pipe(
       Effect.tapError(() => packaging.fail()),
     );
-    yield* packaging.clear();
+    yield* packaging.clear;
     yield* Effect.annotateCurrentSpan({
       "compute.file_count": packaged.fileCount,
       "compute.excluded_count": packaged.excludedCount,
@@ -378,7 +378,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
       Effect.tapError(() => uploading.fail()),
     );
     yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
-    yield* uploading.clear();
+    yield* uploading.clear;
     yield* output.raw("Uploaded build context.\n", "stderr");
     contextUploadId = slot.uploadId;
   }
@@ -429,7 +429,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   // Checked regardless of whether the build was waited on: the verdict can
   // arrive on the deploy response as readily as on a poll.
   if (settled.buildState === "failed") {
-    yield* deploying.clear();
+    yield* deploying.clear;
     return yield* new ComputeBuildFailedError({
       detail: `The build for "${name}" failed${
         settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
@@ -438,7 +438,7 @@ const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
     });
   }
 
-  yield* deploying.clear();
+  yield* deploying.clear;
 
   const url =
     settled.spec.exposure === "public"

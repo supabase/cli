@@ -177,7 +177,7 @@ export const configDiff = Effect.fn("config.diff")(function* (flags: ConfigDiffF
           }),
       ),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     // configProjectConfigTry (ADR 0021) keeps a response the schema can't narrow as a typed
     // ProjectConfigParseError; anything else escaping it is a defect.

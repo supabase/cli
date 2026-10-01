@@ -1,15 +1,16 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Logger, type LogLevel } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
-import { Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
+import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.
 import { WebSocket, WebSocketServer } from "ws";
+import { captureLogs } from "../tests/logs.ts";
 import { ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
-const listen = (server: Server) =>
+const listen = (server: Server | NetServer, options?: { readonly beforeClose?: () => void }) =>
   Effect.acquireRelease(
     Effect.callback<{ host: string; port: number }, HttpProxyTestError>((resume) => {
       const onError = (cause: Error) =>
@@ -25,6 +26,7 @@ const listen = (server: Server) =>
     }),
     () =>
       Effect.callback<void, never>((resume) => {
+        options?.beforeClose?.();
         server.close(() => resume(Effect.void));
         return Effect.void;
       }),
@@ -35,15 +37,8 @@ class HttpProxyTestError extends Data.TaggedError("HttpProxyTestError")<{
   readonly cause?: unknown;
 }> {}
 
-const captureLogs = (levels: ReadonlyArray<LogLevel.LogLevel>) => (lines: Array<string>) =>
-  Logger.layer([
-    Logger.make(({ logLevel, message }) => {
-      if (levels.some((level) => level === logLevel))
-        lines.push((Array.isArray(message) ? message : [message]).map(String).join(" "));
-    }),
-  ]);
-
 const captureErrors = captureLogs(["Error"]);
+const captureWarnings = captureLogs(["Error", "Warn"]);
 
 /** Upstream that resets its first `drops` accepted connections without responding. */
 const droppingBackend = (drops: number) => {
@@ -153,6 +148,75 @@ it.live("keeps the retained listener and remaining route after one route is remo
         Effect.provide(NodeHttpClient.layerNodeHttp),
       );
       expect(removed.status).toBe(404);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("rewrites an exact-prefix request to the upstream prefix verbatim", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((request, response) => response.end(request.url));
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      const route = (id: string, prefix: string, upstreamPrefix: string): HttpRoute => ({
+        id,
+        prefix,
+        upstreamPrefix,
+        target: Effect.succeed(backendAddress),
+      });
+      yield* proxy.setRoutes([
+        route("mcp", "/mcp", "/api/mcp"),
+        route("storage-s3", "/storage/v1/s3", "/s3"),
+        route("realtime-api", "/realtime/v1/api", "/api"),
+      ]);
+      const send = (path: string) =>
+        request(proxy.port, path, new Uint8Array()).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+        );
+      expect(new TextDecoder().decode((yield* send("/mcp")).body)).toBe("/api/mcp");
+      expect(new TextDecoder().decode((yield* send("/mcp?read_only=true")).body)).toBe(
+        "/api/mcp?read_only=true",
+      );
+      expect(new TextDecoder().decode((yield* send("/mcp/x")).body)).toBe("/api/mcp/x");
+      expect((yield* send("/mcpx")).status).toBe(404);
+      expect(new TextDecoder().decode((yield* send("/storage/v1/s3")).body)).toBe("/s3");
+      expect(new TextDecoder().decode((yield* send("/realtime/v1/api")).body)).toBe("/api");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("streams a joined MCP route's request and response through the exact upstream path", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let seenUrl: string | undefined;
+      let seenBody = "";
+      const backend = createServer((request, response) => {
+        seenUrl = request.url;
+        request.on("data", (chunk: Buffer) => (seenBody += chunk.toString()));
+        request.on("end", () => {
+          response.writeHead(200, { "content-type": "text/plain" });
+          response.write("chunk-1");
+          response.end("chunk-2");
+        });
+      });
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([
+        {
+          id: "mcp",
+          prefix: "/mcp",
+          upstreamPrefix: "/api/mcp",
+          target: Effect.succeed(backendAddress),
+        },
+      ]);
+      const response = yield* request(
+        proxy.port,
+        "/mcp?read_only=true",
+        new TextEncoder().encode("mcp-request-body"),
+      ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+      expect(seenUrl).toBe("/api/mcp?read_only=true");
+      expect(seenBody).toBe("mcp-request-body");
+      expect(new TextDecoder().decode(response.body)).toBe("chunk-1chunk-2");
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -518,11 +582,7 @@ it.live("retries a bodyless request once when the upstream drops the connection 
     }),
   ).pipe(
     Effect.provide(
-      Layer.mergeAll(
-        NodeHttpClient.layerNodeHttp,
-        NodeServices.layer,
-        captureLogs(["Error", "Warn"])(logs),
-      ),
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
     ),
   );
 });
@@ -553,6 +613,214 @@ it.live("does not replay a request with a body when the upstream drops the conne
     ),
   );
 });
+
+/**
+ * Keep-alive upstream that answers once per connection and resets any reused connection;
+ * connections after `answered` are dropped unanswered.
+ */
+const oneRequestPerConnectionBackend = (answered = Number.POSITIVE_INFINITY) => {
+  let connections = 0;
+  const sockets = new Set<Socket>();
+  const server = createTcpServer((socket) => {
+    connections += 1;
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+    if (connections > answered) {
+      socket.destroy();
+      return;
+    }
+    let buffered = Buffer.alloc(0);
+    let bodyEnd: number | undefined;
+    let replied = false;
+    socket.on("data", (chunk: Buffer) => {
+      if (replied) {
+        socket.resetAndDestroy();
+        return;
+      }
+      buffered = Buffer.concat([buffered, chunk]);
+      if (bodyEnd === undefined) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
+        const contentLength = Number(
+          /content-length:\s*(\d+)/iu.exec(
+            buffered.subarray(0, headerEnd).toString("latin1"),
+          )?.[1] ?? 0,
+        );
+        bodyEnd = headerEnd + 4 + contentLength;
+      }
+      if (buffered.length < bodyEnd) return;
+      replied = true;
+      socket.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+    });
+  });
+  return {
+    connections: () => connections,
+    listen: listen(server, {
+      beforeClose: () => {
+        for (const socket of sockets) socket.destroy();
+      },
+    }),
+  };
+};
+
+it.live(
+  "succeeds a second POST when a keep-alive backend only answers the first request per connection",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = oneRequestPerConnectionBackend();
+        const address = yield* backend.listen;
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "mcp", prefix: "/", target: Effect.succeed(address) }]);
+        const first = yield* request(proxy.port, "/mcp", new TextEncoder().encode("first-body"));
+        expect(first.status).toBe(200);
+        expect(new TextDecoder().decode(first.body)).toBe("ok");
+        const second = yield* request(proxy.port, "/mcp", new TextEncoder().encode("second-body"));
+        expect(second.status).toBe(200);
+        expect(new TextDecoder().decode(second.body)).toBe("ok");
+        expect(backend.connections()).toBe(2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "retries a GET once on a fresh connection when its pooled connection resets unanswered",
+  () => {
+    const logs: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = oneRequestPerConnectionBackend();
+        const address = yield* backend.listen;
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([{ id: "studio", prefix: "/", target: Effect.succeed(address) }]);
+        const first = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
+        expect(first.status).toBe(200);
+        const second = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
+        expect(second.status).toBe(200);
+        expect(new TextDecoder().decode(second.body)).toBe("ok");
+        expect(backend.connections()).toBe(2);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]).toContain("Route studio GET upstream failed before responding, retrying");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
+      ),
+    );
+  },
+);
+
+it.live("returns a gateway error when the fresh retry after a pooled reset also fails", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const backend = oneRequestPerConnectionBackend(1);
+      const address = yield* backend.listen;
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "studio", prefix: "/", target: Effect.succeed(address) }]);
+      const first = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
+      expect(first.status).toBe(200);
+      const second = yield* request(proxy.port, "/", new Uint8Array(), {}, "GET");
+      expect(second.status).toBe(502);
+      expect(backend.connections()).toBe(2);
+      expect(logs).toHaveLength(2);
+      expect(logs[0]).toContain("Route studio GET upstream failed before responding, retrying");
+      expect(logs[1]).toContain("Route studio request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
+    ),
+  );
+});
+
+it.live("delivers a keyed POST once when the upstream resets after reading its body", () => {
+  const logs: Array<string> = [];
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const bodies: Array<string> = [];
+      let connections = 0;
+      // Answers GETs on a keep-alive connection; resets after reading a POST body in full.
+      const backend = createTcpServer((socket) => {
+        connections += 1;
+        socket.on("error", () => {});
+        let buffered = Buffer.alloc(0);
+        socket.on("data", (chunk: Buffer) => {
+          buffered = Buffer.concat([buffered, chunk]);
+          const headerEnd = buffered.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+          const head = buffered.subarray(0, headerEnd).toString("latin1");
+          const bodyEnd = headerEnd + 4 + Number(/content-length:\s*(\d+)/iu.exec(head)?.[1] ?? 0);
+          if (buffered.length < bodyEnd) return;
+          const body = buffered.subarray(headerEnd + 4, bodyEnd).toString();
+          buffered = buffered.subarray(bodyEnd);
+          if (head.startsWith("GET ")) {
+            socket.write(
+              "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok",
+            );
+            return;
+          }
+          bodies.push(body);
+          socket.resetAndDestroy();
+        });
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const pooled = yield* request(proxy.port, "/rest/v1/", new Uint8Array(), {}, "GET");
+      expect(pooled.status).toBe(200);
+      const post = yield* request(proxy.port, "/rest/v1/rpc", new TextEncoder().encode("insert"), {
+        "idempotency-key": "insert",
+      });
+      expect(post.status).toBe(502);
+      expect(bodies).toEqual(["insert"]);
+      expect(connections).toBe(2);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toContain("Route rest request failed");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
+    ),
+  );
+});
+
+it.live("reuses pooled upstream connections across thousands of concurrent requests", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let connections = 0;
+      const backend = createServer((incoming, outgoing) => {
+        incoming.resume();
+        incoming.once("end", () => outgoing.end(incoming.url));
+      });
+      backend.on("connection", () => {
+        connections += 1;
+      });
+      const address = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "rest", prefix: "/", target: Effect.succeed(address) }]);
+      const responses = yield* Effect.forEach(
+        Array.from({ length: 3000 }, (_, index) => index),
+        (index) =>
+          request(proxy.port, `/rest/v1/items?id=eq.${index}`, new Uint8Array(), {}, "GET").pipe(
+            Effect.map((response) => ({
+              index,
+              status: response.status,
+              body: new TextDecoder().decode(response.body),
+            })),
+          ),
+        { concurrency: 16 },
+      );
+      expect(
+        responses.filter(
+          ({ index, status, body }) => status !== 200 || body !== `/rest/v1/items?id=eq.${index}`,
+        ),
+      ).toEqual([]);
+      expect(connections).toBeLessThan(100);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
 
 it.live(
   "does not replay a bodyless non-idempotent request when the upstream drops the connection",

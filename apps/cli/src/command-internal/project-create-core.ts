@@ -142,7 +142,7 @@ export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
   }
 
   const created = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));
-  yield* creating?.clear() ?? Effect.void;
+  yield* creating?.clear ?? Effect.void;
 
   const id = readProjectField(created, "id");
   yield* Effect.annotateCurrentSpan("project.ref", id);

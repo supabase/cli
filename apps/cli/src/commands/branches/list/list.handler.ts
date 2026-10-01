@@ -50,7 +50,7 @@ export const branchesList = Effect.fn("branches.list")(function* (flags: Branche
       Effect.catch(mapListError),
     );
     yield* Effect.annotateCurrentSpan("branch.count", branches.length);
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 

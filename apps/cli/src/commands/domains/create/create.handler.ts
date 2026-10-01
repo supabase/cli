@@ -46,7 +46,7 @@ export const domainsCreate = Effect.fn("domains.create")(function* (flags: Domai
         Effect.tapError(() => creating?.fail() ?? Effect.void),
         Effect.catch(gateMapError({ projectRef: ref }, mapCreateError)),
       );
-    yield* creating?.clear() ?? Effect.void;
+    yield* creating?.clear ?? Effect.void;
 
     yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

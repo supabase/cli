@@ -43,6 +43,6 @@ export const branchesPause = Effect.fn("branches.pause")(function* (flags: Branc
       Effect.tapError(() => pausing?.fail() ?? Effect.void),
       Effect.catch(mapPauseError),
     );
-    yield* pausing?.clear() ?? Effect.void;
+    yield* pausing?.clear ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

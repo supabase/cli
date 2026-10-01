@@ -227,11 +227,9 @@ const VECTOR_HEALTHCHECK = {
 } as const;
 
 /**
- * Writes the rendered `vector.yaml` via a `cat <<'EOF'` heredoc, waits on Logflare's `/health`
- * (sinks would otherwise start too early), then `exec`s Vector so it stays PID 1. A TERM trap
- * covers the wait so `docker stop` does not burn 10s if Logflare is still down; `-T 2` bounds each
- * probe so a hung health endpoint can't defer the trap. Slim Vector ships BusyBox wget, so the
- * wait uses `-q --spider` instead of GNU's `--no-verbose --tries`.
+ * Vector 0.58's images (slim and upstream) have no `/etc/vector`, so the script creates it. The
+ * TERM trap keeps `docker stop` fast while Logflare's `/health` is still down, and `-T 2` bounds
+ * each probe so a hung endpoint can't defer the trap.
  */
 export function buildVectorEntrypointScript(
   vectorYaml: string,
@@ -242,7 +240,7 @@ export function buildVectorEntrypointScript(
     ? slimWgetWaitCommand(`http://${logflareId}:4000/health`)
     : `wget --no-verbose --tries=1 -T 2 --spider http://${logflareId}:4000/health`;
   return (
-    "cat <<'EOF' > /etc/vector/vector.yaml\n" +
+    "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
     vectorYaml +
     "\nEOF\ntrap 'exit 143' TERM\nuntil " +
     wget +
@@ -251,6 +249,8 @@ export function buildVectorEntrypointScript(
 }
 
 export interface VectorContainerSpecInput {
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
   /** `config.analytics.vector_image`, already resolved/pulled by the caller. */
   readonly image: string;
   /** `serviceContainerName("vector", projectId)`, also used as the `vector.yaml` template's `vectorId` field. */
@@ -281,7 +281,7 @@ export interface VectorContainerSpecInput {
 
 /** Builds Vector's {@link StartContainerSpec}. */
 export function buildVectorContainerSpec(input: VectorContainerSpecInput): StartContainerSpec {
-  const slim = usesSlimImageRuntime(input.image);
+  const slim = usesSlimImageRuntime(input.image, input.slim);
   const vectorYaml = renderStartVectorYaml({
     apiKey: input.apiKey,
     vectorId: input.containerName,

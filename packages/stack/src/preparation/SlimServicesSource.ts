@@ -7,6 +7,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { errorChainMessage } from "../internal/error-message.ts";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import { PreparationError } from "./Errors.ts";
+import { verifySha256 } from "./Integrity.ts";
 
 /** One host serving the archive and manifest of a slim-services release asset. */
 interface SlimServicesMirror {
@@ -14,33 +15,20 @@ interface SlimServicesMirror {
   readonly manifestUrl: string;
 }
 
-/**
- * Where the expected archive digest comes from: a release `SHA256SUMS` file, or the archive layer
- * of the native OCI artifact in a registry that allows anonymous pulls.
- */
-type SlimServicesChecksumSource =
-  | { readonly kind: "sha256sums"; readonly url: string }
-  | {
-      readonly kind: "oci";
-      readonly registry: string;
-      readonly repository: string;
-      readonly tag: string;
-    };
-
 export interface SlimServicesArtifact {
   readonly provider: "supabase/slim-services";
   readonly service: string;
+  /** Release version, `<upstream>-r<revision>`. */
   readonly version: string;
   readonly releaseTag: string;
   readonly target: "darwin-arm64" | "linux-amd64" | "linux-arm64";
   readonly archive: "tar.zst";
   readonly assetName: string;
-  /** Checksum authorities, tried in order; a mirror's own checksum file counts only when listed here. */
-  readonly checksums: readonly [
-    SlimServicesChecksumSource,
-    ...ReadonlyArray<SlimServicesChecksumSource>,
-  ];
-  /** Hosts carrying the same release assets, tried in order until one serves them. */
+  /** Pinned archive digest. Mirrors only serve bytes; they never supply a digest. */
+  readonly sha256: string;
+  /** Pinned manifest digest, verified before the manifest is parsed. */
+  readonly manifestSha256: string;
+  /** Hosts carrying the same release assets, tried in order until one serves the pinned bytes. */
   readonly mirrors: readonly [SlimServicesMirror, ...ReadonlyArray<SlimServicesMirror>];
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
@@ -114,9 +102,9 @@ const systemTarBoundary: TarBoundary = {
     return code;
   }),
 };
-const responseFor = (url: string, headers?: Readonly<Record<string, string>>) =>
+const responseFor = (url: string) =>
   Effect.flatMap(HttpClient.HttpClient, (client) =>
-    HttpClient.followRedirects(client).get(url, { headers }),
+    HttpClient.followRedirects(client).get(url),
   ).pipe(
     Effect.flatMap((response) =>
       Effect.gen(function* () {
@@ -162,9 +150,8 @@ const withTransferRetry =
 const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (
   url: string,
   backoff: Schedule.Schedule<unknown>,
-  headers?: Readonly<Record<string, string>>,
 ) {
-  return yield* responseFor(url, headers).pipe(
+  return yield* responseFor(url).pipe(
     Effect.flatMap((response) => response.arrayBuffer),
     Effect.map((bytes) => new Uint8Array(bytes)),
     withTransferRetry(url, backoff),
@@ -295,93 +282,6 @@ const firstSuccess = <T, A, R>(
   );
 };
 
-const checksumFor = (contents: string, archiveName: string): string | undefined =>
-  contents
-    .split(/\r?\n/u)
-    .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
-    .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1];
-
-const ARCHIVE_MEDIA_TYPE = "application/vnd.supabase.slim.archive.v1.tar+zstd";
-
-const RegistryToken = Schema.Struct({ token: Schema.String });
-
-const NativeOciManifest = Schema.Struct({
-  layers: Schema.Array(Schema.Struct({ mediaType: Schema.String, digest: Schema.String })),
-});
-
-const decodeJson = <S extends Schema.Top>(schema: S, bytes: Uint8Array, message: string) =>
-  Schema.decodeEffect(Schema.fromJsonString(schema))(new TextDecoder().decode(bytes)).pipe(
-    Effect.mapError((cause) => new PreparationError({ message, cause })),
-  );
-
-/** Reads the archive layer digest of a native OCI artifact through an anonymous pull token. */
-const ociArchiveDigest = Effect.fn("SlimServicesSource.ociArchiveDigest")(function* (
-  source: Extract<SlimServicesChecksumSource, { readonly kind: "oci" }>,
-  backoff: Schedule.Schedule<unknown>,
-) {
-  const tokenUrl = `https://${source.registry}/token?scope=repository:${source.repository}:pull&service=${source.registry}`;
-  const { token } = yield* decodeJson(
-    RegistryToken,
-    yield* fetchBytes(tokenUrl, backoff),
-    "Slim-services registry token is invalid",
-  );
-  const manifest = yield* decodeJson(
-    NativeOciManifest,
-    yield* fetchBytes(
-      `https://${source.registry}/v2/${source.repository}/manifests/${source.tag}`,
-      backoff,
-      {
-        accept: "application/vnd.oci.image.manifest.v1+json",
-        authorization: `Bearer ${token}`,
-      },
-    ),
-    "Slim-services native OCI manifest is invalid",
-  );
-  const digest = manifest.layers
-    .find((layer) => layer.mediaType === ARCHIVE_MEDIA_TYPE)
-    ?.digest.match(/^sha256:([a-f0-9]{64})$/u)?.[1];
-  if (digest === undefined)
-    return yield* new PreparationError({
-      message: "Slim-services native OCI manifest has no archive layer",
-    });
-  return digest;
-});
-
-const describeChecksumSource = (source: SlimServicesChecksumSource): string =>
-  source.kind === "sha256sums"
-    ? source.url
-    : `${source.registry}/${source.repository}:${source.tag}`;
-
-export const slimServicesChecksum = Effect.fn("SlimServicesSource.checksum")(function* (
-  artifact: SlimServicesArtifact,
-  backoff: Schedule.Schedule<unknown> = transferBackoff,
-) {
-  return yield* firstSuccess(
-    "Unable to resolve the slim-services checksum",
-    artifact,
-    artifact.checksums,
-    describeChecksumSource,
-    (source) =>
-      source.kind === "oci"
-        ? ociArchiveDigest(source, backoff)
-        : fetchBytes(source.url, backoff).pipe(
-            Effect.map((bytes) => new TextDecoder().decode(bytes)),
-            Effect.flatMap((contents) => {
-              const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
-              return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
-                ? Effect.fail(
-                    new PreparationError({
-                      message: "Slim-services checksum is missing",
-                      service: artifact.service,
-                      version: artifact.version,
-                    }),
-                  )
-                : Effect.succeed(checksum.toLowerCase());
-            }),
-          ),
-  );
-});
-
 const manifestSchema = Schema.Struct({
   service: Schema.String,
   version: Schema.String,
@@ -396,6 +296,18 @@ const verifiedManifest = Effect.fn("SlimServicesSource.verifiedManifest")(functi
   backoff: Schedule.Schedule<unknown>,
 ) {
   const manifestBytes = yield* fetchBytes(mirror.manifestUrl, backoff);
+  yield* verifySha256(manifestBytes, artifact.manifestSha256).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PreparationError({
+          message: "Slim-services manifest does not match its pin",
+          service: artifact.service,
+          version: artifact.version,
+          target: artifact.target,
+          cause,
+        }),
+    ),
+  );
   const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(manifestSchema))(
     new TextDecoder().decode(manifestBytes),
   ).pipe(
@@ -518,10 +430,7 @@ export const makeSlimServicesSource = (
     return artifact;
   });
   return {
-    checksum: (request) =>
-      resolveArtifact(request).pipe(
-        Effect.flatMap((artifact) => slimServicesChecksum(artifact, backoff)),
-      ),
+    checksum: (request) => resolveArtifact(request).pipe(Effect.map(({ sha256 }) => sha256)),
     materialize: Effect.fn("SlimServicesSource.materialize")(
       function* (request, destination, expectedSha256, onProgress) {
         const fs = yield* FileSystem.FileSystem;

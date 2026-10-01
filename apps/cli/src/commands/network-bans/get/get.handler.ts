@@ -41,7 +41,7 @@ export const networkBansGet = Effect.fn("network-bans.get")(function* (flags: Ne
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goOutput = Option.getOrUndefined(outputFlag);
 

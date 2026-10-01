@@ -39,8 +39,8 @@ interface PendingSeed {
 }
 
 // Resolves `[db.seed].sql_paths` to existing files via the shared {@link sqlFilesGlob}
-// traversal, printing a single `WARN: <joined>` line for any glob problem — unlike the
-// schema-files apply path, which only warns when no pattern matched anything at all.
+// traversal, warning once with all joined glob problems — unlike the schema-files apply
+// path, which only warns when no pattern matched anything at all.
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -50,7 +50,7 @@ const resolveSeedFiles = (
   Effect.gen(function* () {
     const output = yield* Output;
     const { files, warnings } = yield* sqlFilesGlob(fs, path, patterns, workdir);
-    if (warnings.length > 0) yield* output.raw(`WARN: ${warnings.join("\n")}\n`, "stderr");
+    if (warnings.length > 0) yield* output.warn(warnings.join("\n"));
     return files;
   });
 

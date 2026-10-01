@@ -8,7 +8,7 @@ const NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
  * Parses a yes/no answer, case-insensitively and trimmed: `y`/`yes` → `true`, `n`/`no` →
- * `false`, anything else → `undefined` (caller falls back to the default).
+ * `false`, anything else → `undefined`.
  */
 export const parseYesNo = (input: string): boolean | undefined => {
   const s = input.trim().toLowerCase();
@@ -26,8 +26,9 @@ export const parseYesNo = (input: string): boolean | undefined => {
  * `yes` echoes an affirmative answer and returns `true` immediately; non-text output
  * uses the default silently unless the caller opts into machine-mode piped answers;
  * a real interactive text TTY prompts via clack; otherwise (including text callers with
- * `interactive: false`) it reads one line via the shared `Stdin` reader, falling back to
- * the default only when the line is empty or unparseable.
+ * `interactive: false`) it reads one line via the shared `Stdin` reader: a parsed answer
+ * wins and an empty line takes the default. Any other line declines, except under
+ * `interactive: false`, where it takes the default.
  */
 export const promptYesNo = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -52,19 +53,14 @@ export const promptYesNo = Effect.fnUntraced(function* (
   // Text `interactive: false` still prints the label and reads one line instead of
   // silently returning the default — it uses the same non-TTY read path below.
   if (!interactive || !tty.stdinIsTty) {
-    // A parsed piped answer wins; an empty or unparseable line falls back to the default.
     yield* output.raw(`${label} [${choices}] `, "stderr");
     const stdin = yield* Stdin;
     const line = yield* stdin.readLine(NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
-    yield* output.raw(`${input}\n`, "stderr");
-    if (input.length > 0) {
-      const answer = parseYesNo(input);
-      if (answer !== undefined) {
-        return answer;
-      }
-    }
-    return defaultValue;
+    yield* output.raw(`${input.trim()}\n`, "stderr");
+    // An unrecognised answer is never consent; under `interactive: false` the line may be
+    // the caller's own script text, so it keeps the default.
+    return parseYesNo(input) ?? (interactive && input.length > 0 ? false : defaultValue);
   }
   return yield* output
     .promptConfirm(label, { defaultValue })

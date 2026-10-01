@@ -91,13 +91,17 @@ const makeSpec = (
                   }),
               ),
             );
-      const runtimePath = (value: string) =>
-        !path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined
-          ? value
-          : path.join(
-              container ? "/__supabase_project" : canonicalFilesRoot,
-              path.relative(filesRoot, value),
-            );
+      const runtimePath = (value: string) => {
+        if (!path.isAbsolute(value) || filesRoot === undefined || canonicalFilesRoot === undefined)
+          return value;
+        const relative = path.relative(filesRoot, value);
+        // Container paths are POSIX regardless of the host path flavor.
+        return container
+          ? ["/__supabase_project", ...relative.split(path.sep).filter((part) => part !== "")].join(
+              "/",
+            )
+          : path.join(canonicalFilesRoot, relative);
+      };
       const root =
         container && filesRoot === undefined
           ? "/__supabase_functions"

@@ -11,9 +11,11 @@ The selectors are mutually exclusive; a missing target fails. Explicit legacy
 `-o/--output` is rejected in favor of `--output-format`.
 
 Interactive text mode asks for confirmation and states that Storage uploads are
-preserved. Non-interactive and machine-output runs require `--yes`. Rejection or
-cancellation does not open or destroy a stack. Discovery may create/chmod the
-registry directory to 0700 but does not launch an owner.
+preserved. Non-interactive and machine-output runs require `--yes`. With `--yes`
+the command prints no question; stderr states which stack and data are destroyed
+and that Storage uploads are preserved. Rejection or cancellation does not open or
+destroy a stack. Discovery may create/chmod the registry directory to 0700 but
+does not launch an owner.
 
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.

@@ -167,7 +167,7 @@ const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: s
     Effect.tapError(() => task?.fail() ?? Effect.void),
     Effect.catch(mapBranchListError),
   );
-  yield* task?.clear() ?? Effect.void;
+  yield* task?.clear ?? Effect.void;
   yield* Effect.annotateCurrentSpan({
     "project.parent_ref": parentRef,
     "branch.count": branches.length,
@@ -405,7 +405,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.timeout(LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
           Effect.orElseSucceed(() => false),
-          Effect.ensuring(correlating?.clear() ?? Effect.void),
+          Effect.ensuring(correlating?.clear ?? Effect.void),
           Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
         );
         if (!verified) {

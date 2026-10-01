@@ -1,5 +1,6 @@
 import { allowedEndpointNames, type ServiceCreation } from "../services/Catalog.ts";
 import type { ServiceEndpoint } from "../services/Recipe.ts";
+import { apiPath as storageApiPath } from "../services/Storage.ts";
 import type { NetworkEndpoint } from "../Network.ts";
 import { ProxyError, type BackendAddress } from "../Proxy.ts";
 import { Data, Effect, Redacted } from "effect";
@@ -29,6 +30,7 @@ export const endpointPort = (creation: EndpointIntents, name: string): number | 
   return endpoint.port === "auto" || typeof endpoint.port === "number" ? endpoint.port : "auto";
 };
 
+/** Path prefix of a service on the shared API listener, or `undefined` when it has a dedicated one. */
 export const apiRoute = (service: ServiceCreation["service"]): string | undefined => {
   switch (service) {
     case "rest":
@@ -36,7 +38,7 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
     case "auth":
       return "/auth/v1";
     case "storage":
-      return "/storage/v1";
+      return storageApiPath;
     case "functions":
       return "/functions/v1";
     case "realtime":
@@ -86,6 +88,12 @@ export const sharedRoutes = (
       return [{ prefix: route, upstreamPrefix: "/" }];
   }
 };
+
+/** Shared-listener routes a dedicated HTTP endpoint also serves: Studio's MCP server at `/mcp`. */
+export const joinRoutes = (creation: ServiceCreation, name: string): NetworkEndpoint["join"] =>
+  creation.service === "studio" && name === "http"
+    ? [{ prefix: "/mcp", upstreamPrefix: "/api/mcp" }]
+    : undefined;
 
 /** Translates a launched runtime's endpoint into the proxy's backend address. */
 export const backendAddress = (

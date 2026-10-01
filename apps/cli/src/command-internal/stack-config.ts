@@ -1,7 +1,12 @@
 import { getDefaultCliConfig, type CliConfig } from "@supabase/config";
 import { resolveCliConfigSubtree } from "@supabase/config/internal";
 import { validateCliConfig } from "@supabase/config/effect";
-import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
+import {
+  DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+  DEFAULT_LOCAL_S3_REGION,
+  DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+  DEFAULT_SIGNING_KEY,
+} from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
 import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -375,14 +380,7 @@ const resolveEffectiveCliConfig = (
   const mail = config.local_smtp;
   const pooler = db.pooler;
   const edge = config.edge_runtime;
-  const experimental = {
-    ...config.experimental,
-    orioledb_version: envOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      env,
-    ),
-  };
+  const experimental = config.experimental;
   const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, env);
   const apiExtraSearchPathOverride = envOverride("SUPABASE_API_EXTRA_SEARCH_PATH", undefined, env);
   const imageDocument = section(section(document, "storage"), "image_transformation");
@@ -666,6 +664,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
+      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
@@ -731,7 +730,7 @@ const unsupportedConfigPaths = [
   { path: "analytics.gcp_jwt_path", active: (config: CliConfig) => config.analytics.enabled },
   { path: "edge_runtime.deno_version", active: (config: CliConfig) => config.edge_runtime.enabled },
   { path: "storage.analytics", active: (config: CliConfig) => config.storage.enabled },
-  { path: "experimental.orioledb_version", active: (_config: CliConfig) => true },
+  { path: "db.orioledb_version", active: (_config: CliConfig) => true },
 ] as const;
 
 const pathValue = (value: unknown, path: string): unknown => {
@@ -1241,6 +1240,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       filePath: `${storagePath}/${stackId}`,
                       fileSizeLimit: storageFileSizeLimit,
                       s3ProtocolEnabled: validatedConfig.storage.s3_protocol.enabled,
+                      s3AccessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
+                      s3SecretAccessKey: DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
+                      s3Region: DEFAULT_LOCAL_S3_REGION,
                       vectorEnabled: validatedConfig.storage.vector.enabled,
                       vectorMaxBuckets: validatedConfig.storage.vector.max_buckets,
                       vectorMaxIndexes: validatedConfig.storage.vector.max_indexes,

@@ -1,5 +1,4 @@
 import { describe, expect, it, test } from "@effect/vitest";
-import { afterEach, vi } from "vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -14,10 +13,6 @@ import {
   type VectorContainerSpecInput,
   type VectorDockerSocketPlan,
 } from "./vector.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
 function mockSpawner(
@@ -213,7 +208,7 @@ describe("resolveVectorDockerSocketPlan", () => {
 describe("buildVectorEntrypointScript", () => {
   test("writes vector.yaml then waits on Logflare's health endpoint before exec'ing vector (start.go:449-454)", () => {
     expect(buildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
-      "cat <<'EOF' > /etc/vector/vector.yaml\n" +
+      "mkdir -p /etc/vector\ncat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
         "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
         "supabase_analytics_proj" +
@@ -223,6 +218,7 @@ describe("buildVectorEntrypointScript", () => {
 });
 
 const base: VectorContainerSpecInput = {
+  slim: false,
   image: "supabase/vector:0.28.1",
   containerName: "supabase_vector_proj",
   networkId: "supabase_network_proj",
@@ -287,9 +283,9 @@ describe("buildVectorContainerSpec", () => {
   });
 
   test("slim image waits on Logflare with BusyBox wget flags", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildVectorContainerSpec({
       ...base,
+      slim: true,
       image: "ghcr.io/supabase/cli/vector:0.53.0",
     });
     expect(spec.entrypoint).toBe("sh");

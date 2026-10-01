@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
+import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
@@ -89,15 +89,14 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
       ? Stream.fromIterable([pipedBytes.value])
       : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
-    // Ignores any timeout argument; dispenses piped lines one per call (trimmed),
-    // then None once exhausted.
+    // Ignores any timeout argument; dispenses piped lines one per call, then None once
+    // exhausted.
     readLine: () =>
       Effect.sync(() => {
         if (lineIndex >= lines.length) {
           return Option.none<string>();
         }
-        const line = (lines[lineIndex++] ?? "").trim();
-        return line.length > 0 ? Option.some(line) : Option.none<string>();
+        return Option.some(lines[lineIndex++] ?? "");
       }),
   });
 }
@@ -285,7 +284,7 @@ export function mockOutput(
                   messages.push({ type: "warn", message: nextMessage });
                 }
               }),
-            clear: () => Effect.void,
+            clear: Effect.void,
           };
         }),
       event: (event) =>
@@ -698,4 +697,45 @@ export function emptyEnv() {
       Layer.provide(BunServices.layer),
     ),
   );
+}
+
+/**
+ * A `Console.Console` test double recording `log`/`error` calls — `--help` and parse-error
+ * output render through it. Not `vi.spyOn`-based: spying on `console.*` here unreliably breaks
+ * call detection under this repo's Bun + Vitest combination.
+ */
+export function fakeConsole(): {
+  readonly console: Console.Console;
+  readonly calls: Array<string>;
+} {
+  const calls: Array<string> = [];
+  const unused = () => {};
+  return {
+    calls,
+    console: {
+      assert: unused,
+      clear: unused,
+      count: unused,
+      countReset: unused,
+      debug: unused,
+      dir: unused,
+      dirxml: unused,
+      error: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`error:${args.join(" ")}`);
+      },
+      group: unused,
+      groupCollapsed: unused,
+      groupEnd: unused,
+      info: unused,
+      log: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`log:${args.join(" ")}`);
+      },
+      table: unused,
+      time: unused,
+      timeEnd: unused,
+      timeLog: unused,
+      trace: unused,
+      warn: unused,
+    },
+  };
 }

@@ -87,7 +87,7 @@ export const functionsList = Effect.fn("functions.list")(function* (flags: Funct
         decode: true,
       });
     }
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
     const { functions, isNil } = decodedFunctions.value;
     yield* Effect.annotateCurrentSpan("function.count", functions.length);
 

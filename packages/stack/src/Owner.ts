@@ -35,6 +35,7 @@ import {
   credentialsFor,
   endpointNames,
   endpointPort,
+  joinRoutes,
   outputsFor,
   publicUrl,
   sharedRoutes,
@@ -72,6 +73,8 @@ export interface OwnerOptions {
   readonly state: State.Interface;
   readonly root: string;
   readonly cacheRoot: string;
+  /** Shares one host-gateway probe with the host's other container runtimes. */
+  readonly hostGateway?: Container.HostGateway;
 }
 
 type OwnerRpcs = RpcGroup.Rpcs<typeof OwnerRpc>;
@@ -293,6 +296,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
+      ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
     }).pipe(Effect.provideContext(services));
 
   const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
@@ -355,20 +359,24 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     const endpoints = Object.fromEntries(
       endpointNames(initial).map((name) => {
         const shared = sharedRoutes(initial, name, routeKeys);
+        const join = joinRoutes(initial, name);
         const endpoint: NetworkEndpoint = {
           protocol: name === "http" ? "http" : "tcp",
           port: endpointPort(initial, name),
-          backend: orchestrator.acquire(id, name !== "inspector").pipe(
-            Effect.andThen(recipe.endpoint(name)),
-            Effect.flatMap(backendAddress),
-            Effect.mapError((cause) =>
-              cause instanceof ProxyError
-                ? cause
-                : new ProxyError({ message: cause.message, cause }),
+          backend: orchestrator
+            .acquire(id, name !== "inspector", `traffic on endpoint ${name}`)
+            .pipe(
+              Effect.andThen(recipe.endpoint(name)),
+              Effect.flatMap(backendAddress),
+              Effect.mapError((cause) =>
+                cause instanceof ProxyError
+                  ? cause
+                  : new ProxyError({ message: cause.message, cause }),
+              ),
             ),
-          ),
           enabled,
           ...(shared === undefined ? {} : { shared }),
+          ...(join === undefined ? {} : { join }),
         };
         return [name, endpoint];
       }),
@@ -377,6 +385,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     yield* Ref.set(namespaceRef, namespace);
     const entry: Entry = {
       id,
+      service: initial.service,
       core,
       recipe,
       creation,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { catalogPins } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
@@ -41,6 +42,25 @@ import { servicesCommand } from "./services.command.ts";
 import { services } from "./services.handler.ts";
 
 const LOCAL_POSTGRES_VERSION = dockerfileServiceImageRaw("pg").split(":")[1] ?? "";
+
+/**
+ * The real stack catalog's pinned upstream version for `sourceService` — the default pin, or
+ * (for postgres) the additional 15.x line when `additional` is set. Derived rather than
+ * hardcoded, so a catalog bump never makes these "stack backend" assertions go stale.
+ */
+function catalogUpstreamVersion(
+  sourceService: string,
+  options: { readonly additional?: boolean } = {},
+): string {
+  const wantDefault = !(options.additional ?? false);
+  const entry = catalogPins().find(
+    (candidate) => candidate.sourceService === sourceService && candidate.isDefault === wantDefault,
+  );
+  if (entry === undefined) {
+    throw new Error(`No catalog pin for '${sourceService}' (default=${wantDefault}).`);
+  }
+  return entry.pin.upstreamVersion;
+}
 
 /** Shape of one row in the `--output json` services array. */
 const ServiceRows = Schema.Array(
@@ -188,6 +208,10 @@ const writeTempFile = Effect.fnUntraced(function* (workdir: string, name: string
   yield* fs.writeFileString(path.join(tempDir, name), content);
 });
 
+// `postgresImageForDbMajorVersion` always returns the raw docker.io reference (slim translation
+// is a downstream concern); its tag is the Dockerfile-generated one, which always matches the
+// catalog's pinned upstream version, so this is the same version the CLI reports whether or not
+// the slim flag is on.
 function postgresVersionForDbMajorVersion(majorVersion: number): string {
   const image = postgresImageForDbMajorVersion(majorVersion);
   if (image === undefined) {
@@ -331,13 +355,25 @@ describe("services", () => {
       expect(out.stderrText).toBe("");
       expect(rows).toHaveLength(13);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: catalogUpstreamVersion("postgres", { additional: true }),
+        }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/mailpit", local: "v1.30.2" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/mailpit",
+          local: catalogUpstreamVersion("mailpit"),
+        }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/vector", local: "0.53.0" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/vector",
+          local: catalogUpstreamVersion("vector"),
+        }),
+      );
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "ghcr.io/supabase/cli/storage", local: "v1.79.28" }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -357,7 +393,10 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "15.14.1.173" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: catalogUpstreamVersion("postgres", { additional: true }),
+        }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
@@ -375,10 +414,16 @@ describe("services", () => {
 
         const rows = yield* decodeServiceRows(out.stdoutText);
         expect(rows).toContainEqual(
-          expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+          expect.objectContaining({
+            name: "ghcr.io/supabase/cli/postgres",
+            local: catalogUpstreamVersion("postgres"),
+          }),
         );
         expect(rows).toContainEqual(
-          expect.objectContaining({ name: "ghcr.io/supabase/cli/auth", local: "v2.196.0" }),
+          expect.objectContaining({
+            name: "ghcr.io/supabase/cli/auth",
+            local: catalogUpstreamVersion("auth"),
+          }),
         );
         expect(out.stderrText).toContain("unsupported PostgreSQL major version: 16");
         expect(out.stderrText).toContain("using default stack catalog versions");
@@ -394,7 +439,10 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/postgres", local: "17.6.1.173" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: catalogUpstreamVersion("postgres"),
+        }),
       );
       expect(out.stderrText).toMatch(/^failed to read config:/);
       expect(out.stderrText).toContain("using default stack catalog versions");
@@ -578,7 +626,7 @@ major_version = 15
       expect(stackRows).toContainEqual(
         expect.objectContaining({
           name: "ghcr.io/supabase/cli/postgres",
-          local: "17.6.1.173",
+          local: catalogUpstreamVersion("postgres"),
           remote: "17.6.1.200",
         }),
       );

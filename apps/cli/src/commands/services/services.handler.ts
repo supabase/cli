@@ -33,6 +33,7 @@ import {
   renderServicesWarning,
   type ServiceVersionRow,
 } from "../../shared/services/services.shared.ts";
+import { slimImagesEnabled } from "../../shared/services/slim-images.ts";
 import type { ServicesFlags } from "./services.command.ts";
 import { ServicesEnvNotSupportedError } from "./services.errors.ts";
 import { stackServiceVersions } from "./services-local-stack.ts";
@@ -181,6 +182,7 @@ export const services = Effect.fn("services")(function* (_flags: ServicesFlags) 
         imageOverrides["edge-runtime"] = edgeRuntimeImage;
       }
       const localImageOptions = {
+        slim: yield* slimImagesEnabled,
         imageOverrides,
         normalizeVersionTags: false,
         serviceVersions,

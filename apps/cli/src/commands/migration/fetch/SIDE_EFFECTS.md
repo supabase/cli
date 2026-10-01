@@ -60,7 +60,7 @@ Same structured `files` result delivered as an NDJSON `result` event.
   `Do you want to overwrite existing files in supabase/migrations directory?`
   (default **YES**). Declining exits non-zero (`context canceled`). `--yes` or
   `SUPABASE_YES` (shell env or project `.env`) auto-confirms; a non-interactive /
-  machine-output run takes the default (YES).
+  machine-output run takes the default (YES). An unrecognised answer declines.
 
 ## Notes
 

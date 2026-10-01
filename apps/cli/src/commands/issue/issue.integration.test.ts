@@ -39,7 +39,7 @@ function issueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
           fail: () => Effect.void,
           info: () => Effect.void,
           cancel: () => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
       promptText: () => Effect.succeed(""),
       promptPassword: () => Effect.succeed(""),

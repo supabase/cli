@@ -42,6 +42,11 @@ import {
 } from "../runtime/Session.ts";
 import { ServiceError, ServiceLaunchError, type RuntimeSession } from "../Service.ts";
 import {
+  containerInstancePath,
+  ensureOwnedInstanceRoot,
+  removeOwnedInstanceRoot,
+} from "./InstanceRoot.ts";
+import {
   type CatalogLog,
   CatalogError,
   type CatalogOptions,
@@ -77,6 +82,8 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
     creation: C,
     endpoints: ReadonlyMap<string, ServiceEndpoint>,
     container: boolean,
+    /** The claimed instance directory: the host path natively, `/instance` in a container. */
+    instanceDir?: string,
   ) => Effect.Effect<Readonly<Record<string, string>>, ServiceError>;
   readonly nativeStartupEnv?: (
     creation: C,
@@ -96,6 +103,8 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly containerEntrypoint?: (creation: C) => string | undefined;
   readonly prepare?: (creation: C) => Effect.Effect<void, ServiceError>;
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
+  /** Claims an owned instance directory, mounted at `/instance` in containers. */
+  readonly instanceDirectory?: boolean;
 }
 
 export interface ResolvedStartupCommand {
@@ -421,8 +430,23 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
     const preparedRoot = yield* Ref.make<string | undefined>(undefined);
     const endpoints = yield* Ref.make<ReadonlyMap<string, ServiceEndpoint>>(new Map());
     const logs = yield* PubSub.sliding<CatalogLog>(256);
+    const instanceRoot = deps.path.join(options.root, options.instanceId);
+    const ownedInstanceRoot = {
+      fs: deps.fs,
+      path: deps.path,
+      parentRoot: options.root,
+      stackId: options.stackId,
+      instanceId: options.instanceId,
+      ownerFileName: ".supabase-instance-owner.json",
+      label: "Instance root",
+    };
+    const nativeInstanceDir = spec.instanceDirectory === true ? instanceRoot : undefined;
+    const containerInstanceDir =
+      spec.instanceDirectory === true ? containerInstancePath : undefined;
 
     const prepare = Effect.fn("ProcessRecipe.prepare")(function* (candidate: C) {
+      if (spec.instanceDirectory === true)
+        yield* ensureOwnedInstanceRoot(ownedInstanceRoot, serviceError);
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
       const resolved = yield* resolveArtifact({
         service: candidate.service,
@@ -559,7 +583,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             container: false,
             artifactRoot,
           });
-          const env = yield* spec.env(context.config, selected, false);
+          const env = yield* spec.env(context.config, selected, false, nativeInstanceDir);
           yield* Scope.close(reservation.portScope, Exit.void);
           const native: NativeProcess = yield* spawnNativeProcess(
             {
@@ -796,10 +820,15 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           instanceId: options.instanceId,
           service: spec.service,
           project: options.project,
-          env: yield* spec.env(context.config, containerDesired, true),
+          env: yield* spec.env(context.config, containerDesired, true, containerInstanceDir),
           entrypoint: spec.containerEntrypoint?.(context.config),
           args: yield* spec.args(context.config, containerDesired, { container: true }),
-          mounts: yield* spec.mounts(context.config, { container: true }),
+          mounts: [
+            ...(yield* spec.mounts(context.config, { container: true })),
+            ...(spec.instanceDirectory === true
+              ? [{ source: instanceRoot, target: containerInstancePath, readOnly: false }]
+              : []),
+          ],
           ports: [...containerDesired.values()].map((endpoint) => endpoint.port),
         })
         .pipe(
@@ -852,9 +881,14 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         prepare,
         launch,
         removeData: (context) =>
-          (spec.removeData?.(context.config) ?? Effect.void).pipe(
-            Effect.andThen(Ref.set(endpoints, new Map())),
-          ),
+          (spec.instanceDirectory === true
+            ? removeOwnedInstanceRoot(
+                ownedInstanceRoot,
+                spec.removeData?.(context.config) ?? Effect.void,
+                serviceError,
+              )
+            : (spec.removeData?.(context.config) ?? Effect.void)
+          ).pipe(Effect.andThen(Ref.set(endpoints, new Map()))),
       },
       endpoints,
       logs: Stream.fromPubSub(logs).pipe(

@@ -4,7 +4,7 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
+import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
 
 /**
  * Resolves the edge-runtime Docker image: the default tag comes from the Dockerfile image, a
@@ -12,9 +12,10 @@ import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
  * `edge_runtime.deno_version = 1` selects the legacy `deno1` image instead.
  */
 
-// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
-// observed by the resolver (and by tests that stub the env).
-export const edgeRuntimeDockerfileImage = () => dockerfileServiceImage("edgeruntime");
+// Read per run, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is observed.
+export const edgeRuntimeDockerfileImage = Effect.map(slimImagesEnabled, (slim) =>
+  dockerfileServiceImage("edgeruntime", slim),
+);
 // Used when `deno_version = 1`. No slim build exists for it, so it stays on docker.io regardless
 // of the flag — the same exception `edgeRuntimeImage` (`shared/functions/functions.shared.ts`)
 // applies for the functions Docker paths reading the same pin file.
@@ -44,5 +45,10 @@ export const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
     return EDGE_RUNTIME_DENO1_IMAGE;
   }
-  return slimImageForCurrentPin("edgeruntime", raw, pinned.length > 0 ? pinned : undefined);
+  return slimImageForCurrentPin(
+    "edgeruntime",
+    raw,
+    pinned.length > 0 ? pinned : undefined,
+    yield* slimImagesEnabled,
+  );
 });

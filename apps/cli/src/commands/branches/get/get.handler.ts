@@ -107,7 +107,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch(mapGetError),
       );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
     const detail: BranchDetail = {
       ...rawDetail,
       db_user: rawDetail.db_user ?? "******",
