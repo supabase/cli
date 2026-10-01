@@ -168,10 +168,9 @@ export interface StackEndpointSetting {
 }
 
 /**
- * A port setting's full identity: everything `envPortOrConfigured`/`envNestedPortOrConfigured`
- * need to resolve it below, plus the `configPath` `stackEndpointSetting` reports for it. Each port
- * is declared once as a `PortSetting` constant and read from both places, so a new or renamed port
- * can't be added to `createCreations` without also reaching `stackEndpointSetting` (or vice versa).
+ * A port setting's `config.toml` key and env var, shared by `createCreations` and
+ * `stackEndpointSetting` so both report the same names; a new endpoint still needs an entry in
+ * `endpointSettingsByServiceEndpoint`.
  */
 interface PortSetting extends StackEndpointSetting {
   readonly section: string;
