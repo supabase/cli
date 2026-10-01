@@ -47,7 +47,10 @@ export interface ForwardedStream {
 }
 
 interface Interface {
-  /** Ships a shipped service's persisted logs, or tracks an Analytics instance as the target. */
+  /**
+   * Ships the persisted logs of a shipped service or an owner stream, or tracks an Analytics
+   * instance as the target.
+   */
   readonly attach: (instance: ForwardedInstance | ForwardedStream) => Effect.Effect<void>;
   /** Re-selects the shipping target after the composition changes. */
   readonly rebind: Effect.Effect<void>;
@@ -397,11 +400,16 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   const attach = Effect.fn("LogForwarder.attach")(function* (
     instance: ForwardedInstance | ForwardedStream,
   ) {
-    if (instance.service === "gateway")
-      yield* Effect.forkIn(forward(instance.id, instance.service, Effect.never), scope);
-    else if (instance.service === "analytics") yield* Effect.forkIn(trackTarget(instance), scope);
+    if (instance.service === "analytics") yield* Effect.forkIn(trackTarget(instance), scope);
     else if (isShippedService(instance.service))
-      yield* Effect.forkIn(forward(instance.id, instance.service, unregistered(instance)), scope);
+      yield* Effect.forkIn(
+        forward(
+          instance.id,
+          instance.service,
+          "observation" in instance ? unregistered(instance) : Effect.never,
+        ),
+        scope,
+      );
   });
 
   return {

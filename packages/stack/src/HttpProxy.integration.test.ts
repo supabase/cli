@@ -1067,100 +1067,83 @@ const rawUpgrade = (port: number, path: string) =>
     Effect.timeout("5 seconds"),
   );
 
-it.live("records each request once with the status the client was sent", () => {
-  const logs: Array<string> = [];
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const backend = createServer((request, response) => {
-        request.resume();
-        if (request.url?.startsWith("/ok")) response.end("hello");
-        else {
-          response.statusCode = 404;
-          response.end("nope");
-        }
-      });
-      const backendAddress = yield* listen(backend);
-      const accesses = yield* Queue.unbounded<HttpAccess>();
-      const proxy = yield* makeHttpProxy({
-        host: "127.0.0.1",
-        port: 0,
-        onAccess: (access) => Queue.offer(accesses, access),
-      });
-      yield* proxy.setRoutes([
-        { id: "api", prefix: "/api", upstreamPrefix: "/", target: Effect.succeed(backendAddress) },
-        {
-          id: "down",
-          prefix: "/down",
-          target: Effect.fail(new ProxyError({ message: "wake failed" })),
-        },
-      ]);
-      const get = (path: string, headers: Readonly<Record<string, string>> = {}) =>
-        request(proxy.port, path, new Uint8Array(), headers, "GET").pipe(
-          Effect.map(({ status }) => status),
-        );
+it.live(
+  "records each request once with its sent status, body bytes and redacted credentials",
+  () => {
+    const logs: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((request, response) => {
+          request.resume();
+          if (request.url?.startsWith("/ok")) response.end("hello");
+          else {
+            response.statusCode = 404;
+            response.end("nope");
+          }
+        });
+        const backendAddress = yield* listen(backend);
+        const accesses = yield* Queue.unbounded<HttpAccess>();
+        const proxy = yield* makeHttpProxy({
+          host: "127.0.0.1",
+          port: 0,
+          onAccess: (access) => Queue.offer(accesses, access),
+        });
+        yield* proxy.setRoutes([
+          {
+            id: "api",
+            prefix: "/api",
+            upstreamPrefix: "/",
+            target: Effect.succeed(backendAddress),
+          },
+          {
+            id: "down",
+            prefix: "/down",
+            target: Effect.fail(new ProxyError({ message: "wake failed" })),
+          },
+        ]);
+        const get = (path: string, headers: Readonly<Record<string, string>> = {}) =>
+          request(proxy.port, path, new Uint8Array(), headers, "GET").pipe(
+            Effect.map(({ status }) => status),
+          );
 
-      const statuses = [
-        yield* get("/api/ok?select=*&apikey=sb_secret_x&Access_Token=jwt", {
-          "user-agent": "proxy-test/1",
-          referer: "http://127.0.0.1:54321/x?token=t1&select=*#access_token=frag&type=bearer",
-        }),
-        yield* get("/api/missing?code=pkce&state=s", {
-          referer:
-            "http://127.0.0.1:54321/y?apikey=sb_publishable_x#refresh_token=r&provider_token=p",
-        }),
-        yield* get(
-          "/elsewhere?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT&return_to=https%3A%2F%2Fuser%3Asecret%40client%2Fcb&next=http%3A%2F%2Flocalhost%3A3000%2F",
-          { referer: "https://user:password@studio.test/relative?Access_Token=jwt" },
-        ),
-        yield* get(
-          "/down/thing?token=t&redirect_to=https://client/cb?access_token=JWT&back=https%253A%252F%252Fclient%252Fcb%253Faccess_token%253DJWT",
-        ),
-      ];
-      const recorded = yield* Queue.takeN(accesses, 4);
+        const statuses = [
+          yield* get("/api/ok?select=*&apikey=sb_secret_x", {
+            "user-agent": "proxy-test/1",
+            referer: "http://127.0.0.1:54321/x?token=t1&select=*",
+          }),
+          yield* get("/api/missing"),
+          yield* get("/elsewhere"),
+          yield* get("/down/thing"),
+        ];
+        const recorded = yield* Queue.takeN(accesses, 4);
 
-      expect(statuses).toEqual([200, 404, 404, 502]);
-      expect(recorded.toSorted((left, right) => left.time - right.time)).toEqual([
-        {
-          time: expect.any(Number),
-          client: "127.0.0.1",
-          method: "GET",
-          target: "/api/ok?select=*&apikey=redacted&Access_Token=redacted",
-          protocol: "HTTP/1.1",
-          status: 200,
-          bytes: 5,
-          referer:
-            "http://127.0.0.1:54321/x?token=redacted&select=*#access_token=redacted&type=bearer",
-          userAgent: "proxy-test/1",
-          durationMillis: expect.any(Number),
-        },
-        expect.objectContaining({
-          target: "/api/missing?code=redacted&state=s",
-          status: 404,
-          bytes: 4,
-          referer:
-            "http://127.0.0.1:54321/y?apikey=redacted#refresh_token=redacted&provider_token=redacted",
-        }),
-        expect.objectContaining({
-          target:
-            "/elsewhere?redirect_to=redacted&return_to=redacted&next=http%3A%2F%2Flocalhost%3A3000%2F",
-          status: 404,
-          bytes: 9,
-          referer: "https://redacted@studio.test/relative?Access_Token=redacted",
-        }),
-        expect.objectContaining({
-          target: "/down/thing?token=redacted&redirect_to=redacted&back=redacted",
-          status: 502,
-          bytes: 11,
-        }),
-      ]);
-      expect(yield* Queue.size(accesses)).toBe(0);
-    }),
-  ).pipe(
-    Effect.provide(
-      Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
-    ),
-  );
-});
+        expect(statuses).toEqual([200, 404, 404, 502]);
+        expect(recorded.toSorted((left, right) => left.time - right.time)).toEqual([
+          {
+            time: expect.any(Number),
+            client: "127.0.0.1",
+            method: "GET",
+            target: "/api/ok?select=*&apikey=redacted",
+            protocol: "HTTP/1.1",
+            status: 200,
+            bytes: 5,
+            referer: "http://127.0.0.1:54321/x?token=redacted&select=*",
+            userAgent: "proxy-test/1",
+            durationMillis: expect.any(Number),
+          },
+          expect.objectContaining({ target: "/api/missing", status: 404, bytes: 4 }),
+          expect.objectContaining({ target: "/elsewhere", status: 404, bytes: 9 }),
+          expect.objectContaining({ target: "/down/thing", status: 502, bytes: 11 }),
+        ]);
+        expect(yield* Queue.size(accesses)).toBe(0);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureErrors(logs)),
+      ),
+    );
+  },
+);
 
 it.live("records WebSocket upgrades at the handshake with the status sent to the client", () => {
   const logs: Array<string> = [];

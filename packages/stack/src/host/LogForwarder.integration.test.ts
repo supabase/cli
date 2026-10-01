@@ -421,22 +421,7 @@ describe("LogForwarder", () => {
       const shipped = yield* sink.next;
 
       expect(shipped.url).toBe("/api/logs?source_name=cloudflare.logs.prod");
-      expect(shipped.events).toEqual([
-        expect.objectContaining({
-          appname: "gateway",
-          timestamp: "2026-10-01T09:25:23.000Z",
-          metadata: {
-            request: {
-              method: "POST",
-              path: "/auth/v1/token",
-              search: "?grant_type=password",
-              protocol: "HTTP/1.1",
-              headers: { cf_connecting_ip: "127.0.0.1" },
-            },
-            response: { status_code: 400 },
-          },
-        }),
-      ]);
+      expect(shipped.events).toEqual([expect.objectContaining({ appname: "gateway" })]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

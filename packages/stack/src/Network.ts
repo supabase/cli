@@ -179,9 +179,7 @@ const makeNetwork = (options: {
                                 proxy: yield* makeHttpProxy({
                                   host,
                                   port,
-                                  ...(options.onAccess === undefined
-                                    ? {}
-                                    : { onAccess: options.onAccess }),
+                                  onAccess: options.onAccess,
                                 }),
                               };
                             }

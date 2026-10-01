@@ -3,7 +3,7 @@ import type { ServiceCreation } from "../services/Catalog.ts";
 import type { gatewayLog } from "./GatewayLog.ts";
 
 /** A service kind, or the owner's `gateway` stream of shared API listener requests. */
-export type LogService = ServiceCreation["service"] | typeof gatewayLog.service;
+type LogService = ServiceCreation["service"] | typeof gatewayLog.service;
 
 /** Logflare source per shipped log service; Studio's Logs pages query these names. */
 export const logflareSources = {
@@ -43,20 +43,21 @@ const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
   }
 };
 
-const months: Record<string, number> = {
-  jan: 0,
-  feb: 1,
-  mar: 2,
-  apr: 3,
-  may: 4,
-  jun: 5,
-  jul: 6,
-  aug: 7,
-  sep: 8,
-  oct: 9,
-  nov: 10,
-  dec: 11,
-};
+/** The `%b` month abbreviations of PostgREST and nginx log times, January first. */
+export const monthNames = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
 
 /** Parses the `%d/%b/%Y:%H:%M:%S %z` time of PostgREST and nginx logs into ISO-8601. */
 const parseLogTime = (text: string): string | undefined => {
@@ -64,8 +65,8 @@ const parseLogTime = (text: string): string | undefined => {
     /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/u.exec(text);
   if (match === null) return undefined;
   const [, day, month, year, hour, minute, second, sign, zoneHours, zoneMinutes] = match;
-  const monthIndex = months[month?.toLowerCase() ?? ""];
-  if (monthIndex === undefined) return undefined;
+  const monthIndex = monthNames.findIndex((name) => name.toLowerCase() === month?.toLowerCase());
+  if (monthIndex < 0) return undefined;
   const utc = Date.UTC(
     Number(year),
     monthIndex,

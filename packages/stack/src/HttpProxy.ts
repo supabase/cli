@@ -164,7 +164,7 @@ const decodeNested = (value: string) => {
 };
 
 // Auth puts PKCE codes, OTP token hashes and OAuth tokens in redirect and verify URLs.
-const credentialParameters = new Set([
+const credentialParameters = [
   "apikey",
   "access_token",
   "token",
@@ -174,36 +174,36 @@ const credentialParameters = new Set([
   "id_token",
   "provider_token",
   "provider_refresh_token",
-]);
+];
+const scheme = String.raw`[a-z][a-z\d+.-]*`;
 
-/** A credential pair inside a decoded value, such as a `redirect_to` URL carrying a token. */
-const nestedCredential = new RegExp(`(?:^|[?&#])(?:${[...credentialParameters].join("|")})=`, "iu");
-
-const userinfo = /^([a-z][a-z\d+.-]*:\/\/)[^/?#@]*@/iu;
-const nestedUserinfo = /[a-z][a-z\d+.-]*:\/\/[^/?#@]*@/iu;
+/**
+ * A decoded parameter that is a credential pair, nests one (a `redirect_to` URL carrying a
+ * token), or nests a URL with userinfo.
+ */
+const sensitive = new RegExp(
+  String.raw`(?:^|[?&#=])(?:${credentialParameters.join("|")})=|${scheme}:\/\/[^/?#@]*@`,
+  "iu",
+);
+const userinfo = new RegExp(String.raw`^(${scheme}:\/\/)[^/?#@]*@`, "iu");
 
 const redactPairs = (pairs: string) =>
   pairs
     .split("&")
     .map((parameter) => {
       const separator = parameter.indexOf("=");
-      if (separator < 0) return parameter;
-      const name = parameter.slice(0, separator);
-      const value = decodeNested(parameter.slice(separator + 1));
-      return credentialParameters.has(decodeQuery(name).toLowerCase()) ||
-        nestedCredential.test(value) ||
-        nestedUserinfo.test(value)
-        ? `${name}=redacted`
+      return separator >= 0 && sensitive.test(decodeNested(parameter))
+        ? `${parameter.slice(0, separator)}=redacted`
         : parameter;
     })
     .join("&");
 
 /**
  * Redacts an absolute URL's userinfo and credential values in its query and fragment, where
- * OAuth implicit grants put `access_token`. Edits the text in place, so relative and unparsable
- * URLs work and the rest of the URL keeps its original encoding.
+ * OAuth implicit grants put `access_token` for non-browser clients. Edits the text in place, so
+ * relative and unparsable URLs work and the rest of the URL keeps its original encoding.
  */
-const redactCredentials = (url: string) => {
+export const redactCredentials = (url: string) => {
   const hashAt = url.indexOf("#");
   const beforeHash = hashAt < 0 ? url : url.slice(0, hashAt);
   const queryAt = beforeHash.indexOf("?");
@@ -549,19 +549,13 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         // 1xx responses such as 100 Continue (RFC 9110 section 15.2).
         const onAnswer = (chunk: Buffer) => {
           answer += chunk.toString("latin1");
-          while (true) {
-            const lineEnd = answer.indexOf("\r\n");
-            if (lineEnd < 0) {
-              if (answer.length >= answerLimit) upstream.off("data", onAnswer);
-              return;
-            }
-            const status = Number(statusLine.exec(answer.slice(0, lineEnd))?.[1] ?? Number.NaN);
+          for (
+            let headEnd = answer.indexOf("\r\n\r\n");
+            headEnd >= 0;
+            headEnd = answer.indexOf("\r\n\r\n")
+          ) {
+            const status = Number(statusLine.exec(answer)?.[1] ?? Number.NaN);
             if (status >= 100 && status < 200 && status !== 101) {
-              const headEnd = answer.indexOf("\r\n\r\n");
-              if (headEnd < 0) {
-                if (answer.length >= answerLimit) upstream.off("data", onAnswer);
-                return;
-              }
               answer = answer.slice(headEnd + 4);
               continue;
             }
@@ -569,6 +563,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
             if (!Number.isNaN(status)) Deferred.doneUnsafe(handshake, Effect.succeed(status));
             return;
           }
+          if (answer.length >= answerLimit) upstream.off("data", onAnswer);
         };
         upstream.on("data", onAnswer);
         client.on("error", onClientGone);
@@ -600,7 +595,7 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
 export const makeHttpProxy = (options: {
   readonly host: string;
   readonly port: number;
-  readonly onAccess?: HttpAccessSink;
+  readonly onAccess?: HttpAccessSink | undefined;
 }): Effect.Effect<HttpProxy, PortError, Scope.Scope> =>
   Effect.gen(function* () {
     const routes = yield* Ref.make<ReadonlyArray<HttpRoute>>([]);
@@ -616,16 +611,19 @@ export const makeHttpProxy = (options: {
     const server = createServer((request, response) => {
       runRequest(
         Effect.gen(function* () {
-          const complete = accessFor(request, yield* Clock.currentTimeMillis);
           const sent: Sent = { bytes: 0, clientLeft: false };
-          // Timed when the response settles, before the target's release runs.
-          const settled =
+          const access =
             onAccess === undefined
               ? undefined
-              : yield* responseSettled(response).pipe(
-                  Effect.andThen(Clock.currentTimeMillis),
-                  Effect.forkChild({ startImmediately: true }),
-                );
+              : {
+                  complete: accessFor(request, yield* Clock.currentTimeMillis),
+                  // Timed when the response settles, before the target's release runs.
+                  settled: yield* responseSettled(response).pipe(
+                    Effect.andThen(Clock.currentTimeMillis),
+                    Effect.forkChild({ startImmediately: true }),
+                  ),
+                  record: onAccess,
+                };
           // The access record waits outside this scope, so it never holds the target's activity.
           yield* Effect.scoped(
             Effect.gen(function* () {
@@ -657,11 +655,11 @@ export const makeHttpProxy = (options: {
               }
             }),
           );
-          if (onAccess === undefined || settled === undefined) return;
-          const ended = yield* Fiber.join(settled);
+          if (access === undefined) return;
+          const ended = yield* Fiber.join(access.settled);
           const delivered = response.writableFinished && !sent.clientLeft;
-          yield* onAccess(
-            complete(
+          yield* access.record(
+            access.complete(
               ended,
               response.headersSent ? response.statusCode : 499,
               delivered ? sent.bytes : undefined,
@@ -678,20 +676,22 @@ export const makeHttpProxy = (options: {
       socket.on("error", () => socket.destroy());
       runRequest(
         Effect.gen(function* () {
-          const complete = accessFor(request, yield* Clock.currentTimeMillis);
           // Completed by the upstream's handshake status, otherwise by the upgrade's outcome.
           const handshake = yield* Deferred.make<number>();
           const recorded =
             onAccess === undefined
               ? undefined
-              : yield* Deferred.await(handshake).pipe(
-                  Effect.flatMap((status) =>
-                    Clock.currentTimeMillis.pipe(
-                      Effect.flatMap((ended) => onAccess(complete(ended, status))),
+              : yield* Effect.gen(function* () {
+                  const complete = accessFor(request, yield* Clock.currentTimeMillis);
+                  return yield* Deferred.await(handshake).pipe(
+                    Effect.flatMap((status) =>
+                      Clock.currentTimeMillis.pipe(
+                        Effect.flatMap((ended) => onAccess(complete(ended, status))),
+                      ),
                     ),
-                  ),
-                  Effect.forkChild({ startImmediately: true }),
-                );
+                    Effect.forkChild({ startImmediately: true }),
+                  );
+                });
           const route = yield* Ref.get(routes).pipe(
             Effect.map((current) => routeFor(request.url ?? "/", current)),
           );
