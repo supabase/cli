@@ -1094,7 +1094,10 @@ it.live("records each request once with the status the client was sent", () => {
           "user-agent": "proxy-test/1",
           referer: "http://127.0.0.1:54321/x?token=t1&select=*#access_token=frag&type=bearer",
         }),
-        yield* get("/api/missing", { referer: "http://127.0.0.1:54321/y?apikey=sb_publishable_x" }),
+        yield* get("/api/missing?code=pkce&state=s", {
+          referer:
+            "http://127.0.0.1:54321/y?apikey=sb_publishable_x#refresh_token=r&provider_token=p",
+        }),
         yield* get("/elsewhere", { referer: "/relative?Access_Token=jwt" }),
         yield* get("/down/thing?token=t"),
       ];
@@ -1116,10 +1119,11 @@ it.live("records each request once with the status the client was sent", () => {
           durationMillis: expect.any(Number),
         },
         expect.objectContaining({
-          target: "/api/missing",
+          target: "/api/missing?code=redacted&state=s",
           status: 404,
           bytes: 4,
-          referer: "http://127.0.0.1:54321/y?apikey=redacted",
+          referer:
+            "http://127.0.0.1:54321/y?apikey=redacted#refresh_token=redacted&provider_token=redacted",
         }),
         expect.objectContaining({
           target: "/elsewhere",

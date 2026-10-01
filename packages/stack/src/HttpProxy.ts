@@ -152,7 +152,18 @@ const decodeQuery = (value: string) => {
   }
 };
 
-const credentialParameters = new Set(["apikey", "access_token", "token"]);
+// Auth puts PKCE codes, OTP token hashes and OAuth tokens in redirect and verify URLs.
+const credentialParameters = new Set([
+  "apikey",
+  "access_token",
+  "token",
+  "token_hash",
+  "code",
+  "refresh_token",
+  "id_token",
+  "provider_token",
+  "provider_refresh_token",
+]);
 
 const redactPairs = (pairs: string) =>
   pairs
