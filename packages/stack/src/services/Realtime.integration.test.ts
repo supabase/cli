@@ -40,6 +40,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const database = yield* makeService(databaseRecipe.definition, {
             id: "database",
@@ -53,6 +54,7 @@ describe("service catalog", () => {
           const realtimeRecipe = yield* makeServiceRecipe(
             { service: "realtime", config: { databaseUrl, jwtSecret: secret } },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const realtime = yield* makeService(realtimeRecipe.definition, {
             id: "realtime",
@@ -71,6 +73,7 @@ describe("service catalog", () => {
           const pgmetaRecipe = yield* makeServiceRecipe(
             { service: "pgmeta", config: { databaseUrl } },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const pgmeta = yield* makeService(pgmetaRecipe.definition, {
             id: "pgmeta",
@@ -99,6 +102,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const studio = yield* makeService(studioRecipe.definition, {
             id: "studio",

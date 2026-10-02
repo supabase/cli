@@ -75,6 +75,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const database = yield* makeService(databaseRecipe.definition, {
             id: "database",
@@ -140,6 +141,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const rest = yield* makeService(restRecipe.definition, {
             id: "rest",
@@ -217,6 +219,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
+          Effect.succeed([]),
         );
         const database = yield* makeService(databaseRecipe.definition, {
           id: "database",
@@ -257,6 +260,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
+          Effect.succeed([]),
         );
         const rest = yield* makeService(restRecipe.definition, {
           id: "rest",
