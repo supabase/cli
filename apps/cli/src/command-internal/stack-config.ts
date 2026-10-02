@@ -309,6 +309,12 @@ export const stackMajorVersionSetting: StackEndpointSetting = {
   envVar: "SUPABASE_DB_MAJOR_VERSION",
 };
 
+/** `db.orioledb_version`'s config key and `SUPABASE_DB_ORIOLEDB_VERSION` override, read in `createCreations`. */
+export const stackOrioledbVersionSetting: StackEndpointSetting = {
+  configPath: "db.orioledb_version",
+  envVar: "SUPABASE_DB_ORIOLEDB_VERSION",
+};
+
 const authProviderNames = [
   "apple",
   "azure",
@@ -812,7 +818,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
-      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
+      orioledb_version: envOverride(stackOrioledbVersionSetting.envVar, db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },

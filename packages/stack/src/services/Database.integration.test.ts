@@ -14,6 +14,7 @@ import {
   Stream,
 } from "effect";
 import { tmpdir } from "node:os";
+import { postgresVersion } from "../Artifacts.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeService } from "../Service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
@@ -173,11 +174,26 @@ describe("database component", { timeout: 180_000 }, () => {
         if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
         const instanceRoot = path.join(root, "database");
         const orioledb: DatabaseConfig = { ...config, version: "17.11.0.002-orioledb" };
+        const recreate =
+          "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
         yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
-        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "15\n");
 
+        expect((yield* Effect.flip(prepare(config))).message).toContain(
+          `PostgreSQL data from an unfinished first start is major 15, but major 17 was requested; ${recreate}`,
+        );
+
+        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
         expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
-          "Unmarked PostgreSQL data cannot be verified as OrioleDB data; run supabase stack destroy to recreate the stack",
+          `Unmarked PostgreSQL data cannot be verified as OrioleDB data; ${recreate}`,
+        );
+
+        yield* fs.writeFileString(
+          path.join(instanceRoot, ".supabase-database-line.json"),
+          '{"line":"17-orioledb"}',
+        );
+        expect((yield* Effect.flip(prepare(config))).message).toContain(
+          `PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested; ${recreate}`,
         );
 
         const marker = (version: string) =>
@@ -187,12 +203,50 @@ describe("database component", { timeout: 180_000 }, () => {
           );
         yield* marker("17.11.0.002");
         expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
-          "Initialized database artifact/runtime does not match the requested configuration; run supabase stack destroy to recreate the stack",
+          `Initialized database data is 17.11.0.002 on the native runtime, but 17.11.0.002-orioledb on the native runtime was requested; ${recreate}`,
         );
         yield* marker("17.11.0.002-orioledb");
         expect((yield* Effect.flip(prepare(config))).message).toContain(
-          "Initialized database artifact/runtime does not match the requested configuration; run supabase stack destroy to recreate the stack",
+          "Initialized database data is 17.11.0.002-orioledb on the native runtime",
         );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("resumes a native first start interrupted before readiness on its recorded line", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-resume-" });
+        const recipe = yield* makeDatabase({
+          stackId: "database-resume-test",
+          instanceId: "database",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const prepare = recipe.definition.prepare;
+        if (prepare === undefined) return yield* Effect.die("database recipe has no prepare");
+        const service = yield* makeService(recipe.definition, {
+          id: "database",
+          config: { ...config, healthTimeoutMs: 120_000 },
+        });
+        yield* service.start;
+        yield* service.ready;
+        yield* service.stop;
+        // Initialized data without its readiness marker is what an interrupted first start leaves.
+        yield* fs.remove(path.join(root, "database", ".supabase-database-ready.json"));
+
+        expect(
+          (yield* Effect.flip(prepare({ ...config, version: "17.11.0.002-orioledb" }))).message,
+        ).toContain("belongs to release line 17, but 17-orioledb was requested");
+        yield* service.start;
+        yield* service.ready;
+        expect(yield* fs.exists(path.join(root, "database", ".supabase-database-ready.json"))).toBe(
+          true,
+        );
+        yield* service.destroy;
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
@@ -330,12 +384,16 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* service.restart({ ...config, version: "unsupported" }).pipe(Effect.flip);
           expect((yield* service.get).lifecycle).toBe("running");
           const mismatch = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
-          expect(mismatch.message).toContain("does not match");
+          expect(mismatch.message).toContain(
+            `Initialized database data is ${postgresVersion("17")} on the native runtime, but ${postgresVersion("15")} on the native runtime was requested`,
+          );
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           yield* fs.remove(path.join(root, "first", ".supabase-database-ready.json"));
           const incomplete = yield* service.restart({ ...config, version: "15" }).pipe(Effect.flip);
-          expect(incomplete.message).toContain("major does not match");
+          expect(incomplete.message).toContain(
+            "PostgreSQL data from an unfinished first start is major 17, but major 15 was requested",
+          );
 
           const reopened = yield* makeDatabase({
             stackId: "stack-integration",
