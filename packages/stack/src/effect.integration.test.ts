@@ -1272,7 +1272,8 @@ it.live(
             startOwner: true,
             requestedCreations: [database, requestedConflicting],
           }).pipe(Effect.flip);
-          expect(failure.message).toContain("already in use");
+          // Linux rejects the overlapping bind itself; other platforms fail the occupancy pre-check.
+          expect(failure.message).toMatch(new RegExp(`\\b${conflictingPort}\\b.*\\bin use\\b`));
           expect(holder.listening).toBe(true);
 
           const reopened = yield* open({ id: stack.id, stateRoot, cacheRoot });
