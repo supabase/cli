@@ -7,7 +7,7 @@ import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { StackApi, stackApiLayer } from "./stack-api.ts";
 import { StackCatalogSetup, stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";

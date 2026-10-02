@@ -20,7 +20,6 @@ import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
-import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
@@ -38,7 +37,6 @@ import {
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
-import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
 import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
@@ -583,14 +581,6 @@ function cliProgramFor<
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
     // if a root-level invocation ever touches them.
-    Layer.succeed(Credentials, {
-      getAccessToken: Effect.die("unexpected root credentials access"),
-      saveAccessToken: () => Effect.die("unexpected root credentials write"),
-      deleteAccessToken: Effect.die("unexpected root credentials deletion"),
-    }),
-    Layer.succeed(CliProjectLocalServiceVersions, {
-      load: Effect.die("unexpected root project local service versions access"),
-    }),
     Layer.succeed(CliConfigStore, {
       load: () => Effect.die("unexpected root cli-config access"),
       loadFile: () => Effect.die("unexpected root cli-config file access"),

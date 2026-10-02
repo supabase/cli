@@ -35,6 +35,19 @@ export const OutputFlag = GlobalFlag.setting("output")({
   ),
 });
 
+/**
+ * The TS-only `--output-format` global, accepted on any subcommand.
+ *
+ * A value-taking global flag must also be registered in `PERSISTENT_VALUE_FLAG_NAMES`
+ * (`shared/cli/cobra-flag-groups.ts`), or the pre-parse argv scanners won't consume its value.
+ */
+export const OutputFormatFlag = GlobalFlag.setting("output-format")({
+  flag: Flag.choice("output-format", ["text", "json", "stream-json"]).pipe(
+    Flag.withDescription("Output format: text (default), json, or stream-json (NDJSON)"),
+    Flag.optional,
+  ),
+});
+
 export const ProfileFlag = GlobalFlag.setting("profile")({
   flag: Flag.string("profile").pipe(
     Flag.withDescription("use a specific profile for connecting to Supabase API"),

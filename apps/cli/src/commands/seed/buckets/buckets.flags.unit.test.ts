@@ -1,50 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Exit } from "effect";
 
-import { assertSeedTargetsExclusive, seedChangedTargetFlags } from "./buckets.flags.ts";
-
-describe("seedChangedTargetFlags", () => {
-  it("returns both selectors in cobra's sorted order when both are set", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets", "--local", "--linked"])).toEqual([
-      "linked",
-      "local",
-    ]);
-  });
-
-  it("returns a single selector", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets", "--linked"])).toEqual(["linked"]);
-    expect(seedChangedTargetFlags(["seed", "buckets", "--local"])).toEqual(["local"]);
-  });
-
-  it("returns nothing when neither is set", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets"])).toEqual([]);
-  });
-
-  it("does not treat a value-consuming flag's value as a selector", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets", "--workdir", "--linked"])).toEqual([]);
-  });
-
-  it("skips the value token after a short value-consuming flag", () => {
-    expect(seedChangedTargetFlags(["-o", "--linked", "--local"])).toEqual(["local"]);
-  });
-
-  it("stops scanning at the -- terminator", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets", "--", "--local", "--linked"])).toEqual([]);
-  });
-
-  it("handles = forms", () => {
-    expect(seedChangedTargetFlags(["--local=true", "--linked=false"])).toEqual(["linked", "local"]);
-  });
-
-  it("treats the --no-* negation form as changed (Effect CLI boolean negation)", () => {
-    expect(seedChangedTargetFlags(["seed", "buckets", "--no-linked"])).toEqual(["linked"]);
-    expect(seedChangedTargetFlags(["seed", "buckets", "--no-local"])).toEqual(["local"]);
-    expect(seedChangedTargetFlags(["seed", "buckets", "--no-local", "--linked"])).toEqual([
-      "linked",
-      "local",
-    ]);
-  });
-});
+import { assertSeedTargetsExclusive } from "./buckets.flags.ts";
 
 describe("assertSeedTargetsExclusive", () => {
   it("fails when both --local and --linked are set (cobra mutual exclusivity)", () => {

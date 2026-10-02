@@ -3,7 +3,7 @@ import { Layer } from "effect";
 import { httpClientLayer } from "../auth/http-debug.layer.ts";
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { dbConfigLayer } from "./db-config.layer.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
 import { dockerRunLayer } from "./docker-run.layer.ts";
 import { edgeRuntimeScriptLayer } from "./edge-runtime-script.layer.ts";

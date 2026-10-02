@@ -21,7 +21,7 @@ FROM supabase/edge-runtime:v1.77.2 AS edgeruntime
 FROM timberio/vector:0.58.0-alpine AS vector
 FROM supabase/supavisor:2.9.13 AS supavisor
 FROM supabase/gotrue:v2.197.0 AS gotrue
-FROM supabase/realtime:v2.140.6 AS realtime
+FROM supabase/realtime:v2.140.7 AS realtime
 FROM supabase/storage-api:v1.79.28 AS storage
 FROM supabase/logflare:1.50.15 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias

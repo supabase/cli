@@ -2,11 +2,10 @@ import { describe, expect, test } from "@effect/vitest";
 import { Console, Effect, Exit, Layer } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
-import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
+import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { emptyEnv, fakeConsole, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
-import { OutputFormatFlag } from "./global-flags.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
 
 const testBranchesCommand = branchesCommand.pipe(

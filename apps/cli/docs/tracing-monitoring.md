@@ -31,7 +31,9 @@ is marked unsampled.
 grandchildren, plus every failed span at any depth. Spans that end before CLI settings load, and
 `cli.run` itself, are not printed. The `--debug` flag does not print spans.
 
-Without a sink or debug variable, spans are no-ops and the CLI does no tracing I/O.
+Without a sink or debug variable, spans are no-ops and the CLI does no tracing I/O. The
+implementation lives in
+[`src/shared/telemetry/trace-export.layer.ts`](../src/shared/telemetry/trace-export.layer.ts).
 
 ## Local trace file
 
