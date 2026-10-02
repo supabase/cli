@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -120,9 +120,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -146,7 +147,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       let caught: unknown;
       try {
         await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-          onWarning: async () => {},
+          onWarning: () => Effect.void,
         });
       } catch (error) {
         caught = error;
@@ -176,9 +177,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("extra.ts"))).toBe(false);
@@ -201,9 +203,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -223,9 +226,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       const matches = warnings.filter(
@@ -255,9 +259,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs/core"))).toBe(false);
@@ -298,9 +303,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs"))).toBe(false);
@@ -331,9 +337,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       const warnings: Array<string> = [];
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
         skipMissingImportMapTargets: true,
       });
 
@@ -359,9 +366,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
         skipMissingImportMapTargets: true,
       });
 
@@ -420,9 +428,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       await writeFile(scopeDependency, 'export const util = "thing";\n');
 
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
       const hostPaths = binds.map((bind) => bind.hostPath);
 
@@ -461,9 +470,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       try {
         const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-          onWarning: async (message) => {
-            warnings.push(message);
-          },
+          onWarning: (message) =>
+            Effect.sync(() => {
+              warnings.push(message);
+            }),
         });
         const functionsBinds = binds.filter((bind) => bind.containerPath === resolve(functionsDir));
 
@@ -495,9 +505,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(warnings).toEqual([]);
@@ -521,9 +532,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -551,9 +563,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(binds.some((bind) => bind.hostPath === modPath)).toBe(true);
@@ -582,9 +595,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
         skipMissingImportMapTargets: true,
       });
 
@@ -617,12 +631,76 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            warnings.push(message);
+          }),
       });
 
       expect(warnings.some((warning) => warning.includes("nested"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips an invalid static_files glob instead of failing, binding nothing for it", async () => {
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+    const assetsDir = join(root, "supabase", "assets");
+    await mkdir(assetsDir, { recursive: true });
+    await writeFile(join(assetsDir, "[z-a].txt"), "a\n");
+
+    try {
+      const baseline = await runBuildDockerBinds("test-project", functionsDir, outputDir, config);
+      const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, {
+        ...config,
+        staticFiles: [join(assetsDir, "[z-a].txt")],
+      });
+
+      expect(binds).toEqual(baseline);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps walking imports after the caller is interrupted", async () => {
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      ['import "../../../outside-a.ts";', 'import "../../../outside-b.ts";', ""].join("\n"),
+    );
+    const started = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    const continued = Deferred.makeUnsafe<void>();
+    const warnings: Array<string> = [];
+
+    try {
+      const caller = Effect.runFork(
+        buildDockerBinds("test-project", functionsDir, outputDir, config, {
+          onWarning: (message) =>
+            Effect.sync(() => {
+              warnings.push(message);
+            }).pipe(
+              Effect.andThen(Deferred.succeed(started, undefined)),
+              Effect.flatMap((first) =>
+                first ? Deferred.await(gate) : Deferred.succeed(continued, undefined),
+              ),
+              Effect.asVoid,
+            ),
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
+      await Effect.runPromise(Deferred.await(started));
+      await Effect.runPromise(Fiber.interrupt(caller));
+      await Effect.runPromise(Deferred.succeed(gate, undefined));
+      await Effect.runPromise(Deferred.await(continued));
+
+      expect(warnings).toEqual(
+        expect.arrayContaining([
+          "WARN: failed to read file: open outside-a.ts: no such file or directory\n",
+          "WARN: failed to read file: open outside-b.ts: no such file or directory\n",
+        ]),
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
