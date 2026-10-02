@@ -237,6 +237,9 @@ export const bodies = <A extends { readonly event: ShippedEvent }>(
   return result;
 };
 
+const lines = (count: number, source: string) =>
+  `${count} ${source} ${count === 1 ? "line" : "lines"}`;
+
 /** Splits ids into two halves, the first one longer by at most one. */
 const halves = (ids: ReadonlyArray<string>): Array<ReadonlyArray<string>> => {
   const middle = Math.ceil(ids.length / 2);
@@ -521,7 +524,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         if (isBodyRejection(error))
           return warnOnce(
             warned.rejection,
-            `Analytics rejected a body of ${body.items.length} ${source} lines of ${session.instanceId}`,
+            `Analytics rejected a body of ${lines(body.items.length, source)} of ${session.instanceId}`,
             error,
           ).pipe(Effect.as<Delivery>("rejected"));
         if (!mayHaveQueued(error))
@@ -545,7 +548,8 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
    * `stuckMillis` for a previous owner's launch. Events the current launch leaves unstored for
    * `stuckMillis` are posted again in halves; one that still is not stored on its own is skipped
    * once a later post to the launch was stored, and kept pending otherwise. A refused
-   * target clears the pending body and pauses; a rejected body is skipped.
+   * target clears the pending body and pauses; a rejected body is posted in halves until each
+   * event Analytics still rejects on its own is skipped.
    */
   const settle = Effect.fn("LogForwarder.settle")(function* (
     session: Session,
@@ -611,7 +615,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         const deleted = new Set(missing.filter((id) => !events.has(id)));
         if (deleted.size > 0) {
           yield* Effect.logWarning(
-            `Logs of ${session.service} instance ${session.instanceId} were deleted before Analytics stored them; skipping ${deleted.size} lines`,
+            `Logs of ${session.service} instance ${session.instanceId} were deleted before Analytics stored them; skipping ${deleted.size === 1 ? "1 line" : `${deleted.size} lines`}`,
           );
           counts.deleted += deleted.size;
           wanted = wanted.filter((id) => !deleted.has(id));
@@ -686,7 +690,13 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         for (const suspect of suspects) if (proof > suspect.post) skipped.add(suspect.id);
         if (skipped.size > 0) {
           yield* Effect.logWarning(
-            `Analytics did not store ${skipped.size} ${source} lines of ${session.instanceId} posted on their own (${rejected} rejected, ${skipped.size - rejected} unstored while it stored later posts); skipping them`,
+            `Skipping ${lines(skipped.size, source)} of ${session.instanceId} that Analytics ${
+              rejected === skipped.size
+                ? "rejected"
+                : rejected === 0
+                  ? "did not store while it stored later posts"
+                  : `rejected (${rejected}) or did not store while it stored later posts`
+            } when posted on their own`,
           );
           remaining = remaining.filter((id) => !skipped.has(id));
           counts.skipped += skipped.size;
@@ -698,7 +708,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
               already
                 ? Effect.void
                 : Effect.logWarning(
-                    `Analytics stored none of ${groups.length} ${source} lines of ${session.instanceId} posted on their own; waiting until it stores them`,
+                    `Analytics stored none of ${lines(groups.length, source)} of ${session.instanceId} posted on their own; waiting until it stores them`,
                   ),
             ),
           );
@@ -707,15 +717,11 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
 
     yield* Effect.gen(function* () {
       const stuck = yield* deliverAll(shipment.ids);
-      if (stuck === "rejected") {
-        yield* Effect.logWarning(
-          `Skipping ${remaining.length} ${source} lines of ${session.instanceId} that Analytics rejected`,
-        );
-        counts.skipped += remaining.length;
-      } else if (stuck.length > 0) {
+      if (stuck === "rejected") yield* isolate([...lastPosted]);
+      else if (stuck.length > 0) {
         counts.stuck = stuck.length;
         yield* Effect.logWarning(
-          `Analytics has not stored ${stuck.length} ${source} lines of ${session.instanceId} it accepted; posting them in halves`,
+          `Analytics has not stored ${lines(stuck.length, source)} of ${session.instanceId} it accepted; posting them in halves`,
         );
         yield* isolate(stuck);
       }

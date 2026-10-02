@@ -860,7 +860,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           if (entry.kind === "lost" && !warnedLaunches.has(entry.launchId)) {
             warnedLaunches.add(entry.launchId);
             yield* Effect.logWarning(
-              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream} chunks of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
+              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream} ${entry.count === 1 ? "chunk" : "chunks"} of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
             );
           }
         return;

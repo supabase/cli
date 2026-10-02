@@ -14,6 +14,7 @@ import { stackOpenReadyProject } from "../../../command-internal/stack-local-dat
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
+import { logEvent, markerText } from "../../experimental/stack/logs/logs.format.ts";
 import { FunctionsServeStackError } from "./serve.errors.ts";
 
 type Instance = Effect.Success<ReturnType<Stack["services"]["get"]>>;
@@ -48,36 +49,16 @@ const follow = Effect.fn("functions.serve.follow")(function* (
   // keeps its first output.
   const since = DateTime.formatIso(yield* DateTime.now);
   const logs = yield* instance.readLogs({ follow: true, since }).pipe(
-    Stream.runForEach(({ kind, timestamp, text, stream, count }) => {
-      if (kind === "lost" && count !== undefined)
-        return output.format === "stream-json"
-          ? output.event({
-              type: "log-marker",
-              timestamp,
-              source: "live",
-              service: "functions",
-              instance_id: instance.id,
-              kind,
-              ...(stream === undefined ? {} : { stream }),
-              count,
-            })
-          : output.raw(
-              `--- ${count} ${stream ?? "output"} ${count === 1 ? "chunk" : "chunks"} lost ---\n`,
-              "stderr",
-            );
-      if (kind !== "stdout" && kind !== "stderr") return Effect.void;
-      const line = text ?? "";
-      return output.format === "stream-json"
-        ? output.event({
-            type: "log-entry",
-            timestamp,
-            source: "live",
-            service: "functions",
-            instance_id: instance.id,
-            stream: kind,
-            line,
-          })
-        : output.raw(`${line}\n`, kind);
+    Stream.runForEach((record) => {
+      const lost = record.kind === "lost" && record.count !== undefined;
+      if (record.kind !== "stdout" && record.kind !== "stderr" && !lost) return Effect.void;
+      if (output.format === "stream-json")
+        return output.event(
+          logEvent({ ...record, service: "functions", instanceId: instance.id }, "live"),
+        );
+      return record.kind === "stdout" || record.kind === "stderr"
+        ? output.raw(`${record.text ?? ""}\n`, record.kind)
+        : output.raw(`${markerText(record)}\n`, "stderr");
     }),
     Effect.forkScoped({ startImmediately: true }),
   );

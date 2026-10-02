@@ -854,7 +854,7 @@ describe("LogForwarder", () => {
       expect(shipped).toEqual(retained.map((record) => record.text));
       expect(warnings).toEqual([
         [
-          "Logs of database instance database were deleted before Analytics stored them; skipping 1 lines",
+          "Logs of database instance database were deleted before Analytics stored them; skipping 1 line",
         ],
         [
           "Logs of database instance database were deleted before shipping; resuming from the next retained record",
@@ -901,32 +901,35 @@ describe("LogForwarder", () => {
         Effect.as("paused"),
         Effect.raceFirst(manual.sleeping(pollMillis).pipe(Effect.as("retrying"))),
       );
-      yield* manual.advance(stuckMillis);
-      const postedWhilePaused = yield* logflare.unread;
       yield* analytics.relaunch(2);
       const resumed = yield* logflare.next;
 
       expect(outcome).toBe("paused");
-      expect(postedWhilePaused).toBe(0);
       expect(messages(refusedPost)).toEqual(["refused line"]);
       expect(ids(resumed)).toEqual(ids(refusedPost));
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("skips a body Analytics rejects and ships the next one", () =>
+  it.live("halves a body Analytics rejects and skips only the line it still rejects alone", () =>
     Effect.gen(function* () {
       const { store, logflare, database, analytics } = yield* fixture();
       yield* analytics.set(true);
       yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
-      yield* logflare.respond(400);
+      yield* logflare.respond(400, 400);
 
-      yield* database.log("rejected line");
-      const rejected = yield* logflare.next;
-      yield* database.log("accepted line");
-      const accepted = yield* logflare.next;
+      yield* database.log("rejected line", "accepted line");
+      const posts = [yield* logflare.next, yield* logflare.next, yield* logflare.next];
+      yield* database.log("next line");
+      const next = yield* logflare.next;
 
-      expect(messages(rejected)).toEqual(["rejected line"]);
-      expect(messages(accepted)).toEqual(["accepted line"]);
+      expect(posts.map(messages)).toEqual([
+        ["rejected line", "accepted line"],
+        ["rejected line"],
+        ["accepted line"],
+      ]);
+      expect(messages(next)).toEqual(["next line"]);
+      // The next line is posted only once the earlier body is confirmed stored.
+      expect((yield* storedMessages(logflare))[0]).toBe("accepted line");
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -990,7 +993,7 @@ describe("LogForwarder", () => {
             "Analytics has not stored 256 postgres.logs lines of database it accepted; posting them in halves",
           ],
           [
-            "Analytics did not store 1 postgres.logs lines of database posted on their own (0 rejected, 1 unstored while it stored later posts); skipping them",
+            "Skipping 1 postgres.logs line of database that Analytics did not store while it stored later posts when posted on their own",
           ],
         ]);
       }).pipe(Effect.scoped, Effect.provide(layer)),

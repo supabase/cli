@@ -712,7 +712,8 @@ launch changes.
   otherwise it stays pending and is posted alone again, so an Analytics that stores nothing loses
   nothing. Each round warns once.
 - **Statuses:** a 401, 403 or 404 response clears the pending body and pauses the instance with its
-  cursor until the target changes; any other 4xx except 408 and 429 skips the body.
+  cursor until the target changes; after any other 4xx except 408 and 429 the body is posted again
+  in halves, and only events still rejected on their own are skipped.
 - **Sanitizing:** event text and metadata strings have NUL and unpaired surrogates replaced with
   U+FFFD before posting, because Postgres `jsonb` rejects them and drops the whole batch.
 - **Recovery and retargets:** a start, restart or retarget reconciles a pending body before later
