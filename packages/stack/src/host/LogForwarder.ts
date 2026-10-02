@@ -10,7 +10,6 @@ import {
   FileSystem,
   Option,
   Path,
-  Predicate,
   Ref,
   Schedule,
   Schema,
@@ -24,6 +23,7 @@ import type { CompositionConfig } from "../Orchestrator.ts";
 import type { ServiceObservation } from "../Service.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
 import type { CatalogError, ServiceEndpoint } from "../services/Recipe.ts";
+import { errorCode } from "../internal/sharing-violation.ts";
 import { reapStaleWrites, writeFileAtomically } from "../State.ts";
 import {
   isShippedService,
@@ -159,6 +159,12 @@ interface Session {
 /** `unsettled` posts may have reached Analytics without an answer; `failed` ones were not queued. */
 type Delivery = "sent" | "unsettled" | "failed" | "refused" | "rejected";
 
+/** Whether a settle already warned of failed posts and of rejected bodies. */
+interface Warned {
+  readonly post: Ref.Ref<boolean>;
+  readonly rejection: Ref.Ref<boolean>;
+}
+
 const batchEvents = 256;
 export const batchBytes = 1024 * 1024;
 /** How long after a post ended its events may still be stored by a launch that stopped. */
@@ -277,19 +283,12 @@ const unsentCodes = new Set([
   "EAI_AGAIN",
 ]);
 
-const errorCode = (cause: unknown): unknown =>
-  Predicate.hasProperty(cause, "code")
-    ? cause.code
-    : Predicate.hasProperty(cause, "cause")
-      ? errorCode(cause.cause)
-      : undefined;
-
 /** A post that timed out or broke after it was sent, so Analytics may have queued its events. */
 const mayHaveQueued = (error: unknown): boolean => {
   if (Cause.isTimeoutError(error)) return true;
   if (!(error instanceof HttpClientError.HttpClientError)) return false;
   const { reason } = error;
-  if (reason._tag === "TransportError") return !unsentCodes.has(String(errorCode(reason.cause)));
+  if (reason._tag === "TransportError") return !unsentCodes.has(errorCode(reason.cause) ?? "");
   return reason._tag === "DecodeError" || reason._tag === "EmptyBodyError";
 };
 
@@ -366,6 +365,11 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       scope === undefined || next === undefined ? undefined : { scope, users: next.users },
     );
     yield* SubscriptionRef.set(target, next);
+    yield* next === undefined
+      ? Effect.logInfo("Log shipping paused until Analytics is running and healthy")
+      : Effect.logInfo(
+          `Log shipping targets Analytics instance ${next.instance.id}, launch ${serving?.launchId ?? "unknown"}`,
+        );
     if (retired !== undefined)
       yield* Effect.forkIn(
         retired.users.take(targetUsers).pipe(Effect.andThen(Scope.close(retired.scope, Exit.void))),
@@ -505,36 +509,40 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       );
   });
 
-  /** Posts one body once, ending by `deadline`, and classifies the answer. */
+  /** Posts one body of `lines` events once, ending by `deadline`, and classifies the answer. */
   const deliver = (
     session: Session,
     source: string,
-    body: string,
+    body: Body<{ readonly event: ShippedEvent }>,
     deadline: number,
-    warned: Ref.Ref<boolean>,
+    warned: Warned,
   ) =>
-    post(session.current, source, body, deadline).pipe(
+    post(session.current, source, body.body, deadline).pipe(
       session.posting.withPermits(1),
       Effect.as<Delivery>("sent"),
       Effect.catchIf(isTargetRejection, (error) =>
-        Effect.logWarning(`Analytics refused ${source} logs; pausing until it changes`, error).pipe(
-          Effect.as<Delivery>("refused"),
-        ),
+        Effect.logWarning(
+          `Analytics refused ${source} logs of ${session.instanceId}; pausing until it changes`,
+          error,
+        ).pipe(Effect.as<Delivery>("refused")),
       ),
       Effect.catch((error) => {
         if (error._tag === "StaleTarget") return Effect.fail(error);
         if (isBodyRejection(error))
-          return Effect.logWarning(
-            `Analytics rejected a ${source} log body; skipping it`,
+          return warnOnce(
+            warned.rejection,
+            `Analytics rejected a body of ${body.items.length} ${source} lines of ${session.instanceId}`,
             error,
           ).pipe(Effect.as<Delivery>("rejected"));
         if (!mayHaveQueued(error))
-          return warnOnce(warned, `Posting ${source} logs failed; retrying`, error).pipe(
-            Effect.as<Delivery>("failed"),
-          );
+          return warnOnce(
+            warned.post,
+            `Posting ${source} logs of ${session.instanceId} failed; retrying`,
+            error,
+          ).pipe(Effect.as<Delivery>("failed"));
         return warnOnce(
-          warned,
-          `Posting ${source} logs got no answer; waiting until Analytics stores them`,
+          warned.post,
+          `Posting ${source} logs of ${session.instanceId} got no answer; waiting until Analytics stores them`,
           error,
         ).pipe(Effect.as<Delivery>("unsettled"));
       }),
@@ -556,9 +564,14 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     posted: Pending | undefined,
   ) {
     const { source } = shipment;
-    yield* Effect.annotateCurrentSpan({ source, event_count: shipment.ids.length });
-    const postWarned = yield* Ref.make(false);
-    const counts = { checks: 0, posts: 0, skipped: 0 };
+    yield* Effect.annotateCurrentSpan({
+      source,
+      instance_id: session.instanceId,
+      launch: session.current.launch,
+      event_count: shipment.ids.length,
+    });
+    const warned: Warned = { post: yield* Ref.make(false), rejection: yield* Ref.make(false) };
+    const counts = { checks: 0, checkAttempts: 0, posts: 0, deleted: 0, stuck: 0, skipped: 0 };
     let remaining = shipment.ids;
     /** The sequence number of the latest post, and the ids it carried. */
     let lastPost = 0;
@@ -566,17 +579,19 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     let latest: { readonly queuedIn: string | undefined; readonly endedAt: number } | undefined =
       posted === undefined ? undefined : { queuedIn: posted.launch, endedAt: posted.postEndsAt };
 
+    /** Only the first attempt of the first check is traced; the rest are counted on this span. */
+    const storedIds = (ids: ReadonlyArray<string>) =>
+      Effect.suspend(() => {
+        const check = session.current.stored.storedIds(source, ids);
+        return counts.checkAttempts++ === 0 ? check : check.pipe(Effect.withTracerEnabled(false));
+      }).pipe(Effect.retry(retrySchedule));
+
     /** Posts `initial` until Analytics stored it, and returns the ids left unstored for `stuckMillis`. */
     const deliverAll = Effect.fnUntraced(function* (initial: ReadonlyArray<string>) {
       let wanted = initial;
       delivering: while (true) {
-        // Only the first check is traced; the rest are counted on this span.
-        const stored = yield* session.current.stored
-          .storedIds(source, wanted)
-          .pipe(
-            Effect.retry(retrySchedule),
-            counts.checks++ === 0 ? (check) => check : Effect.withTracerEnabled(false),
-          );
+        counts.checks++;
+        const stored = yield* storedIds(wanted);
         if (lastPost > 0 && [...lastPosted].some((id) => stored.has(id)))
           yield* Ref.update(session.current.storedPost, (posts) =>
             new Map(posts).set(source, Math.max(posts.get(source) ?? 0, lastPost)),
@@ -608,6 +623,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           yield* Effect.logWarning(
             `Logs of ${session.service} instance ${session.instanceId} were deleted before Analytics stored them; skipping ${deleted.size} lines`,
           );
+          counts.deleted += deleted.size;
           wanted = wanted.filter((id) => !deleted.has(id));
           remaining = remaining.filter((id) => !deleted.has(id));
         }
@@ -617,7 +633,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         });
         if (resend.length === 0) return [];
         let queuedIn: string | undefined;
-        for (const { body } of bodies(resend)) {
+        for (const body of bodies(resend)) {
           const deadline = (yield* Clock.currentTimeMillis) + postTimeoutMillis;
           yield* persist(session, {
             confirmed: (yield* Ref.get(session.progress)).confirmed,
@@ -633,8 +649,8 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           if ((yield* Clock.currentTimeMillis) >= deadline) continue delivering;
           counts.posts++;
           lastPost = ++postSequence;
-          lastPosted = new Set(resend.map(({ event }) => event.id));
-          const delivery = yield* deliver(session, source, body, deadline, postWarned);
+          lastPosted = new Set(body.items.map(({ event }) => event.id));
+          const delivery = yield* deliver(session, source, body, deadline, warned);
           if (delivery === "refused") {
             yield* persist(session, {
               confirmed: (yield* Ref.get(session.progress)).confirmed,
@@ -649,18 +665,6 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       }
     });
 
-    const skip = (id: string, reason: string) =>
-      Effect.logWarning(
-        `Analytics did not store a ${source} line of ${session.instanceId} posted on its own ${reason}; skipping it`,
-      ).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            remaining = remaining.filter((other) => other !== id);
-            counts.skipped++;
-          }),
-        ),
-      );
-
     /**
      * Posts the ids Analytics left unstored in halves until each unstored one was posted alone.
      * A lone unstored id is skipped only once a later post to this launch got stored, which shows
@@ -671,14 +675,17 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       let groups = halves(initial);
       while (groups.length > 0) {
         const suspects: Array<{ readonly id: string; readonly post: number }> = [];
+        const skipped = new Set<string>();
+        let rejected = 0;
         for (let group = groups.shift(); group !== undefined; group = groups.shift()) {
           latest = undefined;
           const left = yield* deliverAll(group);
           const [lone] = group;
           if (left === "rejected") {
-            if (group.length === 1 && lone !== undefined)
-              yield* skip(lone, "as Analytics rejected it");
-            else groups.unshift(...halves(group));
+            if (group.length === 1 && lone !== undefined) {
+              skipped.add(lone);
+              rejected++;
+            } else groups.unshift(...halves(group));
           } else if (left.length > 0) {
             if (group.length === 1 && lone !== undefined)
               suspects.push({ id: lone, post: lastPost });
@@ -686,10 +693,15 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           }
         }
         const proof = (yield* Ref.get(session.current.storedPost)).get(source) ?? 0;
-        for (const suspect of suspects)
-          if (proof > suspect.post) yield* skip(suspect.id, "while it stored later posts");
-        const kept = new Set(remaining);
-        groups = suspects.flatMap(({ id }) => (kept.has(id) ? [[id]] : []));
+        for (const suspect of suspects) if (proof > suspect.post) skipped.add(suspect.id);
+        if (skipped.size > 0) {
+          yield* Effect.logWarning(
+            `Analytics did not store ${skipped.size} ${source} lines of ${session.instanceId} posted on their own (${rejected} rejected, ${skipped.size - rejected} unstored while it stored later posts); skipping them`,
+          );
+          remaining = remaining.filter((id) => !skipped.has(id));
+          counts.skipped += skipped.size;
+        }
+        groups = suspects.flatMap(({ id }) => (skipped.has(id) ? [] : [[id]]));
         if (groups.length > 0)
           yield* Ref.getAndSet(idleWarned, true).pipe(
             Effect.flatMap((already) =>
@@ -703,25 +715,49 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       }
     });
 
-    const stuck = yield* deliverAll(shipment.ids);
-    if (stuck !== "rejected" && stuck.length > 0) {
-      yield* Effect.logWarning(
-        `Analytics has not stored ${stuck.length} ${source} lines of ${session.instanceId} it accepted; posting them in halves`,
-      );
-      yield* isolate(stuck);
-    }
-    yield* Effect.annotateCurrentSpan({
-      check_count: counts.checks,
-      post_count: counts.posts,
-      skipped_count: counts.skipped,
-    });
-    yield* persist(session, { confirmed: positionOf(shipment), pending: undefined });
+    yield* Effect.gen(function* () {
+      const stuck = yield* deliverAll(shipment.ids);
+      if (stuck === "rejected") {
+        yield* Effect.logWarning(
+          `Skipping ${remaining.length} ${source} lines of ${session.instanceId} that Analytics rejected`,
+        );
+        counts.skipped += remaining.length;
+      } else if (stuck.length > 0) {
+        counts.stuck = stuck.length;
+        yield* Effect.logWarning(
+          `Analytics has not stored ${stuck.length} ${source} lines of ${session.instanceId} it accepted; posting them in halves`,
+        );
+        yield* isolate(stuck);
+      }
+      yield* persist(session, { confirmed: positionOf(shipment), pending: undefined });
+    }).pipe(
+      // Counted on every exit, so a stuck or retargeted settle still shows its progress.
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.annotateCurrentSpan({
+            check_count: counts.checks,
+            check_attempt_count: counts.checkAttempts,
+            post_count: counts.posts,
+            deleted_count: counts.deleted,
+            stuck_count: counts.stuck,
+            skipped_count: counts.skipped,
+          }),
+        ),
+      ),
+    );
   });
 
   /** Rebuilds a pending body from its retained records and settles it. */
-  const reconcile = Effect.fnUntraced(function* (session: Session, saved: Progress) {
-    const { confirmed, pending } = saved;
-    if (pending === undefined) return;
+  const reconcile = Effect.fn("LogForwarder.reconcile")(function* (
+    session: Session,
+    confirmed: LogPosition | undefined,
+    pending: Pending,
+  ) {
+    yield* Effect.annotateCurrentSpan({
+      instance_id: session.instanceId,
+      source: pending.source,
+      pending_count: pending.ids.length,
+    });
     const end = positionOf(pending);
     const wanted = new Set(pending.ids);
     const events = new Map<string, ShippedEvent>();
@@ -745,6 +781,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         ),
       ),
     );
+    yield* Effect.annotateCurrentSpan({ recovered_count: events.size });
     yield* settle(session, pending, events, pending);
   });
 
@@ -770,7 +807,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           posting,
           resumedAt: yield* Clock.currentTimeMillis,
         };
-        yield* reconcile(shipping, saved);
+        if (saved.pending !== undefined) yield* reconcile(shipping, saved.confirmed, saved.pending);
         const from = (yield* Ref.get(progress)).confirmed ?? "oldest";
         const records = yield* options.logs.read(instanceId, { from, follow: true });
         const source = logflareSources[service];

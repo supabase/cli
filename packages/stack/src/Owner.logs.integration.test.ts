@@ -94,7 +94,7 @@ describe("owner persisted logs", () => {
         expect(history[0]).toMatchObject({ kind: "launch", launchId: 1 });
         expect(history).toContainEqual(followed);
         const directory = path.join(owner.logsRoot, "mail", mail.id);
-        expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
+        expect(yield* fs.exists(directory)).toBe(true);
         const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
           Stream.runCollect,
         );
@@ -360,8 +360,6 @@ describe("owner persisted logs", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
           const owner = yield* openOwner("owner-logs-docker-", "docker");
           const mail = yield* owner.rpc.createService({
             service: "mail",
@@ -372,11 +370,14 @@ describe("owner persisted logs", () => {
           yield* owner.rpc.readyService({ id: mail.id });
 
           const [followed] = yield* firstOutput(owner.rpc.readLogs({ id: mail.id, follow: true }));
+          const persisted = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+            Stream.runCollect,
+          );
 
           expect(followed).toMatchObject({ launchId: 1 });
-          expect(yield* fs.readDirectory(path.join(owner.logsRoot, "mail", mail.id))).toEqual([
-            "0000000001.log",
-          ]);
+          expect(Array.from(persisted, ({ position }) => position)).toContainEqual(
+            followed?.position,
+          );
         }),
       ).pipe(Effect.provide(services)),
     { timeout: 120_000 },

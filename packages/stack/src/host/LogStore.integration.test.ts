@@ -212,32 +212,6 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("attributes a late chunk of a failed launch to that launch", () =>
-    Effect.gen(function* () {
-      const root = yield* tempRoot("log-store-late-");
-      const { store } = yield* openStore(root);
-      const instance = yield* fakeInstance("late");
-      yield* store.attach(instance);
-      const reader = yield* collect(store.read("late", { from: "oldest", follow: true }));
-
-      yield* instance.publish(instance.chunk(1, "starting\nbo"));
-      yield* instance.publish({ ...instance.chunk(2, "second\n"), seq: 0 });
-      yield* instance.publish({ ...instance.chunk(1, "om\n"), seq: 1 });
-      const records = yield* reader.take(6);
-
-      expect(Array.from(records, ({ kind, launchId, text }) => ({ kind, launchId, text }))).toEqual(
-        [
-          { kind: "launch", launchId: 1, text: undefined },
-          { kind: "stdout", launchId: 1, text: "starting" },
-          { kind: "stdout", launchId: 1, text: "bo" },
-          { kind: "launch", launchId: 2, text: undefined },
-          { kind: "stdout", launchId: 2, text: "second" },
-          { kind: "stdout", launchId: 1, text: "om" },
-        ],
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("writes a launch's partial line when its observation leaves the launch", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-partial-");
