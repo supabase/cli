@@ -1,5 +1,4 @@
 name: Slim Release Published
-run-name: slim-release-published ${{ github.event.client_payload.service }}
 
 # Reconciles the stack catalog against supabase/slim-services releases. See
 # docs/adr/0026-slim-artifact-mirrors.md, "Hotfix and upgrade pickup".
@@ -15,6 +14,8 @@ permissions:
 concurrency:
   group: slim-release-published-${{ github.event.client_payload.service }}
   cancel-in-progress: false
+  # The default `single` cancels a pending run when another is queued, losing its release-visibility wait.
+  queue: max
 
 jobs:
   pickup:
@@ -23,7 +24,6 @@ jobs:
     # for the first planned item) + pin, render and push per item + the merge-queue wait (up to 30 min).
     timeout-minutes: 75
     permissions:
-      actions: read
       contents: read
     steps:
       - name: Checkout the default branch
@@ -105,10 +105,7 @@ jobs:
       # One branch per planned item, rebuilt from the recorded base commit, never from a previous
       # iteration's HEAD; `--release` pins the planned release, never "highest at apply time".
       # `bun`/`pnpm` run under `env -u APP_TOKEN`: only `git push` and `gh` ever see the app token.
-      # A branch whose pull request is in the merge queue rejects pushes; the step waits for the queue
-      # to release it, then stops; a fresh run re-plans every remaining item from the new default branch.
-      # That is the service's pending run when one exists, since a replay would cancel it, otherwise a
-      # re-dispatch of this event.
+      # A merge-queued branch rejects pushes; see ADR 0026 "Hotfix and upgrade pickup" for the wait and hand-off.
       - name: Apply planned updates
         if: steps.plan.outputs.count != '0'
         env:
@@ -165,44 +162,37 @@ jobs:
 
             if ! push_output="$(git push --force "$push_url" "HEAD:refs/heads/${branch}" 2>&1)"; then
               echo "$push_output"
-              if ! grep -q "merge queue" <<<"$push_output"; then
+              if ! grep -q "queued for merging cannot be updated" <<<"$push_output"; then
                 echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
                 exit 1
               fi
-              manual_steps="Once ${branch} leaves the merge queue, run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
-              # The app token minted just before this step expires after one hour.
+              manual_steps="run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+              queued_steps="Once ${branch} leaves the merge queue, ${manual_steps}"
+              # The app token minted just before this step expires after one hour; capping the wait at
+              # 50 minutes into the step leaves room for the lookups and the dispatch that follow it.
               deadline=$((SECONDS + 1800 < 3000 ? SECONDS + 1800 : 3000))
               while :; do
                 if ! queued="$(in_merge_queue "$branch")"; then
-                  echo "::error ::Failed to read the merge-queue state of ${branch}. ${manual_steps}"
+                  echo "::error ::Failed to read the merge-queue state of ${branch}. ${queued_steps}"
                   exit 1
                 fi
                 case "$queued" in
                   false) break ;;
                   true) ;;
                   *)
-                    echo "::error ::Unexpected merge-queue state '${queued}' for ${branch}. ${manual_steps}"
+                    echo "::error ::Unexpected merge-queue state '${queued}' for ${branch}. ${queued_steps}"
                     exit 1
                     ;;
                 esac
                 if [ "$SECONDS" -ge "$deadline" ]; then
-                  echo "::error ::${branch} is still in the merge queue. ${manual_steps}"
+                  echo "::error ::${branch} is still in the merge queue. ${queued_steps}"
                   exit 1
                 fi
                 sleep 30
               done
-              if ! pending="$(GH_TOKEN="$GITHUB_TOKEN" gh run list --repo "$GITHUB_REPOSITORY" --workflow slim-release-published.yml --status pending --json displayTitle |
-                jq --arg title "slim-release-published ${SERVICE}" '[.[] | select(.displayTitle == $title)] | length')"; then
-                echo "::error ::Failed to list pending slim-release-published runs. ${manual_steps}"
-                exit 1
-              fi
-              if [ "$pending" -gt 0 ]; then
-                echo "::warning ::${branch} was held by a merge-queued pull request; a pending ${SERVICE} run re-plans from ${DEFAULT_BRANCH}."
-                exit 0
-              fi
               # `replay` counts consecutive re-sends; anything but 0-2 stops the chain.
               if ! [[ "${REPLAY:-0}" =~ ^[0-2]$ ]]; then
-                echo "::error ::Stopped re-dispatching after repeated merge-queue rejections of ${branch}. ${manual_steps}"
+                echo "::error ::Stopped re-dispatching after repeated merge-queue rejections of ${branch}; ${manual_steps}"
                 exit 1
               fi
               if ! GH_TOKEN="$APP_TOKEN" gh api "repos/${GITHUB_REPOSITORY}/dispatches" \
