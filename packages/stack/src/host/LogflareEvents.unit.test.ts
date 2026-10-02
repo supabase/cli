@@ -138,13 +138,13 @@ it("ships a gateway access line as an API Gateway request stamped with its reque
   });
 
   expect(line).toBe(
-    '127.0.0.1 - - [01/Oct/2026:09:25:23 +0000] "GET /rest/v1/todos?select=*&q=\\x22x\\x22 HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms',
+    '127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=*&q=\\x22x\\x22 HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms',
   );
   expect(logflareEvent("gateway", received, line)).toEqual({
     project: "default",
     appname: "gateway",
     event_message: line,
-    timestamp: "2026-10-01T09:25:23.000Z",
+    timestamp: "2026-10-01T09:25:23.456Z",
     metadata: {
       request: {
         method: "GET",

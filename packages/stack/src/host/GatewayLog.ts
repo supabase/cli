@@ -1,6 +1,10 @@
-import { DateTime, Effect, PubSub, Stream } from "effect";
+import { DateTime, Deferred, Effect, PubSub, Ref, Semaphore, Stream } from "effect";
 import type { HttpAccess, HttpAccessSink } from "../HttpProxy.ts";
-import { launchOutputPublisher, type LaunchOutput } from "../runtime/Session.ts";
+import {
+  launchOutputPublisher,
+  type LaunchOutput,
+  type PublishOutput,
+} from "../runtime/Session.ts";
 import type { CatalogLogs } from "../services/Recipe.ts";
 import { monthNames } from "./LogflareEvents.ts";
 
@@ -12,10 +16,10 @@ const bufferedRecords = 4096;
 
 const two = (value: number) => String(value).padStart(2, "0");
 
-/** Formats epoch milliseconds as nginx's `$time_local` in UTC. */
+/** Formats epoch milliseconds as nginx's `$time_local` in UTC, with milliseconds after the seconds. */
 const nginxTime = (millis: number) => {
   const parts = DateTime.toPartsUtc(DateTime.makeUnsafe(millis));
-  return `${two(parts.day)}/${monthNames[parts.month - 1]}/${parts.year}:${two(parts.hour)}:${two(parts.minute)}:${two(parts.second)} +0000`;
+  return `${two(parts.day)}/${monthNames[parts.month - 1]}/${parts.year}:${two(parts.hour)}:${two(parts.minute)}:${two(parts.second)}.${String(parts.millisecond).padStart(3, "0")} +0000`;
 };
 
 /** Escapes quotes, backslashes and control characters like nginx's default log escaping. */
@@ -35,16 +39,40 @@ const encoder = new TextEncoder();
 /** The gateway stream's output, its access sink, and an observation of one launch per owner run. */
 export interface GatewayLog {
   readonly logs: CatalogLogs;
+  /** Records an access once the owner run's launch began; earlier ones have no reader yet. */
   readonly record: HttpAccessSink;
   readonly observation: Stream.Stream<{ readonly launchId: number }>;
+  /** Begins this owner run's launch, numbered after the retained ones. */
+  readonly begin: (launchId: number) => Effect.Effect<void>;
 }
 
 export const make = Effect.gen(function* () {
   const output = yield* PubSub.sliding<LaunchOutput>(bufferedRecords);
-  const publish = yield* (yield* launchOutputPublisher(output, 1)).part;
+  const launch = yield* Deferred.make<number>();
+  const publisher = yield* Ref.make<PublishOutput | undefined>(undefined);
+  // Requests settle concurrently; publishing one at a time keeps sequence numbers in order.
+  const publishing = yield* Semaphore.make(1);
   return {
     logs: PubSub.subscribe(output),
-    record: (access) => publish("stdout", encoder.encode(`${formatAccess(access)}\n`)),
-    observation: Stream.make({ launchId: 1 }).pipe(Stream.concat(Stream.never)),
+    record: (access) =>
+      Ref.get(publisher).pipe(
+        Effect.flatMap((publish) =>
+          publish === undefined
+            ? Effect.void
+            : publish("stdout", encoder.encode(`${formatAccess(access)}\n`)),
+        ),
+        publishing.withPermits(1),
+      ),
+    observation: Stream.fromEffect(Deferred.await(launch)).pipe(
+      Stream.map((launchId) => ({ launchId })),
+      Stream.concat(Stream.never),
+    ),
+    begin: (launchId) =>
+      launchOutputPublisher(output, launchId).pipe(
+        Effect.flatMap(({ part }) => part),
+        Effect.flatMap((publish) => Ref.set(publisher, publish)),
+        Effect.andThen(Deferred.succeed(launch, launchId)),
+        Effect.asVoid,
+      ),
   } satisfies GatewayLog;
 });

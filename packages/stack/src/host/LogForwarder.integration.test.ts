@@ -1169,6 +1169,7 @@ describe("LogForwarder", () => {
         logs: gateway.logs,
         observation: gateway.observation,
       });
+      yield* gateway.begin(1);
       yield* analytics.set(true);
       yield* startForwarder(store, logflare, [
         analytics.instance,

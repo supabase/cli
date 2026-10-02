@@ -56,7 +56,7 @@ const request = (
   path: string,
   body: Uint8Array,
   headers: Readonly<Record<string, string>> = {},
-  method: "GET" | "POST" = "POST",
+  method: "GET" | "HEAD" | "POST" = "POST",
 ) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
@@ -1142,6 +1142,13 @@ it.live(
         expect(sentinelStatus).toBe(200);
         expect(sentinel).toMatchObject({ target: "/api/ok?select=sentinel" });
         expect(yield* Queue.size(accesses)).toBe(0);
+
+        yield* request(proxy.port, "/elsewhere", new Uint8Array(), {}, "HEAD");
+        const unroutedHead = yield* Queue.take(accesses);
+        yield* request(proxy.port, "/down/thing", new Uint8Array(), {}, "HEAD");
+        const failedHead = yield* Queue.take(accesses);
+        expect(unroutedHead).toMatchObject({ method: "HEAD", status: 404, bytes: 0 });
+        expect(failedHead).toMatchObject({ method: "HEAD", status: 502, bytes: 0 });
       }),
     ).pipe(
       Effect.provide(
@@ -1182,6 +1189,16 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         });
       });
       const interimAddress = yield* listen(interim);
+      // Accepts the upgrade with headers past the proxy's status-reading limit and stays open.
+      const padded = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", () =>
+          connection.write(
+            `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nX-Padding: ${"a".repeat(9 * 1024)}\r\n\r\n`,
+          ),
+        );
+      });
+      const paddedAddress = yield* listen(padded);
       const accesses = yield* Queue.unbounded<HttpAccess>();
       const proxy = yield* makeHttpProxy({
         host: "127.0.0.1",
@@ -1192,6 +1209,7 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         { id: "ws", prefix: "/socket", target: Effect.succeed(backendAddress) },
         { id: "silent", prefix: "/silent", target: Effect.succeed(silentAddress) },
         { id: "interim", prefix: "/interim", target: Effect.succeed(interimAddress) },
+        { id: "padded", prefix: "/padded", target: Effect.succeed(paddedAddress) },
         {
           id: "down",
           prefix: "/down",
@@ -1235,6 +1253,10 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         target: "/interim/upgrade",
         status: 101,
       });
+
+      const open = yield* rawClient(proxy.port, upgradeRequest("/padded"));
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/padded", status: 101 });
+      open.destroy();
 
       const leaving = yield* rawClient(proxy.port, upgradeRequest("/silent"));
       yield* Deferred.await(upgradeReceived);

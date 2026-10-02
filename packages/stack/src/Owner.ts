@@ -225,6 +225,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (
     logs: gateway.logs,
     observation: gateway.observation,
   });
+  yield* gateway.begin(
+    Option.getOrElse(yield* logStore.latestLaunchId(GatewayLog.gatewayLog), () => 0) + 1,
+  );
   yield* forwarder.attach({
     id: GatewayLog.gatewayLog.instanceId,
     service: GatewayLog.gatewayLog.service,

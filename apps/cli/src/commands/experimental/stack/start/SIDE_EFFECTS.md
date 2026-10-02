@@ -41,10 +41,11 @@ The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
 the stack deletes those logs; stopping the stack and resetting database data keep them.
 PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string included, is
-persisted and shipped to Analytics. The shared API port also records one nginx combined line plus
-duration (`... "GET /rest/v1/todos?select=* HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms`) per request
+persisted and shipped to Analytics. The shared API port also records one nginx combined line, its
+time in milliseconds, plus duration
+(`... [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=* HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms`) per request
 and WebSocket upgrade under `logs/gateway/gateway/`, with the same retention; credential query and
-fragment values (`apikey`, `token`, `token_hash`, `code`, access, refresh, ID, and provider
+fragment values (`apikey`, `jwt`, `token`, `token_hash`, `code`, access, refresh, ID, and provider
 tokens, and the `X-Amz-Signature`, `X-Amz-Credential`, and `X-Amz-Security-Token` of S3
 presigned URLs), in the request target and the Referer, are written as `redacted`, as are values
 that themselves carry such a pair (a `redirect_to` URL with a token) and URL userinfo.

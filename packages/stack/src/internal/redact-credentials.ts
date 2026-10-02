@@ -7,11 +7,26 @@ export const decodeQuery = (value: string) => {
   }
 };
 
+/**
+ * Decodes each valid percent-encoded run on its own, so a malformed escape elsewhere in the text
+ * cannot hide an encoded credential delimiter; bytes that are not UTF-8 decode as Latin-1.
+ */
+const decodeLeniently = (value: string) =>
+  value.replace(/\+/gu, " ").replace(/(?:%[\da-f]{2})+/giu, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([\da-f]{2})/giu, (_, hex: string) =>
+        String.fromCharCode(Number.parseInt(hex, 16)),
+      );
+    }
+  });
+
 /** Decodes repeatedly so a nested URL encoded more than once still exposes its delimiters. */
 const decodeNested = (value: string) => {
   let current = value;
   for (let pass = 0; pass < 4; pass++) {
-    const next = decodeQuery(current);
+    const next = decodeLeniently(current);
     if (next === current) break;
     current = next;
   }

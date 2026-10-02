@@ -56,12 +56,17 @@ export const monthNames = [
   "Dec",
 ] as const;
 
-/** Parses the `%d/%b/%Y:%H:%M:%S %z` time of PostgREST and nginx logs into ISO-8601. */
+/**
+ * Parses the `%d/%b/%Y:%H:%M:%S %z` time of PostgREST and nginx logs into ISO-8601, with the
+ * milliseconds the gateway adds to its seconds.
+ */
 const parseLogTime = (text: string): string | undefined => {
   const match =
-    /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$/u.exec(text);
+    /^(\d{2})\/([A-Za-z]{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})(?:\.(\d{3}))? ([+-])(\d{2})(\d{2})$/u.exec(
+      text,
+    );
   if (match === null) return undefined;
-  const [, day, month, year, hour, minute, second, sign, zoneHours, zoneMinutes] = match;
+  const [, day, month, year, hour, minute, second, millis, sign, zoneHours, zoneMinutes] = match;
   const monthIndex = monthNames.findIndex((name) => name.toLowerCase() === month?.toLowerCase());
   if (monthIndex < 0) return undefined;
   const utc = Date.UTC(
@@ -71,6 +76,7 @@ const parseLogTime = (text: string): string | undefined => {
     Number(hour),
     Number(minute),
     Number(second),
+    Number(millis ?? 0),
   );
   const offsetMinutes = (sign === "-" ? -1 : 1) * (Number(zoneHours) * 60 + Number(zoneMinutes));
   return Option.getOrUndefined(

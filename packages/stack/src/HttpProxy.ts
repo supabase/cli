@@ -176,7 +176,8 @@ interface Sent {
 
 const respond = (response: ServerResponse, sent: Sent, status: number, body?: string) => {
   response.statusCode = status;
-  sent.bytes = body === undefined ? 0 : Buffer.byteLength(body);
+  // Node sends no body for a HEAD request.
+  sent.bytes = body === undefined || response.req.method === "HEAD" ? 0 : Buffer.byteLength(body);
   response.end(body);
 };
 
@@ -484,18 +485,17 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         const onClientClose = () => (Deferred.isDoneUnsafe(handshake) ? onClose() : onClientGone());
         const onClientEnd = () => upstream.end();
         const onUpstreamEnd = () => client.end();
-        // Reads the final handshake status off the bytes relayed to the client, skipping interim
-        // 1xx responses such as 100 Continue (RFC 9110 section 15.2).
+        // Reads the final handshake status off the bytes relayed to the client once its status
+        // line is complete, skipping interim 1xx responses such as 100 Continue (RFC 9110
+        // section 15.2).
         const onAnswer = (chunk: Buffer) => {
           answer += chunk.toString("latin1");
-          for (
-            let headEnd = answer.indexOf("\r\n\r\n");
-            headEnd >= 0;
-            headEnd = answer.indexOf("\r\n\r\n")
-          ) {
+          while (answer.includes("\r\n")) {
             const status = Number(statusLine.exec(answer)?.[1] ?? Number.NaN);
             if (status >= 100 && status < 200 && status !== 101) {
-              answer = answer.slice(headEnd + 4);
+              const interimEnd = answer.indexOf("\r\n\r\n");
+              if (interimEnd < 0) break;
+              answer = answer.slice(interimEnd + 4);
               continue;
             }
             upstream.off("data", onAnswer);

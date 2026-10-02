@@ -9,6 +9,16 @@ describe("redactCredentials", () => {
       redacted: "/api/ok?select=*&apikey=redacted&Access_Token=redacted",
     },
     {
+      case: "redacts a nested credential next to a malformed escape",
+      url: "/cb?redirect_to=https%3A%2F%2Fclient%2Fcb%3Faccess_token%3DJWT%ZZ&next=%E0%A4",
+      redacted: "/cb?redirect_to=redacted&next=%E0%A4",
+    },
+    {
+      case: "redacts an encoded credential name with a malformed value",
+      url: "/x?access%5Ftoken=abc%ZZ",
+      redacted: "/x?access%5Ftoken=redacted",
+    },
+    {
       case: "redacts an Edge Function websocket JWT",
       url: "/functions/v1/realtime-chat?jwt=eyJ.p.s",
       redacted: "/functions/v1/realtime-chat?jwt=redacted",
