@@ -6,7 +6,6 @@ import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";
 import { SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
-import { DbExecError } from "./db-connection.errors.ts";
 import {
   acquireProbedPool,
   batchFailureError,
@@ -22,8 +21,12 @@ import {
   mergedConnectionOptions,
   sslConfigsFor,
   sslOptionFor,
+  tlsExplicitlyRequested,
+  toConnectError,
   toExecError,
 } from "./db-connection.sql-pg.layer.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import type { PgConnInput } from "./db-connection.service.ts";
 
 describe("buildConnectionUrl", () => {
   const base = {
@@ -138,8 +141,6 @@ describe("sslOptionFor", () => {
   });
 
   it("uses plaintext for sslmode=disable and sslmode=allow on a remote connection", () => {
-    // pgconn's `allow` fallback list is `{nil, tlsConfig}` — a non-TLS primary —
-    // so an `allow` DSN to a plaintext-only endpoint must connect without TLS.
     expect(sslOptionFor("disable", false, undefined)).toBe(false);
     expect(sslOptionFor("allow", false, undefined)).toBe(false);
   });
@@ -151,8 +152,6 @@ describe("sslOptionFor", () => {
   });
 
   it("verifies the CA chain but skips hostname for verify-ca (pgconn parity)", () => {
-    // pgconn's verify-ca verifies the chain but not the hostname, so Node must
-    // keep rejectUnauthorized but disable the identity check.
     const ssl = sslOptionFor("verify-ca", false, undefined);
     expect(ssl).toMatchObject({ rejectUnauthorized: true });
     if (typeof ssl === "object" && ssl !== null) {
@@ -163,7 +162,6 @@ describe("sslOptionFor", () => {
 
   it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
     const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
-    // verify-full / verify-ca / require|prefer all carry the client certificate.
     expect(sslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject({
       cert: "CERT",
       key: "KEY",
@@ -173,7 +171,6 @@ describe("sslOptionFor", () => {
       cert: "CERT",
       key: "KEY",
     });
-    // Plaintext modes carry no client cert.
     expect(sslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
   });
 
@@ -185,8 +182,6 @@ describe("sslOptionFor", () => {
   });
 
   it("carries the servername for non-verifying TLS modes too (Go enables sslsni by default)", () => {
-    // Go keeps the original hostname as the TLS ServerName for every TLS mode
-    // when DoH swaps in a resolved IP, so require/prefer must send SNI as well.
     expect(sslOptionFor("require", false, "db.example.com")).toEqual({
       rejectUnauthorized: false,
       servername: "db.example.com",
@@ -224,10 +219,11 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
     ]);
   });
 
+  it("allow keeps its TLS fallback for a target classified local", () => {
+    expect(sslConfigsFor("allow", true, undefined)).toEqual([false, { rejectUnauthorized: false }]);
+  });
+
   it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
-    // pgconn's raw list is `{tlsConfig, nil}`, but Go's ConnectByUrl removes the
-    // plaintext fallback when the primary is TLS, so a default remote connection
-    // fails rather than downgrading to plaintext.
     expect(sslConfigsFor("prefer", false, undefined)).toEqual([{ rejectUnauthorized: false }]);
     expect(sslConfigsFor(undefined, false, undefined)).toEqual([{ rejectUnauthorized: false }]);
   });
@@ -242,14 +238,12 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("loads sslrootcert into the verifying modes and promotes require → verify-ca", () => {
     const ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----";
-    // require + a root cert behaves like verify-ca (chain verified, hostname skipped).
     const required = sslConfigsFor("require", false, undefined, ca);
     expect(required).toHaveLength(1);
     expect(required[0]).toMatchObject({ rejectUnauthorized: true, ca });
     expect((required[0] as { checkServerIdentity?: unknown }).checkServerIdentity).toBeTypeOf(
       "function",
     );
-    // verify-full keeps full verification but pins the CA.
     expect(sslConfigsFor("verify-full", false, undefined, ca)).toEqual([
       { rejectUnauthorized: true, ca },
     ]);
@@ -257,21 +251,75 @@ describe("sslConfigsFor (pgconn fallback list)", () => {
 
   it("does not attach a CA to non-verifying modes", () => {
     const ca = "ca-bundle";
-    // prefer stays unverified even with a root cert (pgconn: InsecureSkipVerify).
     expect(sslConfigsFor("prefer", false, undefined, ca)).toEqual([{ rejectUnauthorized: false }]);
   });
 
   it("forces a single plaintext attempt for a unix-socket host regardless of sslmode", () => {
-    // pgconn skips TLS for a unix NetworkAddress, so a socket DSN connects in
-    // plaintext even though the host is not the local services hostname (isLocal=false).
     expect(sslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql")).toEqual([
       false,
     ]);
     expect(sslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([false]);
-    // A non-socket host still follows the normal sslmode fallback list.
     expect(sslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+});
+
+describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)", () => {
+  const base: PgConnInput = {
+    host: "127.0.0.1",
+    port: 54322,
+    user: "postgres",
+    password: "postgres",
+    database: "postgres",
+  };
+
+  it("is false when the DSN set neither sslmode nor a root cert", () => {
+    expect(tlsExplicitlyRequested(base)).toBe(false);
+  });
+
+  it("is true for require/verify-ca/verify-full, the modes sslConfigsFor cannot fall back from", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "require" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-ca" })).toBe(true);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "verify-full" })).toBe(true);
+  });
+
+  it("is false for prefer, allow and disable, none of which name a verification intent", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "prefer" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "allow" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(false);
+  });
+
+  it("leaves a loopback DSN plaintext when PGSSLMODE filled sslmode the URL never set", () => {
+    // The real trigger: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so an
+    // ambient `PGSSLMODE=prefer` must not make a bare loopback `--db-url` demand TLS.
+    const conn = parseConnectionString(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      (name) => (name === "PGSSLMODE" ? "prefer" : undefined),
+    );
+    expect(conn?.sslmode).toBe("prefer");
+    expect(tlsExplicitlyRequested(conn!)).toBe(false);
+  });
+
+  it("still demands TLS when PGSSLMODE asks for verification", () => {
+    const conn = parseConnectionString(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+      (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
+    );
+    expect(conn?.sslmode).toBe("verify-full");
+    expect(tlsExplicitlyRequested(conn!)).toBe(true);
+  });
+
+  it("is true when a root cert (file path or inline PEM) is set", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "/tmp/ca.pem" })).toBe(true);
+    expect(
+      tlsExplicitlyRequested({ ...base, sslrootcertInline: "-----BEGIN CERTIFICATE-----" }),
+    ).toBe(true);
+  });
+
+  it("ignores an empty sslrootcert/sslrootcertInline string", () => {
+    expect(tlsExplicitlyRequested({ ...base, sslrootcert: "" })).toBe(false);
+    expect(tlsExplicitlyRequested({ ...base, sslrootcertInline: "" })).toBe(false);
   });
 });
 
@@ -339,8 +387,6 @@ describe("buildPoolConfig", () => {
   const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
 
   it("disables idle reaping (idleTimeoutMillis 0) and pins one connection (max 1) for a remote config", () => {
-    // The `db pull` bug: `PgClient.make` left idleTimeoutMillis unset (node-postgres
-    // default 10s), reaping the stepped-down connection during a long idle.
     const c = buildPoolConfig(
       { ...base },
       "db.example.com",
@@ -352,7 +398,6 @@ describe("buildPoolConfig", () => {
     expect(c.idleTimeoutMillis).toBe(0);
     expect(c.max).toBe(1);
     expect(c.application_name).toBe("@effect/sql-pg");
-    // carries the raw client config fields through
     expect(c).toMatchObject({ host: "db.example.com", connectionTimeoutMillis: 10_000 });
   });
 
@@ -370,9 +415,6 @@ describe("buildPoolConfig", () => {
   });
 
   it("installs the step-down verify hook only when required", () => {
-    // Every NEW physical connection (initial + silent redials) runs the step-down
-    // before pg-pool hands it to a checkout, mirroring Go's per-connection
-    // AfterConnect.
     const remote = buildPoolConfig({ ...base }, "db.example.com", 5432, false, 10, true);
     expect(remote.verify).toBe(poolStepDownVerify);
     const local = buildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
@@ -420,8 +462,7 @@ describe("installPoolErrorSwallow", () => {
 });
 
 describe("acquireProbedPool", () => {
-  // Tiny fake at the driver boundary: records query/end calls. Standing in for a
-  // real `pg.Pool` proves the pool is always `.end()`ed — the leak this fixes.
+  // Tiny fake at the driver boundary recording query/end calls, standing in for a real `pg.Pool`.
   function makeFakePool(query: () => Promise<unknown>) {
     const calls = { query: 0, end: 0 };
     const pool = {
@@ -445,13 +486,10 @@ describe("acquireProbedPool", () => {
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(fake.calls.query).toBe(1);
-    // The finalizer, installed the moment the pool exists, closes it on failure.
     expect(fake.calls.end).toBe(1);
   });
 
   it("ends the pool when the connect probe times out (black-holed host)", async () => {
-    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
-    // the already-installed finalizer still closes the pool + its in-flight dial.
     const fake = makeFakePool(() => new Promise<unknown>(() => {}));
     const exit = await Effect.runPromiseExit(
       acquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
@@ -465,13 +503,11 @@ describe("acquireProbedPool", () => {
     const observed = await Effect.runPromise(
       Effect.gen(function* () {
         const pool = yield* acquireProbedPool(() => fake.pool, 2);
-        // While the scope is open the pool is live and not yet ended.
         return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
       }).pipe(Effect.scoped),
     );
     expect(observed.isSamePool).toBe(true);
     expect(observed.endWhileOpen).toBe(0);
-    // Closing the scope ends the pool exactly once.
     expect(fake.calls.end).toBe(1);
   });
 });
@@ -485,7 +521,6 @@ describe("isUnixSocketHost", () => {
   });
 
   it("treats an uppercase Windows drive path as a socket, lowercase as TCP (pgconn parity)", () => {
-    // pgconn's isAbsolutePath accepts `A-Z:\…` (uppercase drive only); `c:\…` is TCP.
     expect(isUnixSocketHost("C:\\pgsql")).toBe(true);
     expect(isUnixSocketHost("c:\\pgsql")).toBe(false);
     expect(isUnixSocketHost("C:")).toBe(false);
@@ -579,6 +614,31 @@ describe("toExecError (pg server-error extraction)", () => {
   });
 });
 
+describe("toConnectError (ipv6Unreachable classification)", () => {
+  const cfg: PgConnInput = {
+    host: "db.project-ref.supabase.co",
+    port: 5432,
+    user: "postgres",
+    password: "pw",
+    database: "postgres",
+  };
+
+  it.each([
+    ["ENOTFOUND", { code: "ENOTFOUND" }],
+    ["EHOSTUNREACH with an IPv6 address", { code: "EHOSTUNREACH", address: "2600:1f18::1" }],
+    ["EADDRNOTAVAIL with an IPv6 address", { code: "EADDRNOTAVAIL", address: "2600:1f18::1" }],
+    ["ENETUNREACH with an IPv6 address", { code: "ENETUNREACH", address: "2600:1f18::1" }],
+  ])("sets ipv6Unreachable for a %s driver error", (_description, driverError) => {
+    const error = toConnectError(cfg, false, driverError);
+    expect(error.ipv6Unreachable).toBe(true);
+  });
+
+  it("does not set ipv6Unreachable for a refused connection", () => {
+    const error = toConnectError(cfg, false, { code: "ECONNREFUSED" });
+    expect(error.ipv6Unreachable).toBeUndefined();
+  });
+});
+
 describe("PgBatchQuery.submit", () => {
   const fakeConnection = (writable: boolean, opts: { dieOnUncork?: boolean } = {}) => {
     const frames: Array<string> = [];
@@ -597,9 +657,7 @@ describe("PgBatchQuery.submit", () => {
       frames,
       connection: {
         stream,
-        parse: (query: { text: string }) => {
-          frames.push(`parse(${query.text})`);
-        },
+        parse: record("parse"),
         bind: record("bind"),
         describe: record("describe"),
         execute: record("execute"),
@@ -629,26 +687,10 @@ describe("PgBatchQuery.submit", () => {
       "the connection's socket became unwritable while the batch was flushing",
     );
     expect(batch.outcome).toBe("unsent");
-    expect(frames).toEqual([
-      "cork",
-      "parse(BEGIN)",
-      "bind",
-      "describe",
-      "execute",
-      "parse(select 1)",
-      "bind",
-      "describe",
-      "execute",
-      "parse(COMMIT)",
-      "bind",
-      "describe",
-      "execute",
-      "sync",
-      "uncork",
-    ]);
+    expect(frames).toEqual(["cork", "parse", "bind", "describe", "execute", "sync", "uncork"]);
   });
 
-  it("brackets the statements in BEGIN/COMMIT and writes one sync while writable", () => {
+  it("writes parse/bind/describe/execute per statement and one sync while writable", () => {
     const { connection, frames } = fakeConnection(true);
     const batch = new PgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
 
@@ -656,19 +698,11 @@ describe("PgBatchQuery.submit", () => {
 
     expect(frames).toEqual([
       "cork",
-      "parse(BEGIN)",
+      "parse",
       "bind",
       "describe",
       "execute",
-      "parse(select 1)",
-      "bind",
-      "describe",
-      "execute",
-      "parse(select 2)",
-      "bind",
-      "describe",
-      "execute",
-      "parse(COMMIT)",
+      "parse",
       "bind",
       "describe",
       "execute",
@@ -676,18 +710,6 @@ describe("PgBatchQuery.submit", () => {
       "uncork",
     ]);
     expect(batch.outcome).toBe("submitted");
-  });
-
-  it("counts neither BEGIN's nor COMMIT's completion toward the statement index", () => {
-    const batch = new PgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
-
-    batch.handleCommandComplete();
-    expect(batch.completed).toBe(0);
-    batch.handleCommandComplete();
-    batch.handleEmptyQuery();
-    expect(batch.completed).toBe(2);
-    batch.handleCommandComplete();
-    expect(batch.completed).toBe(2);
   });
 });
 
@@ -749,8 +771,7 @@ describe("batchFailureError", () => {
   });
 
   it("keeps a partially written batch on the statement path, blaming statement 0", () => {
-    // A poisoned batch is corked, so the server acknowledged nothing and `completed`
-    // is always 0 — the failure can only be reported against the batch's first statement.
+    // A poisoned batch is corked, so `completed` stays 0 and statement 0 is blamed.
     const error = batchFailureError(
       new Error("serialization blew up"),
       {
@@ -762,124 +783,6 @@ describe("batchFailureError", () => {
 
     expect(error._tag).toBe("DbExecError");
     expect(error).toMatchObject({ message: "Error: serialization blew up", statementIndex: 0 });
-  });
-
-  it("names the transaction start when the server rejected the batch before BEGIN completed", () => {
-    const beginRejected = new SqlError({
-      reason: new SqlSyntaxError({
-        cause: Object.assign(new Error("canceling statement due to statement timeout"), {
-          severity: "ERROR",
-          code: "57014",
-        }),
-        message: "Failed to execute statement",
-        operation: "execute",
-      }),
-    });
-    const error = batchFailureError(
-      beginRejected,
-      { completed: 0, outcome: "submitted", began: false },
-      true,
-    );
-
-    expect(error).toBeInstanceOf(DbExecError);
-    expect(error).toMatchObject({
-      message:
-        "failed to begin the batch transaction: " +
-        "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
-      statementIndex: 0,
-      transactionPhase: "begin",
-    });
-
-    const lost = batchFailureError(
-      new Error("Connection terminated unexpectedly"),
-      { completed: 0, outcome: "submitted", began: false },
-      true,
-    );
-    expect(lost).toBeInstanceOf(DbExecError);
-    // A connection lost at BEGIN keeps its own reason, but still marks the phase:
-    // no caller statement ran, so nothing downstream may render `At statement: 0`.
-    expect(lost).toMatchObject({
-      message: "Error: Connection terminated unexpectedly",
-      statementIndex: 0,
-      transactionPhase: "begin",
-    });
-
-    const terminated = batchFailureError(
-      new SqlError({
-        reason: new SqlSyntaxError({
-          cause: Object.assign(new Error("terminating connection due to idle-session timeout"), {
-            severity: "FATAL",
-            code: "57P05",
-          }),
-          message: "Failed to execute statement",
-          operation: "execute",
-        }),
-      }),
-      { completed: 0, outcome: "submitted", began: false },
-      true,
-    );
-    expect(terminated).toBeInstanceOf(DbExecError);
-    expect(terminated).toMatchObject({
-      message: "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
-      transactionPhase: "begin",
-    });
-
-    const poisoned = batchFailureError(
-      beginRejected,
-      { completed: 0, outcome: "poisoned", began: false },
-      true,
-    );
-    expect(poisoned).toBeInstanceOf(DbExecError);
-    expect(poisoned.message).toBe(
-      "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
-    );
-    // A poisoned batch never reached the server, so it stays on the statement path.
-    expect(poisoned).not.toHaveProperty("transactionPhase");
-  });
-
-  it("names the transaction commit when a deferred failure lands on COMMIT", () => {
-    const deferred = new SqlError({
-      reason: new SqlSyntaxError({
-        cause: Object.assign(new Error("deferred constraint failed"), {
-          severity: "ERROR",
-          code: "23514",
-        }),
-        message: "Failed to execute statement",
-        operation: "execute",
-      }),
-    });
-    const error = batchFailureError(
-      deferred,
-      { completed: 2, outcome: "submitted", began: true, atCommit: true },
-      true,
-    );
-    expect(error).toBeInstanceOf(DbExecError);
-    expect(error).toMatchObject({
-      message:
-        "failed to commit the batch transaction: ERROR: deferred constraint failed (SQLSTATE 23514)",
-      statementIndex: 2,
-      transactionPhase: "commit",
-    });
-
-    const dropped = batchFailureError(
-      new SqlError({
-        reason: new SqlSyntaxError({
-          cause: Object.assign(new Error("terminating connection: database dropped"), {
-            severity: "FATAL",
-            code: "57P04",
-          }),
-          message: "Failed to execute statement",
-          operation: "execute",
-        }),
-      }),
-      { completed: 2, outcome: "submitted", began: true, atCommit: true },
-      true,
-    );
-    expect(dropped).toBeInstanceOf(DbExecError);
-    expect(dropped).toMatchObject({
-      message: "FATAL: terminating connection: database dropped (SQLSTATE 57P04)",
-      transactionPhase: "commit",
-    });
   });
 
   it("keeps server-error mapping and the completed count for a statement failure", () => {
@@ -913,38 +816,20 @@ describe("batchFailureError", () => {
 
 describe("shouldDiscardBatchClient", () => {
   it("discards a client whose batch never reached the wire", () => {
-    expect(shouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined), false)).toBe(
-      true,
-    );
+    expect(shouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined))).toBe(true);
   });
 
-  it("keeps a written batch's client on success or once its failure rolled back", () => {
-    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined), false)).toBe(
-      false,
-    );
+  it("returns a client to the pool once its batch was written, error or not", () => {
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(false);
     expect(
-      shouldDiscardBatchClient(
-        { outcome: "submitted" },
-        Exit.fail(new Error("server said no")),
-        true,
-      ),
+      shouldDiscardBatchClient({ outcome: "submitted" }, Exit.fail(new Error("server said no"))),
     ).toBe(false);
   });
 
-  it("discards a written batch's client when its failure was not rolled back", () => {
-    expect(
-      shouldDiscardBatchClient(
-        { outcome: "submitted" },
-        Exit.fail(new Error("server said no")),
-        false,
-      ),
-    ).toBe(true);
-  });
-
   it("discards a client whose batch was interrupted or died mid-flight", () => {
-    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1), true)).toBe(true);
-    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"), true)).toBe(true);
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1))).toBe(true);
+    expect(shouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"))).toBe(true);
     // Interrupted before the batch was even constructed: no batch, still discard.
-    expect(shouldDiscardBatchClient(undefined, Exit.interrupt(1), false)).toBe(true);
+    expect(shouldDiscardBatchClient(undefined, Exit.interrupt(1))).toBe(true);
   });
 });

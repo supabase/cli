@@ -1,16 +1,54 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, it, test } from "@effect/vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
+import { afterEach, beforeEach, vi } from "vitest";
+import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
+import { dockerfileServiceImageRaw } from "./dockerfile-images.ts";
 import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
   localServiceImagesFromDockerfile,
+  mergeRemoteServiceVersions,
   parseDockerfileServiceImages,
   postgresImageForDbMajorVersion,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
+
+// `catalogPins` defaults to an auth-only fixture; the real-catalog tests swap in the original.
+const { mockCatalogPins } = vi.hoisted(() => ({ mockCatalogPins: vi.fn() }));
+
+vi.mock("@supabase/stack/internal/artifacts", (importOriginal) =>
+  importOriginal<typeof import("@supabase/stack/internal/artifacts")>().then((actual) => ({
+    ...actual,
+    catalogPins: mockCatalogPins,
+  })),
+);
+
+const { catalogPins: actualCatalogPins } = await vi.importActual<
+  typeof import("@supabase/stack/internal/artifacts")
+>("@supabase/stack/internal/artifacts");
+
+const FIXTURE_DIGEST = "260e94edb8d402555791146fcf70b8e90efdc6a81877a04e5aa26f0f416a5dd7";
+const FIXTURE_NATIVE_PIN = { archive: FIXTURE_DIGEST, manifest: FIXTURE_DIGEST };
+const FIXTURE_CATALOG_PINS = [
+  {
+    service: "auth",
+    sourceService: "auth",
+    pin: {
+      upstreamVersion: "v2.197.0",
+      revision: 0,
+      image: `ghcr.io/supabase/cli/auth:v2.197.0-r0@sha256:${FIXTURE_DIGEST}`,
+      natives: {
+        "darwin-arm64": FIXTURE_NATIVE_PIN,
+        "linux-amd64": FIXTURE_NATIVE_PIN,
+        "linux-arm64": FIXTURE_NATIVE_PIN,
+      },
+    },
+  },
+];
+
+mockCatalogPins.mockImplementation(() => FIXTURE_CATALOG_PINS);
 
 const ACCESS_TOKEN = Redacted.make(`sbp_${"a".repeat(40)}`);
 const PROJECT_REF = "abcdefghijklmnopqrst";
@@ -18,17 +56,15 @@ const PROJECT_REF = "abcdefghijklmnopqrst";
 // `fetchLinkedServiceVersions` reads the ambient HttpClient from context instead
 // of self-provisioning one, so each invocation needs a concrete transport.
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
-  Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
+  fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer));
+
+const serve = (options: Parameters<typeof Bun.serve>[0]) =>
+  Effect.acquireRelease(
+    Effect.try(() => Bun.serve(options)),
+    (server) => Effect.promise(() => server.stop(true)),
+  );
 
 describe("services shared", () => {
-  beforeEach(() => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   test("parses service images from Dockerfile FROM aliases", () => {
     expect(
       parseDockerfileServiceImages(`
@@ -50,8 +86,8 @@ describe("services shared", () => {
     ).toThrow("Missing service image alias 'gotrue' in Dockerfile manifest.");
   });
 
-  test("derives local service versions from the Go Dockerfile manifest", () => {
-    const rows = listLocalServiceVersions();
+  test("derives local service versions from the Dockerfile manifest", () => {
+    const rows = listLocalServiceVersions({ slim: false });
     const dockerfileImages = localServiceImagesFromDockerfile(serviceImagesDockerfile);
     const expectedRows = dockerfileImages.map((service) => {
       const tagSeparator = service.image.lastIndexOf(":");
@@ -77,34 +113,110 @@ describe("services shared", () => {
     ]);
   });
 
-  test("keeps the established PG13/15 fallback unless the slim flag is on", () => {
-    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.8.1.085");
-    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.8.1.085");
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(postgresImageForDbMajorVersion(13)).toBe("supabase/postgres:15.14.1.167");
-    expect(postgresImageForDbMajorVersion(15)).toBe("supabase/postgres:15.14.1.167");
+  test("resolves PG13/14/15 from the Dockerfile's pg15/pg14 stages, regardless of the slim flag", () => {
+    const pg15 = dockerfileServiceImageRaw("pg15");
+    const pg14 = dockerfileServiceImageRaw("pg14");
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
+    // Always the raw docker.io reference; slim translation is a separate, downstream concern
+    // (`toSlimImage`/`slimImageForCurrentPin`), so this function itself doesn't read the flag.
+    expect(postgresImageForDbMajorVersion(13)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(15)).toBe(pg15);
+    expect(postgresImageForDbMajorVersion(14)).toBe(pg14);
   });
 
-  test("lists slim images when SUPABASE_USE_SLIM_IMAGES is set", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(listLocalServiceVersions().map((row) => row.name)).toEqual([
-      "ghcr.io/supabase/cli/postgres",
-      "ghcr.io/supabase/cli/auth",
-      "ghcr.io/supabase/cli/postgrest",
-      "ghcr.io/supabase/cli/realtime",
-      "ghcr.io/supabase/cli/storage",
-      "ghcr.io/supabase/cli/edge-runtime",
-      "ghcr.io/supabase/cli/studio",
-      "ghcr.io/supabase/cli/pgmeta",
-      "ghcr.io/supabase/cli/analytics",
-      "ghcr.io/supabase/cli/pooler",
-    ]);
+  describe("against the real slim-services catalog", () => {
+    beforeEach(() => {
+      mockCatalogPins.mockImplementation(actualCatalogPins);
+    });
+
+    afterEach(() => {
+      mockCatalogPins.mockImplementation(() => FIXTURE_CATALOG_PINS);
+    });
+
+    test("lists slim images with versions derived from the catalog's default pins", () => {
+      const expectedNames = [
+        "postgres",
+        "auth",
+        "postgrest",
+        "realtime",
+        "storage",
+        "edge-runtime",
+        "studio",
+        "pgmeta",
+        "analytics",
+        "pooler",
+      ];
+      const rows = listLocalServiceVersions({ slim: true });
+
+      expect(rows.map((row) => row.name)).toEqual(
+        expectedNames.map((service) => `ghcr.io/supabase/cli/${service}`),
+      );
+
+      for (const row of rows) {
+        const service = row.name.replace("ghcr.io/supabase/cli/", "");
+        const defaultPin = actualCatalogPins().find(
+          (entry) => entry.sourceService === service && entry.isDefault,
+        );
+        expect(defaultPin).toBeDefined();
+        expect(row.local).toBe(defaultPin?.pin.upstreamVersion);
+        expect(row.remote).toBe("");
+      }
+    });
+
+    test("slim-translates a serviceVersions override to a non-default catalog pin", () => {
+      const nonDefaultPostgresPin = actualCatalogPins().find(
+        (entry) => entry.sourceService === "postgres" && !entry.isDefault,
+      );
+      if (nonDefaultPostgresPin === undefined) {
+        throw new Error("Expected the catalog to carry a non-default postgres pin.");
+      }
+      const version = nonDefaultPostgresPin.pin.upstreamVersion;
+
+      // The Dockerfile's `pg` stage pins the default line, not this one — establishing that the
+      // override below actually changes the resolved version instead of matching it by accident.
+      expect(dockerfileServiceImageRaw("pg").split(":").at(-1)).not.toBe(version);
+
+      expect(
+        listLocalServiceVersions({
+          slim: true,
+          serviceVersions: { postgres: version },
+        }),
+      ).toContainEqual({
+        name: "ghcr.io/supabase/cli/postgres",
+        local: version,
+        remote: "",
+      });
+    });
+  });
+
+  test("slim-translates a version override that matches a catalog pin", () => {
+    expect(
+      listLocalServiceVersions({ slim: true, serviceVersions: { auth: "v2.197.0" } }),
+    ).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      // The catalog's release version (`v2.197.0-r0`) is a Dockerfile/manifest tag; the row shows
+      // the upstream version so a `supabase services` mismatch check compares upstream to upstream.
+      local: "v2.197.0",
+      remote: "",
+    });
+  });
+
+  test("keeps a version override that isn't in the catalog on docker.io", () => {
+    expect(
+      listLocalServiceVersions({ slim: true, serviceVersions: { storage: "v1.70.3" } }),
+    ).toContainEqual({
+      name: "supabase/storage-api",
+      local: "v1.70.3",
+      remote: "",
+    });
   });
 
   test("keeps historical pins on docker.io when slimCurrentPinOnly is set", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(
       listLocalServiceVersions({
+        slim: true,
         slimCurrentPinOnly: true,
         serviceVersions: { pooler: "2.0.0", analytics: "1.4.0" },
       }),
@@ -117,28 +229,19 @@ describe("services shared", () => {
   });
 
   test("normalizes historical pins before slimCurrentPinOnly", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(
       listLocalServiceVersions({
+        slim: true,
         slimCurrentPinOnly: true,
         serviceVersions: { auth: "2.151.0" },
       }),
     ).toContainEqual({ name: "supabase/gotrue", local: "v2.151.0", remote: "" });
   });
 
-  test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({
-      name: "ghcr.io/supabase/cli/storage",
-      local: "v1.70.3",
-      remote: "",
-    });
-  });
-
   // Explicit overrides keep their registry; a serviceVersions pin still rewrites the tag.
   test("leaves explicit image overrides on docker.io when SUPABASE_USE_SLIM_IMAGES is set", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     const rows = listLocalServiceVersions({
+      slim: true,
       imageOverrides: {
         postgres: "supabase/postgres:15.8.1.085",
         "edge-runtime": "supabase/edge-runtime:v1.68.4",
@@ -155,9 +258,31 @@ describe("services shared", () => {
     );
   });
 
+  // A digest-carrying override paired with a serviceVersions pin exercises the same
+  // `replaceImageTag` used for the plain-tag case above; it must drop the stale digest
+  // rather than splice the new tag into it (`…-r0@sha256:<pin>`).
+  test("rewrites the tag on a digest-carrying image override, dropping the stale digest", () => {
+    const rows = listLocalServiceVersions({
+      slim: true,
+      imageOverrides: {
+        postgres:
+          "ghcr.io/supabase/cli/postgres:17.6.1.173-r0@sha256:24e96b8d5daf90f67a62b5593d3008446744007e0a57e302d269c02a4e459e8f",
+      },
+      normalizeVersionTags: false,
+      serviceVersions: { postgres: "17.6.1.200" },
+    });
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/postgres",
+      local: "17.6.1.200",
+      remote: "",
+    });
+  });
+
   test("can preserve raw local service version overrides", () => {
     expect(
       listLocalServiceVersions({
+        slim: false,
         normalizeVersionTags: false,
         serviceVersions: {
           auth: "2.151.0",
@@ -171,58 +296,58 @@ describe("services shared", () => {
     );
   });
 
-  test("returns postgres only when no service-role key is available", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const url = new URL(request.url);
-        if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-          return Response.json({
-            id: PROJECT_REF,
-            ref: PROJECT_REF,
-            organization_id: "org-id",
-            organization_slug: "org",
-            name: "Linked Project",
-            region: "us-east-1",
-            created_at: "2026-03-13T12:00:00.000Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.supabase.internal",
-              version: "17.6.1.200",
-              postgres_engine: "17",
-              release_channel: "ga",
-            },
-          });
-        }
+  it.live("returns postgres only when no service-role key is available", () =>
+    Effect.gen(function* () {
+      const server = yield* serve({
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+            return Response.json({
+              id: PROJECT_REF,
+              ref: PROJECT_REF,
+              organization_id: "org-id",
+              organization_slug: "org",
+              name: "Linked Project",
+              region: "us-east-1",
+              created_at: "2026-03-13T12:00:00.000Z",
+              status: "ACTIVE_HEALTHY",
+              database: {
+                host: "db.supabase.internal",
+                version: "17.6.1.200",
+                postgres_engine: "17",
+                release_channel: "ga",
+              },
+            });
+          }
 
-        if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-          return Response.json([
-            {
-              name: "anon",
-              id: "publishable-id",
-              type: "publishable",
-              api_key: "publishable-key",
-              description: null,
-            },
-          ]);
-        }
+          if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+            return Response.json([
+              {
+                name: "anon",
+                id: "publishable-id",
+                type: "publishable",
+                api_key: "publishable-key",
+                description: null,
+              },
+            ]);
+          }
 
-        if (
-          url.pathname === "/auth/v1/health" ||
-          url.pathname === "/rest/v1/" ||
-          url.pathname === "/storage/v1/version"
-        ) {
-          throw new Error(
-            `tenant endpoint should not be called without a service-role key: ${url.pathname}`,
-          );
-        }
+          if (
+            url.pathname === "/auth/v1/health" ||
+            url.pathname === "/rest/v1/" ||
+            url.pathname === "/storage/v1/version"
+          ) {
+            throw new Error(
+              `tenant endpoint should not be called without a service-role key: ${url.pathname}`,
+            );
+          }
 
-        return new Response("not found", { status: 404 });
-      },
-    });
+          return new Response("not found", { status: 404 });
+        },
+      });
 
-    try {
-      const result = await runLinkedFetch({
+      const result = yield* runLinkedFetch({
         apiUrl: server.url.origin,
         projectHost: "supabase.co",
         projectRef: PROJECT_REF,
@@ -232,45 +357,43 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({ postgres: "17.6.1.200" });
-    } finally {
-      await server.stop(true);
-    }
-  });
+    }),
+  );
 
-  test("returns no linked versions when project api keys cannot be loaded", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const url = new URL(request.url);
-        if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-          return new Response("boom", { status: 500 });
-        }
+  it.live("returns no linked versions when project api keys cannot be loaded", () =>
+    Effect.gen(function* () {
+      const server = yield* serve({
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+            return new Response("boom", { status: 500 });
+          }
 
-        if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-          return Response.json({
-            id: PROJECT_REF,
-            ref: PROJECT_REF,
-            organization_id: "org-id",
-            organization_slug: "org",
-            name: "Linked Project",
-            region: "us-east-1",
-            created_at: "2026-03-13T12:00:00.000Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.supabase.internal",
-              version: "17.6.1.200",
-              postgres_engine: "17",
-              release_channel: "ga",
-            },
-          });
-        }
+          if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+            return Response.json({
+              id: PROJECT_REF,
+              ref: PROJECT_REF,
+              organization_id: "org-id",
+              organization_slug: "org",
+              name: "Linked Project",
+              region: "us-east-1",
+              created_at: "2026-03-13T12:00:00.000Z",
+              status: "ACTIVE_HEALTHY",
+              database: {
+                host: "db.supabase.internal",
+                version: "17.6.1.200",
+                postgres_engine: "17",
+                release_channel: "ga",
+              },
+            });
+          }
 
-        return new Response("not found", { status: 404 });
-      },
-    });
+          return new Response("not found", { status: 404 });
+        },
+      });
 
-    try {
-      const result = await runLinkedFetch({
+      const result = yield* runLinkedFetch({
         apiUrl: server.url.origin,
         projectHost: "supabase.co",
         projectRef: PROJECT_REF,
@@ -280,51 +403,49 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({});
-    } finally {
-      await server.stop(true);
-    }
-  });
+    }),
+  );
 
-  test("still returns tenant service versions when project version lookup fails", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const url = new URL(request.url);
-        if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-          return new Response("boom", { status: 500 });
-        }
+  it.live("still returns tenant service versions when project version lookup fails", () =>
+    Effect.gen(function* () {
+      const server = yield* serve({
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+            return new Response("boom", { status: 500 });
+          }
 
-        if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-          return Response.json([
-            {
-              name: "service_role",
-              id: "key-id",
-              type: "secret",
-              api_key: "service-role-key",
-              description: null,
-              secret_jwt_template: { role: "service_role" },
-            },
-          ]);
-        }
+          if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+            return Response.json([
+              {
+                name: "service_role",
+                id: "key-id",
+                type: "secret",
+                api_key: "service-role-key",
+                description: null,
+                secret_jwt_template: { role: "service_role" },
+              },
+            ]);
+          }
 
-        if (url.pathname === "/auth/v1/health") {
-          return Response.json({ version: "v2.190.0" });
-        }
+          if (url.pathname === "/auth/v1/health") {
+            return Response.json({ version: "v2.190.0" });
+          }
 
-        if (url.pathname === "/rest/v1/") {
-          return Response.json({ info: { version: "14.13" } });
-        }
+          if (url.pathname === "/rest/v1/") {
+            return Response.json({ info: { version: "14.13" } });
+          }
 
-        if (url.pathname === "/storage/v1/version") {
-          return new Response("1.61.0");
-        }
+          if (url.pathname === "/storage/v1/version") {
+            return new Response("1.61.0");
+          }
 
-        return new Response("not found", { status: 404 });
-      },
-    });
+          return new Response("not found", { status: 404 });
+        },
+      });
 
-    try {
-      const result = await runLinkedFetch({
+      const result = yield* runLinkedFetch({
         apiUrl: server.url.origin,
         projectHost: "supabase.co",
         projectRef: PROJECT_REF,
@@ -338,62 +459,118 @@ describe("services shared", () => {
         postgrest: "v14.13",
         storage: "v1.61.0",
       });
-    } finally {
-      await server.stop(true);
-    }
-  });
+    }),
+  );
 
-  test("falls back to empty linked versions when the linked fetch fails", async () => {
-    const result = await runLinkedFetch({
-      apiUrl: "http://127.0.0.1:1",
-      projectHost: "supabase.co",
-      projectRef: PROJECT_REF,
-      accessToken: ACCESS_TOKEN,
-      userAgent: "supabase",
-    });
+  it.live("keeps an already-prefixed tenant version, including uppercase V", () =>
+    Effect.gen(function* () {
+      const server = yield* serve({
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+            return new Response("boom", { status: 500 });
+          }
 
-    expect(result).toEqual({});
-  });
+          if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+            return Response.json([
+              {
+                name: "service_role",
+                id: "key-id",
+                type: "secret",
+                api_key: "service-role-key",
+                description: null,
+                secret_jwt_template: { role: "service_role" },
+              },
+            ]);
+          }
 
-  test("authenticates tenant probes with apikey only for sb_ keys", async () => {
-    const authHeaders: Record<string, string | null> = {};
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const url = new URL(request.url);
-        if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
-          return Response.json([
-            {
-              name: "service_role",
-              id: "key-id",
-              type: "secret",
-              api_key: "sb_secret_servicerolekey",
-              description: null,
-              secret_jwt_template: { role: "service_role" },
-            },
-          ]);
-        }
+          if (url.pathname === "/auth/v1/health") {
+            return Response.json({ version: "v2.190.0" });
+          }
 
-        if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
-          return new Response("boom", { status: 500 });
-        }
+          if (url.pathname === "/rest/v1/") {
+            return Response.json({ info: { version: "V14.13" } });
+          }
 
-        if (url.pathname === "/auth/v1/health") {
-          authHeaders.apikey = request.headers.get("apikey");
-          authHeaders.authorization = request.headers.get("authorization");
-          return Response.json({ version: "v2.190.0" });
-        }
+          if (url.pathname === "/storage/v1/version") {
+            return new Response("v1.77.1-versions");
+          }
 
-        if (url.pathname === "/rest/v1/" || url.pathname === "/storage/v1/version") {
           return new Response("not found", { status: 404 });
-        }
+        },
+      });
 
-        return new Response("not found", { status: 404 });
-      },
-    });
+      const result = yield* runLinkedFetch({
+        apiUrl: server.url.origin,
+        projectHost: "supabase.co",
+        projectRef: PROJECT_REF,
+        accessToken: ACCESS_TOKEN,
+        userAgent: "supabase",
+        tenantBaseUrlOverride: server.url.origin,
+      });
 
-    try {
-      const result = await runLinkedFetch({
+      expect(result).toEqual({
+        auth: "v2.190.0",
+        postgrest: "V14.13",
+        storage: "v1.77.1-versions",
+      });
+    }),
+  );
+
+  it.live("falls back to empty linked versions when the linked fetch fails", () =>
+    Effect.gen(function* () {
+      const result = yield* runLinkedFetch({
+        apiUrl: "http://127.0.0.1:1",
+        projectHost: "supabase.co",
+        projectRef: PROJECT_REF,
+        accessToken: ACCESS_TOKEN,
+        userAgent: "supabase",
+      });
+
+      expect(result).toEqual({});
+    }),
+  );
+
+  it.live("authenticates tenant probes with apikey only for sb_ keys", () =>
+    Effect.gen(function* () {
+      const authHeaders: Record<string, string | null> = {};
+      const server = yield* serve({
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url);
+          if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
+            return Response.json([
+              {
+                name: "service_role",
+                id: "key-id",
+                type: "secret",
+                api_key: "sb_secret_servicerolekey",
+                description: null,
+                secret_jwt_template: { role: "service_role" },
+              },
+            ]);
+          }
+
+          if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
+            return new Response("boom", { status: 500 });
+          }
+
+          if (url.pathname === "/auth/v1/health") {
+            authHeaders.apikey = request.headers.get("apikey");
+            authHeaders.authorization = request.headers.get("authorization");
+            return Response.json({ version: "v2.190.0" });
+          }
+
+          if (url.pathname === "/rest/v1/" || url.pathname === "/storage/v1/version") {
+            return new Response("not found", { status: 404 });
+          }
+
+          return new Response("not found", { status: 404 });
+        },
+      });
+
+      const result = yield* runLinkedFetch({
         apiUrl: server.url.origin,
         projectHost: "supabase.co",
         projectRef: PROJECT_REF,
@@ -405,21 +582,19 @@ describe("services shared", () => {
       expect(result).toEqual({ auth: "v2.190.0" });
       expect(authHeaders.apikey).toBe("sb_secret_servicerolekey");
       expect(authHeaders.authorization).toBeNull();
-    } finally {
-      await server.stop(true);
-    }
-  });
+    }),
+  );
 
-  test("skips remote lookups for a malformed project ref", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        throw new Error("no request should be made for a malformed project ref");
-      },
-    });
+  it.live("skips remote lookups for a malformed project ref", () =>
+    Effect.gen(function* () {
+      const server = yield* serve({
+        port: 0,
+        fetch() {
+          throw new Error("no request should be made for a malformed project ref");
+        },
+      });
 
-    try {
-      const result = await runLinkedFetch({
+      const result = yield* runLinkedFetch({
         apiUrl: server.url.origin,
         projectHost: "supabase.co",
         projectRef: "not-a-valid-ref",
@@ -428,13 +603,11 @@ describe("services shared", () => {
       });
 
       expect(result).toEqual({});
-    } finally {
-      await server.stop(true);
-    }
-  });
+    }),
+  );
 
   test("renders the local services table with expected headers and rows", () => {
-    const rows = listLocalServiceVersions();
+    const rows = listLocalServiceVersions({ slim: false });
     const table = renderServicesTable(rows);
 
     expect(table).toContain("SERVICE IMAGE");
@@ -454,5 +627,21 @@ describe("services shared", () => {
         { name: "supabase/gotrue", local: "v2.189.0", remote: "v2.189.0" },
       ]),
     ).toContain("supabase/postgres:17.6.1.132 => 17.6.1.200");
+  });
+
+  test("compares upstream versions for a slim catalog pin, not the release tag", () => {
+    const rows = mergeRemoteServiceVersions(
+      { auth: "v2.197.0" },
+      { slim: true, serviceVersions: { auth: "v2.197.0" } },
+    );
+
+    expect(rows).toContainEqual({
+      name: "ghcr.io/supabase/cli/auth",
+      local: "v2.197.0",
+      remote: "v2.197.0",
+    });
+    // The pinned image's release tag (`v2.197.0-r0@sha256:…`) never surfaces as a mismatch
+    // against the upstream-only remote version.
+    expect(renderServicesWarning(rows)).toBeUndefined();
   });
 });

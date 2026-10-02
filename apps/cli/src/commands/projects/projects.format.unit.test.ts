@@ -1,18 +1,17 @@
-import type { ApiKeyResponse, V1CreateAProjectOutput } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
 import { apiKeyValue, apiKeysToEnv } from "../../command-internal/api-keys.format.ts";
 import {
   type LinkedProject,
   dashboardUrlForProfile,
-  formatRegion,
   renderProjectApiKeysTable,
   renderProjectCreateTable,
   renderProjectsListTable,
 } from "./projects.format.ts";
 import { generateDbPassword } from "./projects.prompt.ts";
 
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 type CreatedProject = typeof V1CreateAProjectOutput.Type;
 
 const PROJECT: LinkedProject = {
@@ -43,17 +42,6 @@ const CREATED: CreatedProject = {
   created_at: "2026-05-27T01:02:03Z",
   status: "COMING_UP",
 };
-
-describe("formatRegion", () => {
-  it("maps a known region code to its display name", () => {
-    expect(formatRegion("us-east-1")).toBe("East US (North Virginia)");
-    expect(formatRegion("ap-southeast-2")).toBe("Oceania (Sydney)");
-  });
-
-  it("passes an unknown region code through unchanged", () => {
-    expect(formatRegion("mars-west-9")).toBe("mars-west-9");
-  });
-});
 
 describe("dashboardUrlForProfile", () => {
   it("resolves the built-in profile dashboard URLs", () => {

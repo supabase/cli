@@ -1,11 +1,7 @@
 /**
- * Ports of `github.com/docker/go-units` used by Go's `sizeInBytes`
- * (`pkg/config/config.go`). `file_size_limit` config values are parsed with
- * `RAMInBytes` before being sent to service APIs.
- *
- * Shared across the CLI: `config push` (storage/auth/api/db diffing)
- * and `seed buckets` (which converts each `[storage.buckets.*].file_size_limit`
- * string to the int64 byte count Go sends in the create/update bucket body).
+ * Parses `file_size_limit` config values using `docker/go-units`' `RAMInBytes` grammar
+ * (1024-based, case-insensitive, optional trailing `b`) before sending them to service APIs.
+ * Shared by `config push` (storage/auth/api/db diffing) and `seed buckets`.
  *
  * @see github.com/docker/go-units@v0.5.0/size.go
  */
@@ -21,9 +17,8 @@ const BINARY_MAP: Readonly<Record<string, number>> = {
 const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
 
 /**
- * Port of `units.RAMInBytes` — parses a human-readable RAM size (1024-based,
- * case-insensitive, optional trailing `b`) into bytes. Throws on an unparseable
- * string (Go returns an error that aborts config load).
+ * Parses a human-readable RAM size (1024-based, case-insensitive, optional trailing `b`)
+ * into bytes. Throws on an unparseable string.
  */
 export function ramInBytes(sizeStr: string): number {
   let sep = -1;
@@ -42,17 +37,11 @@ export function ramInBytes(sizeStr: string): number {
     num = sizeStr.slice(0, sep);
     sfx = sizeStr.slice(sep + 1);
   }
-  // Go's `RAMInBytes` (docker/go-units v0.5.0) hands the WHOLE numeric part to
-  // `strconv.ParseFloat`, which rejects a string that isn't a complete float.
-  // JS `Number.parseFloat` instead silently parses a valid prefix (`1.2.3` → 1.2,
-  // `1 2` → 1), so validate the numeric part against Go's float grammar first:
-  // optional sign, a leading OR trailing dot, optional exponent, and single
-  // underscores BETWEEN digits (Go 1.13+ literal rule — no leading/trailing/
-  // doubled `_`, none adjacent to `.`/sign). The digit group `\d(?:_?\d)*`
-  // enforces the underscore placement. This accepts Go-valid forms (`.5`, `1.`,
-  // `1e6`, `+5`, `1_000`) and rejects the prefix hazards (`1.2.3`, `1 2`,
-  // leading-space, `0x10`, `_1`, `1_`). A negative value is rejected post-parse
-  // below (matching Go's `size < 0` check); `1e309`→Infinity by the isFinite check.
+  // JS `Number.parseFloat` silently parses a valid numeric prefix (`1.2.3` → 1.2, `1 2` → 1),
+  // so validate the whole numeric part against a strict float grammar first: optional sign, a
+  // leading or trailing dot, optional exponent, and single underscores between digits only (no
+  // leading/trailing/doubled `_`, none adjacent to `.`/sign). Accepts `.5`, `1.`, `1e6`, `+5`,
+  // `1_000`; rejects `1.2.3`, `1 2`, leading space, `0x10`, `_1`, `1_`.
   if (
     !/^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)([eE][+-]?\d(?:_?\d)*)?$/.test(num)
   ) {
@@ -61,9 +50,8 @@ export function ramInBytes(sizeStr: string): number {
   // Strip the (already-validated, between-digits) underscores before parsing:
   // JS `Number.parseFloat("1_000")` stops at the underscore (→1), unlike Go.
   const size = Number.parseFloat(num.replace(/_/g, ""));
-  // Reject NaN and ±Infinity: Go's `strconv.ParseFloat` returns a range error
-  // for an overflowing numeral like `1e309` (which JS parses to Infinity), so it
-  // must fail config load rather than flow through as `null` in the request body.
+  // Reject NaN and ±Infinity: an overflowing numeral like `1e309` parses to Infinity in JS,
+  // but must fail here rather than flow through as `null` in the request body.
   if (!Number.isFinite(size)) {
     throw new Error(`invalid size: '${sizeStr}'`);
   }

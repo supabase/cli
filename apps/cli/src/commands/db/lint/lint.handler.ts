@@ -42,7 +42,7 @@ const asString = (value: unknown): string =>
   value === null || value === undefined ? "" : String(value);
 
 /** Lists the user schemas — used when `--schema` is omitted. */
-const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
+const listUserSchemas = Effect.fn("DbLint.listUserSchemas")(function* (session: DbSession) {
   const rows = yield* session
     .query(LIST_SCHEMAS_SQL, [MANAGED_SCHEMAS])
     .pipe(
@@ -55,12 +55,13 @@ const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
 });
 
 /** Runs the pgsql_check-based lint, minus the transaction setup the handler owns. */
-const lintDatabase = Effect.fnUntraced(function* (
+const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
   session: DbSession,
   schemaFlags: ReadonlyArray<string>,
 ) {
   const output = yield* Output;
   const schemas = schemaFlags.length > 0 ? schemaFlags : yield* listUserSchemas(session);
+  yield* Effect.annotateCurrentSpan({ "schema.count": schemas.length });
 
   yield* session.exec(ENABLE_PGSQL_CHECK).pipe(
     Effect.mapError(
@@ -107,46 +108,44 @@ const runLint = Effect.fnUntraced(function* (
   const dbConn = yield* DbConnection;
   const processControl = yield* ProcessControl;
 
-  // Mutually-exclusive db-url/linked/local group, keyed off the
-  // explicitly-set flags, not the `--local` default value.
+  // Mutually-exclusive db-url/linked/local group, keyed off explicitly-set flags,
+  // not `--local`'s default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new DbLintMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
-  // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // for the full TS-only rationale.
+  // `--project-ref` never implies `--linked`; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new DbLintMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new DbLintMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const level = Option.getOrElse(flags.level, () => "warning");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
 
-  // `--schema` is a CSV string-slice value, split at parse time. The command
-  // definition applies `Flag.mapTryCatch(parseSchemaFlags)` so
-  // `flags.schema` is already the fully CSV-parsed and validated schema list.
+  // `flags.schema` is already CSV-parsed and validated by
+  // `Flag.mapTryCatch(parseSchemaFlags)` at the command definition.
   const schemaFlags = flags.schema;
 
   const lintBody = Effect.gen(function* () {
-    // The resolver applies the established precedence (db-url > linked >
-    // local-default), so the connType passes straight through — `--local`'s
-    // default is handled by the resolver's fall-through to the local branch.
+    // connType passes straight through; the resolver applies db-url > linked >
+    // local precedence and handles `--local`'s default.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
       linkedProjectRef: flags.projectRef,
+    });
+
+    yield* Effect.annotateCurrentSpan({
+      "db.is_local": cfg.isLocal,
+      "db.lint.level": level,
+      "db.lint.fail_on": failOn,
     });
 
     const results = yield* Effect.scoped(
@@ -176,10 +175,8 @@ const runLint = Effect.fnUntraced(function* (
       }),
     );
 
-    // "\nNo schema errors found" is printed to stderr when the RAW result is
-    // empty (before level filtering), and nothing is emitted on stdout. The
-    // diagnostic goes to stderr in every mode (stdout stays payload-only);
-    // machine modes additionally emit the empty result envelope.
+    // Printed when the raw result (before level filtering) is empty; stdout stays
+    // payload-only, so machine modes additionally emit the empty result envelope.
     if (results.length === 0) {
       yield* output.raw("\nNo schema errors found\n", "stderr");
       if (output.format !== "text") {
@@ -189,6 +186,7 @@ const runLint = Effect.fnUntraced(function* (
     }
 
     const filtered = filterLintResult(results, LINT_LEVEL_ENUM.toEnum(level));
+    yield* Effect.annotateCurrentSpan({ "db.lint.issue_count": filtered.length });
 
     if (output.format === "text") {
       // Encoding no-ops on an empty slice.
@@ -207,7 +205,7 @@ const runLint = Effect.fnUntraced(function* (
     if (failed) {
       const message = `fail-on is set to ${LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
       if (output.format === "text") {
-        return yield* Effect.fail(new DbLintFailOnError({ message }));
+        return yield* new DbLintFailOnError({ message });
       }
       // json / stream-json already emitted the result payload above; signal the
       // non-zero exit without a second stdout write that would corrupt it.
@@ -215,12 +213,9 @@ const runLint = Effect.fnUntraced(function* (
     }
   });
 
-  // For `--linked`, the project ref is resolved and the linked-project cache
-  // is refreshed afterward, writing supabase/.temp/linked-project.json so
-  // telemetry carries the project/org grouping. Resolve the ref up front
-  // (non-prompting) and write the cache on success and failure. `--local` /
-  // `--db-url` leave the ref empty, so its cache write no-ops — we match that
-  // by caching only on the linked branch.
+  // For `--linked`, the ref is resolved up front (non-prompting) and the
+  // linked-project cache is refreshed on both success and failure; `--local`/`--db-url`
+  // never write it since caching only runs on the linked branch.
   if (target.connType === "linked") {
     const projectRef = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;
@@ -235,7 +230,6 @@ export const dbLint = Effect.fn("db.lint")(function* (flags: DbLintFlags) {
   const telemetryState = yield* TelemetryState;
   const cliArgs = yield* CliArgs;
   const target = resolveDbTargetFlags(cliArgs.args);
-  // Flush telemetry on success and failure. Command-level instrumentation /
-  // JSON error handling are applied by `lint.command.ts` (the codebase convention).
+  // Command-level instrumentation/JSON error handling are applied by `lint.command.ts`.
   yield* runLint(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

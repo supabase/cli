@@ -18,14 +18,10 @@ interface ProjectRefResolverShape {
     never
   >;
   /**
-   * Resolution chain used by `supabase link`. The on-disk `project-ref` file
-   * is deliberately skipped:
-   *
-   *   flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt.
-   *
-   * On a non-TTY with neither the flag nor `PROJECT_ID` set, fails with
-   * `ProjectRefRequiredError`, reproducing cobra's
-   * `required flag(s) "project-ref" not set` error.
+   * Resolution chain used by `supabase link`, skipping the on-disk `project-ref` file:
+   * flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt. Fails with
+   * `ProjectRefRequiredError` on a non-TTY when neither is set, matching cobra's
+   * `required flag(s) "project-ref" not set` wording.
    */
   readonly resolveForLink: (
     flagValue: Option.Option<string>,
@@ -35,33 +31,19 @@ interface ProjectRefResolverShape {
     never
   >;
   /**
-   * Soft resolution chain (flag -> `cliSettings.projectId` -> ref file) with **no
-   * prompt and no failure**. Used by `projects list`, which ignores a
-   * missing/unreadable ref and only uses the value as a "linked" marker.
-   * Returns `None` when nothing resolves.
-   *
-   * Unlike `resolve`, the returned value is **not** format-validated (see
-   * `services`'s equivalent validate-and-warn handling, CLI-1872, for an
-   * alternative pattern). `resolveOptional` skips that warning, which is
-   * safe only because every current caller uses the value purely as a
-   * display marker, never injected into an API path — a caller that needs
-   * the warning should validate and warn itself rather than assume this
-   * does it.
+   * Soft resolution chain (flag → `cliSettings.projectId` → ref file), with no prompt and no
+   * failure; returns `None` when nothing resolves. Unlike `resolve`, the value is not
+   * format-validated — safe only because every caller treats it as a display marker, never
+   * an API input; a caller needing validation must do it itself.
    */
   readonly resolveOptional: (
     flagValue: Option.Option<string>,
   ) => Effect.Effect<Option.Option<string>, never, never>;
   /**
-   * Non-prompting resolution chain (flag -> `cliSettings.projectId` -> ref file)
-   * that **fails hard** with `ProjectRefNotLinkedError` when nothing
-   * resolves, with ref-format validation. Used by the `--linked` PreRun of
-   * the `db` command family and by the linked branch of database-config
-   * resolution.
-   *
-   * Unlike `resolve`, it never reaches the interactive `PromptProjectRef` TTY
-   * fallback — `db lint`/`db advisors`/`db query` deliberately call
-   * `loadProjectRef`, not `resolve`, so a `--linked` run with a token but no
-   * linked-project file must fail fast rather than open a project picker.
+   * Non-prompting resolution chain (flag → `cliSettings.projectId` → ref file) that fails
+   * hard with `ProjectRefNotLinkedError` when nothing resolves, with ref-format validation.
+   * Used by the `--linked` PreRun of the `db` command family, so a run with a token but no
+   * linked-project file fails fast instead of opening a project picker.
    */
   readonly loadProjectRef: (
     flagValue: Option.Option<string>,
@@ -87,9 +69,6 @@ export class ProjectRefResolver extends Context.Service<
   ProjectRefResolverShape
 >()("supabase/cli/ProjectRefResolver") {}
 
-// `ref-patterns.ts` is the single canonical definition; re-exported under this
-// module's established name since telemetry redaction (`safeFlags` gating) and several
-// resolvers import it from here.
 export const PROJECT_REF_PATTERN = BRANCH_PROJECT_REF_PATTERN;
 
 export const PROJECT_NOT_LINKED_MESSAGE = "Cannot find project ref. Have you run supabase link?";

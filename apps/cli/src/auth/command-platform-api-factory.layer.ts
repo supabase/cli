@@ -10,13 +10,10 @@ type CommandPlatformApiDeps =
   typeof makeCommandPlatformApi extends Effect.Effect<infer _A, infer _E, infer R> ? R : never;
 
 /**
- * Captures the surrounding Management API context without resolving an access
- * token. The raw fetch client is provided here so `makeCommandPlatformApi` owns
- * the single typed-API debug wrapper.
- *
- * `dohFetchLayer` overrides `FetchHttpClient.Fetch` so that when the
- * factory's `make` resolves on the `--linked` path, the typed API client
- * honours `--dns-resolver https`.
+ * Captures the surrounding Management API context without resolving an access token; the raw
+ * fetch client is provided here so `makeCommandPlatformApi` owns the single typed-API debug
+ * wrapper. `dohFetchLayer` overrides `FetchHttpClient.Fetch` so a factory-resolved `--linked`
+ * client honours `--dns-resolver https`.
  */
 export const commandPlatformApiFactoryLayer = Layer.effect(
   CommandPlatformApiFactory,
@@ -28,7 +25,7 @@ export const commandPlatformApiFactoryLayer = Layer.effect(
       make,
     });
   }),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(dohFetchLayer));
+).pipe(Layer.provide(Layer.fresh(FetchHttpClient.layer)), Layer.provide(dohFetchLayer));
 
 /**
  * Adapts an already-built eager `CommandPlatformApi` into a factory. Use this in

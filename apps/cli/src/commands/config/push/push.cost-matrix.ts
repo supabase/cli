@@ -12,10 +12,8 @@ import {
   ConfigPushListAddonsStatusError,
 } from "./push.errors.ts";
 
-/**
- * Cost matrix entry: the addon variant's display name and price description,
- * used to render the cost-aware confirmation prompt (Go `push.CostItem`).
- */
+/** Cost matrix entry: the addon variant's display name and price description, used to render
+ *  the cost-aware confirmation prompt. */
 export interface CostItem {
   readonly name: string;
   readonly price: string;
@@ -31,7 +29,7 @@ export interface CostItem {
  * (e.g. the `"api"` GraphQL addon). Mirrors the `sso add` /
  * `postgres-config` raw-HTTP precedent.
  */
-export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref: string) {
+export const getCostMatrix = Effect.fn("config.push.fetchCostMatrix")(function* (ref: string) {
   const httpClient = yield* HttpClient.HttpClient;
   const cliSettings = yield* CommandSettings;
   const tokenOpt = yield* resolveAccessToken;
@@ -56,18 +54,16 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const body = sanitizeErrorBody(rawBody);
-    return yield* Effect.fail(
-      new ConfigPushListAddonsStatusError({
-        status: response.status,
-        body,
-        message: `unexpected list addons status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new ConfigPushListAddonsStatusError({
+      status: response.status,
+      body,
+      message: `unexpected list addons status ${response.status}: ${body}`,
+    });
   }
 
   const rawBody = yield* response.text;
   const parsed = yield* Effect.try({
-    try: () => JSON.parse(rawBody) as unknown,
+    try: () => parseAddonsBody(rawBody),
     catch: (cause) =>
       new ConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${String(cause)}`,
@@ -82,8 +78,14 @@ export const getCostMatrix = Effect.fn("config.push.cost-matrix")(function* (ref
       costMatrix.set(addon.type, { name: variant.name, price: variant.price.description });
     }
   }
+  yield* Effect.annotateCurrentSpan("addon.count", costMatrix.size);
   return costMatrix;
 });
+
+// Native `JSON.parse` keeps the runtime's syntax-error text in the `failed to list addons` message.
+function parseAddonsBody(text: string): unknown {
+  return JSON.parse(text);
+}
 
 interface ParsedAddon {
   readonly type: string;
@@ -93,7 +95,8 @@ interface ParsedAddon {
   }>;
 }
 
-/** Tolerantly extracts `available_addons` with a string `type` (Go uses `string`, not an enum). */
+/** Tolerantly extracts `available_addons` with a string `type`, since the API response itself
+ *  uses a plain string, not the enum the generated client declares. */
 function readAddons(parsed: unknown): ReadonlyArray<ParsedAddon> {
   if (typeof parsed !== "object" || parsed === null) return [];
   const available = (parsed as { available_addons?: unknown }).available_addons;

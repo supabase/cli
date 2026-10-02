@@ -8,8 +8,6 @@ import {
 
 describe("detect unmirrored images", () => {
   test("mirrors an upstream image under the supabase namespace of a registry", () => {
-    // Third-party orgs are dropped; only the basename is kept, matching Go's
-    // utils.GetRegistryImageUrl.
     expect(mirrorImageTarget("postgrest/postgrest:v14.14", "ghcr.io")).toBe(
       "ghcr.io/supabase/postgrest:v14.14",
     );
@@ -48,7 +46,6 @@ describe("detect unmirrored images", () => {
 
     expect(mirrored).toEqual(["library/kong:2.8.1"]);
     expect(missing).toEqual(["postgrest/postgrest:v14.14"]);
-    // Two unique images x two registries = four checks.
     expect(queried).toHaveLength(4);
   });
 

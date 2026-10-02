@@ -1,24 +1,14 @@
-import { PgClient } from "@effect/sql-pg";
-import { Context, Duration, Effect, Layer, Predicate, Redacted, Schema, Scope } from "effect";
+import { Effect, Predicate, Redacted, Schema, Scope } from "effect";
 import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
 import {
   DatabaseBootstrapError,
+  INTERNAL_DATABASE,
+  INTERNAL_SCHEMAS,
+  JWT_SECRET_SETTING,
   type DatabaseSession,
   type DatabaseSqlValue,
   type DatabaseTransaction,
-  runDatabaseBootstrap,
-} from "../model/DatabaseBootstrap.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
-import { StackPreparationError } from "../public/Errors.ts";
-import { databaseBootstrapPlan } from "./DatabaseBootstrapCatalog.ts";
-
-interface PostgresDatabaseSessionOptions {
-  readonly host: string;
-  readonly port: number;
-  readonly password: Redacted.Redacted<string>;
-  readonly database?: string;
-  readonly connectTimeout?: Duration.Input;
-}
+} from "./DatabaseBootstrap.ts";
 
 export interface DatabaseSqlClient {
   readonly unsafe: (
@@ -63,23 +53,27 @@ export interface PostgresDatabaseSession extends DatabaseSession {
 export const makeDatabaseSessionFromSqlClient = (
   client: DatabaseSqlClient,
 ): PostgresDatabaseSession => {
-  const executeWith = (
+  const executeWith = Effect.fn("PostgresDatabaseSession.execute")(function* (
     sql: string,
     parameters: ReadonlyArray<DatabaseSqlValue> = [],
-  ): Effect.Effect<void, DatabaseBootstrapError> =>
-    client.unsafe(sql, parameters).pipe(Effect.asVoid, Effect.mapError(mapSqlError("statement")));
+  ) {
+    return yield* client
+      .unsafe(sql, parameters)
+      .pipe(Effect.asVoid, Effect.mapError(mapSqlError("statement")));
+  });
 
-  const queryWith = (
+  const queryWith = Effect.fn("PostgresDatabaseSession.query")(function* (
     sql: string,
     parameters: ReadonlyArray<DatabaseSqlValue> = [],
-  ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, DatabaseBootstrapError> =>
-    client.unsafe(sql, parameters).pipe(Effect.mapError(mapSqlError("query")));
+  ) {
+    return yield* client.unsafe(sql, parameters).pipe(Effect.mapError(mapSqlError("query")));
+  });
 
-  const generated = (
+  const generated = Effect.fn("PostgresDatabaseSession.generated")(function* (
     format: string,
     parameters: ReadonlyArray<DatabaseSqlValue>,
-  ): Effect.Effect<void, DatabaseBootstrapError> =>
-    Effect.gen(function* () {
+  ) {
+    yield* Effect.gen(function* () {
       const rows = yield* client
         .unsafe(format, parameters)
         .pipe(Effect.mapError(mapSqlError("statement preparation")));
@@ -89,6 +83,7 @@ export const makeDatabaseSessionFromSqlClient = (
       );
       yield* executeWith(decoded.statement);
     });
+  });
 
   const transaction: DatabaseTransaction = {
     execute: executeWith,
@@ -105,7 +100,7 @@ export const makeDatabaseSessionFromSqlClient = (
         .join(", ");
       const parameters = settings.flatMap((setting) => [
         setting.name,
-        setting.name === "app.settings.jwt_secret" ? Redacted.value(setting.value) : setting.value,
+        setting.name === JWT_SECRET_SETTING ? Redacted.value(setting.value) : setting.value,
       ]);
       return generated(
         `SELECT string_agg(format('ALTER DATABASE postgres SET %I TO %L', name, value), E';\\n') AS statement FROM (VALUES ${values}) AS settings(name, value)`,
@@ -123,94 +118,46 @@ export const makeDatabaseSessionFromSqlClient = (
 };
 
 /** Acquires a SQL client in the caller's scope and keeps it live with the session. */
-export const makeDatabaseSessionFromAcquisition = (
-  acquire: Effect.Effect<DatabaseSqlClient, SqlError, Scope.Scope>,
-): Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope> =>
-  acquire.pipe(
+export const makeDatabaseSessionFromAcquisition = Effect.fn(
+  "PostgresDatabaseSession.fromAcquisition",
+)(function* (acquire: Effect.Effect<DatabaseSqlClient, SqlError, Scope.Scope>) {
+  return yield* acquire.pipe(
     Effect.map(makeDatabaseSessionFromSqlClient),
     Effect.mapError(mapSqlError("connection")),
   );
-
-/** Creates a scoped production session backed by the Effect PostgreSQL pool. */
-const makePostgresDatabaseSession = (
-  options: PostgresDatabaseSessionOptions,
-): Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope> =>
-  makeDatabaseSessionFromAcquisition(
-    Effect.gen(function* () {
-      const services = yield* Layer.build(
-        PgClient.layer({
-          host: options.host,
-          port: options.port,
-          database: options.database ?? "postgres",
-          // The canonical Supabase migration demotes the bootstrap-created
-          // `postgres` role. Keep the session on the init superuser so role
-          // and database-setting reconciliation remains authorized.
-          username: "supabase_admin",
-          password: options.password,
-          connectTimeout: options.connectTimeout ?? "5 seconds",
-        }),
-      );
-      return Context.get(services, PgClient.PgClient);
-    }),
-  );
-
-const INTERNAL_DATABASE = "_supabase";
-const INTERNAL_SCHEMAS = ["_analytics", "_supavisor"] as const;
+});
 
 /**
  * Ensures the private database and service-owned schemas exist before any
- * dependent workload is started. Database creation is deliberately outside a
- * transaction because PostgreSQL does not support CREATE DATABASE there.
+ * dependent workload is started. Database creation happens outside a transaction because
+ * PostgreSQL does not support CREATE DATABASE there.
  */
-export const ensureInternalDatabase = (
-  postgres: PostgresDatabaseSession,
-  openInternal: Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope>,
-): Effect.Effect<void, DatabaseBootstrapError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const databases = yield* postgres.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-      INTERNAL_DATABASE,
-    ]);
-    if (databases.length === 0)
-      yield* postgres.execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`);
+export const ensureInternalDatabase = Effect.fn("PostgresDatabaseSession.ensureInternalDatabase")(
+  function* (
+    postgres: PostgresDatabaseSession,
+    openInternal: Effect.Effect<PostgresDatabaseSession, DatabaseBootstrapError, Scope.Scope>,
+  ) {
+    return yield* Effect.gen(function* () {
+      const exists = postgres
+        .query("SELECT 1 FROM pg_database WHERE datname = $1", [INTERNAL_DATABASE])
+        .pipe(Effect.map((databases) => databases.length > 0));
+      // A concurrent creator, such as an abandoned earlier attempt, can win between check and create.
+      if (!(yield* exists))
+        yield* postgres
+          .execute(`CREATE DATABASE ${INTERNAL_DATABASE} WITH OWNER postgres`)
+          .pipe(
+            Effect.catch((error) =>
+              exists.pipe(
+                Effect.flatMap((created) => (created ? Effect.void : Effect.fail(error))),
+              ),
+            ),
+          );
 
-    const internal = yield* openInternal;
-    for (const schema of INTERNAL_SCHEMAS) {
-      yield* internal.execute(`CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION postgres`);
-      yield* internal.execute(`ALTER SCHEMA ${schema} OWNER TO postgres`);
-    }
-  });
-
-/** Runs the initial bootstrap through the durable loopback database endpoint. */
-export const bootstrapDatabaseAt = (
-  state: PersistedStackState,
-): Effect.Effect<void, DatabaseBootstrapError | StackPreparationError> =>
-  Effect.gen(function* () {
-    const plan = yield* databaseBootstrapPlan(state);
-    const port = state.privatePorts.find(
-      (assignment) =>
-        assignment.workloadId === "database:database" && assignment.binding === "primary",
-    )?.port;
-    if (port === undefined)
-      return yield* new StackPreparationError({
-        message: "A persisted database private port is required for bootstrap",
-      });
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const session = yield* makePostgresDatabaseSession({
-          host: "127.0.0.1",
-          port,
-          password: plan.databasePassword,
-        });
-        yield* ensureInternalDatabase(
-          session,
-          makePostgresDatabaseSession({
-            host: "127.0.0.1",
-            port,
-            database: INTERNAL_DATABASE,
-            password: plan.databasePassword,
-          }),
-        );
-        yield* runDatabaseBootstrap(session, plan);
-      }),
-    );
-  });
+      const internal = yield* openInternal;
+      for (const schema of INTERNAL_SCHEMAS) {
+        yield* internal.execute(`CREATE SCHEMA IF NOT EXISTS ${schema} AUTHORIZATION postgres`);
+        yield* internal.execute(`ALTER SCHEMA ${schema} OWNER TO postgres`);
+      }
+    });
+  },
+);

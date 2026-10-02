@@ -49,9 +49,7 @@ export const migrationListCommand = Command.make("list", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // `p` maps to the already-redacted `password` flag.
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,

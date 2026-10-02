@@ -1,87 +1,67 @@
 [
   {
     "op": "test",
-    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/CreateProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/CreateProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": []
   },
   {
     "op": "test",
-    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/GetProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/GetProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": []
   },
   {
     "op": "test",
-    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/ListProvidersResponse_Output/properties/items/items/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/ListProvidersResponse_Output/properties/items/items/properties/saml/properties/attribute_mapping/required",
     "value": []
   },
   {
     "op": "test",
-    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/UpdateProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/UpdateProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": []
   },
   {
     "op": "test",
-    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/DeleteProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "path": "/components/schemas/DeleteProviderResponse_Output/properties/saml/properties/attribute_mapping/required",
     "value": []
   },
   {
     "op": "test",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
-    "value": ["status", "validation_records"]
+    "path": "/components/schemas/UpdateCustomHostnameResponse_Output/required",
+    "value": ["status", "data"]
   },
   {
     "op": "replace",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
-    "value": ["status"]
-  },
-  {
-    "op": "test",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
-    "value": ["status", "custom_hostname", "data"]
-  },
-  {
-    "op": "replace",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
+    "path": "/components/schemas/UpdateCustomHostnameResponse_Output/required",
     "value": ["data"]
   },
   {
     "op": "test",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
-    "value": ["id", "hostname", "ssl", "ownership_verification", "custom_origin_server", "status"]
-  },
-  {
-    "op": "replace",
-    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
-    "value": ["id", "hostname", "ssl", "custom_origin_server", "status"]
-  },
-  {
-    "op": "test",
-    "path": "/components/schemas/AuthConfigResponse/required",
+    "path": "/components/schemas/AuthConfigResponse_Output/required",
     "value": [
       "api_max_request_duration",
       "db_max_pool_size",
@@ -279,6 +259,7 @@
       "security_captcha_secret",
       "security_manual_linking_enabled",
       "security_refresh_token_reuse_interval",
+      "security_update_password_require_current_password",
       "security_update_password_require_reauthentication",
       "sessions_inactivity_timeout",
       "sessions_single_per_user",
@@ -324,7 +305,7 @@
   },
   {
     "op": "replace",
-    "path": "/components/schemas/AuthConfigResponse/required",
+    "path": "/components/schemas/AuthConfigResponse_Output/required",
     "value": [
       "api_max_request_duration",
       "db_max_pool_size",
@@ -521,6 +502,7 @@
       "security_captcha_secret",
       "security_manual_linking_enabled",
       "security_refresh_token_reuse_interval",
+      "security_update_password_require_current_password",
       "security_update_password_require_reauthentication",
       "sessions_inactivity_timeout",
       "sessions_single_per_user",
@@ -566,7 +548,7 @@
   },
   {
     "op": "replace",
-    "path": "/components/schemas/FunctionResponse/properties/import_map_path",
+    "path": "/components/schemas/FunctionResponse_Output/properties/import_map_path",
     "value": {
       "type": "string",
       "nullable": true
@@ -574,7 +556,7 @@
   },
   {
     "op": "replace",
-    "path": "/components/schemas/BulkUpdateFunctionResponse/properties/functions/items/properties/import_map_path",
+    "path": "/components/schemas/BulkUpdateFunctionResponse_Output/properties/functions/items/properties/import_map_path",
     "value": {
       "type": "string",
       "nullable": true
@@ -582,7 +564,7 @@
   },
   {
     "op": "replace",
-    "path": "/components/schemas/DeployFunctionResponse/properties/import_map_path",
+    "path": "/components/schemas/DeployFunctionResponse_Output/properties/import_map_path",
     "value": {
       "type": "string",
       "nullable": true
@@ -590,28 +572,11 @@
   },
   {
     "op": "replace",
-    "path": "/components/schemas/FunctionSlugResponse/properties/import_map_path",
+    "path": "/components/schemas/FunctionSlugResponse_Output/properties/import_map_path",
     "value": {
       "type": "string",
       "nullable": true
     }
-  },
-  {
-    "op": "test",
-    "path": "/components/schemas/StorageConfigResponse/required",
-    "value": [
-      "fileSizeLimit",
-      "features",
-      "capabilities",
-      "external",
-      "migrationVersion",
-      "databasePoolMode"
-    ]
-  },
-  {
-    "op": "replace",
-    "path": "/components/schemas/StorageConfigResponse/required",
-    "value": ["fileSizeLimit", "features", "capabilities", "external", "migrationVersion"]
   },
   {
     "op": "replace",
@@ -626,67 +591,56 @@
   {
     "op": "remove",
     "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints",
-    "$comment": "CLI-2157: the platform's v2 spec gives all 10 project-webhook operations the shared operationId \"allV2ProjectsByRefWebhooks\" (and all 10 org-webhook operations share \"allV2OrganizationsBySlugWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+    "$comment": "The v2 webhook response schemas use const keywords in the OpenAPI 3.0 document that the Effect schema converter rejects; keep these paths out of the generated client until the converter supports them."
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}",
-    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1deliveries",
-    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1deliveries"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1test",
-    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1test"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}",
-    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}~1retry",
-    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}~1retry"
   },
   {
     "op": "remove",
     "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints",
-    "$comment": "CLI-2157: the platform's v2 spec gives all 10 org-webhook operations the shared operationId \"allV2OrganizationsBySlugWebhooks\" (and all 10 project-webhook operations share \"allV2ProjectsByRefWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+    "$comment": "The v2 webhook response schemas use const keywords in the OpenAPI 3.0 document that the Effect schema converter rejects; keep these paths out of the generated client until the converter supports them."
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}",
-    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1deliveries",
-    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1deliveries"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1test",
-    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1test"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}",
-    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}"
   },
   {
     "op": "remove",
-    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}~1retry",
-    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}~1retry"
   },
   {
     "op": "remove",
-    "path": "/components/schemas/APIErrorObject",
-    "$comment": "CLI-2157: referenced only by the removed webhook paths (verified in prod and staging); removing it also makes the staging document deterministic."
+    "path": "/components/schemas/APIErrorObject"
   },
   {
     "op": "test",

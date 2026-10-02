@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Result } from "effect";
+import { Effect, FileSystem, Path, Predicate, Result } from "effect";
 
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CredentialDeleteError } from "../../auth/errors.ts";
@@ -21,17 +21,14 @@ export const unlink = Effect.fn("unlink")(function* () {
   const paths = tempPaths(path, cliSettings.workdir);
 
   yield* Effect.gen(function* () {
-    // 1. Load the linked project ref. An absent file is `ErrNotLinked`; any other
-    // read failure surfaces verbatim (unlink.go:16-19).
+    // 1. Load the linked project ref. An absent file means not-linked; any other
+    // read failure surfaces verbatim.
     const exists = yield* fs.exists(paths.projectRef).pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
-      return yield* Effect.fail(
-        new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-      );
+      return yield* new ProjectRefNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
     }
-    // Go reads the raw bytes without trimming — `link` writes the ref with no
-    // trailing newline, so the value round-trips exactly (used for both the
-    // stderr message and the keyring key).
+    // No trimming needed: `link` writes the ref with no trailing newline, so the raw
+    // bytes round-trip exactly for both the stderr message and the keyring key.
     const projectRef = yield* fs.readFileString(paths.projectRef).pipe(
       Effect.mapError(
         (cause) =>
@@ -43,8 +40,8 @@ export const unlink = Effect.fn("unlink")(function* () {
 
     yield* output.raw(`Unlinking project: ${projectRef}\n`, "stderr");
 
-    // 2. Best-effort: remove the temp dir and delete the stored db-password
-    // credential. Both are attempted; non-ignored errors are joined (unlink.go:29-41).
+    // 2. Best-effort: both the temp-dir removal and the credential delete are
+    // attempted regardless of either failing; their errors are joined below.
     const collected: Array<UnlinkTempRemovalError | CredentialDeleteError> = [];
 
     const removed = yield* fs.remove(paths.tempDir, { recursive: true, force: true }).pipe(
@@ -63,22 +60,19 @@ export const unlink = Effect.fn("unlink")(function* () {
 
     const [first, ...rest] = collected;
     if (first !== undefined) {
-      // Mirror `errors.Join(allErrors...)` (unlink.go:41): surface every
-      // collected message, not just the first. Keep the leading failure's tag
-      // (temp removal precedes the credential delete, matching that order).
+      // Surfaces every collected message, not just the first, while keeping the
+      // leading failure's tag (temp removal is attempted before the credential delete).
       if (rest.length === 0) {
-        return yield* Effect.fail(first);
+        return yield* first;
       }
       const message = collected.map((e) => e.message).join("\n");
-      return yield* Effect.fail(
-        first._tag === "UnlinkTempRemovalError"
-          ? new UnlinkTempRemovalError({ message })
-          : new CredentialDeleteError({ message }),
-      );
+      const failure = Predicate.isTagged(first, "UnlinkTempRemovalError")
+        ? new UnlinkTempRemovalError({ message })
+        : new CredentialDeleteError({ message });
+      return yield* failure;
     }
 
-    // 3. PostRun: `Finished supabase unlink.` to stdout (text), structured success
-    // otherwise.
+    // 3. Print "Finished supabase unlink." in text mode, or a structured success otherwise.
     if (output.format === "text") {
       yield* output.raw("Finished supabase unlink.\n");
     } else {

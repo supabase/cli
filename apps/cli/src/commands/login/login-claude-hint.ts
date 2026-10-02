@@ -1,13 +1,6 @@
 /**
- * Port of `utils.SuggestClaudePlugin` (`apps/cli-go/internal/utils/misc.go:43-57`).
- *
- * Returns the Claude Code plugin-install hint **only** when both:
- *   1. the CLI is running inside Claude Code (`CLAUDECODE` / `CLAUDE_CODE` env —
- *      `agent.IsClaudeCode`), and
- *   2. stdout is an interactive terminal (`term.IsTerminal(stdout)`).
- *
- * Otherwise returns `""`. Pure: env + TTY state are passed in so the helper is
- * trivially unit-testable and free of service dependencies.
+ * Returns the Claude Code plugin-install hint only when the CLI is running inside Claude Code
+ * (`CLAUDECODE`/`CLAUDE_CODE` env) and stdout is an interactive terminal; otherwise returns `""`.
  */
 const CLAUDE_CODE_HINT = `<claude-code-hint v="1" type="plugin" value="supabase@claude-plugins-official" />`;
 

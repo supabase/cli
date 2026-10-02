@@ -23,7 +23,6 @@ const config = {
     Flag.withDescription("Resets the local database with local migrations."),
     Flag.withDefault(false),
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -67,11 +66,8 @@ export const dbResetCommand = Command.make("reset", config).pipe(
           version: flags.version,
           last: flags.last,
         },
-        // NO safeFlags: telemetry-safe marking is per flag INSTANCE — migration
-        // squash's `--version` is marked safe, but db reset's `--version` is
-        // unmarked, so it stays redacted here. `--project-ref` has no
-        // established telemetry-safety baseline either, so it stays redacted
-        // as well.
+        // No safeFlags: telemetry-safe marking is per flag instance, and neither `--version` nor
+        // `--project-ref` is marked safe on this command, so both stay redacted.
       }),
       withJsonErrorHandling,
     ),

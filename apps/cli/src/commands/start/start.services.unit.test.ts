@@ -1,10 +1,13 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import type { LocalServiceVersionOverrides } from "../../shared/services/services.shared.ts";
-import { toSlimImage } from "../../shared/services/slim-images.ts";
+import {
+  expectedPinnedImage,
+  GHCR_SLIM_IMAGE_PATTERN,
+} from "../../../tests/helpers/slim-images.ts";
 import { serviceContainerIds, localDbContainerId } from "../../command-internal/docker-ids.ts";
 import { SERVICE_CATALOG } from "../../command-internal/service-catalog.ts";
 import { resolveStartGates, resolveStartImagePlan, type StartGates } from "./start.gates.ts";
@@ -116,15 +119,9 @@ describe("startServiceMeta", () => {
 });
 
 /**
- * Cross-check: `start.services.ts`'s `enabledGate` metadata (descriptive
- * only, never read by runtime code — see that module's header) against
- * `start.gates.ts`'s `resolveStartGates` (the REAL, executable gate).
- * The two are hand-maintained separately and can silently drift (e.g. a gate
- * condition changes in `start.gates.ts` without the matching `enabledGate`
- * string being updated) — this mechanically evaluates every `enabledGate`
- * boolean-string expression against a synthetic config and compares it
- * against what `resolveStartGates` actually computes for the SAME
- * config, so a future drift fails loudly here instead of silently.
+ * `start.services.ts`'s `enabledGate` strings and `start.gates.ts`'s `resolveStartGates` are
+ * hand-maintained separately and can drift silently; this evaluates every `enabledGate`
+ * expression against a synthetic config and compares it to what `resolveStartGates` computes.
  */
 describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => {
   const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -170,10 +167,9 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
   }
 
   /**
-   * Evaluates an `enabledGate` string ("x.enabled", "x.enabled && y.enabled",
-   * or the `"none"` sentinel) against a synthetic config. Deliberately
-   * ignores the `!excluded(...)` factor every real gate also ANDs in — the
-   * caller isolates that by resolving with `excludedKeys` empty.
+   * Evaluates an `enabledGate` string (`"x.enabled"`, `"x.enabled && y.enabled"`, or the
+   * `"none"` sentinel) against a synthetic config. Ignores the `!excluded(...)` factor real
+   * gates also apply — callers isolate that by resolving with `excludedKeys` empty.
    */
   function evaluateEnabledGate(expr: string, config: CliConfig): boolean {
     if (expr === "none") return true;
@@ -223,10 +219,6 @@ describe("START_SERVICES enabledGate cross-check against start.gates.ts", () => 
 });
 
 describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   const allGatesOpen: StartGates = {
     kong: true,
     gotrue: true,
@@ -243,26 +235,36 @@ describe("resolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
     edgeRuntime: true,
   };
 
-  const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
-    resolveStartImagePlan(allGatesOpen, serviceVersions).find((entry) => entry.service === service)
-      ?.image;
+  const imageFor = (
+    service: string,
+    slim: boolean,
+    serviceVersions: LocalServiceVersionOverrides = {},
+  ) =>
+    resolveStartImagePlan(allGatesOpen, slim, serviceVersions).find(
+      (entry) => entry.service === service,
+    )?.image;
 
   it("plans docker.io images while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    expect(imageFor("gotrue")).toBe(currentGotrue);
-    expect(imageFor("vector")).toBe(currentVector);
-    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    expect(imageFor("gotrue", false)).toBe(currentGotrue);
+    expect(imageFor("vector", false)).toBe(currentVector);
+    expect(imageFor("supavisor", false, { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
   });
 
   it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue));
-    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare));
-    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector));
-    expect(imageFor("supavisor", { pooler: currentPoolerTag })).toBe(
-      toSlimImage("supavisor", currentPooler),
-    );
-    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
-    expect(imageFor("kong")).toBe("library/kong:2.8.1");
+    const gotruePinned = expectedPinnedImage("gotrue", currentGotrue);
+    const logflarePinned = expectedPinnedImage("logflare", currentLogflare);
+    const vectorPinned = expectedPinnedImage("vector", currentVector);
+    const poolerPinned = expectedPinnedImage("supavisor", currentPooler);
+    for (const pinned of [gotruePinned, logflarePinned, vectorPinned, poolerPinned]) {
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
+    }
+    expect(imageFor("gotrue", true)).toBe(gotruePinned);
+    expect(imageFor("logflare", true)).toBe(logflarePinned);
+    expect(imageFor("vector", true)).toBe(vectorPinned);
+    expect(imageFor("supavisor", true, { pooler: currentPoolerTag })).toBe(poolerPinned);
+    // Deliberate fallback: a historical pin the catalog doesn't carry stays on docker.io.
+    expect(imageFor("supavisor", true, { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    // Deliberate fallback: kong has no slim build at all.
+    expect(imageFor("kong", true)).toBe("library/kong:2.8.1");
   });
 });

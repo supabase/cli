@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
-import { setupStorage } from "../../../../tests/helpers/storage.ts";
+import { StackStorageCapabilityError } from "../../../command-internal/stack-storage.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { setupStorage, STORAGE_TEST_JWT_SECRET } from "../../../../tests/helpers/storage.ts";
 import { VALID_REF, useTempWorkdir } from "../../../../tests/helpers/command-mocks.ts";
 import { storageMv } from "./mv.handler.ts";
 import type { StorageMvFlags } from "./mv.command.ts";
@@ -61,7 +63,9 @@ describe("storage mv", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify an object path");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("You must specify an object path");
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -76,7 +80,9 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///bucket/docs", dst: "ss:///private" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Moving between buckets is unsupported");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Moving between buckets is unsupported");
+      }
       expect(requests).toHaveLength(0);
     });
   });
@@ -170,7 +176,6 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Nested file moved with the sub/ prefix rewritten under docs/.
       const nested = requests.find(
         (r) => r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "sub/b.txt",
       );
@@ -193,7 +198,9 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("not_found");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("not_found");
+      }
     });
   });
 
@@ -216,7 +223,9 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///private/dir", dst: "ss:///private/other", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: /private/dir/");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Object not found: /private/dir/");
+      }
     });
   });
 
@@ -255,8 +264,7 @@ describe("storage mv", () => {
   });
 
   it.live("moves within the project given via --project-ref, overriding VALID_REF", () => {
-    // `opts.projectRef` (the fake's own fallback) is left at its default
-    // (VALID_REF) — the flag must win over it and drive the gateway host.
+    // The fake's default projectRef is VALID_REF; the flag must win over it.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, requests, linkedCache } = setupStorage(tmp.current, {
       routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
@@ -288,9 +296,11 @@ describe("storage mv", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-      );
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        );
+      }
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });
@@ -308,7 +318,9 @@ describe("storage mv", () => {
         mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("Error status 503");
+      }
     });
   });
 
@@ -381,4 +393,55 @@ describe("storage mv", () => {
       expect(linkedCache.cached).toBe(true);
     });
   });
+});
+
+describe("stack backend", () => {
+  const tmp = useTempWorkdir("supabase-storage-mv-stack-");
+
+  it.live("moves through the stack's api endpoint and JWT", () => {
+    const { layer, out, requests } = setupStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stackBackend: true,
+      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* storageMv(
+        mvFlags({ src: "ss:///private/readme.md", dst: "ss:///private/docs/file" }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Successfully moved");
+      const move = requests.find((r) => r.url.includes(MOVE));
+      expect(move?.url.startsWith("http://127.0.0.1:59999")).toBe(true);
+      expect(move?.headers["apikey"]).toBe(generateGoJwt(STORAGE_TEST_JWT_SECRET, "service_role"));
+    });
+  });
+
+  it.live(
+    "fails with StackStorageCapabilityError when Storage is disabled, before any request",
+    () => {
+      const { layer, requests } = setupStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        stackBackend: true,
+        stackApi: { storageState: "disabled" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* storageMv(
+          mvFlags({ src: "ss:///private/readme.md", dst: "ss:///private/docs/file" }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(exit.cause.reasons.every(Cause.isFailReason)).toBe(true);
+          const capability = exit.cause.reasons
+            .filter(Cause.isFailReason)
+            .map((reason) => reason.error)
+            .find((error) => error instanceof StackStorageCapabilityError);
+          expect(capability).toBeDefined();
+          expect(capability?.suggestion).toContain("--exclude storage");
+        }
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
 });

@@ -54,7 +54,7 @@ export const postgresConfigDelete = Effect.fn("postgres-config.delete")(function
         unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
       }).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
 
-      yield* deleting?.clear() ?? Effect.void;
+      yield* deleting?.clear ?? Effect.void;
       yield* writePostgresConfigOutput(updated);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));

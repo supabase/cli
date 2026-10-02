@@ -3,31 +3,28 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  withChildTraceEnv,
+  withProcessSpan,
+  withProcessSpanScoped,
+} from "../shared/telemetry/spans.ts";
+import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Container CLIs tried in order: Docker is preferred, Podman is the fallback
- * for Docker-less hosts (e.g. Podman-only Linux setups).
- *
- * Both helpers fall back to `podman` only when the `docker` executable cannot
- * be spawned. Once a runtime starts, its container/daemon exit code and stderr
- * propagate unchanged, so callers keep Docker's error semantics. This mirrors
- * the `gen types --local` behaviour in `commands/gen/types/types.handler.ts`.
+ * Container CLIs tried in order: Docker preferred, Podman as the fallback for Docker-less hosts.
+ * A runtime's own exit code and stderr propagate unchanged once it starts, so callers keep
+ * Docker's error semantics regardless of which runtime answered.
  */
 
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Raised when neither `docker` nor `podman` can be spawned at all (e.g. neither
- * is installed or on `PATH`) — distinct from a spawned process exiting non-zero.
- * Callers never need to match on this type directly, they fold it into their
- * own tagged error via {@link describeContainerCliFailure} so the "no
- * runtime found" root cause survives instead of collapsing into a generic
- * "failed to ..." message. Exported only so the coverage test can verify its
- * own actionability declaration.
+ * Raised when neither `docker` nor `podman` can be spawned at all, as opposed to a spawned
+ * process exiting non-zero. Callers fold this into their own tagged error via
+ * {@link describeContainerCliFailure} so the "no runtime found" root cause survives.
  */
 export class ContainerRuntimeNotFoundError extends Data.TaggedError(
   "ContainerRuntimeNotFoundError",
@@ -39,22 +36,11 @@ export class ContainerRuntimeNotFoundError extends Data.TaggedError(
   }
 }
 
-/**
- * Exported so `docker-suggest.ts`'s daemon-unreachable matcher can test
- * against this literal directly instead of a hardcoded copy of the substring —
- * keeping the producer and the classifier from drifting apart if this ever gets
- * reworded.
- */
+/** Matched by `docker-suggest.ts`'s daemon-unreachable classifier; keep the two in sync. */
 export const containerRuntimeNotFoundMessage =
   "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
 
-/**
- * Renders a caller-facing suffix for a `spawnContainerCli`/`containerCliExitCode`
- * failure: the clear "neither runtime found" message when that's the cause,
- * otherwise the underlying cause's own message (falling back to `String(cause)`
- * for non-`Error` causes) so callers never collapse a real failure reason into a
- * bare, uninformative "failed to ..." string.
- */
+/** Formats a `spawnContainerCli`/`containerCliExitCode` failure cause for display. */
 export function describeContainerCliFailure(cause: unknown): string {
   if (cause instanceof ContainerRuntimeNotFoundError) return cause.message;
   if (cause instanceof Error) return cause.message;
@@ -65,19 +51,18 @@ export function describeContainerCliFailure(cause: unknown): string {
 export type ContainerRuntime = "docker" | "podman";
 
 /**
- * {@link spawnContainerCli}, but also reporting which runtime answered — for
- * callers that print a command for the user to run themselves, where naming
- * `docker` on a Podman-only host would be uncopyable advice.
+ * {@link spawnContainerCli}, but also reports which runtime answered, for callers that print a
+ * command for the user to copy — naming `docker` on a Podman-only host would be unusable.
  */
 export const spawnContainerCliWithRuntime = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
 ) =>
-  spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+  spawnRuntime(spawner, dockerRuntime, args, options).pipe(
     Effect.map((handle) => ({ handle, runtime: dockerRuntime })),
     Effect.catch(() =>
-      spawner.spawn(ChildProcess.make("podman", args, options)).pipe(
+      spawnRuntime(spawner, podmanRuntime, args, options).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
         Effect.catch(() =>
           Effect.fail(
@@ -93,6 +78,78 @@ export const spawnContainerCliWithRuntime = (
 const dockerRuntime: ContainerRuntime = "docker";
 const podmanRuntime: ContainerRuntime = "podman";
 
+const MANAGEMENT_COMMANDS: ReadonlySet<string> = new Set([
+  "container",
+  "context",
+  "image",
+  "network",
+  "system",
+  "volume",
+]);
+const COMMANDS: ReadonlySet<string> = new Set([
+  "build",
+  "cp",
+  "create",
+  "exec",
+  "images",
+  "info",
+  "inspect",
+  "kill",
+  "load",
+  "logs",
+  "ls",
+  "ps",
+  "prune",
+  "pull",
+  "restart",
+  "rm",
+  "run",
+  "save",
+  "start",
+  "stop",
+  "tag",
+  "version",
+  "wait",
+]);
+
+function containerSubcommand(args: ReadonlyArray<string>): string {
+  const [first, second] = args;
+  if (first === undefined) return "none";
+  if (MANAGEMENT_COMMANDS.has(first)) {
+    return second !== undefined && COMMANDS.has(second) ? `${first} ${second}` : first;
+  }
+  return COMMANDS.has(first) ? first : "other";
+}
+
+const processTarget = (runtime: ContainerRuntime, args: ReadonlyArray<string>) => ({
+  executable: runtime,
+  argCount: args.length,
+  subcommand: containerSubcommand(args),
+  hasFallback: runtime === dockerRuntime,
+});
+
+function spawnRuntime(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpanScoped("ContainerCli.spawn", processTarget(runtime, args), (traceEnv) =>
+    spawner.spawn(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
+
+function runtimeExitCode(
+  spawner: Spawner,
+  runtime: ContainerRuntime,
+  args: ReadonlyArray<string>,
+  options?: ChildProcess.CommandOptions,
+) {
+  return withProcessSpan("ContainerCli.run", processTarget(runtime, args), (traceEnv) =>
+    spawner.exitCode(ChildProcess.make(runtime, args, withChildTraceEnv(options, traceEnv))),
+  );
+}
+
 /**
  * Spawn a container-CLI command and return the process handle. Use when the
  * caller needs to read stdout/stderr or await the exit code itself.
@@ -104,14 +161,10 @@ export const spawnContainerCli = (
 ) => spawnContainerCliWithRuntime(spawner, args, options).pipe(Effect.map((it) => it.handle));
 
 /**
- * Run a container-CLI command and resolve to its exit code, mirroring the
- * spawner's `exitCode` convenience for callers that only need the status.
+ * Runs a container-CLI command and resolves to its exit code.
  *
- * `podmanArgs` lets a caller pass different argv to the Podman fallback than to
- * Docker, for the rare case where the two aren't drop-in compatible on a given
- * subcommand (e.g. `volume prune --all` — Docker-only, see
- * `stop.handler.ts`'s volume-prune call). Defaults to reusing `args` unchanged,
- * which is correct for every other call site.
+ * `podmanArgs` lets a caller pass different argv to the Podman fallback for a subcommand that
+ * isn't drop-in compatible between the two (e.g. `volume prune --all`, Docker-only).
  */
 export const containerCliExitCode = (
   spawner: Spawner,
@@ -119,9 +172,9 @@ export const containerCliExitCode = (
   options?: ChildProcess.CommandOptions,
   podmanArgs?: ReadonlyArray<string>,
 ) =>
-  spawner.exitCode(ChildProcess.make("docker", args, options)).pipe(
+  runtimeExitCode(spawner, dockerRuntime, args, options).pipe(
     Effect.catch(() =>
-      spawner.exitCode(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+      runtimeExitCode(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
         Effect.catch(() =>
           Effect.fail(
             new ContainerRuntimeNotFoundError({
@@ -133,13 +186,8 @@ export const containerCliExitCode = (
     ),
   );
 
-/**
- * Folds a byte stream into a decoded string. Hoisted here (the shared home for
- * container-CLI plumbing) so `container-lifecycle.ts`/`restart-services.ts`/
- * `docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
- * needs its stdout/stderr as text — stop each defining their own copy.
- */
-export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+/** Folds a byte stream into a decoded string. */
+export function collectText<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -149,21 +197,10 @@ export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
- * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
- * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
- * Podman's own differently worded "no container with name or ID ... found: no such container" —
- * the subprocess equivalent of `errdefs.IsNotFound` for a CLI-shelled-out (rather than
- * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
- * is tolerated exactly like an uppercase Docker one — the same distinction
- * `docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`, and the
- * same distinction the pre-existing Podman-aware parser in `commands/start/start.handler.ts`'s
- * own (now-removed) local `isContainerNotFoundMessage` used to draw. Hoisted here (rather than
- * left as separate per-caller copies) so every container-not-found check across the
- * container-lifecycle/start/restart/health-check domain (`isLocalDbRunning`,
- * `restartSatelliteService`, `reloadKong`, …) shares one predicate instead of
- * re-deriving the same match with different Podman coverage — a reset excluding a satellite
- * service (storage/auth/realtime/pooler) or Kong would otherwise report a hard restart/reload
- * failure instead of tolerating the absent container.
+ * Matches "container doesn't exist" stderr from `container inspect`: Docker's "No such
+ * container"/"No such object" (casing varies by daemon version), or Podman's "no container with
+ * name or ID ... found: no such container". Case-insensitive so callers can tolerate an
+ * already-absent container instead of treating it as a hard failure.
  */
 export function isContainerNotFoundMessage(message: string): boolean {
   return (
@@ -174,13 +211,11 @@ export function isContainerNotFoundMessage(message: string): boolean {
 }
 
 /**
- * Runs a container-CLI command that must succeed outright — no tolerance for any
- * failure mode (spawn failure, non-zero exit) — the shared shape behind every
- * "docker verb target" primitive that fails hard on any problem
- * (`removeContainer`/`removeVolume`/`restartContainer`; see
- * `db-bootstrap/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
- * `verb` is the human-readable action embedded in the error message (e.g.
- * `"remove container"` → `"failed to remove container: <cause>"`).
+ * Runs a container-CLI command that must succeed outright, failing on a spawn error or any
+ * non-zero exit.
+ *
+ * @param verb - Human-readable action embedded in the error message, e.g. `"remove container"` →
+ * `"failed to remove container: <cause>"`.
  */
 export function runContainerCliExpectSuccess<E>(
   spawner: Spawner,
@@ -214,13 +249,9 @@ export function runContainerCliExpectSuccess<E>(
 }
 
 /**
- * Like {@link containerCliExitCode}, but also collecting the child's stdout —
- * for callers that need the CLI's own report of what it did (e.g. the `docker
- * … prune` deleted-ID lists backing `--debug` "Pruned …" reports in
- * `DockerRemoveAll`). Collecting (i.e. reading) stdout
- * also sidesteps the unread-pipe hang that `stdout: "ignore"` callers avoid by
- * discarding it. stderr is discarded, matching the exit-code-only helper.
- * `podmanArgs` has the same meaning as on {@link containerCliExitCode}.
+ * Like {@link containerCliExitCode}, but also returns the child's stdout — reading it instead of
+ * ignoring it avoids the process hanging on an unread pipe. `podmanArgs` behaves the same as on
+ * {@link containerCliExitCode}.
  */
 export const containerCliExitCodeAndStdout = (
   spawner: Spawner,
@@ -234,9 +265,9 @@ export const containerCliExitCodeAndStdout = (
         stdout: "pipe",
         stderr: "ignore",
       } satisfies ChildProcess.CommandOptions;
-      const handle = yield* spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
+      const handle = yield* spawnRuntime(spawner, dockerRuntime, args, options).pipe(
         Effect.catch(() =>
-          spawner.spawn(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
+          spawnRuntime(spawner, podmanRuntime, podmanArgs ?? args, options).pipe(
             Effect.catch(() =>
               Effect.fail(
                 new ContainerRuntimeNotFoundError({
@@ -247,10 +278,8 @@ export const containerCliExitCodeAndStdout = (
           ),
         ),
       );
-      // Subscribe to stdout concurrently with awaiting the exit code — Node's
-      // "exit" event can fire before a fast process's stdio pipes are drained,
-      // so a late subscriber would see an already-ended, empty stream (same
-      // pattern as `docker-lifecycle.ts`'s `spawnDockerPsLines`).
+      // Read stdout concurrently with the exit code: Node's "exit" event can fire before a fast
+      // process's stdio finishes draining, so awaiting the exit code first would race the stream.
       const [exitCode, stdout] = yield* Effect.all(
         [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
         { concurrency: "unbounded" },
@@ -260,10 +289,8 @@ export const containerCliExitCodeAndStdout = (
   );
 
 /**
- * Mirrors `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`):
- * splits each version on
- * `.` and compares the parts numerically, component by component — not a
- * naive string/float compare, which would misorder e.g. `"1.9"` vs `"1.10"`.
+ * Compares two dot-separated version strings numerically, component by component — a naive
+ * string/float compare would misorder e.g. `"1.9"` vs `"1.10"`.
  */
 function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean {
   const parts = version.split(".").map((part) => Number.parseInt(part, 10));
@@ -277,25 +304,12 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
 }
 
 /**
- * Docker CLI's own `volume prune --all` flag is annotated `version: "1.42"`
- * (vendored `docker/cli@v28.5.2`) and
- * enforced by Cobra's `Args` validator *before* `RunE` runs:
- * against a daemon with a lower negotiated
- * API version, `docker volume prune --all ...` exits nonzero without pruning
- * anything at all, rather than degrading gracefully. This gates the equivalent
- * `all=true` filter on
- * `Docker.ClientVersion() >= "1.42"`; there is no
- * persistent Engine API client here to ask, so this asks the `docker` CLI
- * itself via `docker version`.
- *
- * Deliberately does not fall back to Podman like {@link containerCliExitCode}
- * does: Podman's `volume prune` never has an `--all` flag to gate in the
- * first place (callers already omit it from their Podman argv
- * unconditionally), so this check is meaningless on that path. Resolves to
- * `false` (omit `--all`, matching how a pre-1.42 daemon's own `volume prune`
- * already prunes every unused volume without it) whenever `docker` can't be
- * spawned, its `version` call fails, or the reported version can't be read —
- * the side that can never turn into a hard failure of the prune call itself.
+ * Checks whether the daemon's negotiated API version supports `docker volume prune --all`
+ * (added in 1.42). Older daemons reject the flag outright instead of ignoring it, so this must be
+ * checked via `docker version` before use; there's no persistent Engine API client to ask
+ * directly. Does not fall back to Podman, whose `volume prune` has no `--all` flag to gate.
+ * Resolves to `false` on any failure to spawn `docker` or read its version — the same effect as
+ * omitting `--all` on a pre-1.42 daemon, which already prunes every unused volume without it.
  */
 export const dockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
   Effect.scoped(

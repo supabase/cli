@@ -29,10 +29,9 @@ import type { ProjectsApiKeysFlags } from "./api-keys.command.ts";
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 
 /**
- * Struct spec for the raw API key response. Only `-o yaml` hits the raw
- * struct — `-o toml`/`-o env` encode the `SUPABASE_<NAME>_KEY` env map
- * instead — and yaml.v3 renders the `nullable.Nullable[T]` fields as
- * `map[bool]T`.
+ * Struct spec for the raw API key response, used only by `-o yaml`; `-o toml`/`-o env` encode
+ * the `SUPABASE_<NAME>_KEY` env map instead. Nullable fields render as a single-key map to keep
+ * the yaml output format stable.
  */
 const GO_API_KEYS_LIST = goSlice(
   goStruct([
@@ -67,12 +66,10 @@ export const projectsApiKeys = Effect.fn("projects.api-keys")(function* (
     const keys: ApiKeys = yield* getProjectApiKeys(ref, flags.reveal).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go encodes the `SUPABASE_<NAME>_KEY` env map for both toml and env
-    // (`api_keys.go:34-36`).
     if (goFmt === "toml") {
       yield* output.raw(encodeToml(apiKeysToEnv(keys)) + "\n");
       return;

@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { badArgument } from "effect/PlatformError";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -12,6 +9,8 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { TestNewInvalidNameError } from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 import { testNew } from "./new.handler.ts";
 
@@ -56,9 +55,8 @@ function setup(opts: SetupOpts = {}) {
     out.layer,
     cliSettings,
     telemetry.layer,
-    // BunServices provides FileSystem + Path; when forcing a failure the failing
-    // layer is appended last so it overrides FileSystem (Path still comes from
-    // BunServices — duplicate-tag mergeAll is last-wins).
+    // The failing layer is appended last so it overrides BunServices' FileSystem
+    // (duplicate-tag mergeAll is last-wins); Path still comes from BunServices.
     BunServices.layer,
     ...(opts.writeFails === true ? [failingFsLayer("writeFileString")] : []),
     ...(opts.mkdirFails === true ? [failingFsLayer("makeDirectory")] : []),
@@ -75,10 +73,12 @@ describe("test new integration", () => {
   it.live("creates a pgtap test file and prints the created path", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* testNew(flags("pet"));
-      const target = join(workdir, "supabase", "tests", "pet_test.sql");
-      expect(existsSync(target)).toBe(true);
-      expect(readFileSync(target, "utf8")).toBe(PGTAP_TEMPLATE);
+      const target = path.join(workdir, "supabase", "tests", "pet_test.sql");
+      expect(yield* fs.exists(target)).toBe(true);
+      expect(yield* fs.readFileString(target)).toBe(PGTAP_TEMPLATE);
       expect(out.stdoutText).toContain("Created new pgtap test at ");
       expect(out.stdoutText).toContain("supabase/tests/pet_test.sql");
     }).pipe(Effect.provide(layer));
@@ -86,28 +86,44 @@ describe("test new integration", () => {
 
   it.live("pins the created test file to Go's exact 0644 mode under a permissive umask", () => {
     const { layer, workdir } = setup();
-    const prevUmask = process.umask(0);
-    return Effect.gen(function* () {
-      yield* testNew(flags("modepin"));
-      const target = join(workdir, "supabase", "tests", "modepin_test.sql");
-      expect(statSync(target).mode & 0o777).toBe(0o644);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
+    return Effect.acquireUseRelease(
+      Effect.sync(() => process.umask(0)),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* testNew(flags("modepin"));
+          const target = path.join(workdir, "supabase", "tests", "modepin_test.sql");
+          const info = yield* fs.stat(target);
+          expect(info.mode & 0o777).toBe(0o644);
+        }).pipe(Effect.provide(layer)),
+      (prevUmask) =>
+        Effect.sync(() => {
+          process.umask(prevUmask);
+        }),
+    );
   });
 
   it.live("defaults the template to pgtap when --template is omitted", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* testNew(flags("nodbtemplate"));
-      const target = join(workdir, "supabase", "tests", "nodbtemplate_test.sql");
-      expect(readFileSync(target, "utf8")).toBe(PGTAP_TEMPLATE);
+      const target = path.join(workdir, "supabase", "tests", "nodbtemplate_test.sql");
+      expect(yield* fs.readFileString(target)).toBe(PGTAP_TEMPLATE);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors an explicit --template pgtap", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* testNew(flags("explicit", "pgtap"));
-      expect(existsSync(join(workdir, "supabase", "tests", "explicit_test.sql"))).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "explicit_test.sql"))).toBe(
+        true,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -135,15 +151,20 @@ describe("test new integration", () => {
 
   it.live("fails with TestNewFileExistsError when the file already exists", () => {
     const { layer, workdir } = setup();
-    mkdirSync(join(workdir, "supabase", "tests"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "tests", "dupe_test.sql"), "-- existing\n");
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(workdir, "supabase", "tests"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "tests", "dupe_test.sql"),
+        "-- existing\n",
+      );
       const exit = yield* Effect.exit(testNew(flags("dupe")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("TestNewFileExistsError");
-        expect(json).toContain("supabase/tests/dupe_test.sql already exists.");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("TestNewFileExistsError");
+        expect(causeText).toContain("supabase/tests/dupe_test.sql already exists.");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -154,7 +175,7 @@ describe("test new integration", () => {
       const exit = yield* Effect.exit(testNew(flags("nowrite")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("TestNewWriteError");
+        expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -165,8 +186,90 @@ describe("test new integration", () => {
       const exit = yield* Effect.exit(testNew(flags("nomkdir")));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("TestNewWriteError");
+        expect(Cause.pretty(exit.cause)).toContain("TestNewWriteError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("creates test files under subdirectories that stay inside the tests directory", () => {
+    const { layer, out, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* testNew(flags("sub/foo"));
+      yield* testNew(flags("sub/../foo"));
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "sub", "foo_test.sql"))).toBe(
+        true,
+      );
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests", "foo_test.sql"))).toBe(true);
+      expect(out.stdoutText).toContain("supabase/tests/sub/foo_test.sql");
+      expect(out.stdoutText).toContain("supabase/tests/foo_test.sql");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a name that escapes the tests directory and writes nothing", () => {
+    const { layer, telemetry, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // Escapes into a fresh directory inside this test's own temp root, so a guard
+      // that ran after makeDirectory would leave `nested/` behind.
+      const exit = yield* Effect.exit(testNew(flags("../../nested/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(TestNewInvalidNameError);
+          expect(failure.value.message).toContain("must not escape the supabase/tests directory");
+        }
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(yield* fs.exists(path.join(workdir, "nested"))).toBe(false);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests"))).toBe(false);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("follows an existing symlink to a shared test directory", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const testsDir = path.join(workdir, "supabase", "tests");
+      const sharedDir = path.join(workdir, "shared-tests");
+      yield* fs.makeDirectory(testsDir, { recursive: true });
+      yield* fs.makeDirectory(sharedDir);
+      yield* fs.symlink(sharedDir, path.join(testsDir, "shared"));
+
+      yield* testNew(flags("shared/pet"));
+
+      expect(yield* fs.readFileString(path.join(sharedDir, "pet_test.sql"))).toBe(PGTAP_TEMPLATE);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a name that escapes into a sibling directory sharing the tests prefix", () => {
+    const { layer, workdir } = setup();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const exit = yield* Effect.exit(testNew(flags("../tests2/x")));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* fs.exists(path.join(workdir, "supabase", "tests2"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sanitizes control characters in an invalid-name diagnostic", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const error = yield* testNew(flags("../../\u001b[2Jbad\r\n\t\u009bname")).pipe(Effect.flip);
+      expect(error).toBeInstanceOf(TestNewInvalidNameError);
+      expect(error.message).toContain('invalid test name: "../../[2Jbad name"');
     }).pipe(Effect.provide(layer));
   });
 

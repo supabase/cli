@@ -62,14 +62,9 @@ export const dbLintCommand = Command.make("lint", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below. --schema stays redacted: it's a string-slice flag,
-        // not a choice. --project-ref has no established telemetry-safety
-        // baseline either, so it stays redacted too.
+        // level/fail-on are auto-detected as safe (Flag.choice); --schema and
+        // --project-ref stay redacted (no established safelist).
         config,
-        // Telemetry reports flags under their canonical name even for the
-        // `-s` shorthand; map it so `db lint -s public` records the schema
-        // flag in telemetry.
         aliases: { s: "schema" },
       }),
       withJsonErrorHandling,

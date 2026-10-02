@@ -1,6 +1,6 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -15,8 +15,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { snippetsDownload } from "./download.handler.ts";
 
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
-// Raw 32-hex form of VALID_ID, uppercase — a form `uuid.Parse` accepts
-// (google/uuid v1.6.0) that the old handler rejected before this fix.
+// Raw 32-hex form of VALID_ID, uppercase.
 const UPPER_HEX32_ID = "0B0D48F6878B419088D72CA33ED800BC";
 const INVALID_ID = "not-a-uuid"; // length 10 → "invalid UUID length: 10"
 const TOO_LONG_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc-extra"; // length 42 (3 ungrouped: 32, 36, 38, 41)
@@ -40,10 +39,9 @@ const SNIPPET_RESPONSE: SnippetResponse = {
   content: { schema_version: "1.0.0", sql: SQL },
 };
 
-// `goOutput` is intentionally absent: the download handler does not consume
-// `OutputFlag` at all — it always prints the raw SQL unconditionally.
-// Threading a value through here would suggest a behaviour difference that
-// does not exist.
+// `goOutput` is absent: the download handler doesn't consume `OutputFlag` at
+// all — always prints raw SQL. Threading a value through would suggest a
+// behavior difference that doesn't exist.
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   status?: number;
@@ -72,6 +70,14 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
+function stringLeaves(value: unknown): Array<string> {
+  if (typeof value === "string") return [value];
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).flatMap(stringLeaves);
+  }
+  return [];
+}
+
 describe("snippets download integration", () => {
   it.live("prints raw SQL with a trailing newline in text mode", () => {
     const { layer, out } = setup();
@@ -81,10 +87,9 @@ describe("snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // `--output` is ignored entirely: no read of `OutputFlag`, no
-  // branching. This regression guards against a future refactor that adds
-  // branch-on-goOutput logic by mistake — if the flag is consumed, this
-  // assertion will diverge.
+  // `--output` is ignored entirely: no read of `OutputFlag`, no branching.
+  // Guards against a future refactor adding branch-on-goOutput logic by
+  // mistake — if the flag is consumed, this assertion diverges.
   it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockTelemetryStateTracked();
@@ -139,14 +144,11 @@ describe("snippets download integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("SnippetsInvalidIdError");
-          // `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
-          // (length 10), wrapped as `invalid snippet ID: %w`.
-          expect(dump).toContain("invalid snippet ID: invalid UUID length: 10");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SnippetsInvalidIdError");
+          expect(causeText).toContain("invalid snippet ID: invalid UUID length: 10");
         }
         expect(api.requests).toHaveLength(0);
-        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -161,8 +163,8 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID length: 42");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID length: 42");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -175,10 +177,17 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("invalid snippet ID: invalid UUID format");
-        // The offending value must NOT be embedded in the error message.
-        expect(dump).not.toContain(WRONG_FORMAT_ID);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("invalid snippet ID: invalid UUID format");
+        // The offending value must not be embedded anywhere in the failure. The rendered
+        // cause covers the message; `message` is a non-enumerable own prop, so the value
+        // scan below covers payload fields only. Keep both assertions.
+        expect(causeText).not.toContain(WRONG_FORMAT_ID);
+        const failure = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+        // Guard against a vacuous pass: the failure must be a typed error, not a defect
+        // or interruption, for the value scan below to mean anything.
+        expect(failure).toBeDefined();
+        expect(stringLeaves(failure).some((leaf) => leaf.includes(WRONG_FORMAT_ID))).toBe(false);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -225,9 +234,9 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsDownloadUnexpectedStatusError");
-        expect(dump).toContain("unexpected download snippet status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadUnexpectedStatusError");
+        expect(causeText).toContain("unexpected download snippet status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -240,9 +249,9 @@ describe("snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsDownloadNetworkError");
-        expect(dump).toContain("failed to download snippet");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsDownloadNetworkError");
+        expect(causeText).toContain("failed to download snippet");
       }
     }).pipe(Effect.provide(layer));
   });

@@ -232,10 +232,10 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"fd00::/8"}
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"10.0.0.0/8\"]")
-		assert.Contains(t, string(diff), "+db_allowed_cidrs = [\"192.168.1.0/24\"]")
-		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"2001:db8::/32\"]")
-		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = [\"fd00::/8\"]")
+		assert.Contains(t, string(diff), "-allowed_cidrs = [\"10.0.0.0/8\"]")
+		assert.Contains(t, string(diff), "+allowed_cidrs = [\"192.168.1.0/24\"]")
+		assert.Contains(t, string(diff), "-allowed_cidrs_v6 = [\"fd00::/8\"]")
+		assert.Contains(t, string(diff), "+allowed_cidrs_v6 = [\"2001:db8::/32\"]")
 	})
 
 	t.Run("no differences", func(t *testing.T) {
@@ -273,9 +273,9 @@ func TestNetworkRestrictionsDiff(t *testing.T) {
 		remoteConfig.Config.DbAllowedCidrsV6 = &[]string{"::/0"}
 		diff, err := local.DiffWithRemote(remoteConfig)
 		assert.NoError(t, err)
-		assert.Contains(t, string(diff), "-db_allowed_cidrs = [\"0.0.0.0/0\"]")
-		assert.Contains(t, string(diff), "+db_allowed_cidrs = []")
-		assert.Contains(t, string(diff), "-db_allowed_cidrs_v6 = [\"::/0\"]")
-		assert.Contains(t, string(diff), "+db_allowed_cidrs_v6 = []")
+		assert.Contains(t, string(diff), "-allowed_cidrs = [\"0.0.0.0/0\"]")
+		assert.Contains(t, string(diff), "+allowed_cidrs = []")
+		assert.Contains(t, string(diff), "-allowed_cidrs_v6 = [\"::/0\"]")
+		assert.Contains(t, string(diff), "+allowed_cidrs_v6 = []")
 	})
 }

@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -16,6 +13,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { projectsDelete } from "./delete.handler.ts";
@@ -90,11 +88,13 @@ function setup(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-function writeRefFile(content: string) {
-  const tempDir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), content);
-}
+const writeRefFile = Effect.fnUntraced(function* (content: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tempDir = path.join(tempRoot.current, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true });
+  yield* fs.writeFileString(path.join(tempDir, "project-ref"), content);
+});
 
 function hasMethod(
   api: { requests: ReadonlyArray<{ method: string }> },
@@ -128,7 +128,7 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsDeleteCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
       }
       expect(hasMethod(api, "DELETE")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -157,9 +157,8 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteRefRequiredError");
       }
-      // No ref resolved → no linked-project cache write.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -170,10 +169,8 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ProjectsDeleteCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ProjectsDeleteCancelledError");
       }
-      // Established non-TTY behavior: still prints the label and echoes the
-      // (empty) scanned line before the No default cancels.
       expect(out.stderrText).toContain("Do you want to delete project ");
       expect(out.stderrText).toContain("? This action is irreversible. [y/N] \n");
       expect(hasMethod(api, "DELETE")).toBe(false);
@@ -181,23 +178,16 @@ describe("projects delete integration", () => {
   });
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, api } = setup({ yes: false });
-    return Effect.gen(function* () {
-      yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      // Established `--yes` branch bytes.
-      expect(out.stderrText).toContain("Do you want to delete project ");
-      expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
-      expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        yield* projectsDelete({ ref: Option.some(VALID_REF) });
+        expect(out.stderrText).toContain("Do you want to delete project ");
+        expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
+        expect(hasMethod(api, "DELETE")).toBe(true);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
@@ -205,11 +195,22 @@ describe("projects delete integration", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "y\n" });
     return Effect.gen(function* () {
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      // The piped answer is echoed to stderr, matching the non-TTY prompt.
       expect(out.stderrText).toContain("[y/N] y\n");
       expect(hasMethod(api, "DELETE")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  for (const format of ["json", "stream-json"] as const) {
+    it.live(`${format} does not authorize deletion from piped y`, () => {
+      const { layer, out, api } = setup({ format, stdinIsTty: false, stdinInput: "y\n" });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(hasMethod(api, "DELETE")).toBe(false);
+        expect(out.stderrText).not.toContain("[y/N]");
+      }).pipe(Effect.provide(layer));
+    });
+  }
 
   it.live("non-TTY with piped `n` declines like Go", () => {
     const { layer, out, api } = setup({ stdinIsTty: false, stdinInput: "n\n" });
@@ -236,26 +237,34 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some("BADREF") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("removes the linked supabase/.temp dir when the deleted ref matches", () => {
-    writeRefFile(VALID_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeRefFile(VALID_REF);
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp"))).toBe(false);
+      const tempDirExists = yield* fs.exists(path.join(tempRoot.current, "supabase", ".temp"));
+      expect(tempDirExists).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("leaves the linked dir intact when the deleted ref differs", () => {
-    writeRefFile(OTHER_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeRefFile(OTHER_REF);
       yield* projectsDelete({ ref: Option.some(VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp", "project-ref"))).toBe(true);
+      const refFileExists = yield* fs.exists(
+        path.join(tempRoot.current, "supabase", ".temp", "project-ref"),
+      );
+      expect(refFileExists).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -265,9 +274,9 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsDeleteNotFoundError");
-        expect(json).toContain(`Project does not exist:${VALID_REF}`);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteNotFoundError");
+        expect(causeText).toContain(`Project does not exist:${VALID_REF}`);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -278,9 +287,9 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsDeleteUnexpectedStatusError");
-        expect(json).toContain(`Failed to delete project ${VALID_REF}`);
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteUnexpectedStatusError");
+        expect(causeText).toContain(`Failed to delete project ${VALID_REF}`);
       }
     }).pipe(Effect.provide(layer));
   });
@@ -291,9 +300,9 @@ describe("projects delete integration", () => {
       const exit = yield* Effect.exit(projectsDelete({ ref: Option.some(VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("ProjectsDeleteNetworkError");
-        expect(json).toContain("failed to delete project");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ProjectsDeleteNetworkError");
+        expect(causeText).toContain("failed to delete project");
       }
     }).pipe(Effect.provide(layer));
   });

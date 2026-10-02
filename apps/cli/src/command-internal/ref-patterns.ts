@@ -1,8 +1,6 @@
 /**
- * Service-free ref/branch identifier patterns, shared by the resolver
- * machinery and pure formatters alike — a formatter documented as "no
- * Effect, no services" must not pull a service-bearing module into its
- * dependency graph just to reach a regex.
+ * Service-free ref/branch identifier patterns. A formatter documented as "no Effect, no
+ * services" must not pull in a service-bearing module just to reach a regex.
  */
 
 /**

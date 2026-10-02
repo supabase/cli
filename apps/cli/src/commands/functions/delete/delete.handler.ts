@@ -28,9 +28,7 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
             }),
           ),
         ),
-      // Go: `fmt.Printf("Deleted Function %s from project %s.\n", utils.Aqua(slug),
-      // utils.Aqua(projectRef))` (`internal/functions/delete/delete.go:20`) —
-      // stdout-bound, so the TTY gate must check stdout.
+      // The "Deleted Function" line is stdout-bound, so the TTY gate must check stdout.
       styleIdentifier: (text) => aqua(text, process.stdout),
     },
   ).pipe(
@@ -38,7 +36,10 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
       Effect.suspend(() =>
         Option.match(resolvedProjectRef, {
           onNone: () => Effect.void,
-          onSome: (ref) => linkedProjectCache.cache(ref),
+          onSome: (ref) =>
+            Effect.annotateCurrentSpan("project.ref", ref).pipe(
+              Effect.andThen(linkedProjectCache.cache(ref)),
+            ),
         }),
       ),
     ),

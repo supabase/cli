@@ -1,9 +1,15 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { CliOutput, Command } from "effect/unstable/cli";
 
-import { mockAnalytics, mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockStdin,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../../tests/helpers/mocks.ts";
 import { GLOBAL_FLAGS, YesFlag } from "../../../command-internal/global-flags.ts";
 import {
   VALID_REF,
@@ -14,10 +20,13 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { branchesCreateCommand, type BranchesCreateFlags } from "./create.command.ts";
 import { branchesCreate } from "./create.handler.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
+import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -216,58 +225,34 @@ describe("branches create integration", () => {
   });
 
   it.live("reports a missing name before contacting the API outside a git repository", () => {
-    const previousHead = process.env["GITHUB_HEAD_REF"];
-    delete process.env["GITHUB_HEAD_REF"];
     const { layer, api } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* branchesCreate(baseFlags).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("BranchesBranchNameEmptyError");
-        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
-          error_kind: "user_actionable",
-          error_category: "invalid_input",
-          suggestion_type: "provide_flags",
-        });
-      }
-      expect(api.requests).toHaveLength(0);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousHead === undefined) delete process.env["GITHUB_HEAD_REF"];
-          else process.env["GITHUB_HEAD_REF"] = previousHead;
-        }),
-      ),
-      Effect.provide(layer),
+    return withConfigEnv(
+      { GITHUB_HEAD_REF: "" },
+      Effect.gen(function* () {
+        const exit = yield* branchesCreate(baseFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("BranchesBranchNameEmptyError");
+          expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+            error_kind: "user_actionable",
+            error_category: "invalid_input",
+            suggestion_type: "provide_flags",
+          });
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer)),
     );
   });
 
-  // ---------------------------------------------------------------------------
-  // Git-branch auto-name confirmation — Go `create.go:17-28` routes it through
-  // `PromptYesNo(title, true)` (`console.go:64-82`). `GITHUB_HEAD_REF` drives
-  // `detectGitBranch` deterministically (its highest-priority source).
-  // ---------------------------------------------------------------------------
-
-  const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") => {
-    const prevHead = process.env["GITHUB_HEAD_REF"];
-    process.env["GITHUB_HEAD_REF"] = branch;
-    return effect.pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevHead === undefined) delete process.env["GITHUB_HEAD_REF"];
-          else process.env["GITHUB_HEAD_REF"] = prevHead;
-        }),
-      ),
-    );
-  };
+  // `GITHUB_HEAD_REF` drives `detectGitBranch` deterministically (its highest-priority source).
+  const withGitBranch = <A, E, R>(effect: Effect.Effect<A, E, R>, branch = "feat-y") =>
+    withConfigEnv({ GITHUB_HEAD_REF: branch }, effect);
 
   it.live("--yes auto-confirms the git-branch name with the [Y/n] y echo", () => {
     const { layer, out, api } = setup({ yes: true, stdinIsTty: true });
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        // Established behavior: the `--yes` branch echoes `<title> [Y/n] y`
-        // to stderr instead of blocking the TTY prompt.
         expect(out.stderrText).toContain("Do you want to create a branch named ");
         expect(out.stderrText).toContain("? [Y/n] y\n");
         expect(api.requests[0]?.body).toMatchObject({
@@ -279,22 +264,16 @@ describe("branches create integration", () => {
   });
 
   it.live("SUPABASE_YES=1 auto-confirms the git-branch name like --yes", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, api } = setup({ stdinIsTty: true });
     return withGitBranch(
-      Effect.gen(function* () {
-        yield* branchesCreate(baseFlags);
-        expect(out.stderrText).toContain("? [Y/n] y\n");
-        expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_YES"];
-            else process.env["SUPABASE_YES"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
+      withEnvVar(
+        "SUPABASE_YES",
+        "1",
+        Effect.gen(function* () {
+          yield* branchesCreate(baseFlags);
+          expect(out.stderrText).toContain("? [Y/n] y\n");
+          expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
+        }).pipe(Effect.provide(layer)),
       ),
     );
   });
@@ -306,9 +285,8 @@ describe("branches create integration", () => {
         const exit = yield* Effect.exit(branchesCreate(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("BranchesCreateCancelledError");
+          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
         }
-        // The piped answer is echoed to stderr, matching the non-TTY prompt.
         expect(out.stderrText).toContain("? [Y/n] n\n");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
@@ -320,7 +298,6 @@ describe("branches create integration", () => {
     return withGitBranch(
       Effect.gen(function* () {
         yield* branchesCreate(baseFlags);
-        // Label printed, empty scan echoed, true default wins (`console.go:64-102`).
         expect(out.stderrText).toContain("? [Y/n] \n");
         expect(api.requests[0]?.body).toMatchObject({ branch_name: "feat-y" });
       }).pipe(Effect.provide(layer)),
@@ -334,7 +311,7 @@ describe("branches create integration", () => {
         const exit = yield* Effect.exit(branchesCreate(baseFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("BranchesCreateCancelledError");
+          expect(Cause.pretty(exit.cause)).toContain("BranchesCreateCancelledError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
@@ -368,9 +345,9 @@ describe("branches create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesCreateNetworkError");
-        expect(json).toContain("failed to create preview branch");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesCreateNetworkError");
+        expect(causeText).toContain("failed to create preview branch");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -383,9 +360,9 @@ describe("branches create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesCreateUnexpectedStatusError");
-        expect(json).toContain("unexpected create branch status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesCreateUnexpectedStatusError");
+        expect(causeText).toContain("unexpected create branch status 500");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -458,14 +435,17 @@ describe("branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // The established --size enum is an 18-value list that does not include
-  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
-  // previously listed "nano" as a valid choice, silently succeeding where
-  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([branchesCreateCommand]),
       Command.withGlobalFlags(GLOBAL_FLAGS),
+    );
+
+    const { layer } = setup();
+    const commandLayer = Layer.mergeAll(
+      layer,
+      CliOutput.layer(textCliOutputFormatter()),
+      mockTelemetryRuntime(),
     );
 
     return Effect.gen(function* () {
@@ -476,13 +456,12 @@ describe("branches create integration", () => {
       if (Exit.isFailure(exit)) {
         expect(rejectsInvalidSizeChoice(Cause.squash(exit.cause))).toBe(true);
       }
-    }) as Effect.Effect<void>;
+    }).pipe(Effect.provide(commandLayer));
   });
 });
 
-// Distinguishes "the --size flag itself was rejected at parse time" from any
-// other failure (e.g. a missing runtime service in this minimal test setup),
-// so the regression test above can't pass for the wrong reason.
+// Distinguishes "the --size flag itself was rejected at parse time" from any other failure, so
+// the test above can't pass for the wrong reason.
 function rejectsInvalidSizeChoice(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("errors" in error)) return false;
   const { errors } = error;

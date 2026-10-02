@@ -65,18 +65,17 @@ Same structured `applied` result delivered as an NDJSON `result` event.
   a non-linked target).
 - `--include-all` applies all migrations not found on the remote history table.
 - Pipeline-incompatible statements (`CREATE [UNIQUE] INDEX CONCURRENTLY`,
-  `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
-  `CLUSTER`, `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`,
-  `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`, `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
-  `ALTER DATABASE … SET TABLESPACE`,
-  `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
-  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
-  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`, and
-  `REFRESH MATERIALIZED VIEW CONCURRENTLY`) run standalone outside
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`) run standalone outside
   the migration's transaction batch — they fail with SQLSTATE 25001 inside one. The
   history insert stays in the final batch, so a mid-file failure leaves earlier,
   already-committed batches applied with **no history row**; a re-run replays the file
-  from the top. A failed batch's transaction is rolled back (bounded) before its
-  connection is reused. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
+  from the top. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
   Intentional fix for supabase/cli#5139, adopted into TS in PR supabase/cli#5671
   (landed on develop as `b48fad60`).
+
+- Transaction diagnostics follow [db push's migration guidance](../../db/push/SIDE_EFFECTS.md).
+  SQLSTATE 25P01 errors recommend authored `BEGIN; ... COMMIT;`; SQLSTATE 25001
+  errors recommend a separate migration starting with `-- pg-delta: transaction=false`
+  without `BEGIN`/`COMMIT`. Bare `SET LOCAL` and automatic splitting emit per-file
+  warnings. Authored boundaries and directive-marked files keep their existing
+  execution and history behavior; warnings preserve machine-readable stdout.

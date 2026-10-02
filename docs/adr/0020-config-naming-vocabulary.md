@@ -17,7 +17,7 @@ the rename CLI-2235 executed is what freed one.
 That third thing is a hosted-project subset. `config diff` (CLI-2156), `config pull` (CLI-2064), and
 Studio's own drift detection all need a shape that describes what a Supabase project looks like on
 the platform — a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`,
-`workers`, `experimental`), never the full document with local-only sections stripped out and
+`compute`, `experimental`), never the full document with local-only sections stripped out and
 defaults applied. CLI-2230 introduced that mapping (`toProjectConfig`, exported from
 `@supabase/config`'s root entrypoint; PR supabase/cli#6339). Studio is already an external
 consumer: supabase/supabase#48906 builds Studio's config-drift page against the shapes this
@@ -38,7 +38,7 @@ and its CLI consumer:
 | Name            | Meaning                                                                                                                                                                                                                                                  | Owner              |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
 | `CliConfig`     | The full config-file document (`supabase/config.toml`/`.json`) — the local superset, including local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …).                                                                     | `@supabase/config` |
-| `ProjectConfig` | The hosted-project subset: a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`) describing what a Supabase project looks like on the platform. Introduced by CLI-2230 (PR supabase/cli#6339). | `@supabase/config` |
+| `ProjectConfig` | The hosted-project subset: a sparse overlay of the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`, `compute`, `experimental`) describing what a Supabase project looks like on the platform. Introduced by CLI-2230 (PR supabase/cli#6339). | `@supabase/config` |
 | `CliSettings`   | The CLI's own runtime settings — platform `apiUrl`, access token, telemetry flags, `supabaseHome`, ….                                                                                                                                                    | `apps/cli`         |
 
 Prefix rule: `Cli*` names the local checkout side — what the CLI reads, writes, or resolves about

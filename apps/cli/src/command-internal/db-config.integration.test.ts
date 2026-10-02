@@ -1,9 +1,29 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { NetConnectOpts } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
+import { vi } from "vitest";
+
+// Keep reserved `.invalid` fixture hosts from depending on ambient DNS/TCP timing.
+vi.mock("node:net", async (importOriginal) => {
+  const net = await importOriginal<typeof import("node:net")>();
+  return {
+    ...net,
+    connect: (options: NetConnectOpts) => {
+      const host = "host" in options ? options.host : undefined;
+      if (typeof host !== "string" || !host.startsWith("db.") || !host.endsWith(".invalid")) {
+        return net.connect(options);
+      }
+      const socket = new net.Socket();
+      queueMicrotask(() => socket.emit("error", new Error("fixture connection refused")));
+      return socket;
+    },
+  };
+});
 
 import {
   mockAnalytics,
@@ -22,10 +42,12 @@ import {
 } from "./global-flags.ts";
 import { DebugLogger } from "./debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
-import { dbConfigLayer } from "./db-config.layer.ts";
+import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { DbConnection, type DbSession, type PgConnInput } from "./db-connection.service.ts";
+import { StackApi } from "./stack-api.ts";
+import { stackBackendLayer } from "./stack-backend.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -46,6 +68,8 @@ function buildResolver(
     readonly projectHost?: string;
     readonly poolerHost?: string;
     readonly dbConnection?: Layer.Layer<DbConnection>;
+    readonly configEnv?: Record<string, string | undefined>;
+    readonly stackApi?: Layer.Layer<StackApi>;
   } = {},
 ) {
   const deps = Layer.mergeAll(
@@ -75,8 +99,16 @@ function buildResolver(
       Layer.provide(BunServices.layer),
     ),
     BunServices.layer,
+    ConfigProvider.layer(
+      ConfigProvider.fromEnvRecord(
+        opts.configEnv ?? Object.fromEntries(Object.entries(process.env)),
+        { preserveEmptyStrings: true },
+      ),
+    ),
   );
-  return dbConfigLayer.pipe(Layer.provide(deps));
+  return opts.stackApi === undefined
+    ? dbConfigLayer.pipe(Layer.provide(deps))
+    : dbConfigResolverLayer.pipe(Layer.provide(Layer.merge(deps, opts.stackApi)));
 }
 
 function withWorkdir(toml?: string) {
@@ -96,7 +128,13 @@ const resolve = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolve(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(opts?.configEnv ?? process.env, { preserveEmptyStrings: true }),
+    ),
+  );
 
 const resolvePoolerFallback = (
   workdir: string,
@@ -106,7 +144,49 @@ const resolvePoolerFallback = (
   Effect.gen(function* () {
     const resolver = yield* DbConfigResolver;
     return yield* resolver.resolvePoolerFallback(flags);
-  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+  }).pipe(
+    Effect.provide(buildResolver(workdir, opts)),
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+    ),
+  );
+
+let savedResolverConfigEnv:
+  | {
+      readonly projectId: string | undefined;
+      readonly profile: string | undefined;
+      readonly home: string | undefined;
+      readonly workdir: string | undefined;
+    }
+  | undefined;
+
+beforeEach(() => {
+  savedResolverConfigEnv = {
+    projectId: process.env["SUPABASE_PROJECT_ID"],
+    profile: process.env["SUPABASE_PROFILE"],
+    home: process.env["SUPABASE_HOME"],
+    workdir: process.env["SUPABASE_WORKDIR"],
+  };
+  delete process.env["SUPABASE_PROJECT_ID"];
+  delete process.env["SUPABASE_PROFILE"];
+  delete process.env["SUPABASE_HOME"];
+  delete process.env["SUPABASE_WORKDIR"];
+});
+
+afterEach(() => {
+  const saved = savedResolverConfigEnv;
+  if (saved === undefined) return;
+  if (saved.projectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+  else process.env["SUPABASE_PROJECT_ID"] = saved.projectId;
+  if (saved.profile === undefined) delete process.env["SUPABASE_PROFILE"];
+  else process.env["SUPABASE_PROFILE"] = saved.profile;
+  if (saved.home === undefined) delete process.env["SUPABASE_HOME"];
+  else process.env["SUPABASE_HOME"] = saved.home;
+  if (saved.workdir === undefined) delete process.env["SUPABASE_WORKDIR"];
+  else process.env["SUPABASE_WORKDIR"] = saved.workdir;
+  savedResolverConfigEnv = undefined;
+});
 
 const localFlags: DbConfigFlags = {
   dbUrl: Option.none(),
@@ -154,8 +234,8 @@ describe("dbConfigResolver (local + db-url)", () => {
             user: "postgres",
             password: "hunter2",
             database: "postgres",
-            // The resolver attaches the connect-failure suggestion context (Go's
-            // ambient CurrentProfile) to every resolved connection.
+            // The resolver attaches the connect-failure suggestion context to every resolved
+            // connection.
             suggestionContext: {
               dashboardUrl: "https://supabase.com/dashboard",
               profileName: "supabase",
@@ -169,10 +249,10 @@ describe("dbConfigResolver (local + db-url)", () => {
   });
 
   it.effect("local mode: honors SUPABASE_SERVICES_HOSTNAME for the connection host", () => {
-    // Dev-container / remote-Docker parity (Go's utils.Config.Hostname).
-    process.env["SUPABASE_SERVICES_HOSTNAME"] = "host.docker.internal";
     const dir = withWorkdir();
-    return resolve(dir, localFlags).pipe(
+    return resolve(dir, localFlags, {
+      configEnv: { SUPABASE_SERVICES_HOSTNAME: "host.docker.internal" },
+    }).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
           expect(r.conn.host).toBe("host.docker.internal");
@@ -232,9 +312,23 @@ describe("dbConfigResolver (local + db-url)", () => {
     );
   });
 
+  it.effect("db-url mode: a multi-host url stays remote even when its primary is local", () => {
+    const dir = withWorkdir();
+    return resolve(
+      dir,
+      dbUrlFlags("postgres://postgres:pw@127.0.0.1:54322,db.example.com:5432/postgres"),
+    ).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+          expect(r.isLocal).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("db-url mode: a passwordless local url fills the password from config", () => {
-    // Go's ConnectLocalPostgres fills an empty password from `[db].password`
-    // for local connections, so a passwordless local DSN still authenticates.
     const dir = withWorkdir(["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"));
     return resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres")).pipe(
       Effect.tap((r) =>
@@ -276,8 +370,6 @@ describe("dbConfigResolver (local + db-url)", () => {
     return resolve(dir, dbUrlFlags(url)).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
-          // Go's `pgconn.ParseConfig` keeps both in `pgconn.Config`; the URL
-          // parser must not discard the query string.
           expect(r.conn.sslmode).toBe("verify-full");
           expect(r.conn.options).toBe("reference=abcdefghijklmnop");
           rmSync(dir, { recursive: true, force: true });
@@ -291,7 +383,6 @@ describe("dbConfigResolver (local + db-url)", () => {
     return resolve(dir, dbUrlFlags("host=pg.example.com port=6543 user=admin dbname=app")).pipe(
       Effect.tap((r) =>
         Effect.sync(() => {
-          // Go's `pgconn.ParseConfig` accepts keyword/value DSNs, not just URLs.
           expect(r.conn.host).toBe("pg.example.com");
           expect(r.conn.port).toBe(6543);
           expect(r.conn.user).toBe("admin");
@@ -328,16 +419,202 @@ describe("dbConfigResolver (local + db-url)", () => {
   );
 });
 
+describe("dbConfigResolver (db-url under the stack backend)", () => {
+  const STACK_SQL_PORT = 54329;
+  const stackUrl = (port: number) =>
+    `postgresql://supabase_admin:postgres@127.0.0.1:${port}/postgres?connect_timeout=10`;
+
+  type StackState = "running" | "stopped" | "unregistered";
+
+  const projectStackApi = (root: string, state: StackState) => {
+    const unused = Effect.die("unused by the resolver");
+    const database: DatabaseInstance = {
+      id: "database-primary",
+      service: "database",
+      start: unused,
+      ready: unused,
+      stop: unused,
+      restart: () => unused,
+      destroy: unused,
+      prepare: unused,
+      status: Effect.succeed({
+        id: "database-primary",
+        endpoints:
+          state === "running"
+            ? [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_SQL_PORT }]
+            : [],
+        config: {
+          service: "database",
+          config: {
+            version: "17.6.1.173",
+            databasePassword: Redacted.make("stack-password"),
+            jwtSecret: Redacted.make("secret"),
+            jwtExpiry: 3600,
+          },
+          endpoints: {},
+        },
+        lifecycle: state === "running" ? "running" : "stopped",
+        health: state === "running" ? "healthy" : undefined,
+        error: undefined,
+        cleanupError: undefined,
+        exit: undefined,
+        currentOperation: undefined,
+        launchId: undefined,
+        intentRevision: 0,
+        wakeEnabled: state === "running",
+        registered: true,
+      }),
+      followStatus: Stream.empty,
+      logs: Stream.empty,
+      credentials: () => unused,
+      saveSnapshot: () => unused,
+      restoreSnapshot: () => unused,
+      resetData: unused,
+    };
+    const stack: Stack = {
+      id: "b".repeat(64),
+      services: { create: () => unused, get: () => Effect.succeed(database), list: unused },
+      credentials: { get: unused },
+      composition: {
+        plan: () => unused,
+        describe: Effect.succeed({
+          members: [{ id: database.id, activation: "eager" }],
+          dependencies: [],
+        }),
+        supabase: () => unused,
+        configure: () => unused,
+        start: unused,
+        stop: unused,
+        restart: unused,
+      },
+      stop: unused,
+      destroy: unused,
+      commands: { run: () => unused },
+    };
+    return Layer.succeed(StackApi, {
+      create: () => unused,
+      open: () => Effect.succeed(stack),
+      discover: () => unused,
+      find: () =>
+        Effect.succeed(
+          state !== "unregistered"
+            ? Option.some({
+                definition: {
+                  id: stack.id,
+                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  runtime: "native" as const,
+                  instances: [],
+                  lifetime: "detached" as const,
+                  composition: { members: [], dependencies: [] },
+                  ports: [],
+                },
+                host: undefined,
+              })
+            : Option.none(),
+        ),
+    });
+  };
+
+  const resolveOnStack = (
+    dir: string,
+    url: string,
+    stackApi: Layer.Layer<StackApi> = projectStackApi(dir, "running"),
+  ) =>
+    resolve(dir, dbUrlFlags(url), { stackApi }).pipe(
+      Effect.provide(stackBackendLayer("stack")),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+
+  it.effect("treats the url printed by `stack status --env` as the local database", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(withWorkdir(), stackUrl(STACK_SQL_PORT));
+      expect(resolved.isLocal).toBe(true);
+    }),
+  );
+
+  it.effect("fills a passwordless stack url from the stack's credentials, not [db].password", () =>
+    Effect.gen(function* () {
+      const dir = withWorkdir(["[db]", 'password = "config-password"', ""].join("\n"));
+      const resolved = yield* resolveOnStack(
+        dir,
+        `postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`,
+      );
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }),
+  );
+
+  it.effect("keeps a loopback url on another port remote so it still requires TLS", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(withWorkdir(), stackUrl(STACK_SQL_PORT + 1));
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+
+  it.effect("fills from the stack's credentials when the stack port is also [db].port", () =>
+    Effect.gen(function* () {
+      const dir = withWorkdir(
+        ["[db]", `port = ${STACK_SQL_PORT}`, 'password = "config-password"', ""].join("\n"),
+      );
+      const resolved = yield* resolveOnStack(
+        dir,
+        `postgresql://postgres@127.0.0.1:${STACK_SQL_PORT}/postgres`,
+      );
+      expect(resolved.isLocal).toBe(true);
+      expect(resolved.conn.password).toBe("stack-password");
+    }),
+  );
+
+  for (const state of ["unregistered", "stopped"] as const) {
+    it.effect(`resolves the stack url as remote when the project stack is ${state}`, () =>
+      Effect.gen(function* () {
+        const dir = withWorkdir();
+        const resolved = yield* resolveOnStack(
+          dir,
+          stackUrl(STACK_SQL_PORT),
+          projectStackApi(dir, state),
+        );
+        expect(resolved.isLocal).toBe(false);
+      }),
+    );
+  }
+
+  it.effect("keeps a multi-host url remote even when its primary is the stack endpoint", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@127.0.0.1:${STACK_SQL_PORT},db.example.com:5432/postgres`,
+      );
+      expect(resolved.conn.fallbacks).toEqual([{ host: "db.example.com", port: 5432 }]);
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+
+  it.effect("does not consult the stack for a non-loopback host", () =>
+    Effect.gen(function* () {
+      const untouchedStackApi = Layer.succeed(StackApi, {
+        create: () => Effect.die("unexpected stack create"),
+        open: () => Effect.die("unexpected stack open"),
+        discover: () => Effect.die("unexpected stack discover"),
+        find: () => Effect.die("unexpected stack lookup"),
+      });
+      const resolved = yield* resolveOnStack(
+        withWorkdir(),
+        `postgresql://postgres:pw@db.example.com:${STACK_SQL_PORT}/postgres`,
+        untouchedStackApi,
+      );
+      expect(resolved.isLocal).toBe(false);
+    }),
+  );
+});
+
 describe("dbConfigResolver (linked config ordering)", () => {
   it.effect(
     "validates the ref-merged config before any network work (Go ParseDatabaseConfig order)",
     () => {
-      // `ParseDatabaseConfig` runs LoadProjectRef → LoadConfig → NewDbConfigWithPassword,
-      // so an invalid `[remotes.<ref>]`-merged db.major_version
-      // fails as a config error before the TCP probe / pooler / Management API. The
-      // ref is sourced from the config's top-level project_id; the matching remote
-      // block sets an unsupported major_version. If validation happened after the
-      // connection work, mockDbConnection.connect() would die first.
+      // The ref is sourced from the config's top-level project_id; the matching remote block
+      // sets an unsupported major_version. If validation happened after the connection work,
+      // `mockDbConnection.connect()` would die first.
       const ref = "abcdefghijklmnopqrst";
       const dir = withWorkdir(
         [
@@ -352,8 +629,7 @@ describe("dbConfigResolver (linked config ordering)", () => {
         ].join("\n"),
       );
       // The linked ref is sourced via the project-ref resolver's env fallback.
-      process.env["SUPABASE_PROJECT_ID"] = ref;
-      return resolve(dir, linkedFlags).pipe(
+      return resolve(dir, linkedFlags, { configEnv: { SUPABASE_PROJECT_ID: ref } }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
@@ -363,7 +639,10 @@ describe("dbConfigResolver (linked config ordering)", () => {
                 "Failed reading config: Invalid db.major_version: 99.",
               );
             }
-            delete process.env["SUPABASE_PROJECT_ID"];
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -372,10 +651,8 @@ describe("dbConfigResolver (linked config ordering)", () => {
   );
 
   it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // `ParseDatabaseConfig`'s linked branch uses the hard LoadProjectRef,
-    // which returns `failed to load project ref` on a real `.temp/project-ref` read error
-    // rather than masking it as not-linked. With no project_id /
-    // env and the ref file seeded as a DIRECTORY, the resolver must surface that.
+    // The ref file is seeded as a directory (not a file), with no project_id or env fallback,
+    // to force a real read error.
     const dir = withWorkdir();
     mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });
     return resolve(dir, linkedFlags).pipe(
@@ -831,11 +1108,10 @@ describe("dbConfigResolver (linked config ordering)", () => {
   });
 });
 
-// CLI P1 fix (codex review, db-config.types.ts:81): an explicit
-// `--project-ref`/`linkedProjectRef` on a NON-ad-hoc `db` command must
-// independently unlock the Management API pooler fetch on an IPv4-only
-// network — it must not stay confined to the workdir's saved
-// `.temp/pooler-url` the way the plain `--linked` default path is.
+// An explicit `--project-ref`/`linkedProjectRef` on a non-ad-hoc `db` command must
+// independently unlock the Management API pooler fetch on an IPv4-only network — it must not
+// stay confined to the workdir's saved `.temp/pooler-url` the way the plain `--linked` default
+// path is.
 describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProjectRef)", () => {
   it.effect(
     "an unlinked workdir + explicit --project-ref resolves via the API pooler config, honoring the ambient password with no login-role mint",
@@ -917,8 +1193,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               },
             });
             expect(r.ref).toEqual(Option.some(ref));
-            // Only the pooler-config GET fires — no `cli/login-role` POST, since
-            // the ambient password takes precedence once the pooler is resolved.
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
             ]);
@@ -1028,9 +1302,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
               },
             });
             expect(r.ref).toEqual(Option.some(targetRef));
-            // The saved URL is read (not skipped — `ignoreSavedUrl` stays tied to
-            // `adHocProjectRef` only) but rejected by the tenant-ref check, so a
-            // second-chance API fetch for `targetRef` follows.
             expect(requests).toEqual([
               { method: "GET", path: `/v1/projects/${targetRef}/config/database/pooler` },
             ]);
@@ -1053,10 +1324,6 @@ describe("dbConfigResolver (--project-ref pooler fetch decoupled from adHocProje
   it.effect(
     "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
     () => {
-      // Pins the untouched default path: `linkedProjectRef` is absent, so
-      // `fetchPoolerFromApi` stays false and an unreachable direct host with no
-      // saved `.temp/pooler-url` still fails with Go's IPv6 suggestion — the fix
-      // only widens the explicit `--project-ref` path, not this default one.
       const ref = "plainlinkedrefabcdef";
       const dir = withWorkdir(
         [`project_id = "${ref}"`, "[db]", "major_version = 15", ""].join("\n"),

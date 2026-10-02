@@ -12,10 +12,9 @@ const mapDeleteError = mapDomainsHttpError("delete");
 
 const DELETE_SUCCESS_MESSAGE = "Deleted custom hostname config successfully.";
 
-// `flags.includeRawOutput` is intentionally unread: `--include-raw-output`
-// is a persistent flag on the `domains` group, so it is accepted on `delete`
-// too, but ignored (delete has no response body to encode). The flag is
-// inert here, asserted by the "ignores --include-raw-output" integration test.
+// `flags.includeRawOutput` is unread: `--include-raw-output` is a persistent flag on the
+// `domains` group, so it's accepted on `delete` too, but ignored — delete has no response
+// body to encode. Asserted by the "ignores --include-raw-output" integration test.
 export const domainsDelete = Effect.fn("domains.delete")(function* (flags: DomainsDeleteFlags) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
@@ -30,13 +29,13 @@ export const domainsDelete = Effect.fn("domains.delete")(function* (flags: Domai
       output.format === "text"
         ? yield* output.task("Deleting custom hostname config...")
         : undefined;
-    // Delete returns an empty (void) body; Go ignores `-o` here and only prints
-    // the success line to stderr.
+    // Delete returns an empty (void) body, so `-o` has nothing to encode; only the success
+    // line prints to stderr.
     yield* api.v1.deleteHostnameConfig({ ref }).pipe(
       Effect.tapError(() => deleting?.fail() ?? Effect.void),
       Effect.catch(mapDeleteError),
     );
-    yield* deleting?.clear() ?? Effect.void;
+    yield* deleting?.clear ?? Effect.void;
 
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success(DELETE_SUCCESS_MESSAGE, {});

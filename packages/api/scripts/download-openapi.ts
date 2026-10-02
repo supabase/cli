@@ -217,13 +217,10 @@ export function applyOpenApiOverrides(
       continue;
     }
     if (override.op === "remove") {
-      // Deliberate deviation from RFC 6902 (mirroring the existing "add"
-      // deviation below, which throws when the target key already exists):
-      // silently ignore removal of a pointer that doesn't exist. This file
-      // applies to documents that differ between environments — staging's
-      // /api/v2-json is currently served by two backend variants that
-      // disagree about whether the webhook paths exist — so a strict
-      // remove would fail on most staging runs.
+      // Silently ignores removing a pointer that doesn't exist (a deviation from
+      // RFC 6902): staging's /api/v2-json is served by two backend variants that
+      // disagree about whether the webhook paths exist, so a strict remove would
+      // fail on most staging runs.
       removeJsonPointerValue(document, override.path);
       continue;
     }
@@ -390,12 +387,9 @@ export function mergeOpenApiDocuments(
     }
   }
 
-  // The merged document carries only the keys the generator consumes.
-  // Upstream extras (`servers`, `tags`, `components.securitySchemes`, …)
-  // must not reach the snapshot even transiently: generate.ts rewrites the
-  // file without them, so if they were written here a crash between the two
-  // steps would leave a plausible-looking openapi.json that disagrees with
-  // every healthy regeneration.
+  // Carries only the keys the generator consumes; upstream extras (`servers`,
+  // `tags`, `components.securitySchemes`, …) are dropped so a crash before
+  // generate.ts finishes can't leave a stale-looking but inconsistent openapi.json.
   return {
     openapi: openapiVersion,
     info: { title: "Supabase API", version: infoVersion },
@@ -404,10 +398,9 @@ export function mergeOpenApiDocuments(
   };
 }
 
-// Runs AFTER overrides are applied — this ordering is load-bearing. Prod's
-// v2 document currently has 20 webhook operations sharing just 2 duplicated
-// operationIds, and the overrides remove those paths. Validating before
-// overrides were applied would abort every production regeneration.
+// Must run after overrides are applied: some upstream webhook operations share
+// duplicate operationIds that the overrides remove, so validating first would
+// abort regeneration.
 export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
   const operationClaims = new Map<string, Array<string>>();
 
@@ -461,9 +454,8 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
 
 export async function downloadOpenApiSpec(): Promise<void> {
   const envBaseUrl = process.env.SUPABASE_API_URL;
-  // The sidecar is consulted only when the environment does not override it,
-  // so an explicit SUPABASE_API_URL works even when the pin is absent or
-  // malformed.
+  // The pin is consulted only when the environment doesn't override it, so an
+  // explicit SUPABASE_API_URL works even when the pin is absent or malformed.
   const pinnedBaseUrl = envBaseUrl === undefined ? await loadPinnedBaseUrl() : undefined;
   const baseUrl = resolveOpenApiBaseUrl({ envBaseUrl, pinnedBaseUrl });
   console.log(`Resolved OpenAPI base URL: ${baseUrl}`);
@@ -476,10 +468,9 @@ export async function downloadOpenApiSpec(): Promise<void> {
     console.log(`Fetching ${version} OpenAPI document from ${url}`);
     const response = await fetch(url);
 
-    // Hard-fail on a missing document instead of tolerating it: a 404 on
-    // /api/v2-json would silently delete the whole v2 namespace from the
-    // generated client, and the hourly regeneration sync would auto-merge
-    // that deletion without anyone noticing.
+    // Hard-fails on a missing document instead of tolerating it: a 404 would
+    // silently drop the whole v2 namespace, and the hourly regeneration sync
+    // would auto-merge that deletion unnoticed.
     if (!response.ok) {
       throw new Error(`Failed to download OpenAPI spec from ${url}: ${response.status}`);
     }

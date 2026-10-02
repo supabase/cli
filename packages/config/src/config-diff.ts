@@ -17,8 +17,8 @@ import { getDefaultCliConfig } from "./sparse.ts";
  * response, resolving the target, and rendering output are the caller's job
  * (`supabase config diff`, and `config pull` after it). See ADR 0022.
  *
- * Both operands are convergence projections from CLI-2230's normalizers (ADR
- * 0021): the local operand is derived here from the loaded `{config,
+ * Both operands are convergence projections from this package's normalizers
+ * (ADR 0021): the local operand is derived here from the loaded `{config,
  * document}` pair via `fromConfigDocument` (raw-presence-masked,
  * canonicalized, secrets omitted), and the caller builds `remote` with
  * `fromApiProjectConfig(response)`. The comparable surface is the mapping
@@ -87,56 +87,32 @@ export interface ConfigChangeSet {
   /**
    * Comparable non-secret paths the file declares but the local projection
    * dropped — declared state no actor's write path can express, because the
-   * feature it belongs to is switched off (ADR 0021's CLI-2314 addendum:
-   * siblings of a disabled container's sentinel — e.g.
-   * `auth.oauth_server.authorization_url_path`, disabled
-   * `storage.analytics`/`storage.vector`'s quota fields — an unselected SMS
-   * provider's credentials, …). Not every reason a path lands here is
-   * self-contained, either: `auth.rate_limit.email_sent` can be pruned
-   * because a DIFFERENT path, `auth.email.smtp`, is undeclared. These were
-   * never compared on the local side, so — like `masked` — a clean `changes`
-   * list is only a partial claim; callers must surface this rather than let
-   * a declared value silently vanish from the comparison.
+   * owning feature is switched off (see ADR 0021's addendum for examples). The
+   * reason isn't always self-contained: a path can be pruned because a
+   * different, sibling path is undeclared. Never compared on the local side,
+   * so — like `masked` — a clean `changes` list is only a partial claim;
+   * callers must surface this.
    */
   readonly unmanaged: ReadonlyArray<ReadonlyArray<string>>;
   readonly counts: ConfigChangeCounts;
   /**
    * Which {@link ConfigAbsencePolicy} `options.local` selected for this call —
    * `"absent-is-hands-off"` when `options.local.document` was supplied,
-   * `"absent-is-default"` when it was omitted. See that type's docstring for
-   * the danger matrix this distinction protects against, and
-   * {@link DiffProjectConfigOptions.local}'s docstring for the specific
-   * classification cliff omitting `document` falls off.
+   * `"absent-is-default"` otherwise. See that type's docstring for the danger
+   * matrix this protects against, and {@link DiffProjectConfigOptions.local}
+   * for the classification cliff omitting `document` falls off.
    */
   readonly absencePolicy: ConfigAbsencePolicy;
 }
 
 export interface DiffProjectConfigOptions {
   /**
-   * The loaded local config: the `{config, document}` pair
-   * `fromConfigDocument` accepts (pass the loaded config WITH its raw
-   * document so raw-presence masking applies — ADR 0021's remedy), plus the
-   * loader's `valueOrigins` when env-var attribution is wanted. The local
-   * projection and the declared-key set are both derived from this one value,
-   * so they can never come from different loads. `LoadedCliConfig` is
-   * structurally assignable. Note `fromConfigDocument` runs inside
-   * `diffProjectConfig`, so a document the registry cannot canonicalize
-   * throws `ProjectConfigParseError` from here.
-   *
-   * **Omitting `document` is a cliff, not a gentle degradation.** Internally,
-   * `diffProjectConfig` computes `const declaredRoot = options.local.document
-   * ?? {}` — a caller that leaves `document` out entirely doesn't just lose
-   * `applyRawPresenceMask`'s fixed-list masking, EVERY path's `declared` flag
-   * becomes `false` universally (`isDeclaredAtPath` walks an empty object).
-   * That means `local_only` can never fire (it requires `declared === true`
-   * with no remote value) and `unmanaged`/`masked` are always empty arrays
-   * (both filter on `isDeclaredAtPath(declaredRoot, ...)` too) — not merely
-   * "less masking coverage". This selects {@link ConfigAbsencePolicy}
-   * `"absent-is-default"` (see that type's docstring for the danger matrix)
-   * and is exactly the calling shape a caller like Studio would use if it
-   * called `diffProjectConfig({local: {config}, remote})` without ever
-   * loading/passing a raw document — the whole reason `ConfigAbsencePolicy`
-   * exists to be named.
+   * The loaded local config: the `{config, document}` pair `fromConfigDocument`
+   * accepts. Omitting `document` is a cliff, not gentle degradation: every
+   * path's `declared` flag becomes `false`, so `local_only` never fires and
+   * `unmanaged`/`masked` are always empty, and this selects
+   * {@link ConfigAbsencePolicy} `"absent-is-default"` instead of
+   * `"absent-is-hands-off"`.
    */
   readonly local: CliConfigWithRawPresence & {
     readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin> | undefined;
@@ -251,13 +227,11 @@ export type ConfigArrayEquality = "set" | "sequence";
 
 /**
  * Type-aware value equality. Scalars tolerate string/number and
- * string/boolean representation skew. Arrays default to SEQUENCE semantics —
- * element order is meaningful unless the field's registry row opts into
- * `"set"` (whether an array is a set or a sequence is per-field wire
- * knowledge: `api.schemas`' first entry is PostgREST's default schema and
- * `api.extra_search_path` is a literal `search_path`, while
- * `auth.additional_redirect_urls` is membership-only). Defaulting to
- * sequence over-reports rather than under-reports drift.
+ * string/boolean representation skew. Arrays default to sequence semantics —
+ * order matters unless the field's registry row opts into `"set"` (e.g.
+ * `auth.additional_redirect_urls` is membership-only, while `api.schemas`'
+ * order matters). Defaulting to sequence over-reports rather than
+ * under-reports drift.
  */
 export function isEqualConfigValue(
   a: unknown,
@@ -266,9 +240,8 @@ export function isEqualConfigValue(
 ): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     if (arrayEquality === "set") {
-      // TRUE set semantics: membership only. Duplicates carry no meaning for
-      // a set-mode field (a repeated redirect URL is the same allow list),
-      // so they must not register as drift.
+      // Set semantics: membership only. Duplicates carry no meaning for a
+      // set-mode field, so they must not register as drift.
       const left = new Set(a.map(canonicalArrayElement));
       const right = new Set(b.map(canonicalArrayElement));
       return left.size === right.size && [...left].every((element) => right.has(element));
@@ -366,11 +339,10 @@ function hasAncestorPathKey(path: ReadonlyArray<string>, set: ReadonlySet<string
 
 // The default config's own convergence projection — the first `remote_only`
 // suppression baseline tier. Lazy so importing this module never pays for a
-// full schema decode + projection up front. Deliberately calls
-// `fromConfigDocument` on a bare `EffectiveConfig` — an internal,
-// intentional `"absent-is-default"` use (`ConfigAbsencePolicy`): the
-// suppression tiers below need a fully schema-materialized baseline to
-// compare a silent remote report against, not a raw-presence-masked one.
+// full schema decode up front. Calls `fromConfigDocument` on a bare
+// `EffectiveConfig`, an intentional internal `"absent-is-default"` use: the
+// suppression tiers below need a fully schema-materialized baseline, not a
+// raw-presence-masked one.
 let defaultProjectionMemo: ProjectConfig | undefined;
 function defaultProjection(): ProjectConfig {
   defaultProjectionMemo ??= fromConfigDocument(getDefaultCliConfig());
@@ -402,12 +374,11 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
   }
 
   // Declared comparable paths the local projection dropped: push cannot
-  // communicate them, so they were never compared on the local side.
-  // `comparableProjectConfigPaths` already excludes secret rows, so this
-  // never overlaps `masked`. Hoisted above the classification loop and
-  // excluded there before any classification branch runs — ADR 0022: an
-  // unmanaged path can never classify either, so it must never reach a
-  // branch that would compare it against the remote report.
+  // communicate them, so they were never compared locally.
+  // `comparableProjectConfigPaths` already excludes secret rows, so this never
+  // overlaps `masked`. Hoisted above the classification loop and excluded
+  // there first — an unmanaged path (ADR 0022) must never reach a branch that
+  // compares it against the remote report.
   const unmanaged = comparableProjectConfigPaths
     .filter(
       (path) => isDeclaredAtPath(declaredRoot, path) && valueAtPath(local, path) === undefined,
@@ -432,9 +403,9 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
         continue;
       }
       // A declared value differing from the remote is an update; an
-      // undeclared one is remote-side drift against the (materialized)
-      // default the local projection carries — which stays populated on the
-      // change so consumers can see what a push would write.
+      // undeclared one is remote-side drift against the local projection's
+      // materialized default, which stays populated on the change so
+      // consumers can see what a push would write.
       changes.push({
         path,
         class: declared ? "update" : "remote_only",
@@ -447,20 +418,11 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
     }
 
     if (remoteValue !== undefined) {
-      // The local projection is silent because the file doesn't declare this
-      // path — a declared-but-unmanaged path never reaches this branch, since
-      // the loop above already excluded it (ADR 0022). Suppress the remote
-      // value unconditionally when the row is `platformRendered` (the
-      // platform authors this value itself; no local default exists to
-      // compare against), or when it matches the unconfigured baseline: the
-      // default config's own projection, then the raw default config
-      // (push-gated containers, e.g. network restrictions' allow-all), then
-      // the registry row's declared `unconfiguredValue` (the platform's
-      // report of an unconfigured feature, e.g. `sessions_timebox: 0`
-      // canonicalized to `"0s"`). With no baseline at any tier the value is
-      // reported — "unconfigured" is never inferred from type-level zero
-      // values, since canonicalization can turn a platform zero into a
-      // non-zero shape.
+      // Suppresses a silent-local, declared remote value when the row is
+      // `platformRendered`, or when it matches the unconfigured baseline: the
+      // default projection, the raw default config, then the registry row's
+      // `unconfiguredValue`, tried in order. With no baseline match the value
+      // is reported — never inferred as unconfigured from a type-level zero.
       const baseline =
         valueAtPath(defaultProjection(), path) ??
         valueAtPath(getDefaultCliConfig(), path) ??

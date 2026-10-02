@@ -7,29 +7,14 @@ import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
 import { readExistingState } from "../telemetry/telemetry-state.layer.ts";
 
 /**
- * Session identity stitching, a 1:1 port of `identityTransport` +
- * `StitchLogin`.
- *
- * The transport wraps EVERY Management API response, so the first response
- * of a session that carries `X-Gotrue-Id` stamps the user id in memory and, on a
- * persistent machine, aliases the device id to the gotrue id and persists
- * `distinct_id` to `telemetry.json`. Crucially, one `sync.Once`-equivalent installs in the
- * root command context shared across every transport, so
- * the alias + persist happen at most once per command no matter how many
- * Management API responses (typed client, raw advisor GETs, linked-project cache)
- * flow through it.
- *
- * Per the hybrid stitch+stamp model (docs/adr/0013), stamping the in-memory
- * identity happens in EVERY runtime — including CI, Docker, and `npx supabase` —
- * so captures in this process carry the real user id; the `$create_alias` (which
- * merges pre-login history) and the `telemetry.json` write only happen where the
- * file survives. Ephemeral runtimes stamp but never alias or persist.
- *
- * The TS port models that single guard with the {@link IdentityStitch}
- * service: it owns the one `stitchAttempted` flag and every transport consumes
- * the same service instance, so a command that touches several transports (e.g.
- * `db advisors --linked` mints a temp role via the typed client AND issues raw
- * advisor GETs) stamps/aliases/persists exactly once, matching Go.
+ * Session identity stitching. On the first Management API response of a
+ * session carrying `X-Gotrue-Id`, stamps the user id in memory in every
+ * runtime (including CI, Docker, `npx supabase`), and on a persistent machine
+ * also aliases the device id and persists `distinct_id` to `telemetry.json` —
+ * see docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
+ * {@link IdentityStitch} guards this to at most once per command, shared
+ * across every transport (typed client, raw advisor GETs, linked-project
+ * cache) that command touches.
  */
 
 const HEADER_GOTRUE_ID = "x-gotrue-id";
@@ -52,16 +37,11 @@ function gotrueIdFromResponse(response: HttpClientResponse.HttpClientResponse): 
 }
 
 /**
- * Builds a once-per-session stitcher. The returned function inspects a Management
- * API response's `X-Gotrue-Id` header and stamps the in-memory identity on the
- * first authenticated response; on a persistent machine it additionally aliases
- * the device and persists `distinct_id` at most once. Never fails (telemetry is
- * best-effort, matching the typed client's `Effect.exit` swallow).
- *
- * Internal: this is the implementation behind {@link identityStitchLayer}.
- * Transports must NOT build their own stitcher (each would get a separate
- * `stitchAttempted` flag and re-alias/re-persist); they consume the single
- * {@link IdentityStitch} service instead.
+ * Builds a once-per-session stitcher: stamps identity from a response's
+ * `X-Gotrue-Id` header, aliasing/persisting `distinct_id` at most once on a
+ * persistent machine. Never fails — telemetry is best-effort. Transports must
+ * go through the shared {@link IdentityStitch} service instead of building
+ * their own, or each gets its own `stitchAttempted` flag.
  */
 const makeIdentityStitcher: Effect.Effect<
   {
@@ -85,29 +65,23 @@ const makeIdentityStitcher: Effect.Effect<
   const stitchIdentity = (gotrueId: string) =>
     Effect.gen(function* () {
       if (runtime.consent !== "granted" || stitchAttempted) return;
-      // Mark before the first yield: every Management API response flows through
-      // this one shared stitcher, so concurrent authenticated responses must not
-      // both pass the guard and double-stitch.
+      // Mark before the first yield, so concurrent authenticated responses
+      // can't both pass the guard and double-stitch.
       stitchAttempted = true;
 
       if (hasIdentity()) {
-        // An identity already exists (telemetry.json holds a previous user, or a
-        // prior response in this session already stitched). Stamp memory so this
-        // process's captures carry the live user, but do NOT alias — re-aliasing
-        // the device to a second user would merge unrelated person graphs in
-        // PostHog. Mirrors Go's ObserveAuthenticatedUser.
+        // An identity already exists (from telemetry.json or an earlier
+        // response this session): stamp memory so captures carry the live
+        // user, but don't re-alias — that would merge unrelated person
+        // graphs in PostHog.
         runtime.identity.stamp(gotrueId);
         return;
       }
 
       const telemetryPath = path.join(runtime.configDir, "telemetry.json");
       const existing = yield* fs.readFileString(telemetryPath).pipe(Effect.option);
-      // Reuses the same all-or-nothing decode as `loadOrCreateTelemetryState`
-      // (`decodeState`) instead of a second tolerant
-      // per-field parser: `StitchLogin` only ever mutates the state that
-      // `LoadOrCreateState` already decoded, it never re-parses the file itself.
-      // This also fixes a prior bug where a `consent: "denied"` file (no
-      // `enabled` key) was treated as `enabled: true`.
+      // Uses the same decode as `loadOrCreateTelemetryState` so a
+      // `consent: "denied"` file isn't misread as `enabled: true`.
       const prior = Option.match(existing, {
         onNone: () => undefined,
         onSome: readExistingState,
@@ -115,11 +89,8 @@ const makeIdentityStitcher: Effect.Effect<
       const enabled = prior?.enabled ?? true;
       if (!enabled) return;
 
-      // The in-memory stamp always happens so subsequent captures in this process
-      // carry the user's id (restores attribution in CI/Docker/npx). The alias
-      // (merging pre-login history) and the telemetry.json write are only
-      // worthwhile where the file survives. Same rules as Go's StitchLogin.
-      // See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
+      // Alias and telemetry.json write only happen where the file survives;
+      // see docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
       runtime.identity.stamp(gotrueId);
       if (isEphemeralIdentityRuntime(runtime)) return;
 
@@ -140,10 +111,9 @@ const makeIdentityStitcher: Effect.Effect<
       yield* fs.makeDirectory(runtime.configDir, { recursive: true });
       yield* fs.writeFileString(
         telemetryPath,
-        // Exact int64 token of the prior schema_version, when there is one:
-        // re-serializing `state.schema_version` directly would round tokens
-        // above 2^53 through `Number` (9007199254740993 → …992) — Go decodes
-        // and re-encodes the 64-bit `int` verbatim.
+        // Preserves the prior schema_version's exact int64 token:
+        // re-serializing `state.schema_version` through `Number` would round
+        // values above 2^53 (e.g. 9007199254740993 → …992).
         prior?.schemaVersionToken === undefined
           ? JSON.stringify(state)
           : JSON.stringify({ ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) }),
@@ -163,24 +133,21 @@ interface IdentityStitchShape {
   /** Stitch the session identity from a Management API response, at most once. */
   readonly stitch: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
   /**
-   * Returns the in-memory identity for this session — the gotrue id stamped from
-   * the first authenticated response, or the startup-persisted `distinct_id`, or
-   * `undefined` if neither exists yet. Read AFTER the command runs so the
-   * stitching transport has had a chance to stamp it (`s.distinctID()`, read
-   * post-run). Because stamping happens in every runtime (incl. CI), this
-   * attributes the post-run `cli_command_executed` event to the real user even
-   * where no alias/persist occurred.
+   * The in-memory identity for this session — the gotrue id stamped from the
+   * first authenticated response, the persisted `distinct_id`, or
+   * `undefined`. Read after the command runs, once a transport has had a
+   * chance to stamp it; since stamping happens in every runtime, this
+   * attributes `cli_command_executed` to the real user even without an
+   * alias/persist.
    */
   readonly stitchedDistinctId: () => string | undefined;
 }
 
 /**
- * The single per-command identity stitcher (Go's one root-context `sync.Once`).
- * Every Management API transport in a command — the typed `CommandPlatformApi`
- * client, the raw-HTTP advisor GETs, and the linked-project cache GET — consumes
- * THIS one service so they share a single `stitchAttempted` flag and alias/persist
- * at most once. Provided once per command runtime via {@link identityStitchLayer}
- * (memoised by reference, so all consumers in a runtime get the same instance);
+ * The single per-command identity stitcher. Every Management API transport in
+ * a command (typed client, raw advisor GETs, linked-project cache) shares
+ * this one service so alias/persist happens at most once. Provided once per
+ * command runtime via {@link identityStitchLayer} (memoized by reference);
  * tests can mock it directly.
  */
 export class IdentityStitch extends Context.Service<IdentityStitch, IdentityStitchShape>()(

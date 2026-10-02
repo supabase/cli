@@ -4,15 +4,8 @@ import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "ef
 
 import { compareUtf8Bytes, globPattern, resolveUnderWorkdir, walkSqlFiles } from "./glob.ts";
 
-/**
- * A `FileSystem.FileSystem` that answers `readDirectory` from a fixed map (keyed by the exact
- * directory string `globPattern` asks for) instead of touching the real filesystem — lets
- * these tests assert Go's root-vs-workdir distinction (`Glob{"/*"}.Files(fsys)` reads the fsys
- * root, not the cwd `afero.NewOsFs()` happens to be `chdir`-ed into) without depending on what's
- * actually present at the real OS root. Every other `FileSystem` method delegates to the real
- * Bun filesystem (unused by `globPattern`'s glob-meta branch, which only calls
- * `readDirectory`).
- */
+// Answers `readDirectory` from a fixed map keyed by the requested directory; every other method
+// delegates to the real Bun filesystem.
 function fakeReadDirFs(entries: Record<string, ReadonlyArray<string>>) {
   const calls: Array<string> = [];
   const layer = Layer.effect(
@@ -34,10 +27,6 @@ describe("globPattern", () => {
   it.effect(
     "globs a root-anchored absolute pattern (/*.sql) against the filesystem root, not the workdir",
     () => {
-      // `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) reduce `/*.sql` to a bare `/`
-      // directory — confirmed empirically against the real Go CLI's own (unrooted)
-      // `afero.NewOsFs()`: `config.Glob{"/*"}.Files(fsys)` lists the actual filesystem root's
-      // entries, each still `/`-prefixed, never the process's cwd.
       const { layer, calls } = fakeReadDirFs({
         "/": ["one.sql", "two.sql", "notes.txt"],
         "/some/workdir": ["should-not-be-read.sql"],
@@ -69,11 +58,7 @@ describe("globPattern", () => {
   it.effect(
     "globs a Windows drive-root pattern (C:\\*.sql) against the drive root, not the workdir",
     () => {
-      // Mirrors the POSIX root case one level up: Go's split also collapses a drive-root
-      // pattern to a bare `C:` directory component (`filepath.ToSlash` turns `C:\*.sql` into
-      // `C:/*.sql` first, then the SAME `path.Split`/`cleanGlobPath` logic applies) — still
-      // part of the same already-absolute pattern, never something to join under the workdir.
-      // Uses the real Node win32 path module (via `BunPath.layerWin32`) so this is deterministic
+      // Uses the real Node win32 path module (`BunPath.layerWin32`) so this is deterministic
       // regardless of the host OS running the test.
       const { layer, calls } = fakeReadDirFs({
         "C:": ["x.sql", "y.sql"],
@@ -127,15 +112,9 @@ const statFailure = (path: string) =>
     pathOrDescriptor: path,
   });
 
-/**
- * A `FileSystem.FileSystem` entirely backed by fixed maps: `readDirectory` answers from
- * `entries`, `readLink` succeeds (with a dummy target) only for paths listed in `symlinks` —
- * every other entry looks like "not a symlink" to `walkSqlFiles`'s probe — and `stat`
- * answers from `statTypes`, except for `statFailsFor`, which fails, simulating a
- * permission/I/O error reading an entry `readDirectory` just listed (distinct from a benign
- * not-a-symlink `readLink` failure). Every other method is `walkSqlFiles`-unreachable
- * noise, so it's left as `FileSystem.makeNoop`'s default `NotFound` failure.
- */
+// A `FileSystem.FileSystem` backed by fixed maps: `readDirectory`/`stat` answer from `entries`/
+// `statTypes`, `readLink` succeeds only for paths in `symlinks`, and `statFailsFor` makes `stat`
+// fail for that one path.
 function fakeWalkFs(
   entries: Record<string, ReadonlyArray<string>>,
   statTypes: Record<string, FileSystem.File.Type>,
@@ -158,11 +137,6 @@ function fakeWalkFs(
 
 describe("walkSqlFiles", () => {
   it.effect("propagates a stat failure instead of silently treating the entry as absent", () => {
-    // `fs.WalkDir` (`walkMatchedDir`) propagates a
-    // per-entry stat/lstat error from its walk callback, aborting the SQL-files glob entirely —
-    // a directory `readDirectory` can list but `stat` then fails to read (permission denied,
-    // removed mid-walk, I/O error) must fail the whole walk, not silently resolve to "no file
-    // here" (review: PRRT_kwDOErm0O86WXFqr).
     const layer = fakeWalkFs({ "/schemas": ["broken.sql"] }, {}, "/schemas/broken.sql");
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -195,8 +169,6 @@ describe("walkSqlFiles", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const files = yield* walkSqlFiles(fs, "/schemas", "");
-      // No caller-side `.sort()` — `walkSqlFiles` now returns the fully-sorted result
-      // itself, matching both Go walkers' own trailing `sort.Strings(files)`.
       expect([...files]).toEqual(["nested/inner.sql", "top.sql"]);
     }).pipe(Effect.provide(layer));
   });
@@ -204,12 +176,8 @@ describe("walkSqlFiles", () => {
   it.effect(
     "sorts by UTF-8 byte order, not JS's default UTF-16 code-unit order (review: PRRT_kwDOErm0O86XAlIo)",
     () => {
-      // A supplementary-plane character (U+1F600, encoded as a UTF-16 surrogate pair
-      // 0xD800-0xDFFF) alongside a BMP private-use character (U+E000): JS's default
-      // `Array.prototype.sort()` ranks the surrogate pair FIRST (0xD800 < 0xE000), while Go's
-      // `sort.Strings` (byte-wise over UTF-8, which preserves Unicode codepoint order) ranks
-      // the supplementary-plane codepoint (0x1F600 > 0xE000) AFTER it — see
-      // `compareUtf8Bytes`'s own doc comment.
+      // U+1F600 (a UTF-16 surrogate pair) sorts before U+E000 in JS's default order but after it
+      // in byte-wise UTF-8 order.
       const surrogatePair = "a\u{1f600}.sql";
       const privateUse = "a\u{e000}.sql";
       const layer = fakeWalkFs(

@@ -4,13 +4,11 @@ import { Output } from "../shared/output/output.service.ts";
 import { Stdin } from "../shared/runtime/stdin.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
 
-/** Go's non-TTY `Console.ReadLine` timeout (`internal/utils/console.go:36`). */
 const NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
- * Port of Go's `parseYesNo` (`apps/cli-go/internal/utils/console.go:84-93`):
- * case-insensitive and trimmed. `y`/`yes` → `true`, `n`/`no` → `false`,
- * anything else → `undefined` (caller falls back to the default).
+ * Parses a yes/no answer, case-insensitively and trimmed: `y`/`yes` → `true`, `n`/`no` →
+ * `false`, anything else → `undefined`.
  */
 export const parseYesNo = (input: string): boolean | undefined => {
   const s = input.trim().toLowerCase();
@@ -24,32 +22,13 @@ export const parseYesNo = (input: string): boolean | undefined => {
 };
 
 /**
- * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
- * (`apps/cli-go/internal/utils/console.go:64-82`) — the single Go-faithful
- * confirmation helper for every Go-parity prompt (CLI-1974). It lives in
- * `command-internal/` (not `command-internal/`) because Go-parity confirmations also
- * fire from shell-agnostic shared code (`shared/functions/deploy.ts` prune,
- * `shared/init/project-init.ts` IDE settings):
- *  - when `yes` is set, echoes `<label> [Y/n|y/N] y` and returns true even on a
- *    TTY (Go auto-confirms with the affirmative echo, `console.go:70-72`);
- *  - when `interactive` is false (Go callers that force `console.IsTTY = false`,
- *    e.g. `buckets.Run(ctx, "", false, fsys)` during `db reset`), behaves like a
- *    non-TTY stdin: label + one bounded line scan, honoring a parsed answer;
- *  - `json`/`stream-json` output never prompts and uses the default silently;
- *  - a real TTY otherwise prompts with the given default via clack;
- *  - on a non-TTY stdin, Go does **not** short-circuit to the default: it prints
- *    the label, scans the next piped line, echoes it, and honors a parsed answer
- *    (`console.go:74-82,96-102`). Only empty/unparseable input falls back to the
- *    default. The shared `Stdin` reader supplies the piped line (one per prompt).
- *
- * Callers resolve `yes` via `resolveYes` so it honors both `--yes` and
- * `SUPABASE_YES`, matching Go's `viper.GetBool("YES")` (root.go:318-320,334).
- *
- * NOTE: the migration family's `migrationConfirm`
- * (`commands/migration/migration.prompt.ts`) intentionally diverges on
- * the TS-only machine modes (it prompts regardless of `output.format`) and on a
- * real TTY (raw stdin read instead of clack) — see its doc comment before
- * consolidating the two (CLI-1974 review).
+ * Confirm-or-default prompt shared by command handlers and shell-agnostic code alike.
+ * `yes` echoes an affirmative answer and returns `true` immediately; non-text output
+ * uses the default silently unless the caller opts into machine-mode piped answers;
+ * a real interactive text TTY prompts via clack; otherwise (including text callers with
+ * `interactive: false`) it reads one line via the shared `Stdin` reader: a parsed answer
+ * wins and an empty line takes the default. Any other line declines, except under
+ * `interactive: false`, where it takes the default.
  */
 export const promptYesNo = Effect.fnUntraced(function* (
   output: typeof Output.Service,
@@ -57,37 +36,31 @@ export const promptYesNo = Effect.fnUntraced(function* (
   label: string,
   defaultValue: boolean,
   interactive = true,
+  options: { readonly readMachineStdin?: boolean } = {},
 ) {
   const choices = defaultValue ? "Y/n" : "y/N";
   if (yes) {
     yield* output.raw(`${label} [${choices}] y\n`, "stderr");
     return true;
   }
-  if (output.format !== "text") {
+  if (output.format !== "text" && !options.readMachineStdin) {
     return defaultValue;
   }
   const tty = yield* Tty;
-  // `interactive === false` mirrors Go callers that force `console.IsTTY = false`
-  // (e.g. `buckets.Run(ctx, "", false, fsys)` during `db reset`): Go does NOT
-  // silently take the default — `PromptYesNo` still prints the label, scans one
-  // line with the 100ms timeout, echoes it, and honors a parsed answer
-  // (`console.go:64-102`). So route it through the same non-TTY read path.
+  if (output.format !== "text" && (!interactive || tty.stdinIsTty)) {
+    return defaultValue;
+  }
+  // Text `interactive: false` still prints the label and reads one line instead of
+  // silently returning the default — it uses the same non-TTY read path below.
   if (!interactive || !tty.stdinIsTty) {
-    // Go's `PromptText` prints the label, then `ReadLine` scans one line and (on a
-    // non-TTY) echoes it to stderr (`console.go:96-102`). A parsed piped answer
-    // wins; an empty/exhausted scan or an unparseable line uses the default.
     yield* output.raw(`${label} [${choices}] `, "stderr");
     const stdin = yield* Stdin;
     const line = yield* stdin.readLine(NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
-    yield* output.raw(`${input}\n`, "stderr");
-    if (input.length > 0) {
-      const answer = parseYesNo(input);
-      if (answer !== undefined) {
-        return answer;
-      }
-    }
-    return defaultValue;
+    yield* output.raw(`${input.trim()}\n`, "stderr");
+    // An unrecognised answer is never consent; under `interactive: false` the line may be
+    // the caller's own script text, so it keeps the default.
+    return parseYesNo(input) ?? (interactive && input.length > 0 ? false : defaultValue);
   }
   return yield* output
     .promptConfirm(label, { defaultValue })

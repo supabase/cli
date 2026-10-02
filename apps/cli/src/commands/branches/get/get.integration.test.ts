@@ -5,7 +5,7 @@ import type {
   V1GetProjectApiKeysOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -24,11 +24,9 @@ type FindResponse = typeof V1GetABranchOutput.Type;
 type Pooler = typeof V1GetPoolerConfigOutput.Type;
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 
-// V1GetABranchConfigInput.branch_id_or_ref is a oneOf [project-ref, uuid] union.
-// A 20-lowercase project-ref matches BOTH branches → schema rejects.
-// We use a valid v4 UUID for the input so the schema picks exactly one branch.
+// A UUID keeps `branch_id_or_ref`'s oneOf union unambiguous; a 20-lowercase ref could match
+// either variant.
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
-// project_ref returned by mocks — 20 lowercase, the production shape.
 const BRANCH_REF = "cccccccccccccccccccc";
 
 const DETAIL: BranchDetail = {
@@ -54,8 +52,7 @@ const DETAIL_MASKED: BranchDetail = {
   db_port: 5432,
 };
 
-// V1GetABranch (named-lookup) returns this — note `project_ref` is a UUID so
-// the downstream getABranchConfig({ branch_id_or_ref: UUID }) passes the union.
+// project_ref is a UUID here so the downstream getABranchConfig call passes the same union.
 const FIND: FindResponse = {
   id: BRANCH_UUID,
   name: "feat-x",
@@ -168,7 +165,6 @@ describe("branches get integration", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
       yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
-      // Only the detail call hits /v1/branches/<uuid>; no /v1/projects/{ref}/branches/<name> lookup.
       expect(api.requests.some((r) => r.url.includes(`/v1/branches/${BRANCH_UUID}`))).toBe(true);
       expect(
         api.requests.some((r) =>
@@ -244,8 +240,7 @@ describe("branches get integration", () => {
       const { layer, out } = setup({ goOutput: "toml" });
       return Effect.gen(function* () {
         yield* branchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
-        // This encodes a map[string]string here — BurntSushi keeps map keys as-is
-        // (no PascalCase remap), so the struct-field remap must NOT apply.
+        // Map payloads are exempt from the struct-field PascalCase key remap; keys stay verbatim.
         expect(out.stdoutText).toContain('SUPABASE_URL = "');
         expect(out.stdoutText).toContain('POSTGRES_URL = "');
       }).pipe(Effect.provide(layer));
@@ -284,9 +279,9 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesPrimaryNotFoundError");
-        expect(json).toContain("primary database not found");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesPrimaryNotFoundError");
+        expect(causeText).toContain("primary database not found");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -297,9 +292,9 @@ describe("branches get integration", () => {
       const exit = yield* Effect.exit(branchesGet({ ...baseFlags, name: Option.some("feat-x") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesFindUnexpectedStatusError");
-        expect(json).toContain("unexpected find branch status 404");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesFindUnexpectedStatusError");
+        expect(causeText).toContain("unexpected find branch status 404");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -312,9 +307,9 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesGetUnexpectedStatusError");
-        expect(json).toContain("unexpected get branch status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected get branch status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -327,8 +322,8 @@ describe("branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesApiKeysUnexpectedStatusError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesApiKeysUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });

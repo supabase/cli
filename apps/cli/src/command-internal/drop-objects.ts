@@ -17,14 +17,12 @@ export class MigrationDropError extends Data.TaggedError("MigrationDropError")<{
 }
 
 /**
- * A single PL/pgSQL `DO` block that drops user schemas, non-managed
- * extensions, and `public`-schema objects, drops every RLS policy and every
- * non-Supabase publication database-wide (not just in `public`), then
- * truncates the managed `auth` / `supabase_functions` / `supabase_migrations`
- * tables. The schema loop anti-joins `pg_depend` scoped by `classid` to
- * `pg_namespace` rows so an oid collision with another catalog cannot hide a
- * user schema (supabase/cli#6375). Shared by `migration down` and `db reset`
- * (`drop-schemas.ts`).
+ * A single PL/pgSQL `DO` block that drops user schemas, non-managed extensions, and
+ * `public`-schema objects, drops every RLS policy and every non-Supabase publication
+ * database-wide (not just in `public`), then truncates the managed
+ * `auth`/`supabase_functions`/`supabase_migrations` tables. The schema loop anti-joins
+ * `pg_depend` scoped by `classid` to `pg_namespace` rows so an oid collision with another
+ * catalog cannot hide a user schema.
  */
 export const dropObjectsSql = `do $$ declare
   rec record;

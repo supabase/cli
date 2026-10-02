@@ -4,5 +4,44 @@
   "options": {
     "denyWarnings": true
   },
-  "ignorePatterns": []
+  "ignorePatterns": [
+    "**",
+    "!packages/stack/**",
+    "!apps/cli/src/commands/**",
+    "!apps/cli/src/shared/auth/**",
+    "!apps/cli/src/shared/compute/**",
+    "!apps/cli/src/shared/config/**",
+    "!apps/cli/src/shared/feedback/**",
+    "!apps/cli/src/shared/functions/functions-docker.ts",
+    "!apps/cli/src/shared/functions/functions-docker.unit.test.ts",
+    "!apps/cli/src/shared/functions/serve.ts",
+    "!apps/cli/src/shared/functions/serve.unit.test.ts",
+    "!apps/cli/src/shared/git/**",
+    "!apps/cli/src/shared/init/**",
+    "!apps/cli/src/shared/issue/**",
+    "!apps/cli/src/shared/output/**",
+    "!apps/cli/src/shared/runtime/**",
+    "!apps/cli/src/shared/services/**",
+    "!apps/cli/src/shared/telemetry/**",
+    // Last match wins across the whole list: keep bare re-exclusions after every
+    // `!` entry that would otherwise re-include them.
+    "apps/cli/src/shared/compute/stacks/**",
+    "apps/cli/src/shared/feedback/database.types.ts",
+    "!apps/cli/tests/helpers/branches-live.ts",
+    "!apps/cli/tests/helpers/compute.ts",
+    "!apps/cli/tests/helpers/migration-live.ts",
+    "!apps/cli/tests/helpers/notebooks.ts",
+    "!apps/cli/tests/helpers/postgres-config-live.ts",
+    "!apps/cli/tests/helpers/secrets-live.ts",
+    "!apps/cli/tests/helpers/storage-live.ts",
+    "!apps/cli/src/command-internal/experimental-feature.ts",
+    "!apps/cli/src/command-internal/postgres-client.run.ts",
+    "!apps/cli/src/command-internal/stack-api.ts",
+    "!apps/cli/src/command-internal/stack-backend.ts",
+    "!apps/cli/src/command-internal/stack-catalog-setup.ts",
+    "!apps/cli/src/command-internal/stack-config.ts",
+    "!apps/cli/src/command-internal/stack-local-database.ts",
+    "!apps/cli/src/command-internal/stack-shadow.ts",
+    "!apps/cli/src/command-internal/stack-storage.ts"
+  ]
 }

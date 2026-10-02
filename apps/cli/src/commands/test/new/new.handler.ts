@@ -4,8 +4,13 @@ import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { bold } from "../../../command-internal/colors.ts";
+import { sanitizeInlineName } from "../../../command-internal/http-errors.ts";
 import type { TestNewFlags } from "./new.command.ts";
-import { TestNewFileExistsError, TestNewWriteError } from "./new.errors.ts";
+import {
+  TestNewFileExistsError,
+  TestNewInvalidNameError,
+  TestNewWriteError,
+} from "./new.errors.ts";
 import { PGTAP_TEMPLATE } from "./new.template.ts";
 
 const TEMPLATE_CONTENT: Record<"pgtap", string> = {
@@ -20,23 +25,32 @@ export const testNew = Effect.fn("test.new")(function* (flags: TestNewFlags) {
   const path = yield* Path.Path;
 
   const template = Option.getOrElse(flags.template, () => "pgtap" as const);
+  yield* Effect.annotateCurrentSpan("test.template", template);
 
   yield* Effect.gen(function* () {
-    // Path is relative to the project root (`utils.DbTestsDir` =
-    // "supabase/tests") and that relative path is what gets printed; FS ops
-    // are rooted at the resolved workdir.
+    // The printed path is relative to the project root ("supabase/tests"); FS ops are
+    // rooted at the resolved workdir.
     const relPath = path.join("supabase", "tests", `${flags.name}_test.sql`);
     const target = path.join(cliSettings.workdir, relPath);
 
-    const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
-    if (exists) {
-      return yield* Effect.fail(
-        new TestNewFileExistsError({ path: relPath, message: `${relPath} already exists.` }),
-      );
+    // `path.join` collapses "..", so check the normalized target: names may include
+    // subdirectories as long as they resolve inside supabase/tests.
+    const testsDir = path.join(cliSettings.workdir, "supabase", "tests");
+    if (!target.startsWith(testsDir + path.sep)) {
+      return yield* new TestNewInvalidNameError({
+        path: relPath,
+        message: `invalid test name: "${sanitizeInlineName(flags.name)}" must not escape the ${path.join("supabase", "tests")} directory`,
+      });
     }
 
-    // `utils.WriteFile` pins the dir to 0755 and the test file to 0644
-    // (`internal/utils/misc.go:281,284`).
+    const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+    if (exists) {
+      return yield* new TestNewFileExistsError({
+        path: relPath,
+        message: `${relPath} already exists.`,
+      });
+    }
+
     yield* fs
       .makeDirectory(path.dirname(target), { recursive: true, mode: 0o755 })
       .pipe(

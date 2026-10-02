@@ -1,19 +1,11 @@
 /**
- * Publishes the generated CLI reference to the docs site by opening a PR
- * against supabase/supabase, replacing the Go `tools/bumpdoc` that was deleted
- * in the monorepo merge (71b543255). The reference has not been republished
- * since, so the published spec is frozen at 2.98.2.
- *
- * Reads the spec on stdin so it composes with the generator exactly the way the
- * Go release job did:
+ * Publishes the generated CLI reference to the docs site by opening a PR against
+ * supabase/supabase. Reads the spec on stdin:
  *
  *   bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version>
  *
- * Like `bumpdoc`, this is a no-op when the spec is already published and no PR
- * is missing: it prints "already up to date" and exits 0. A branch whose spec
- * is ahead of base still gets its PR ensured, so a run that pushed but failed
- * to open the PR is repaired by the next release. Any real failure exits
- * non-zero.
+ * No-op (exit 0) when the spec is already published and no PR is missing; a branch already ahead
+ * of base still gets its PR ensured, so a failed prior run is repaired by the next release.
  */
 import { $ } from "bun";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -27,7 +19,6 @@ const { values } = parseArgs({
   options: {
     version: { type: "string" },
     repo: { type: "string", default: "supabase/supabase" },
-    // Path of the spec inside the docs repo, as the Go job passed it.
     "spec-path": { type: "string", default: "apps/docs/spec/cli_v1_commands.yaml" },
     branch: { type: "string", default: "cli/ref-doc" },
     base: { type: "string", default: "master" },
@@ -88,10 +79,8 @@ if (dryRun) {
   process.exit(0);
 }
 
-// `--depth 1` is enough: when `cli/ref-doc` already exists its tip is fetched
-// and the new spec lands as one commit on top, so commits pushed onto an open
-// PR (sidebar fixes) survive later releases; otherwise the branch starts from
-// base.
+// `--depth 1` suffices: an existing `cli/ref-doc` branch is fetched at its tip and the new spec
+// lands as one commit on top, so commits pushed onto an open PR survive later releases.
 const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-docs-"));
 try {
   await $`git clone --quiet --depth 1 --branch ${base} https://github.com/${repo}.git ${tmpDir}`;

@@ -1,28 +1,24 @@
 /**
- * Built-in profile → environment endpoints. Mirrors the `allProfiles` table.
- * Both `project_host` (used
- * to build `SUPABASE_URL = https://<ref>.<host>` for `branches get`) and
- * `dashboard_url` (used by `suggestUpgrade` to build the billing URL)
- * live here so we have a single source of truth.
+ * Built-in profile → environment endpoints, the single source of truth for `project_host`
+ * (used to build `SUPABASE_URL = https://<ref>.<host>`) and `dashboard_url` (used to build the
+ * billing URL).
  *
- * YAML-mode profiles carry their own `project_host` and `dashboard_url`
- * (both `required`, loaded by `loadProfile`). The `?? DEFAULT_ENDPOINTS`
- * fallbacks below only serve callers that key a lookup on an already-resolved
- * profile NAME, which for a YAML profile is its `name:` field, not a table key.
+ * YAML-mode profiles carry their own `project_host`/`dashboard_url` (loaded by `loadProfile`).
+ * The `?? DEFAULT_ENDPOINTS` fallbacks below only serve callers keying a lookup on an
+ * already-resolved profile name, which for a YAML profile is its `name:` field, not a table key.
  */
 
 import type { ProfileName } from "../config/command-settings.service.ts";
 
 interface ProfileEndpoints {
-  /** Management API base URL (`Profile.APIURL`). */
+  /** Management API base URL. */
   readonly apiUrl: string;
   readonly projectHost: string;
   readonly dashboardUrl: string;
   /**
-   * eTLD+1 the connection pooler hostname must belong to
-   * (`Profile.PoolerHost`). Empty string means "no pooler-domain
-   * assertion" (`supabase-local`). Used by the linked db-config resolver's
-   * MITM domain check.
+   * eTLD+1 the connection pooler hostname must belong to. Empty string means no
+   * pooler-domain assertion (`supabase-local`). Used by the linked db-config resolver's MITM
+   * domain check.
    */
   readonly poolerHost: string;
 }
@@ -55,10 +51,9 @@ const BUILT_IN: Readonly<Record<string, ProfileEndpoints>> = {
 };
 
 /**
- * Exact-match (case-sensitive) built-in profile-name guard. Go matches
- * built-in names with `strings.EqualFold`; callers that
- * need Go's fold semantics lower-case the candidate first (all four built-in
- * names are already lower-case).
+ * Exact-match (case-sensitive) built-in profile-name guard. Callers that need
+ * case-insensitive matching lower-case the candidate first (all four built-in names are
+ * already lower-case).
  */
 export function isBuiltinProfileName(profile: string): profile is ProfileName {
   return profile in BUILT_IN;

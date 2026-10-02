@@ -33,39 +33,30 @@ const runList = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* DnsResolverFlag;
 
-  // Mutually-exclusive flag groups, in registration order: the target group
-  // first, then {db-url, password}. `setFlags` is already
-  // alphabetically sorted, matching the established group-error formatting.
+  // Mutually-exclusive flag groups, checked target group first, then {db-url,
+  // password}; `setFlags` is already sorted, matching the established error format.
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
   if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-    return yield* Effect.fail(
-      new MigrationPasswordFlagsError({
-        message:
-          "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-      }),
-    );
+    return yield* new MigrationPasswordFlagsError({
+      message:
+        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const listBody = Effect.gen(function* () {
-    // list defaults to `--linked`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "linked",
@@ -76,8 +67,6 @@ const runList = Effect.fnUntraced(function* (
 
     const remote = yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -97,6 +86,10 @@ const runList = Effect.fnUntraced(function* (
     );
 
     const rows = makeMigrationListRows(remote, local);
+    yield* Effect.annotateCurrentSpan({
+      "db.is_local": cfg.isLocal,
+      "migration.count": rows.length,
+    });
     if (output.format === "text") {
       yield* output.raw(renderGlamourTable([...LIST_HEADERS], migrationListTableCells(rows)));
     } else {
@@ -104,9 +97,8 @@ const runList = Effect.fnUntraced(function* (
     }
   });
 
-  // `--linked` resolves the project ref and writes the linked-project cache so
-  // telemetry carries the org/project grouping. `--local` / `--db-url` leave the
-  // ref empty.
+  // `--linked` resolves the project ref and writes the linked-project cache; `--local`
+  // / `--db-url` leave the ref empty.
   if ((target.connType ?? "linked") === "linked") {
     const projectRef = yield* ProjectRefResolver;
     const linkedProjectCache = yield* LinkedProjectCache;

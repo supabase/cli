@@ -31,7 +31,6 @@ class FakeExecError extends Data.TaggedError("DbExecError")<{
   readonly detail?: string;
   readonly position?: number;
   readonly statementIndex?: number;
-  readonly transactionPhase?: "begin" | "commit";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
@@ -42,13 +41,7 @@ function fakeSession(
   opts: {
     failOn?: string;
     failAfterBatch?: boolean;
-    failWith?: {
-      message: string;
-      code?: string;
-      detail?: string;
-      position?: number;
-      transactionPhase?: "begin" | "commit";
-    };
+    failWith?: { message: string; code?: string; detail?: string; position?: number };
     restoreRoleSql?: string;
     batchConnectionLost?: string;
   } = {},
@@ -121,6 +114,7 @@ const executedSql = (
 const run = (
   session: DbSession,
   migrationPath: string,
+  out = mockOutput(),
 ): Effect.Effect<void, TestError | DbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -132,7 +126,7 @@ const run = (
       migrationPath,
       (message) => new TestError({ message }),
     );
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(BunServices.layer), Effect.provide(out.layer));
 
 describe("applyMigrationFile", () => {
   it.effect(
@@ -148,11 +142,6 @@ describe("applyMigrationFile", () => {
             const execs = executedSql(calls);
             expect(execs).toContain("CREATE SCHEMA IF NOT EXISTS supabase_migrations");
             expect(execs).toContain("RESET ALL");
-            // The history-table setup scopes lock_timeout to its own transaction
-            // (SET LOCAL), so it reverts on COMMIT and never leaks into the migration's
-            // statements — matching Go's implicit ExecBatch transaction.
-            // RESET ALL runs FIRST — before the history-table setup transaction — so a
-            // session default leaked by a prior migration is cleared before this DDL.
             expect(execs[0]).toBe("RESET ALL");
             const firstBegin = execs.indexOf("BEGIN");
             const setupCommit = execs.indexOf("COMMIT");
@@ -160,15 +149,12 @@ describe("applyMigrationFile", () => {
             expect(firstBegin).toBe(1);
             expect(setLocal).toBeGreaterThan(firstBegin);
             expect(setLocal).toBeLessThan(setupCommit);
-            // The migration's statements and history insert share one implicitly
-            // transactional extended-protocol batch.
             const migrationBatch = calls.find((call) => call.kind === "batch");
             expect(migrationBatch?.statements?.map(({ sql }) => sql)).toEqual([
               "ALTER TABLE a ADD COLUMN b int",
               "CREATE INDEX i ON a(b)",
               expect.stringContaining("supabase_migrations.schema_migrations"),
             ]);
-            // History insert carries version, name, and the statements array.
             const insert = migrationBatch?.statements?.at(-1);
             expect(insert?.sql).toContain("supabase_migrations.schema_migrations");
             expect(insert?.params).toEqual([
@@ -216,7 +202,6 @@ describe("applyMigrationFile", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           expect(calls.filter((call) => call.kind === "batch")).toHaveLength(1);
-          // Go's ExecBatch appends the failing statement number + text for context.
           if (Exit.isFailure(exit)) {
             const msg = JSON.stringify(exit.cause);
             expect(msg).toContain("At statement: 0");
@@ -291,58 +276,7 @@ describe("applyMigrationFile", () => {
     );
   });
 
-  it.effect("reports a begin failure without blaming the first statement", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_begin.sql");
-    writeFileSync(file, "SELECT 1;");
-    const { session } = fakeSession({
-      failOn: "SELECT 1",
-      failWith: {
-        message: "failed to begin the batch transaction: ERROR: canceling statement",
-        transactionPhase: "begin",
-      },
-    });
-    return run(session, file).pipe(
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.message).toContain("failed to begin the batch transaction");
-          expect(error.message).not.toContain("At statement");
-          expect(error.message).not.toContain("SELECT 1");
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
-
-  it.effect("reports a connection lost at BEGIN without blaming the first statement", () => {
-    // The driver marks the begin phase without relabeling the message when the
-    // connection died before BEGIN completed; the caller's statement never ran,
-    // so the formatter must surface the loss verbatim with no statement echo.
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_begin_lost.sql");
-    writeFileSync(file, "SELECT 1;");
-    const { session } = fakeSession({
-      failOn: "SELECT 1",
-      failWith: {
-        message: "Error: Connection terminated unexpectedly",
-        transactionPhase: "begin",
-      },
-    });
-    return run(session, file).pipe(
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.message).toContain("Connection terminated unexpectedly");
-          expect(error.message).not.toContain("At statement");
-          expect(error.message).not.toContain("SELECT 1");
-        }),
-      ),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
-  });
-
-  it.effect("reports a deferred commit failure without blaming a statement", () => {
+  it.effect("defaults a deferred batch failure to the migration history statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -351,8 +285,8 @@ describe("applyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).not.toContain("At statement");
-          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
         }),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
@@ -362,11 +296,6 @@ describe("applyMigrationFile", () => {
   it.effect(
     "wraps a read failure with Go's parse-file error text (Go NewMigrationFromFile parity)",
     () => {
-      // `NewMigrationFromFile`/`parseFile` wraps the open failure as
-      // `"failed to open migration file: %w"` before
-      // `ApplyMigrations`/`applySchemaFiles` ever get a chance to attach a
-      // `CmdSuggestion` — a read failure here must carry the same prefix, not the bare
-      // platform error text.
       const dir = mkdtempSync(join(tmpdir(), "apply-read-fail-"));
       const missingFile = join(dir, "20240101120000_missing.sql");
       const { session } = fakeSession();
@@ -400,8 +329,6 @@ describe("applyMigrationFile", () => {
           const execs = executedSql(calls);
           const concurrently = "CREATE INDEX CONCURRENTLY a_idx ON a(id)";
           expect(execs).toContain(concurrently);
-          // The CONCURRENTLY statement must not run inside an implicit batch
-          // transaction, so the compatible statements are flushed on each side.
           const batches = calls.filter((call) => call.kind === "batch");
           expect(batches).toHaveLength(2);
           expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
@@ -411,7 +338,6 @@ describe("applyMigrationFile", () => {
             "ALTER TABLE a ENABLE ROW LEVEL SECURITY",
             expect.stringContaining("supabase_migrations.schema_migrations"),
           ]);
-          // The migration is still recorded once every statement succeeds.
           const insert = batches[1]?.statements?.at(-1);
           expect(insert?.params?.[0]).toBe("20240101120000");
           rmSync(dir, { recursive: true, force: true });
@@ -441,8 +367,6 @@ describe("applyMigrationFile", () => {
           const action = execs.indexOf("DROP SUBSCRIPTION app_events");
           const cleanup = execs.lastIndexOf("RESET ALL");
 
-          // The history-table setup owns the only CLI transaction. Pg-delta's
-          // preamble, action, and cleanup then run sequentially on this session.
           expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(1);
           expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(1);
           expect(set).toBeGreaterThan(setupCommit);
@@ -506,11 +430,9 @@ describe("applyMigrationFile", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const msg = JSON.stringify(exit.cause);
-            // Index 1: the leading `create table a` (index 0) committed in its own batch first.
             expect(msg).toContain("At statement: 1");
             expect(msg).toContain("CREATE INDEX CONCURRENTLY a_idx ON a(id)");
           }
-          // The migration version is not recorded when a statement fails.
           expect(
             executedSql(calls).some((sql) =>
               sql.includes("INSERT INTO supabase_migrations.schema_migrations"),
@@ -531,8 +453,6 @@ describe("applyMigrationFile", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
-          // One BEGIN/COMMIT belongs to history-table setup; the other pair is
-          // exactly the authored boundary, with no nested migration wrapper.
           expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(2);
           expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(2);
           expect(execs).toContain("SET LOCAL check_function_bodies = off");
@@ -561,9 +481,6 @@ describe("applyMigrationFile", () => {
     return run(session, file).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          // `ROLLBACK TO SAVEPOINT` is not an authored boundary, so the file keeps the
-          // CLI-managed transaction — which is the single implicitly transactional
-          // batch (one Sync), carrying the history insert as its last statement.
           const batches = calls.filter((call) => call.kind === "batch");
           expect(batches).toHaveLength(1);
           expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
@@ -573,7 +490,6 @@ describe("applyMigrationFile", () => {
             "SELECT 1",
             expect.stringContaining("supabase_migrations.schema_migrations"),
           ]);
-          // No standalone history insert: it rides the same batch as the statements.
           expect(
             calls.filter((call) => call.kind === "query" && call.params !== undefined),
           ).toHaveLength(0);
@@ -603,9 +519,6 @@ describe("applyMigrationFile", () => {
     );
   });
 
-  // Passwordless remote sessions step down from the temp login role via
-  // `SET SESSION ROLE postgres`; a migration's own `RESET ROLE` reverts to the
-  // login role, which used to fail the history insert with 42501 (supabase/cli#6236).
   it.effect(
     "re-asserts the stepped-down role between the statements and the history insert",
     () => {
@@ -616,9 +529,6 @@ describe("applyMigrationFile", () => {
       return run(session, file).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            // The restore is injected right after the trailing RESET ROLE (the
-            // end-of-file restore dedupes away), so the insert runs as postgres —
-            // and the committed session ends role-clean for the next file.
             const batch = calls.find((call) => call.kind === "batch");
             expect(batch?.statements?.map(({ sql }) => sql)).toEqual([
               "set role repro_writer",
@@ -627,7 +537,6 @@ describe("applyMigrationFile", () => {
               "SET SESSION ROLE postgres",
               expect.stringContaining("supabase_migrations.schema_migrations"),
             ]);
-            // The ledger row records only the file's own statements.
             expect(batch?.statements?.at(-1)?.params?.[2]).toEqual([
               "set role repro_writer",
               "create table t (id int)",
@@ -697,7 +606,6 @@ describe("applyMigrationFile", () => {
       Effect.tap((error) =>
         Effect.sync(() => {
           expect(error.message).toContain("permission denied for schema supabase_migrations");
-          // The CLI-internal restore op must not shift Go's `At statement: N`.
           expect(error.message).toContain("At statement: 1");
           expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
@@ -726,9 +634,7 @@ describe("applyMigrationFile", () => {
     );
   });
 
-  it.effect("reports a deferred commit failure cleanly when a restore op is appended", () => {
-    // The restore op between the statements and the insert must not resurrect a
-    // statement tail for a commit-phase failure.
+  it.effect("keeps the deferred-failure index when a restore op is appended", () => {
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -740,8 +646,8 @@ describe("applyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).not.toContain("At statement");
-          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -773,8 +679,6 @@ describe("applyMigrationFile", () => {
   });
 
   it.effect("keeps the insert index when the final batch holds only the trailing ops", () => {
-    // A trailing CONCURRENTLY statement empties `pending`, so the final batch is
-    // just [restore, insert] — the index math must still report the file's count.
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "SELECT 1;\nCREATE INDEX CONCURRENTLY i ON a(id);");
@@ -795,14 +699,12 @@ describe("applyMigrationFile", () => {
   });
 
   it.effect("restores postgres immediately after a mid-file RESET ROLE, silently", () => {
-    // Statements after the reset now run as postgres again (avallete's #6246
-    // review), so the old drift WARN is gone — there is no drift left to surface.
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_reset_role.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
     const out = mockOutput({ format: "text" });
-    return run(session, file).pipe(
+    return run(session, file, out).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           const batch = calls.find((call) => call.kind === "batch");
@@ -819,11 +721,10 @@ describe("applyMigrationFile", () => {
             "reset role",
             "select 1",
           ]);
-          expect(out.stderrText).not.toContain("WARN:");
+          expect(out.stderrText).not.toContain("Warning:");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(out.layer),
     );
   });
 
@@ -858,8 +759,6 @@ describe("applyMigrationFile", () => {
   });
 
   it.effect("emits exactly one restore when a no-transaction file ends in a revert", () => {
-    // Sequential path: the injected restore after the trailing `reset role`
-    // makes the end-of-file restore redundant, so it must dedupe away.
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_seq_reset.sql");
     writeFileSync(file, "-- pg-delta: transaction=false\nset role r;\nreset role;");
@@ -879,9 +778,7 @@ describe("applyMigrationFile", () => {
     );
   });
 
-  it.effect("reports a deferred commit failure cleanly with mid-file restores injected", () => {
-    // The `injectedBefore[raw] ?? injected` fallback only matters when the
-    // deferred (post-Sync) index lands past the ops array AND injections exist.
+  it.effect("keeps the deferred-failure index when mid-file restores were injected", () => {
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
@@ -893,8 +790,8 @@ describe("applyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).not.toContain("At statement");
-          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).toContain("At statement: 4");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -925,49 +822,6 @@ describe("applyMigrationFile", () => {
     );
   });
 
-  it.effect("re-asserts postgres right after a standalone role-reverting statement", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_discard.sql");
-    writeFileSync(file, "select 1;\nDISCARD ALL;\nselect 2;");
-    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
-    return run(session, file).pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
-          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
-          const batches = calls.filter((call) => call.kind === "batch");
-          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual(["select 1"]);
-          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
-            "select 2",
-            "SET SESSION ROLE postgres",
-            expect.stringContaining("supabase_migrations.schema_migrations"),
-          ]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("sends no trailing restore when the file ends on a restored standalone", () => {
-    const dir = mkdtempSync(join(tmpdir(), "apply-"));
-    const file = join(dir, "20240101120000_discard_last.sql");
-    writeFileSync(file, "select 1;\nDISCARD ALL;");
-    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
-    return run(session, file).pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
-          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
-          const batches = calls.filter((call) => call.kind === "batch");
-          expect(batches.at(-1)?.statements?.map(({ sql }) => sql)).toEqual([
-            expect.stringContaining("supabase_migrations.schema_migrations"),
-          ]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
   it.effect("reports a mid-file restore's own failure at its host statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "apply-"));
     const file = join(dir, "20240101120000_fail.sql");
@@ -980,8 +834,6 @@ describe("applyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          // The injected op inherits `reset role`'s index and shows the SQL that
-          // actually failed, so debugging lands on the right line of the file.
           expect(error.message).toContain("At statement: 1");
           expect(error.message).toContain("SET SESSION ROLE postgres");
           rmSync(dir, { recursive: true, force: true });
@@ -1036,8 +888,7 @@ describe("hasTransactionControl", () => {
 });
 
 describe("migration failure rendering (Go ExecBatch parity)", () => {
-  // Byte-exact ports of `(*MigrationFile).ExecBatch` error layout:
-  // `<pg error>\n[Detail]\n[42704 hint]\n`
+  // Error message layout: `<pg error>\n[Detail]\n[42704 hint]\n` then
   // `At statement: <i>\n<caret-marked statement>`.
   const failing = (
     sql: string,
@@ -1101,8 +952,6 @@ describe("migration failure rendering (Go ExecBatch parity)", () => {
   });
 
   it.effect("skips the hint when the SQLSTATE is not 42704", () => {
-    // Go gates the hint on `pgErr.Code == "42704"` in addition to the message
-    // pattern — a matching message under a different code must stay hint-free.
     const stat = "CREATE TABLE test (path ltree NOT NULL)";
     return failing(stat, {
       message: 'ERROR: type "ltree" does not exist (SQLSTATE 42P01)',
@@ -1151,9 +1000,6 @@ describe("migration failure rendering (Go ExecBatch parity)", () => {
 });
 
 describe("markError", () => {
-  // Every expectation below is pinned against `markError` output,
-  // captured by running the Go function
-  // directly on the same inputs.
   it("places the caret under a mid-statement position", () => {
     expect(markError("create table t (col ltree)", 21)).toBe(
       "create table t (col ltree)\n                    ^",
@@ -1184,16 +1030,12 @@ describe("markError", () => {
   });
 
   it("consumes the position in UTF-8 bytes like Go, not characters", () => {
-    // "héllo" is 5 characters but 6 bytes; Go decrements the position by the
-    // BYTE length + 1 per line, so position 8 lands on column 1 of "world"
-    // (character counting would land on column 2). Verified against Go.
     expect(markError("héllo\nworld", 8)).toBe("héllo\nworld\n^");
     expect(markError("sélect 1", 3)).toBe("sélect 1\n  ^");
   });
 });
 
 describe("isPipelineIncompatible", () => {
-  // Mirrors `TestIsPipelineIncompatible` (`pkg/migration/file_test.go`, supabase/cli#5156).
   const cases: ReadonlyArray<readonly [string, string, boolean]> = [
     [
       "create index concurrently",
@@ -1226,85 +1068,6 @@ describe("isPipelineIncompatible", () => {
     ["vacuum with options", "VACUUM (FULL, ANALYZE) public.widgets", true],
     ["alter system", "ALTER SYSTEM SET wal_level = 'logical'", true],
     ["cluster", "CLUSTER public.widgets USING widgets_id_idx", true],
-    ["create database", "CREATE DATABASE demo", true],
-    ["drop database", "DROP DATABASE IF EXISTS demo", true],
-    ["create tablespace", "CREATE TABLESPACE ts LOCATION '/tmp/ts'", true],
-    ["drop tablespace", "DROP TABLESPACE ts", true],
-    ["reindex database", "REINDEX DATABASE postgres", true],
-    ["reindex system with options", "REINDEX (VERBOSE) SYSTEM postgres", true],
-    ["reindex database adjacent options", "REINDEX(VERBOSE) DATABASE postgres", true],
-    ["reindex concurrently as option", "REINDEX (CONCURRENTLY) INDEX widgets_id_idx", true],
-    ["reindex mixed option list", "REINDEX (VERBOSE, CONCURRENTLY) TABLE public.widgets", true],
-    [
-      "reindex concurrently false over-routes conservatively",
-      "REINDEX (CONCURRENTLY FALSE) INDEX widgets_id_idx",
-      true,
-    ],
-    ["reindex verbose option only", "REINDEX (VERBOSE) INDEX widgets_id_idx", false],
-    ["reindex schema", "REINDEX SCHEMA public", true],
-    ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
-    ["alter database", "ALTER DATABASE demo SET search_path = public", false],
-    ["alter database set tablespace", "ALTER DATABASE demo SET TABLESPACE fast", true],
-    [
-      "alter table all in tablespace",
-      "ALTER TABLE ALL IN TABLESPACE old_ts SET TABLESPACE fast",
-      true,
-    ],
-    [
-      "alter index all in tablespace",
-      "ALTER INDEX ALL IN TABLESPACE old_ts SET TABLESPACE fast",
-      true,
-    ],
-    [
-      "alter materialized view all in tablespace",
-      "ALTER MATERIALIZED VIEW ALL IN TABLESPACE old_ts SET TABLESPACE fast",
-      true,
-    ],
-    ["alter table set tablespace single", "ALTER TABLE t SET TABLESPACE fast", false],
-    ["alter database set tablespace multiline", "ALTER DATABASE demo\n SET TABLESPACE fast", true],
-    [
-      "alter database with tablespace inside a literal over-routes conservatively",
-      "ALTER DATABASE demo SET application_name TO 'foo SET TABLESPACE bar'",
-      true,
-    ],
-    ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
-    ["detach partition finalize stays batched", "ALTER TABLE m DETACH PARTITION p FINALIZE", false],
-    ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
-    [
-      "detach inside a comment over-routes conservatively",
-      "ALTER TABLE m ADD COLUMN x int /* DETACH PARTITION p CONCURRENTLY */",
-      true,
-    ],
-    [
-      "detach partition qualified concurrently",
-      "ALTER TABLE IF EXISTS ONLY s.m\n DETACH PARTITION p CONCURRENTLY",
-      true,
-    ],
-    [
-      "detach partition quoted qualified concurrently",
-      'ALTER TABLE "tenant schema".events DETACH PARTITION "p 1" CONCURRENTLY',
-      true,
-    ],
-    [
-      "detach partition spaced qualification",
-      'ALTER TABLE "tenant schema" . events DETACH PARTITION p CONCURRENTLY',
-      true,
-    ],
-    ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
-    ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
-    ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
-    ["alter subscription refresh", "ALTER SUBSCRIPTION sub REFRESH PUBLICATION", true],
-    ["alter subscription set publication", "ALTER SUBSCRIPTION sub SET PUBLICATION p", true],
-    ["alter subscription refresh multiline", "ALTER SUBSCRIPTION sub\n REFRESH PUBLICATION", true],
-    ["alter subscription set options", "ALTER SUBSCRIPTION sub SET (slot_name = 's')", false],
-    ["discard all", "DISCARD ALL", true],
-    ["discard temp", "DISCARD TEMP", false],
-    [
-      "refresh materialized view concurrently",
-      "REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv",
-      true,
-    ],
-    ["plain refresh materialized view", "REFRESH MATERIALIZED VIEW public.mv", false],
     [
       "lower-case create index concurrently",
       "create index concurrently widgets_id_idx on public.widgets(id)",
@@ -1351,8 +1114,6 @@ describe("seedGlobals", () => {
       const path = yield* Path.Path;
       yield* seedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
       const execs = executedSql(calls);
-      // Go's SeedGlobals calls ExecBatch directly — no RESET ALL (that's only the
-      // migration-apply path) and no schema-migrations history insert.
       expect(execs).not.toContain("RESET ALL");
       expect(execs).toContain("CREATE ROLE my_role");
       expect(
@@ -1366,8 +1127,8 @@ describe("seedGlobals", () => {
   });
 
   it.effect("leaves a stepped-down session role-clean after a globals file", () => {
-    // Globals run before the vault upsert and the history-table DDL on the same
-    // session, so a `reset role` here must not leak the login role into them.
+    // Globals run on the same session as the later vault upsert and history-table DDL, so a role
+    // must not leak into them.
     const dir = mkdtempSync(join(tmpdir(), "globals-"));
     const file = join(dir, "roles.sql");
     writeFileSync(file, "CREATE ROLE my_role;\nset role my_role;\nreset role;");
@@ -1393,16 +1154,9 @@ describe("applySchemaFiles", () => {
   it.effect(
     "reports a read failure with the workdir-relative path, not the absolute path used to read it (Go open supabase/... parity)",
     () => {
-      // Go opens the workdir-relative `fp` from `schema_paths` directly (its process
-      // cwd is always the workdir, `ChangeWorkDir`), so a read failure reports
-      // `open supabase/unreadable.sql: ...`. This module never `process.chdir`s, so
-      // the real read needs an absolute path — but the wrapped read-failure message
-      // must still show the relative `supabase/...` form, not that absolute path. An
-      // unreadable file (a real permission failure, not a missing-path one) reproduces
-      // a genuine read failure while still passing the glob's own stat/type check —
-      // `stat` only needs directory execute permission, not read permission on the
-      // file itself, so this still resolves as a `"File"` match, unlike a directory
-      // (which the glob would instead expand via `walkSqlFiles`).
+      // An unreadable file (permission denied, not missing) still passes the glob's own
+      // stat/type check, since that only needs directory execute permission, not read access to
+      // the file itself.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-read-fail-"));
       const file = join(dir, "supabase", "unreadable.sql");
       mkdirSync(join(dir, "supabase"), { recursive: true });
@@ -1430,25 +1184,18 @@ describe("applySchemaFiles", () => {
         }
         chmodSync(file, 0o644);
         rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockOutput().layer));
     },
   );
 
   it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go bufio.Scanner: token too long parity)",
     () => {
-      // `parser.Split` only enforces
-      // `SUPABASE_SCANNER_BUFFER_SIZE` when it's explicitly set — `parseFile`
-      // otherwise auto-grows the scanner to the real file's byte length, so the
-      // DEFAULT path can never hit `bufio.ErrTooLong`. With it set below a single
-      // statement's raw byte length, this fails with `bufio.Scanner: token too long`
-      // instead of silently applying the oversized statement — verified empirically
-      // (a `parser.SplitAndTrim` scratch probe).
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
-      // A single, un-splittable statement whose raw text exceeds the 4096-byte floor
-      // (`bufio.Scanner` starts at that size regardless of the configured limit).
+      // Exceeds the 4096-byte floor the scanner always starts at, regardless of the configured
+      // limit.
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
       const { session } = fakeSession();
       const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
@@ -1481,6 +1228,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1488,13 +1236,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "reports the last scanned RAW token in the too-long error even when it trimmed to empty (Go scanner.Text() parity, review CLI-1958)",
     () => {
-      // `token = scanner.Text()` runs on EVERY
-      // successful `Scan()`, unconditionally — BEFORE the `len(trim) > 0` gate that
-      // decides whether to append to `stats`. So when a statement trims to empty
-      // (a lone ";") immediately before an oversized one, `bufio.ErrTooLong`
-      // message still reports that lone ";" as the last-scanned text, not a blank
-      // token — `len(stats)` (this port's `emitted`) stays gated on non-empty trim,
-      // but the reported RAW text must not share that gate.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-empty-token-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1518,9 +1259,6 @@ describe("applySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 0 statements were EMITTED (the lone ";" trimmed to empty and was never
-          // appended), but the last scanned RAW token (";") must still show — not a
-          // blank token, which a trim-gated tracker would wrongly report instead.
           expect(msg).toContain("After statement 0: ;");
         }
       }).pipe(
@@ -1532,6 +1270,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1567,6 +1306,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1574,14 +1314,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
     () => {
-      // Verified empirically: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
-      // is NOT 5 MiB in real Go — `parseSizeInBytes` only recognizes a multiplier when
-      // the string's LAST character is literally "b"/"B", so "5M" never strips a
-      // suffix and `cast.ToInt("5M")` fails whole, yielding 0. `viper.IsSet` is still
-      // true (the var IS present), so `parseFile`'s file-size auto-growth never runs —
-      // `parser.Split` falls back to its OWN hardcoded default cap
-      // (`MaxScannerCapacity`, 256KiB), not to "no limit" and not to a tiny 5-byte
-      // limit either. A statement past that hardcoded default must still fail.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-garbage-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1605,7 +1337,6 @@ describe("applySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 256KiB (`parser.MaxScannerCapacity` default), not "5MB" and not ~0KB.
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
           );
@@ -1619,6 +1350,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1626,14 +1358,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "accepts a hex-literal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 parity, review CLI-1958)",
     () => {
-      // `viper.GetSizeInBytes` → `cast.ToInt` → `strconv.ParseInt(s, 0, 0)` parses
-      // with base 0, so a `0x`-prefixed literal is a valid byte count in real Go:
-      // "0x1400" is 5120 (5KiB) — verified empirically against vendored
-      // `viper@v1.21.0` (`viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` with the env
-      // var set to "0x1400" returns 5120). A decimal-only parser would reject this
-      // string outright and silently fall back to the 256KiB default instead, so a
-      // statement between 5120 and 262144 bytes would apply in TS but Go would
-      // already have failed with "bufio.Scanner: token too long" at 5121 bytes.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-hex-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1657,8 +1381,6 @@ describe("applySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 5KiB (0x1400 bytes), not the 256KiB hardcoded fallback a decimal-only
-          // parser would have silently used instead.
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
           );
@@ -1672,6 +1394,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1679,14 +1402,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "accepts underscore digit separators in a decimal SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt base-0 underscore-literal parity, review CLI-1958)",
     () => {
-      // Go's base-0 integer grammar (`go.dev/ref/spec#Integer_literals`, reproduced
-      // by `strconv.ParseInt`) permits a single `_` between digits: "5_120" is the
-      // same 5120 (5KiB) byte count as the hex-literal test above's "0x1400" —
-      // verified empirically against the real `strconv.ParseInt("5_120", 0, 64)`.
-      // A parser that rejects underscores outright would silently fall back to the
-      // 256KiB default instead, so a statement between 5120 and 262144 bytes would
-      // apply in TS but Go would already have failed with "bufio.Scanner: token too
-      // long" at 5121 bytes.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-underscore-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1710,8 +1425,6 @@ describe("applySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 5KiB (5_120 bytes), not the 256KiB hardcoded fallback an
-          // underscore-rejecting parser would have silently used instead.
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 5KB)",
           );
@@ -1725,6 +1438,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1732,12 +1446,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "rejects an invalid underscore placement in SUPABASE_SCANNER_BUFFER_SIZE, unlike a valid digit separator (Go strconv.ParseInt underscore-grammar parity, review CLI-1958)",
     () => {
-      // Go only permits a SINGLE underscore immediately after a base prefix or
-      // between two digits — never leading a plain (no-prefix) decimal literal,
-      // never doubled, never trailing. "_5120" (leading underscore, no prefix) is
-      // invalid in real Go (`strconv.ParseInt("_5120", 0, 64)` errors), so it falls
-      // back to the same 256KiB default as a genuinely unset/unparseable value —
-      // verified empirically against the real Go `strconv.ParseInt`.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-bad-underscore-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1757,8 +1465,6 @@ describe("applySchemaFiles", () => {
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
         ).pipe(Effect.exit);
-        // The 5116-byte statement fits comfortably under the 256KiB default
-        // fallback, so an invalid underscore placement must NOT fail the apply.
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(
         Effect.ensuring(
@@ -1769,6 +1475,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1776,15 +1483,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE overflows Go's signed int range (strconv.ParseInt/cast.ToInt range-error parity, review CLI-1958)",
     () => {
-      // "9223372036854775808" is one more than `math.MaxInt64`. Go's
-      // `strconv.ParseInt(s, 0, 0)` rejects it with a range error, and `cast.ToInt`
-      // discards ANY `parseFn` error —
-      // range or syntax — returning exactly `0`, never the huge (if imprecise)
-      // magnitude `Number.parseInt` would otherwise accept. `viper.IsSet` is still
-      // true, so this falls back to the 256KiB hardcoded default, same as a
-      // genuinely unparseable value ("5M" above) — NOT to "no limit". Verified
-      // empirically against the pinned `spf13/cast@v1.10.0`
-      // (`cast.ToInt("9223372036854775808")` → `0`).
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-int64-overflow-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1808,8 +1506,6 @@ describe("applySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 256KiB (Go's hardcoded default), not "no limit" — a treat-as-unbounded
-          // bug would let this 300_000-byte statement apply successfully instead.
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
           );
@@ -1823,6 +1519,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1830,11 +1527,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "still accepts the exact int64 boundary magnitudes for SUPABASE_SCANNER_BUFFER_SIZE (Go strconv.ParseInt range-boundary parity, review CLI-1958)",
     () => {
-      // `math.MaxInt64` itself ("9223372036854775807", one less than the overflow
-      // test above) is NOT a range error in Go — only magnitudes strictly beyond it
-      // are. A range check that's off-by-one in the strict direction would wrongly
-      // reject this legitimate (if enormous) configured size and fall back to the
-      // 256KiB default instead of the requested cap.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-int64-boundary-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1854,8 +1546,6 @@ describe("applySchemaFiles", () => {
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
         ).pipe(Effect.exit);
-        // The 5116-byte statement fits comfortably under the (enormous) configured
-        // limit, so this must succeed, not fall back to the 256KiB default.
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(
         Effect.ensuring(
@@ -1866,6 +1556,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1873,12 +1564,6 @@ describe("applySchemaFiles", () => {
   it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
     () => {
-      // `loadNestedEnv` `os.Setenv`s every
-      // project-`.env` key that isn't already in the shell env BEFORE the command body
-      // runs, so `viper.AutomaticEnv()` sees a `supabase/.env`-only
-      // `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported one.
-      // `applySchemaFiles`'s `projectEnv` parameter threads the caller's already
-      // -loaded `loadProjectEnv` map through to the same check.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-projectenv-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -1912,6 +1597,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1919,17 +1605,14 @@ describe("applySchemaFiles", () => {
   it.effect(
     "shell env still wins over the project env for SUPABASE_SCANNER_BUFFER_SIZE (Go godotenv 'never overrides' parity)",
     () => {
-      // `godotenv.Load`'s `overload=false` never sets a key already present in
-      // `os.Environ()` — the shell value must
-      // win even when a (different) project-env value is also threaded through.
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-shellwins-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT '${"a".repeat(5000)}';\n`);
       const { session, calls } = fakeSession();
       const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      // Shell explicitly unsets enforcement (0 → treated as unset, no check) while the
-      // project env sets a tiny limit — the shell value must win.
+      // "0" is treated as unset (no check); the shell value must still win over the project
+      // env's tiny limit.
       process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "0";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1954,6 +1637,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );

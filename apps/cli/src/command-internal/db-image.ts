@@ -1,20 +1,17 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImageRaw } from "../shared/services/dockerfile-images.ts";
 import { postgresImageForDbMajorVersion } from "../shared/services/services.shared.ts";
-import { slimImageForCurrentPin } from "../shared/services/slim-images.ts";
+import { slimImageForCurrentPin, slimImagesEnabled } from "../shared/services/slim-images.ts";
+import { PropOrioleDb } from "../shared/telemetry/event-catalog.ts";
+import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 
 /**
- * Resolves the local Postgres Docker image the way `config.Load` does,
- * for commands that run a
- * pg_dump / shadow-DB container (`db dump`, declarative). Promote/extend this if
- * the full service-image resolution is ever needed.
- *
- * The default PG image is read from the same embedded Dockerfile manifest Go parses
- * into `config.Images`, so the TS port tracks Dependabot bumps in that source.
+ * Resolves the local Postgres Docker image for commands that run a pg_dump/shadow-DB container
+ * (`db dump`, declarative). Promote/extend this if full service-image resolution is ever needed.
  */
 
-// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
-// observed by the resolver (and by tests that stub the env).
+// Read per call, not at import time, so `SUPABASE_USE_SLIM_IMAGES` is observed by the resolver
+// and by tests that stub the env.
 const pgImageRaw = () => dockerfileServiceImageRaw("pg");
 
 /** Replace everything after the first `:` with `tag`. */
@@ -24,8 +21,7 @@ function replaceImageTag(image: string, tag: string): string {
 }
 
 /**
- * `VersionCompare`: compares semver, treating a
- * 4th+ dotted component as a build suffix. Returns <0, 0, or >0.
+ * Compares semver, treating a 4th+ dotted component as a build suffix. Returns <0, 0, or >0.
  */
 function versionCompare(a: string, b: string): number {
   const split = (v: string): [string, string] => {
@@ -54,11 +50,25 @@ function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+/** OrioleDB replaces the Postgres image only on 15/17 projects with a version set. */
+export const selectsOrioleDb = (
+  orioledbVersion: string | undefined,
+  majorVersion: number,
+): orioledbVersion is string =>
+  orioledbVersion !== undefined &&
+  orioledbVersion.length > 0 &&
+  (majorVersion === 15 || majorVersion === 17);
+
+/** Records whether the local project selects OrioleDB on the enclosing command event. */
+export const recordOrioleDbTelemetry = (
+  orioledbVersion: string | undefined,
+  majorVersion: number,
+) => recordCommandTelemetry({ [PropOrioleDb]: selectsOrioleDb(orioledbVersion, majorVersion) });
+
 /**
- * Resolve the Postgres image for `majorVersion`, honoring the pinned version
- * written by `supabase start` to `supabase/.temp/postgres-version` (Go reads
- * `builder.PostgresVersionPath` and only replaces the tag when the configured
- * image is at/above 15.1.0.55).
+ * Resolves the Postgres image for `majorVersion`, honoring the pinned version written by
+ * `supabase start` to `supabase/.temp/postgres-version`. The tag is only replaced when the
+ * configured image is at/above 15.1.0.55.
  */
 export const resolveDbImage = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -67,20 +77,16 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override (`config.Validate`): on a
-  // 15/17 project with `experimental.orioledb_version` set, the Postgres image is
-  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
-  if (
-    orioledbVersion !== undefined &&
-    orioledbVersion.length > 0 &&
-    (majorVersion === 15 || majorVersion === 17)
-  ) {
+  yield* recordOrioleDbTelemetry(orioledbVersion, majorVersion);
+  // The OrioleDB tag takes precedence over the default/pinned image.
+  if (selectsOrioleDb(orioledbVersion, majorVersion)) {
     const image =
       versionCompare(orioledbVersion, "15.1.1.13") > 0
         ? `supabase/postgres:${orioledbVersion}-orioledb`
         : `supabase/postgres:orioledb-${orioledbVersion}`;
     return { image, configImage: image };
   }
+  const slim = yield* slimImagesEnabled;
   const currentRaw = postgresImageForDbMajorVersion(majorVersion) ?? pgImageRaw();
   let appliedPin: string | undefined;
   if (majorVersion > 14) {
@@ -104,7 +110,7 @@ export const resolveDbImage = Effect.fnUntraced(function* (
   const configImage =
     appliedPin !== undefined ? replaceImageTag(currentRaw, appliedPin) : currentRaw;
   return {
-    image: slimImageForCurrentPin("pg", currentRaw, appliedPin),
+    image: slimImageForCurrentPin("pg", currentRaw, appliedPin, slim),
     configImage,
   };
 });

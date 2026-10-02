@@ -60,11 +60,9 @@ const config = {
 } as const;
 
 describe("SSO provider contracts", () => {
-  // The provider payload the Management API actually returns: no `saml.id` and
-  // no `domains[].id` — neither field exists in the spec (or in the Go CLI's
-  // `api.ListProvidersResponse`). Every SSO subcommand decodes one of these
-  // five schemas, so a stale required-key here breaks the whole command family
-  // (supabase/cli#5475, #5589, #6051).
+  // The provider payload the Management API actually returns: no `saml.id` or
+  // `domains[].id`. Every SSO subcommand decodes one of these five schemas, so a
+  // stale required key here breaks the whole command family.
   const SPARSE_PROVIDER = {
     id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
     saml: {
@@ -107,7 +105,6 @@ describe("SSO provider contracts", () => {
       domains: [{ ...SPARSE_PROVIDER.domains[0], id: "9484591c-a203-4500-bea7-d0aaa845e2f5" }],
     };
 
-    // Go's structs have no such fields, so `encoding/json` never echoes them.
     for (const schema of SINGLE_PROVIDER_SCHEMAS) {
       const decoded = Schema.decodeUnknownSync(schema)(withLegacyIds);
       expect(decoded.saml).not.toHaveProperty("id");

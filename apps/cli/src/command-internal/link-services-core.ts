@@ -14,9 +14,8 @@ import {
 export interface LinkServicesInput {
   readonly ref: string;
   /**
-   * Tenant API key used for the service version probes. `link` passes the
-   * service-role key; `bootstrap` passes the anon key (mirroring Go's
-   * `link.LinkServices(ctx, ref, tenant.NewApiKey(keys).Anon, …)`).
+   * Tenant API key used for the service version probes: `link` passes the
+   * service-role key, `bootstrap` passes the anon key.
    */
   readonly serviceKey: string;
   readonly skipPooler: boolean;
@@ -32,15 +31,20 @@ export interface LinkServicesInput {
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
 /**
- * Ports `link.LinkServices`: the
- * best-effort portion of linking that writes `supabase/.temp/{storage-migration,
- * pooler-url,rest-version,gotrue-version,storage-version}`. Every probe is
- * best-effort — a single unreachable service never fails the caller. This core
- * does NOT write `project-ref`, the linked-project cache, or fire
- * `cli_project_linked`; `link.Run` (the standalone command) owns those, and
- * `bootstrap` deliberately skips them by calling `LinkServices` directly.
+ * Writes the best-effort portion of linking:
+ * `supabase/.temp/{storage-migration,pooler-url,rest-version,gotrue-version,
+ * storage-version}`. Each probe is independently best-effort — an
+ * unreachable service never fails the caller. Does not write `project-ref`,
+ * the linked-project cache, or fire `cli_project_linked`; the `link` command
+ * owns those, and `bootstrap` calls this directly to skip them.
  */
-export const linkServicesCore = Effect.fnUntraced(function* (input: LinkServicesInput) {
+export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
+  input: LinkServicesInput,
+) {
+  yield* Effect.annotateCurrentSpan({
+    "project.ref": input.ref,
+    "link.skip_pooler": input.skipPooler,
+  });
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
@@ -95,7 +99,11 @@ const linkStorageMigration = (
   writeTempFile: WriteTempFile,
 ) =>
   api.v1.getStorageConfig({ ref }).pipe(
-    Effect.flatMap((config) => writeTempFile(storageMigrationPath, config.migrationVersion)),
+    Effect.flatMap((config) =>
+      config.migrationVersion === null
+        ? Effect.void
+        : writeTempFile(storageMigrationPath, config.migrationVersion),
+    ),
     Effect.ignore,
   );
 

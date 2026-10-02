@@ -1,10 +1,7 @@
 /**
- * Pure Postgres connection-string helpers. Used only to build the `.env` file's
- * `POSTGRES_URL`/derived keys (`bootstrap.dotenv.ts`) — no live DB connection here.
- * The push step's actual connection is resolved separately, by
- * `resolveLinkedConn` (`db-config.layer.ts`), which reproduces the
- * *rest* of `NewDbConfigWithPassword` this module doesn't: the direct-host
- * reachability probe and the IPv4 pooler fallback for IPv6-only projects.
+ * Pure Postgres connection-string helpers for the `.env` file's `POSTGRES_URL`/derived keys; no
+ * live DB connection here. The push step's actual connection (with reachability probing and IPv4
+ * pooler fallback) is resolved separately by `resolveLinkedConn`.
  */
 
 export interface DbConfig {
@@ -15,15 +12,14 @@ export interface DbConfig {
   readonly database: string;
 }
 
-// `url.UserPassword` escapes userinfo with the `encodeUserPassword` mode:
-// unreserved chars + the sub-delims `$ & + , ; =` pass through; the reserved
-// `@ / ? :` and everything else are percent-encoded (`net/url.shouldEscape`).
+// Percent-encodes everything except unreserved chars and the sub-delims `$ & + , ; =`; the
+// reserved `@ / ? :` are always escaped.
 const USERINFO_UNESCAPED = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~$&+,;=".split(""),
 );
 
-// `url.PathEscape` uses `encodePathSegment`: escape `/ ; , ?` and anything
-// outside unreserved + the remaining reserved sub-delims `$ & + : = @`.
+// Percent-encodes everything except unreserved chars and the sub-delims `$ & + : = @`; `/ ; , ?`
+// are always escaped.
 const PATH_SEGMENT_UNESCAPED = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~$&+:=@".split(""),
 );
@@ -43,11 +39,8 @@ function percentEscape(value: string, allowed: ReadonlySet<string>): string {
 }
 
 /**
- * Reproduces `ToPostgresURL`:
- * `postgresql://<user>:<pass>@<host>:<port>/<db>?connect_timeout=10`, with
- * percent-encoded userinfo, a path-escaped database, and IPv6 hosts wrapped in
- * square brackets. Bootstrap passes no `RuntimeParams`, so the only query
- * parameter is the default `connect_timeout=10`.
+ * Renders `postgresql://<user>:<pass>@<host>:<port>/<db>?connect_timeout=10`, with
+ * percent-encoded userinfo, a path-escaped database, and IPv6 hosts wrapped in square brackets.
  */
 export function toPostgresUrl(config: DbConfig): string {
   const userinfo = `${percentEscape(config.user, USERINFO_UNESCAPED)}:${percentEscape(
@@ -60,15 +53,11 @@ export function toPostgresUrl(config: DbConfig): string {
 }
 
 /**
- * Derives the remote project's naive direct (session-mode) connection shape —
- * `host = db.<ref>.<projectHost>`, `user = postgres`, `database = postgres`,
- * direct port `5432` — for the `.env` file only. Unlike
- * `flags.NewDbConfigWithPassword`, this never probes reachability or falls back
- * to the IPv4 pooler, so on an IPv6-only project the `.env`'s `POSTGRES_URL`
- * (and derived keys) point at a host the user's own machine may not be able to
- * reach directly — a pre-existing, narrow divergence tracked as out-of-scope
- * for CLI-1953 (which fixed this same gap for the actual push connection;
- * see `resolveLinkedConn`).
+ * Derives the remote project's naive direct (session-mode) connection shape for the `.env` file
+ * only: `host = db.<ref>.<projectHost>`, `user = postgres`, `database = postgres`, port `5432`.
+ * Never probes reachability or falls back to the IPv4 pooler, so on an IPv6-only project the
+ * `.env`'s `POSTGRES_URL` may point at a host the user's machine can't reach directly; the actual
+ * push connection is resolved separately via `resolveLinkedConn`.
  */
 export function deriveDbConfig(ref: string, password: string, projectHost: string): DbConfig {
   return {

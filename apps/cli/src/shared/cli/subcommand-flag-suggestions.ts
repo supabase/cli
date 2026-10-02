@@ -63,10 +63,9 @@ function findCommand(
 }
 
 /**
- * The longest command-path prefix argv's positionals resolve to in the tree,
- * cobra-`Find`-style: segments descend while they match a subcommand and stop
- * at the first that doesn't (an operand). Includes the root's own name, the
- * shape `isValueTakingFlagTokenFor` expects.
+ * The longest command-path prefix argv's positionals resolve to in the tree: segments descend
+ * while they match a subcommand and stop at the first that doesn't (an operand). Includes the
+ * root's own name, the shape `isValueTakingFlagTokenFor` expects.
  */
 export function resolvedCommandPathForArgv(
   rootCommand: Command.Command.Any,
@@ -134,17 +133,10 @@ function flagMatchesOption(flag: HelpDoc.FlagDoc, option: string): boolean {
 }
 
 /**
- * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also
- * resolves to `option` for the command at `commandPath`, by walking the
- * command tree the same way `buildSubcommandFlagHint` does. Returns `[]` if
- * `commandPath` doesn't resolve to a real command or that command has no
- * flag named `option` — callers should treat that as "no aliases", not an
- * error, since a synthetic/test command path is a legitimate input.
- *
- * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize a required
- * flag supplied by its short alias but missing its value (Go/pflag still
- * shows usage for that case — see CLI-1901) instead of misclassifying it as
- * genuinely absent (Go: `SilenceUsage`-suppressed, no usage shown).
+ * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also resolves to `option`
+ * for the command at `commandPath`. Returns `[]` if `commandPath` doesn't resolve to a real
+ * command or that command has no flag named `option` — callers should treat that as "no
+ * aliases", not an error, since a synthetic/test command path is a legitimate input.
  */
 export function flagAliasesFor(
   rootCommand: Command.Command.Any,
@@ -160,27 +152,11 @@ export function flagAliasesFor(
 }
 
 /**
- * Builds a lookup for whether an argv token (a canonical `--name` or one of
- * its aliases, e.g. `-t`) at `commandPath` belongs to a *value-taking* flag
- * (any flag whose `HelpDoc.FlagDoc.type !== "boolean"`) on the command
- * resolved the same way `flagAliasesFor` does. Returns a function that
- * answers `false` for every token when `commandPath` doesn't resolve to a
- * real command, mirroring `flagAliasesFor`'s "no aliases" fallback.
- *
- * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize when a
- * DIFFERENT flag's value-consumption ate the very token being scanned for.
- * Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes the next
- * argv entry as a value-taking flag's value, even when that entry itself
- * looks like another flag — e.g. `sso add --project-ref --type` hands the
- * literal string `--type` to `--project-ref`, so `--type` is never seen as
- * its own occurrence and its `MissingOption` failure gets Go's
- * `SilenceUsage` treatment (no usage shown). The vendored `effect` CLI
- * library's own parser does NOT replicate that (`internal/parser.ts`'s
- * `consumeFlagValueWithTokens` only consumes a following token when it's
- * lexed as a plain `Value`, never a flag-shaped token), so without this
- * lookup the raw argv scan in `isMissingFlagTokenPresent` would find the
- * literal `--type` token and wrongly conclude the flag is present but
- * missing its value — reintroducing the usage dump CLI-1901 suppresses.
+ * Builds a lookup for whether an argv token (a canonical `--name` or an alias) at `commandPath`
+ * belongs to a value-taking flag (any flag whose type isn't `"boolean"`), answering `false` for
+ * every token when `commandPath` doesn't resolve to a real command. Used by `run.ts`'s
+ * `isMissingFlagTokenPresent` to detect when pflag would have consumed the token as a preceding
+ * flag's value instead of treating it as its own occurrence.
  */
 export function isValueTakingFlagTokenFor(
   rootCommand: Command.Command.Any,

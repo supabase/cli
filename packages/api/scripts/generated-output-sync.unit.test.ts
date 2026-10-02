@@ -6,14 +6,11 @@ import { describe, expect, test } from "vitest";
 
 import { extractOperations, loadSpec, renderContracts, renderEffectClient } from "./generate.ts";
 
-// Full-fidelity drift guard: re-renders every generated file from the
-// committed openapi.json snapshot, formats the result through the same oxfmt
-// the pipeline uses, and requires byte equality with the committed files.
-// Unlike the operation-level bijection test in src/generated-contract-sync,
-// this catches hand edits to schema definitions, parameter lists, request
-// bodies, response types, and the executor switch — anything short of
-// editing the snapshot and the generated output consistently, which the
-// hourly upstream sync then catches.
+// Full-fidelity drift guard: re-renders every generated file from the committed
+// snapshot, formats it with the same oxfmt the pipeline uses, and requires byte
+// equality. Catches hand edits to schema definitions, parameter lists, request
+// bodies, response types, and the executor switch, which the operation-level
+// bijection test in src/generated-contract-sync doesn't.
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.join(scriptDir, "..");
@@ -24,11 +21,10 @@ const generatedDir = path.join(packageDir, "src", "generated");
 const oxfmtBin = path.join(repoDir, "node_modules", ".bin", "oxfmt");
 
 function formatWithOxfmt(source: string, fileName: string): string {
-  // oxfmt runs in file mode (also what the pipeline's fmt:fix runs) rather
-  // than through stdin/stdout: Bun on Linux truncates a child's piped stdout
-  // at ~219 KB, and these renders are 600+ KB. The temp directory lives
-  // inside the package so oxfmt resolves the same configuration, but not
-  // under node_modules, which oxfmt skips by default.
+  // Runs oxfmt in file mode, not via stdin/stdout: Bun on Linux truncates a
+  // child's piped stdout at ~219 KB, and these renders are 600+ KB. The temp
+  // dir lives inside the package (same oxfmt config) but outside node_modules,
+  // which oxfmt skips by default.
   const tempDir = mkdtempSync(path.join(packageDir, ".generated-output-sync-"));
   try {
     const tempFile = path.join(tempDir, fileName);

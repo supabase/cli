@@ -30,16 +30,12 @@ const name = values.name!;
 const local = values.local!;
 const dryRun = values["dry-run"]!;
 
-// The shipped binary is always `supabase.exe`, regardless of channel — only
-// the manifest filename differs (e.g. `supabase-beta.json`) so stable and
-// beta can coexist in the same bucket. Matches the Go CLI's historical
-// scoop-bucket layout (`supabase.json` and `supabase-beta.json` both shim
-// `supabase.exe`).
+// The shipped binary is always `supabase.exe`; only the manifest filename differs (e.g.
+// `supabase-beta.json`), so stable and beta can coexist in the same bucket.
 const binEntry = "supabase.exe";
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-// Parse checksums
 const checksums = new Map<string, string>();
 const checksumsText = await readFile(path.join(distDir, "checksums.txt"), "utf-8");
 for (const line of checksumsText.trim().split("\n")) {
@@ -58,9 +54,8 @@ const baseUrl = local
   ? `file:///${distDir.replace(/\\/g, "/")}`
   : `https://github.com/${repo}/releases/download/v${version}`;
 
-// Main-bucket layout uses unversioned Windows tarballs on GitHub Releases
-// (release-shared.yml copies versioned builds to supabase_windows_*.tar.gz).
-// Local builds only emit versioned archives, so --local keeps those names.
+// Published releases use unversioned Windows tarball names (release-shared.yml copies the
+// versioned build); local builds only emit versioned archives, so --local keeps those names.
 const amd64Tar = local
   ? `supabase_${version}_windows_amd64.tar.gz`
   : "supabase_windows_amd64.tar.gz";
@@ -121,7 +116,6 @@ async function hasStagedChanges(repoDir: string, repoPath: string): Promise<bool
   throw new Error(`Failed to inspect staged changes for ${repoPath}`);
 }
 
-// Clone bucket repo, update manifest, commit, push
 const tmpDir = await mkdtemp(path.join(tmpdir(), "scoop-bucket-"));
 try {
   const bucketUrl = `https://github.com/${bucket}.git`;

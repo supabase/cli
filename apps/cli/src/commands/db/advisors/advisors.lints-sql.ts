@@ -1,4 +1,3 @@
-/* eslint-disable */
 /**
  * `lints.sql` embedded verbatim, an established output contract. Stored as a
  * JSON-encoded string literal so the bytes stay byte-identical and immune to

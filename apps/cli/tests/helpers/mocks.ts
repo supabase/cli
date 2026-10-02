@@ -2,20 +2,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, Redacted, Stream } from "effect";
+import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
-import { Api } from "../../src/shared/auth/api.service.ts";
-import type { LoginSessionResponse, ProfileResponse } from "../../src/shared/auth/api.service.ts";
-import { Credentials } from "../../src/shared/auth/credentials.service.ts";
-import { Crypto } from "../../src/shared/auth/crypto.service.ts";
-import { ApiError } from "../../src/shared/auth/errors.ts";
+import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
-import {
-  CliProjectLocalServiceVersions,
-  type LocalServiceVersionsState,
-} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/shared/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
@@ -37,10 +28,6 @@ import { CurrentAnalyticsContext } from "../../src/shared/telemetry/analytics-co
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type OutputMessage = {
   type: "intro" | "outro" | "info" | "warn" | "error" | "success" | "fail";
   message: string;
@@ -59,37 +46,18 @@ type OutputEvent = {
   [key: string]: unknown;
 };
 
-// Default home for mocks that need *some* path value. Unique per process (never
-// created on disk here) so a test that accidentally combines this default with a
-// real FileSystem layer can never pick up stale files written by earlier test
-// runs or manual CLI invocations — the failure mode the previous fixed literal
-// `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
-// under homeDir must pass their own per-test temp dir instead (see
-// `useTempWorkdir` in `command-mocks.ts`).
+// Default home for mocks that need *some* path value; unique per process and never
+// created on disk, so a test combining it with a real FileSystem layer can't collide
+// with another run's files. Tests that read/write real files under homeDir should use
+// `useTempWorkdir` in `command-mocks.ts` instead.
 const defaultTestHomeDir = join(
   tmpdir(),
   `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
 );
 
-// ---------------------------------------------------------------------------
-// Stateless mocks
-// ---------------------------------------------------------------------------
-
 export function mockBrowser(): Layer.Layer<Browser> {
   return Layer.succeed(Browser, {
     open: () => Effect.void,
-  });
-}
-
-export function mockCrypto(token = "sbp_" + "a".repeat(40)): Layer.Layer<Crypto> {
-  return Layer.succeed(Crypto, {
-    generateKeyPair: Effect.sync(() => ({
-      ecdh: {} as import("node:crypto").ECDH,
-      publicKeyHex: "04abcd",
-    })),
-    generateSessionId: Effect.sync(() => "test-session-id"),
-    defaultTokenName: Effect.sync(() => "cli_test@host_123"),
-    decryptToken: () => Effect.succeed(token),
   });
 }
 
@@ -105,9 +73,8 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
     ? Option.some(new TextDecoder().decode(pipedBytes.value))
     : Option.none<string>();
 
-  // Split the piped input into lines, dropping the trailing empty element left by a
-  // final newline (production `Stream.splitLines` emits no line after the terminating
-  // newline); interior blank lines are preserved.
+  // Drops the trailing empty element a final newline leaves behind, matching
+  // production `Stream.splitLines`; interior blank lines are preserved.
   const lines = Option.isSome(pipedText) ? pipedText.value.split(/\r?\n/u) : [];
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   let lineIndex = 0;
@@ -119,16 +86,14 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
       ? Stream.fromIterable([pipedBytes.value])
       : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
-    // Dispenses the piped lines one per call (trimmed), then None once exhausted —
-    // the timeout is irrelevant to a fixed mock. Mirrors the production persistent
-    // reader so a command issuing several prompts reads successive lines.
+    // Ignores any timeout argument; dispenses piped lines one per call, then None once
+    // exhausted.
     readLine: () =>
       Effect.sync(() => {
         if (lineIndex >= lines.length) {
           return Option.none<string>();
         }
-        const line = (lines[lineIndex++] ?? "").trim();
-        return line.length > 0 ? Option.some(line) : Option.none<string>();
+        return Option.some(lines[lineIndex++] ?? "");
       }),
   });
 }
@@ -213,37 +178,6 @@ export function mockProcessControl(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Stateful mock factories
-// ---------------------------------------------------------------------------
-
-export function mockCredentials(opts: { existingToken?: string } = {}) {
-  let savedToken: string | undefined;
-  let deleteWasCalled = false;
-  return {
-    layer: Layer.succeed(Credentials, {
-      getAccessToken: Effect.sync(() => {
-        const token = opts.existingToken ?? savedToken;
-        return token ? Option.some(Redacted.make(token)) : Option.none();
-      }),
-      saveAccessToken: (token: string | Redacted.Redacted<string>) =>
-        Effect.sync(() => {
-          savedToken = typeof token === "string" ? token : Redacted.value(token);
-        }),
-      deleteAccessToken: Effect.sync(() => {
-        deleteWasCalled = true;
-        return !!(opts.existingToken ?? savedToken);
-      }),
-    }),
-    get savedToken() {
-      return savedToken;
-    },
-    get deleteWasCalled() {
-      return deleteWasCalled;
-    },
-  };
-}
-
 export function mockOutput(
   opts: {
     format?: OutputFormat;
@@ -259,6 +193,7 @@ export function mockOutput(
   } = {},
 ) {
   const messages: OutputMessage[] = [];
+  const failures: Array<Parameters<ReturnType<typeof Output.of>["fail"]>[0]> = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
@@ -346,7 +281,7 @@ export function mockOutput(
                   messages.push({ type: "warn", message: nextMessage });
                 }
               }),
-            clear: () => Effect.void,
+            clear: Effect.void,
           };
         }),
       event: (event) =>
@@ -360,6 +295,18 @@ export function mockOutput(
                 : JSON.stringify(event),
           });
         }),
+      result: (data: unknown) =>
+        Effect.sync(() => {
+          if (opts.format === "json") {
+            rawChunks.push({ text: `${JSON.stringify(data)}\n`, stream: "stdout" });
+          } else if (opts.format === "stream-json") {
+            events.push({
+              type: "result",
+              data,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }),
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
           messages.push({ type: "success", message, data });
@@ -367,6 +314,7 @@ export function mockOutput(
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.sync(() => {
           messages.push({ type: "fail", message: err.message });
+          failures.push(err);
         }),
       progress: (opts: { max: number }) =>
         Effect.sync(() => ({
@@ -395,12 +343,12 @@ export function mockOutput(
         ) => {
           callCount++;
           promptTextCalls.push({ message, opts: options });
-          // Exercise the validate callback to cover both branches (line 140)
+          // Runs the validate callback so both branches get coverage.
           if (options?.validate) {
-            options.validate(""); // truthy branch: returns error message
-            options.validate("123456"); // falsy branch: returns undefined
+            options.validate(""); // returns an error message
+            options.validate("123456"); // returns undefined
           }
-          // Fail on the verification prompt (2nd call), not the "Press Enter" prompt (1st call)
+          // Fails the verification prompt (2nd call), not the "Press Enter" prompt (1st call).
           if (opts.promptTextFail && callCount > 1) {
             return Effect.fail(
               new NonInteractiveError({
@@ -451,6 +399,7 @@ export function mockOutput(
         }),
     }),
     messages,
+    failures,
     progressEvents,
     events,
     promptConfirmCalls,
@@ -472,64 +421,9 @@ export function mockOutput(
   };
 }
 
-export function mockApi(
-  opts: {
-    failTimes?: number;
-    response?: Partial<LoginSessionResponse>;
-    profileResponse?: Partial<ProfileResponse>;
-    profileError?: ApiError;
-  } = {},
-) {
-  let callCount = 0;
-  let profileCallCount = 0;
-  const failTimes = opts.failTimes ?? 0;
-  const response: LoginSessionResponse = {
-    access_token: "encrypted",
-    public_key: "abcd",
-    nonce: "1234",
-    ...opts.response,
-  };
-  const profileResponse: ProfileResponse = {
-    gotrue_id: "user-123",
-    primary_email: "test@example.com",
-    username: "tester",
-    ...opts.profileResponse,
-  };
-
-  return {
-    layer: Layer.succeed(Api, {
-      fetchLoginSession: () => {
-        callCount++;
-        if (callCount <= failTimes) {
-          return Effect.fail(new ApiError({ detail: "network error" }));
-        }
-        return Effect.succeed(response);
-      },
-      fetchProfile: () => {
-        profileCallCount++;
-        if (opts.profileError !== undefined) {
-          return Effect.fail(opts.profileError);
-        }
-        return Effect.succeed(profileResponse);
-      },
-    }),
-    get callCount() {
-      return callCount;
-    },
-    get profileCallCount() {
-      return profileCallCount;
-    },
-  };
-}
-
 /**
- * `withCommandTelemetry` threads `flags`/`command`/etc. through
- * `CurrentAnalyticsContext`, not the direct `capture()` call args. The plain
- * `mockAnalytics()` below deliberately doesn't merge that context (most
- * callers don't need it); tests asserting on context-carried properties
- * (telemetry `flags` maps, `groups`) use this variant instead.
- * Shape-compatible with `mockAnalytics()`'s return so it's a drop-in
- * override wherever a setup helper accepts one.
+ * Like `mockAnalytics()`, but merges `CurrentAnalyticsContext` into captured event
+ * properties. Use it when asserting on context-carried fields (`flags`, `groups`).
  */
 export function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
   const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
@@ -624,9 +518,7 @@ export function mockAnalytics() {
 export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
-    tracesDir: string;
     consent: "granted" | "denied";
-    showDebug: boolean;
     deviceId: string;
     sessionId: string;
     distinctId: string | undefined;
@@ -642,9 +534,7 @@ export function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
-      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
       consent: opts.consent ?? "granted",
-      showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
       identity: makeTelemetryIdentity(opts.distinctId),
@@ -657,10 +547,6 @@ export function mockTelemetryRuntime(
     }),
   );
 }
-
-// ---------------------------------------------------------------------------
-// Environment helpers
-// ---------------------------------------------------------------------------
 
 function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
   const snapshot = { ...process.env };
@@ -681,14 +567,25 @@ function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return Layer.effectDiscard(
+  return ConfigProvider.layer(
     Effect.acquireRelease(
-      Effect.sync(() => applyProcessEnv(values)),
-      (snapshot) =>
+      Effect.sync(() => {
+        const ambientTestRun = process.env[stackTestRunEnvVar];
+        const snapshot = applyProcessEnv(
+          stackTestRunEnvVar in values || ambientTestRun === undefined
+            ? values
+            : { [stackTestRunEnvVar]: ambientTestRun, ...values },
+        );
+        return {
+          provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
+          snapshot,
+        };
+      }),
+      ({ snapshot }) =>
         Effect.sync(() => {
           applyProcessEnv(snapshot);
         }),
-    ),
+    ).pipe(Effect.map(({ provider }) => provider)),
   );
 }
 
@@ -731,7 +628,7 @@ function mockCliProjectHome(
   );
 }
 
-export function mockProjectLinkState(
+function mockProjectLinkState(
   initialState?: ProjectLinkStateValue,
 ): Layer.Layer<ProjectLinkState, never, never> {
   let state = initialState;
@@ -762,82 +659,12 @@ export function mockProjectLinkState(
   );
 }
 
-export function mockProjectLinkRemote(
-  opts: {
-    projects?: ReadonlyArray<{
-      ref: string;
-      name: string;
-      region: string;
-      status: string;
-      organizationId?: string;
-      organizationSlug?: string;
-    }>;
-    linkedProject?: {
-      ref: string;
-      name: string;
-      region: string;
-      status: string;
-      organizationId?: string;
-      organizationSlug?: string;
-      versions: {
-        postgres?: string;
-        postgrest?: string;
-        auth?: string;
-        storage?: string;
-      };
-      unavailableServices?: ReadonlyArray<"postgres" | "postgrest" | "auth" | "storage">;
-    };
-  } = {},
-): Layer.Layer<ProjectLinkRemote, never, never> {
-  const projects = opts.projects ?? [];
-  const linkedProject = opts.linkedProject;
-  return Layer.succeed(
-    ProjectLinkRemote,
-    ProjectLinkRemote.of({
-      listAccessibleProjects: Effect.succeed(
-        projects.map((project) => ({
-          ...project,
-          organizationId: project.organizationId ?? "org_123",
-          organizationSlug: project.organizationSlug ?? "supabase",
-        })),
-      ),
-      fetchLinkedProject: (projectRef: string) =>
-        Effect.gen(function* () {
-          if (linkedProject === undefined) {
-            return yield* Effect.fail(new Error(`No linked project mock for ${projectRef}`));
-          }
-          return {
-            ...linkedProject,
-            organizationId: linkedProject.organizationId ?? "org_123",
-            organizationSlug: linkedProject.organizationSlug ?? "supabase",
-            unavailableServices: linkedProject.unavailableServices ?? [],
-          };
-        }),
-    }),
-  );
-}
-
-export function mockCliProjectLocalServiceVersions(
-  initialState?: LocalServiceVersionsState,
-): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
-  let state = initialState;
-  return Layer.succeed(
-    CliProjectLocalServiceVersions,
-    CliProjectLocalServiceVersions.of({
-      load: Effect.sync(() =>
-        state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
-      ),
-    }),
-  );
-}
-
 export function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer();
   const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
-  const cliProjectLocalServiceVersionsLayer = mockCliProjectLocalServiceVersions();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
@@ -845,32 +672,56 @@ export function emptyEnv() {
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
-    cliProjectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
-    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
+    cliSettingsLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(cliProjectContextLayer),
+      Layer.provide(envLayer),
+      Layer.provide(BunServices.layer),
+    ),
   );
 }
 
-export function withEnv(env: Record<string, string>) {
-  const runtimeInfoLayer = mockRuntimeInfo();
-  const cliProjectContextLayer = mockCliProjectContext();
-  const envLayer = processEnvLayer(env);
-  const cliProjectHomeLayer = mockCliProjectHome();
-  const analytics = mockAnalytics();
-  return Layer.mergeAll(
-    BunServices.layer,
-    runtimeInfoLayer,
-    cliProjectContextLayer,
-    cliProjectHomeLayer,
-    analytics.layer,
-    mockTelemetryRuntime(),
-    envLayer,
-    mockTty(),
-    mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
-  );
+/**
+ * A `Console.Console` test double recording `log`/`error` calls — `--help` and parse-error
+ * output render through it. Not `vi.spyOn`-based: spying on `console.*` here unreliably breaks
+ * call detection under this repo's Bun + Vitest combination.
+ */
+export function fakeConsole(): {
+  readonly console: Console.Console;
+  readonly calls: Array<string>;
+} {
+  const calls: Array<string> = [];
+  const unused = () => {};
+  return {
+    calls,
+    console: {
+      assert: unused,
+      clear: unused,
+      count: unused,
+      countReset: unused,
+      debug: unused,
+      dir: unused,
+      dirxml: unused,
+      error: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`error:${args.join(" ")}`);
+      },
+      group: unused,
+      groupCollapsed: unused,
+      groupEnd: unused,
+      info: unused,
+      log: (...args: ReadonlyArray<unknown>) => {
+        calls.push(`log:${args.join(" ")}`);
+      },
+      table: unused,
+      time: unused,
+      timeEnd: unused,
+      timeLog: unused,
+      trace: unused,
+      warn: unused,
+    },
+  };
 }

@@ -1,6 +1,6 @@
 import { type V1ListAllSnippetsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -41,9 +41,7 @@ const PIPE_RESPONSE: SnippetsResponse = {
   data: [
     {
       ...SNIPPET_BASE,
-      // `strings.ReplaceAll(value, "|", "\\|")` is a markdown-intermediate
-      // escape that glamour decodes back to literal `|` in the rendered ASCII
-      // bytes. `renderGlamourTable` bypasses glamour, so we pass raw values —
+      // `renderGlamourTable` bypasses glamour's markdown-table escaping, so
       // any `|` in `name` / `owner.username` must appear literally in stdout.
       name: "name|with|pipes",
       owner: { id: 7, username: "user|name" },
@@ -121,7 +119,6 @@ describe("snippets list integration", () => {
       yield* snippetsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("name|with|pipes");
       expect(out.stdoutText).toContain("user|name");
-      // No `\|` escape — the intermediate escape is round-tripped by glamour.
       expect(out.stdoutText).not.toContain("\\|");
     }).pipe(Effect.provide(layer));
   });
@@ -167,8 +164,7 @@ describe("snippets list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
-      // The API returns `{"data": []}`; our raw-HTTP bypass means we
-      // faithfully echo whatever the API sent — no `nullForEmptyArrays`
+      // Raw-HTTP bypass echoes whatever the API sent — no `nullForEmptyArrays`
       // coercion (real responses always send `[]`, never null).
       expect(out.stdoutText).toBe(`{
   "data": []
@@ -187,18 +183,17 @@ describe("snippets list integration", () => {
   });
 
   it.live("Go --output=toml fails like Go when a snippet carries a description", () => {
-    // BurntSushi refuses the `nullable.Nullable[string]` description field
-    // (`map[bool]string`) — `snippets list -o toml` fails with this exact
-    // message whenever any snippet has a `description` key (present-with-value
+    // The nullable `description` field can't be represented in TOML, so this
+    // fails whenever any snippet has a `description` key (present-with-value
     // or explicit null).
     const { layer } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsTomlEncodeError");
-        expect(dump).toContain(
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsTomlEncodeError");
+        expect(causeText).toContain(
           "failed to output toml: toml: cannot encode a map with non-string key type",
         );
       }
@@ -206,10 +201,9 @@ describe("snippets list integration", () => {
   });
 
   it.live("Go --output=toml emits Go-shaped bytes when no snippet has a description", () => {
-    // In practice the Management API always includes `description` (the
-    // schema marks it required, value-or-null), so this success branch is
-    // realistically unreachable in production — Go fails there too. It is
-    // kept to pin the encoder bytes for the shape where the key is absent.
+    // The Management API always includes `description`, so this success
+    // branch is unreachable in production — kept to pin the encoder bytes
+    // for the shape where the key is absent.
     const { description: _omitted, ...withoutDescription } = SNIPPET_BASE;
     const { layer, out } = setup({
       goOutput: "toml",
@@ -217,7 +211,7 @@ describe("snippets list integration", () => {
     });
     return Effect.gen(function* () {
       yield* snippetsList({ projectRef: Option.none() });
-      // PascalCase Go field names, sub-tables after primitives, 2-space indent.
+      // PascalCase field names, sub-tables after primitives, 2-space indent.
       expect(out.stdoutText).toBe(`[[Data]]
   Favorite = false
   Id = "${SNIPPET_ID}"
@@ -247,12 +241,11 @@ describe("snippets list integration", () => {
         const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
-          expect(dump).toContain("SnippetsEnvNotSupportedError");
-          expect(dump).toContain("--output env flag is not supported");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SnippetsEnvNotSupportedError");
+          expect(causeText).toContain("--output env flag is not supported");
         }
         expect(api.requests).toHaveLength(0);
-        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -301,9 +294,9 @@ describe("snippets list integration", () => {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsListUnexpectedStatusError");
-        expect(dump).toContain("unexpected list snippets status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list snippets status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -314,9 +307,9 @@ describe("snippets list integration", () => {
       const exit = yield* Effect.exit(snippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("SnippetsListNetworkError");
-        expect(dump).toContain("failed to list snippets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SnippetsListNetworkError");
+        expect(causeText).toContain("failed to list snippets");
       }
     }).pipe(Effect.provide(layer));
   });

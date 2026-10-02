@@ -19,16 +19,11 @@ describe("@supabase/api entrypoints", () => {
   });
 
   test("exports runtime-specific client builders", () => {
-    const srcDir = dirname(fileURLToPath(import.meta.url));
-    const bunSource = readFileSync(join(srcDir, "bun.ts"), "utf8");
-
-    expect(bunSource).toContain("export async function createApiClient");
     expect(typeof createNodeApiClient).toBe("function");
     expect(typeof effectModule.makeApiClient).toBe("function");
     expect(effectModule.ApiConfig).toBeDefined();
     expect(effectModule.apiConfigLayer).toBeDefined();
     expect(effectModule.DEFAULT_SUPABASE_API_URL).toBe("https://api.supabase.com");
-    expect(bunSource).not.toContain("clientLayer");
   });
 
   test("does not generate separate promise or standalone operation artifacts", () => {

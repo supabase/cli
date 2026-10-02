@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -42,17 +40,12 @@ interface SetupOpts {
   readonly failResolve?: boolean;
   readonly failDrop?: boolean;
   readonly failSeed?: boolean;
-  readonly config?: string;
   readonly seedTable?: ReadonlyArray<{ path: string; hash: string }>;
 }
 
 const SELECT_SEED = "SELECT path, hash FROM supabase_migrations.seed_files";
 
 function setup(workdir: string, opts: SetupOpts = {}) {
-  if (opts.config !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.config);
-  }
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
@@ -109,17 +102,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        // A migration file's statements arrive as one batch; replay them through
-        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        // Replays each statement through exec/query so recordings and failure injection apply.
         execBatch: (statements) => sequentialExecBatch(session)(statements),
       };
       return Effect.succeed(session);
     },
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -145,8 +136,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly, so a confirm answer is
-      // supplied via piped stdin rather than the Output prompt mock.
+      // Migration prompts read stdin directly, so the confirm answer is piped in.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
     BunServices.layer,
@@ -162,11 +152,25 @@ const flags = (over: Partial<MigrationDownFlags> = {}): MigrationDownFlags => ({
   projectRef: over.projectRef ?? Option.none(),
 });
 
-const seed = (workdir: string, name: string, body = "create table a;\n") => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
-};
+const seed = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  body = "create table a;\n",
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase", "migrations");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
+
+const writeProjectFile = Effect.fnUntraced(function* (workdir: string, name: string, body: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  yield* fs.writeFileString(path.join(dir, name), body);
+});
 
 const tmp = useTempWorkdir();
 
@@ -184,15 +188,12 @@ describe("migration down", () => {
   });
 
   it.live("resolves the DB target before rejecting --last 0", () => {
-    // The DB config resolves before the `--last === 0`
-    // check, so an unlinked/invalid target error wins over --last 0.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* migrationDown(flags({ last: 0 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        // The target/config error surfaces first, NOT the --last 0 error.
         expect(Option.isSome(failure) && failure.value._tag).toBe("ProjectRefNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
@@ -211,17 +212,15 @@ describe("migration down", () => {
   });
 
   it.live("reverts to the target version on confirm (drop + migrate&seed)", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationDown(flags({ last: 1 }));
-      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
-      // dropped user schemas, then re-applied the migration <= target version.
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(true);
       expect(
         queries.some(
@@ -235,17 +234,16 @@ describe("migration down", () => {
   it.live(
     "reverts on the project given via --project-ref --linked, overriding the linked ref",
     () => {
-      // down defaults to local; only with --linked does the flag's ref get
-      // cached. The fake resolver's own fallback (VALID_REF) represents
-      // whatever the workdir would resolve to absent the flag.
+      // VALID_REF is the fake resolver's fallback, representing whatever the
+      // workdir would resolve to without the flag override.
       const FLAG_REF = "flagflagflagflagflag";
-      seed(tmp.current, "20240101000000_a.sql");
       const { layer, cache } = setup(tmp.current, {
         args: ["--linked"],
         confirm: true,
         remote: ["20240101000000", "20240102000000"],
       });
       return Effect.gen(function* () {
+        yield* seed(tmp.current, "20240101000000_a.sql");
         yield* migrationDown(
           flags({ last: 1, linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
         );
@@ -257,8 +255,6 @@ describe("migration down", () => {
   );
 
   it.live("rejects --project-ref on the default local target", () => {
-    // down defaults to local when no target flag is set — the guard must fire
-    // from the flag alone, with no explicit --local/--db-url needed.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, execs, queries, cache } = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
@@ -282,12 +278,12 @@ describe("migration down", () => {
   });
 
   it.live("cancels on a declined prompt", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, execs } = setup(tmp.current, {
       confirm: false,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -299,8 +295,7 @@ describe("migration down", () => {
   });
 
   it.live("falls back to NO (cancels) without a TTY and no piped answer", () => {
-    // Stdin is read regardless of TTY (isTTY only changes the timeout); with no piped
-    // answer the empty read falls back to the default (NO) → cancel.
+    // isTTY only changes the read timeout; stdin is still read either way.
     const { layer, out } = setup(tmp.current, {
       isTTY: false,
       remote: ["20240101000000", "20240102000000"],
@@ -317,13 +312,13 @@ describe("migration down", () => {
   });
 
   it.live("emits a structured result in json with --yes", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, out } = setup(tmp.current, {
       format: "json",
       yes: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       yield* migrationDown(flags({ last: 1 }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -336,15 +331,14 @@ describe("migration down", () => {
   });
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    // SUPABASE_YES lives only in supabase/.env, not the shell — the project env loads it
-    // before the prompt, so the revert auto-confirms with no --yes flag and no stdin answer.
-    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+    // SUPABASE_YES lives only in supabase/.env; the project env loads it before the prompt.
     const { layer, out } = setup(tmp.current, {
       format: "json",
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, ".env", "SUPABASE_YES=true\n");
       yield* migrationDown(flags({ last: 1 }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -357,13 +351,13 @@ describe("migration down", () => {
   });
 
   it.live("reports a drop-schema failure", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
       failDrop: true,
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
       const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -374,13 +368,13 @@ describe("migration down", () => {
   });
 
   it.live("seeds data from a new seed file and records its hash", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), "insert into a values (1);\n");
     const { layer, out, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (1);\n");
       yield* migrationDown(flags({ last: 1 }));
       expect(stripAnsi(out.stderrText)).toContain("Seeding data from supabase/seed.sql...");
       expect(
@@ -390,14 +384,14 @@ describe("migration down", () => {
   });
 
   it.live("reports a seed-apply failure", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), "insert into a values (1);\n");
     const { layer } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
       failSeed: true,
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (1);\n");
       const exit = yield* migrationDown(flags({ last: 1 })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -408,9 +402,7 @@ describe("migration down", () => {
   });
 
   it.live("skips an unchanged seed file", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const body = "insert into a values (1);\n";
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), body);
     const hash = createHash("sha256").update(body).digest("hex");
     const { layer, out, queries } = setup(tmp.current, {
       confirm: true,
@@ -418,6 +410,8 @@ describe("migration down", () => {
       seedTable: [{ path: "supabase/seed.sql", hash }],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "seed.sql", body);
       yield* migrationDown(flags({ last: 1 }));
       expect(stripAnsi(out.stderrText)).not.toContain("Seeding data from");
       expect(
@@ -427,16 +421,15 @@ describe("migration down", () => {
   });
 
   it.live("updates the recorded hash (without re-running) for a changed seed file", () => {
-    seed(tmp.current, "20240101000000_a.sql");
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), "insert into a values (2);\n");
     const { layer, out, execs, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
       seedTable: [{ path: "supabase/seed.sql", hash: "stale-hash-does-not-match" }],
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "seed.sql", "insert into a values (2);\n");
       yield* migrationDown(flags({ last: 1 }));
-      // Dirty seed → "Updating seed hash" + hash UPSERT, but the seed SQL is NOT re-run.
       expect(stripAnsi(out.stderrText)).toContain("Updating seed hash to supabase/seed.sql...");
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -446,13 +439,13 @@ describe("migration down", () => {
   });
 
   it.live("skips migration apply when db.migrations.enabled = false", () => {
-    seed(tmp.current, "20240101000000_a.sql");
     const { layer, queries } = setup(tmp.current, {
       confirm: true,
       remote: ["20240101000000", "20240102000000"],
-      config: "[db.migrations]\nenabled = false\n",
     });
     return Effect.gen(function* () {
+      yield* seed(tmp.current, "20240101000000_a.sql");
+      yield* writeProjectFile(tmp.current, "config.toml", "[db.migrations]\nenabled = false\n");
       yield* migrationDown(flags({ last: 1 }));
       expect(queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(false);
     }).pipe(Effect.provide(layer));

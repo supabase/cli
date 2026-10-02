@@ -3,11 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./go-output.encoders.ts";
 
-// These encoders are type-generic. We keep one fixture shaped like the backups
-// response because the `nullForEmptyArrays` option (and the Go-parity byte
-// assertions that exercise it) were extracted from the backups port. The
-// encoder itself has no backups coupling — see the `{ items, name }` fixtures
-// below for plain-object coverage of the option path.
+// Shaped like the backups response because the `nullForEmptyArrays` byte-parity assertions were
+// extracted from that port; see the `{ items, name }` fixtures below for plain-object coverage.
 const SAMPLE_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   region: "ap-southeast-1",
   walg_enabled: true,
@@ -52,8 +49,6 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    // Matches the established "encodes json output" fixture —
-    // empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
     const out = encodeGoJson(
       {
         region: "ap-southeast-1",
@@ -77,7 +72,6 @@ describe("encodeGoJson", () => {
   });
 
   it("leaves arrays intact when nullForEmptyArrays is not provided", () => {
-    // Default behaviour for commands (e.g. ssl-enforcement) that have no nil-slice rewrite.
     const out = encodeGoJson({ items: [], name: "x" });
     expect(out).toBe(
       `{
@@ -103,11 +97,6 @@ describe("encodeGoJson", () => {
   });
 
   it("keeps Go's true lexicographic order for numeric-looking keys (CLI-1961 Codex review finding)", () => {
-    // A plain JS object always reorders integer-like string keys ("2", "10") into
-    // ascending NUMERIC order on enumeration, regardless of insertion order — Go's
-    // `encoding/json` has no such special case for a real Go map, so "10" sorts before
-    // "2" lexicographically. `sortKeysDeep` must build a `Map` (not a plain object) to
-    // carry that sort through to the final encoded output intact.
     const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
     expect(out).toBe(
       `{
@@ -120,12 +109,6 @@ describe("encodeGoJson", () => {
   });
 
   it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
-    // U+E000 is a single UTF-16 code unit (0xE000); U+10000 is a surrogate PAIR whose
-    // leading unit (0xD800) is numerically SMALLER than 0xE000 — so plain JS `.sort()`
-    // (which compares UTF-16 code units) puts the astral key FIRST, while Go's real
-    // `encoding/json` (byte/code-point order) puts the high-BMP key first instead.
-    // Verified against the real binary: `json.Marshal` of a Go map keyed by these two
-    // strings emits the U+E000 key first.
     const highBmp = String.fromCodePoint(0xe000);
     const astral = String.fromCodePoint(0x10000);
     const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
@@ -158,8 +141,6 @@ describe("encodeEnv", () => {
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('REGION="ap-southeast-1"');
-    // Booleans are stringified to "true"/"false" — not integers under strconv.Atoi,
-    // so godotenv quotes them.
     expect(lines).toContain('WALG_ENABLED="true"');
     expect(lines).toContain('PITR_ENABLED="true"');
   });
@@ -172,8 +153,6 @@ describe("encodeEnv", () => {
   });
 
   it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
-    // Go output for `backups: [{...}]` is `BACKUPS=""`, not `BACKUPS_0_STATUS=...` —
-    // viper.AllKeys() stops at slice boundaries and GetString of a slice is "".
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('BACKUPS=""');
@@ -181,7 +160,6 @@ describe("encodeEnv", () => {
   });
 
   it("matches Go's full env output for the sample backup response", () => {
-    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`.
     expect(encodeEnv(SAMPLE_RESPONSE)).toBe(
       [
         'BACKUPS=""',
@@ -200,9 +178,6 @@ describe("encodeEnv", () => {
   });
 
   it("escapes embedded newlines, carriage returns, and tabs (Go %q parity)", () => {
-    // Without this, a multi-line string value would render as multiple lines in
-    // env output and be interpreted as separate KEY=VALUE assignments by a shell
-    // that `eval`s or `source`s the output.
     const out = encodeEnv({ description: "line one\nline two\rwith\ttab" });
     expect(out).toBe('DESCRIPTION="line one\\nline two\\rwith\\ttab"');
   });
@@ -213,15 +188,10 @@ describe("encodeEnv", () => {
   });
 
   it("omits empty nested maps entirely (Go viper parity)", () => {
-    // Go output for `{physical_backup_data: {}}` is empty — viper.AllKeys()
-    // does not surface a key for a map with no children. Contrast with empty
-    // arrays, which Go DOES surface as `KEY=""`.
     expect(encodeEnv({ physical_backup_data: {} })).toBe("");
   });
 
   it("matches Go for the PITR-only response shape with empty physical_backup_data", () => {
-    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`
-    // with a JSON-decoded V1BackupsResponse whose physical_backup_data is `{}`.
     expect(
       encodeEnv({
         region: "ap-southeast-1",
@@ -238,7 +208,6 @@ describe("encodeEnv", () => {
   });
 
   it("emits an empty-string value for an explicit null leaf", () => {
-    // Go: viper does surface a nil leaf as `KEY=""` (it still has a key path).
     expect(encodeEnv({ physical_backup_data: { earliest_physical_backup_date_unix: null } })).toBe(
       'PHYSICAL_BACKUP_DATA_EARLIEST_PHYSICAL_BACKUP_DATE_UNIX=""',
     );

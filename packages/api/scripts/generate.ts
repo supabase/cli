@@ -206,37 +206,20 @@ function identifier(value: string): string {
   return camel[0] ? camel[0].toUpperCase() + camel.slice(1) : camel;
 }
 
-// OpenAPI 3.0 treats `format: "uuid"` as a hint, not validation. Without a
-// concrete `pattern`, the resulting Effect schema's UUID branch has no check,
-// so a 20-letter project ref matches both branches of `oneOf [project-ref, uuid]`
-// unions (e.g. `branch_id_or_ref`) and validation fails at "Expected exactly one
-// member to match". Add the canonical RFC 4122 pattern so the branches become
-// mutually exclusive. Mirrored by an inline patch in `contracts.ts` (search
-// "Patched: OpenAPI's `format: \"uuid\"`") that survives ad-hoc edits between
-// regenerations.
+// OpenAPI's `format: "uuid"` is a hint, not validation, so a project-ref string
+// can match both branches of a `oneOf [project-ref, uuid]` union unless a
+// concrete pattern is added; kept in sync with contracts.ts's inline uuid patch.
 const UUID_PATTERN =
   "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-// Keys that we want to strip from a schema node because they describe
-// documentation / example values rather than the value's shape. JSON Schema's
-// `default` is a primitive (or array/object) literal used for documentation —
-// not part of the type contract — so we drop it during sanitization to keep
-// the generated Effect schema lean.
+// Keys stripped from a schema node because they describe documentation/example
+// values, not the value's shape.
 const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
 
-// Recurses into a schema. The `inPropertiesMap` flag tracks whether the current
-// object is the value of a JSON Schema `properties: {...}` map — in that
-// context, keys are user-defined property NAMES (which may legitimately be
-// literally `"default"`, `"example"`, etc.) and we must NOT strip them.
-//
-// Without this distinction, an OpenAPI schema like
-//   { properties: { default: { oneOf: [...] } } }
-// would have the `default` field silently dropped during generation, producing
-// a TypeScript schema that omits the property. This bit the SAML SSO
-// attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
-// `default?: any` per OpenAPI spec; the `default?: any` field was silently
-// stripped because of this). The union may be encoded as either `oneOf` or
-// `anyOf` by different OpenAPI producers.
+// `inPropertiesMap` tracks whether the current object is the value of a
+// `properties: {...}` map; there, keys are user-defined property names (which may
+// legitimately be `"default"`, `"example"`, etc.) and must not be stripped, or a
+// schema like `{ properties: { default: {...} } }` loses that property entirely.
 function isArbitraryJsonDefault(schema: OpenApiSchema): boolean {
   const members = schema.oneOf ?? schema.anyOf;
   if (members?.length !== 4) {
@@ -304,11 +287,9 @@ export function sanitizeOpenApiSchema(
     sanitized.pattern = UUID_PATTERN;
   }
 
-  // The spec's `date-time` patterns reject timestamps the Management API
-  // itself emits: most are Z-anchored, and even the most permissive variant
-  // rejects offset-less values and the lowercase `t`/`z` RFC 3339 §5.6 allows
-  // (supabase/cli#6115). Keeping any of them means owning a guess about every
-  // shape the API may serialize, so keep `format` and drop the pattern.
+  // The spec's `date-time` pattern rejects timestamps the Management API actually
+  // emits (offset-less values, lowercase `t`/`z`); keep `format` but drop the
+  // pattern rather than guessing every shape the API may serialize.
   if (sanitized.type === "string" && sanitized.format === "date-time") {
     delete sanitized.pattern;
   }
@@ -636,10 +617,9 @@ export function operationVersionFromPath(path: string): string {
 }
 
 // Strips a leading version prefix (e.g. `v1`/`V2`) from a camelized operation
-// name, lowercasing the character that follows it, so `v2GetProjectConfig`
-// becomes `getProjectConfig`. Operation names without a version prefix are
-// returned unchanged — the path, not the operationId, is the authority on
-// version.
+// name and lowercases the next character, so `v2GetProjectConfig` becomes
+// `getProjectConfig`. Names without a prefix are returned unchanged — the path,
+// not the operationId, is the authority on version.
 export function operationMethodName(operationName: string): string {
   const match = /^([vV]\d+)(.*)$/u.exec(operationName);
   if (!match) {
@@ -655,10 +635,9 @@ export function operationMethodName(operationName: string): string {
   return `${first}${methodBase.slice(1)}`;
 }
 
-// A version prefix on the operationId is optional, but when present it must
-// agree with the path-derived version — otherwise the generated namespace
-// (from the path) and the SDK method name (from the operationId) would imply
-// different API versions for the same operation.
+// A version prefix on the operationId is optional, but when present must agree
+// with the path-derived version, or the generated namespace and the SDK method
+// name would imply different API versions for the same operation.
 function assertOperationVersionAgreement(operation: {
   readonly operationId: string;
   readonly operationName: string;

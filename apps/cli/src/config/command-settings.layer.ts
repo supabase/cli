@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../shared/cli/version.ts";
@@ -11,33 +11,23 @@ import {
 import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "./command-settings.service.ts";
-import { profileFilePath } from "./profile-file.ts";
+import { resolveSupabaseHomeValue } from "../shared/config/supabase-home.ts";
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Profile resolution precedence: explicit `--profile` flag →
- * `SUPABASE_PROFILE` env → persisted `~/.supabase/profile` file →
- * `supabase` — then loads the token via `loadProfile`, failing instead
- * of falling back to the built-in `supabase` profile, which silently
- * targeted the wrong keyring token and API (supabase/cli#6091).
- *
- * `explicitFlagValue` mirrors pflag: the LAST explicit `--profile` occurrence
- * wins (the Effect parser is first-wins), and an explicit `--profile supabase`
- * shadows env and file even at the default value, which the parsed value
- * alone cannot detect. The persisted file's content is trimmed — a deliberate
- * divergence from the raw file bytes, compensated by the sso pflag
- * reconciliation (`pflag-reconcile.ts`).
+ * Resolves the profile: explicit `--profile` (last occurrence wins) → `SUPABASE_PROFILE` env →
+ * persisted `~/.supabase/profile` file (trimmed) → `supabase`, then loads its token — failing
+ * rather than silently falling back to the `supabase` profile's token.
  */
 function resolveProfile(
   flagValue: string,
   explicitFlagValue: string | undefined,
-  envValue: string | undefined,
+  envValue: Option.Option<string>,
   fs: FileSystem.FileSystem,
-  path: Path.Path,
-  homeDir: string,
+  profilePath: string,
   debugLogger: DebugLoggerShape,
 ): Effect.Effect<LoadedProfile, ProfileLoadError> {
   return Effect.gen(function* () {
@@ -46,14 +36,13 @@ function resolveProfile(
       const flag = explicitFlagValue ?? flagValue;
       yield* debugLogger.debug(`Loading profile from flag: ${flag}`);
       token = flag;
-    } else if (envValue !== undefined && envValue.length > 0) {
-      // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
-      // cannot distinguish env from an explicitly changed flag.
-      yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
-      token = envValue;
+    } else if (Option.isSome(envValue) && envValue.value.length > 0) {
+      // Debug output can't distinguish an env value from an explicitly set flag; both log
+      // the same message.
+      yield* debugLogger.debug(`Loading profile from flag: ${envValue.value}`);
+      token = envValue.value;
     } else {
-      // Lowest precedence: the persisted `~/.supabase/profile` file.
-      const filePath = profileFilePath(path, homeDir);
+      const filePath = profilePath;
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
         Effect.map(Option.some),
@@ -71,63 +60,43 @@ function resolveProfile(
     }
 
     return yield* loadProfile(token, fs);
-  });
+  }).pipe(Effect.withSpan("CommandSettings.resolveProfile"));
 }
 
 /**
- * `--workdir`/`SUPABASE_WORKDIR` can be a relative string (e.g. `.`), but
- * every later reader of the resolved workdir (including the
- * `Config.ProjectId` cwd-basename default, run on every config load) must
- * see the real ABSOLUTE directory, never the raw configured string. This
- * resolves the flag/env value against the real process `cwd`, so
- * `CommandSettings.workdir` is always absolute — the invariant that
- * basename-ing it (e.g. `resolveLocalProjectId`'s workdir-basename
- * fallback) operates on a real directory name, not a relative-path fragment
- * like `.` (which would sanitize to an empty project id and build a bare,
- * all-projects-matching Docker label filter).
+ * Resolves `--workdir`/`SUPABASE_WORKDIR` to an absolute path: it may be given as a relative
+ * string (e.g. `.`), but downstream readers such as the project-id cwd-basename fallback need
+ * a real directory name, not a relative fragment that would sanitize to an empty project id.
  *
- * The returned `explicit` flag is what lets JSON-capable config loads
- * (`config diff`/`config push`/`config pull`/`gen types`/etc — sites that do
- * NOT pass `tomlOnly: true`) skip the second ancestor search that
- * `@supabase/config`'s `loadCliConfig`/`findCliProjectPaths` would otherwise
- * perform by default. It is true iff this function used the flag/env value
- * verbatim without climbing.
- *
- * `pflagWorkdirValue` (`command-internal/pflag-reconcile.ts`) is
- * a similar-looking pflag-semantics predicate used for a different purpose
- * (SSO/dotenv precedence) and deliberately handles a changed-but-empty
- * `--workdir=` differently (treats it as explicit-but-falls-through-to-walk-up,
- * never to env) — the two are intentionally NOT unified.
+ * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
+ * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
  */
-function resolveWorkdir(
+export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(function* (
   flagValue: Option.Option<string>,
-  envValue: string | undefined,
+  envValue: Option.Option<string>,
   cwd: string,
   configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
-): Effect.Effect<{ readonly workdir: string; readonly explicit: boolean }> {
-  return Effect.gen(function* () {
-    if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-      return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
+) {
+  if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
+  }
+  if (Option.isSome(envValue) && envValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, envValue.value), explicit: true };
+  }
+  let current = cwd;
+  while (true) {
+    const candidate = path.join(current, "supabase", "config.toml");
+    if (yield* configTomlExists(candidate)) {
+      return { workdir: current, explicit: false };
     }
-    if (envValue !== undefined && envValue.length > 0) {
-      return { workdir: path.resolve(cwd, envValue), explicit: true };
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return { workdir: cwd, explicit: false };
     }
-    let current = cwd;
-    // Walk up until we hit a directory containing supabase/config.toml or the FS root.
-    while (true) {
-      const candidate = path.join(current, "supabase", "config.toml");
-      if (yield* configTomlExists(candidate)) {
-        return { workdir: current, explicit: false };
-      }
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return { workdir: cwd, explicit: false };
-      }
-      current = parent;
-    }
-  });
-}
+    current = parent;
+  }
+});
 
 export const commandSettingsLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -140,11 +109,20 @@ export const commandSettingsLayer = Layer.unwrap(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const runtimeInfo = yield* RuntimeInfo;
-        const env = process.env;
 
-        // `serviceOption`: tests without argv default to "not explicit". The
-        // empty command path scans all of argv up to `--`, like pflag.
+        const runtimeInfo = yield* RuntimeInfo;
+        const provider = yield* ConfigProvider.ConfigProvider;
+        const read = <A>(config: Config.Config<A>) => config.parse(provider);
+        const profileEnvValue = yield* read(Config.option(Config.string("SUPABASE_PROFILE")));
+        const supabaseHome = yield* read(Config.option(Config.string("SUPABASE_HOME")));
+        const resolvedSupabaseHome = resolveSupabaseHomeValue(
+          path,
+          supabaseHome,
+          runtimeInfo.homeDir,
+        );
+
+        // Optional service: tests without argv default to "not explicit". An empty command
+        // path scans all of argv up to `--`, matching pflag.
         const cliArgs = yield* Effect.serviceOption(CliArgs);
         const explicitProfileFlag = Option.match(cliArgs, {
           onNone: () => undefined,
@@ -160,28 +138,34 @@ export const commandSettingsLayer = Layer.unwrap(
         } = yield* resolveProfile(
           profileFlag,
           explicitProfileFlag,
-          env["SUPABASE_PROFILE"],
+          profileEnvValue,
           fs,
-          path,
-          runtimeInfo.homeDir,
+          path.join(resolvedSupabaseHome, "profile"),
           debugLogger,
         );
 
-        const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
-        const accessToken =
-          rawAccessToken === undefined || rawAccessToken.length === 0
-            ? Option.none<Redacted.Redacted<string>>()
-            : Option.some(Redacted.make(rawAccessToken, { label: "SUPABASE_ACCESS_TOKEN" }));
+        const rawDbPassword = yield* read(Config.option(Config.string("SUPABASE_DB_PASSWORD")));
+        const dbPassword = Option.filter(rawDbPassword, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "SUPABASE_DB_PASSWORD" })),
+        );
 
-        const rawProjectId = env["SUPABASE_PROJECT_ID"];
-        const projectId =
-          rawProjectId === undefined || rawProjectId.length === 0
-            ? Option.none<string>()
-            : Option.some(rawProjectId);
+        const rawGithubToken = yield* read(Config.option(Config.string("GITHUB_TOKEN")));
+        const githubToken = Option.filter(rawGithubToken, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "GITHUB_TOKEN" })),
+        );
 
+        const rawAccessToken = yield* read(Config.option(Config.string("SUPABASE_ACCESS_TOKEN")));
+        const accessToken = Option.filter(rawAccessToken, (value) => value.length > 0).pipe(
+          Option.map((value) => Redacted.make(value, { label: "SUPABASE_ACCESS_TOKEN" })),
+        );
+
+        const rawProjectId = yield* read(Config.option(Config.string("SUPABASE_PROJECT_ID")));
+        const projectId = Option.filter(rawProjectId, (value) => value.length > 0);
+
+        const workdirEnvValue = yield* read(Config.option(Config.string("SUPABASE_WORKDIR")));
         const { workdir, explicit: explicitWorkdir } = yield* resolveWorkdir(
           workdirFlag,
-          env["SUPABASE_WORKDIR"],
+          workdirEnvValue,
           runtimeInfo.cwd,
           (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,
@@ -189,19 +173,29 @@ export const commandSettingsLayer = Layer.unwrap(
 
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
 
+        yield* Effect.annotateCurrentSpan({
+          "config.workdir_explicit": explicitWorkdir,
+          "config.access_token_from_env": Option.isSome(accessToken),
+        });
+
         return CommandSettings.of({
           profile,
+          profileEnvValue,
+          supabaseHome: resolvedSupabaseHome,
           apiUrl,
           projectHost,
           poolerHost,
           dashboardUrl,
           accessToken,
+          dbPassword,
+          githubToken,
           projectId,
           workdir,
           explicitWorkdir,
+          workdirEnvValue,
           userAgent,
         });
-      }),
+      }).pipe(Effect.withSpan("CommandSettings.load")),
     );
   }),
 );

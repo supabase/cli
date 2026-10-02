@@ -56,12 +56,11 @@ export interface SupabaseApiClientShape {
     input: OperationInput<Id>,
   ) => Effect.Effect<OperationOutput<Id>, SupabaseApiError>;
   /**
-   * Execute an operation but return the raw HTTP response without decoding the
-   * output schema or filtering on status. Use this when the response body
-   * cannot satisfy the strict generated schema (e.g. cli-e2e replay fixtures
-   * embed a `__PROJECT_REF__` placeholder that violates `ref`'s 20-char
-   * pattern), so the caller can parse the body leniently. Request building —
-   * URL, auth, headers, body serialization — is identical to `execute`.
+   * Executes an operation but returns the raw HTTP response, without decoding
+   * the output schema or filtering on status. Use this when the response body
+   * can't satisfy the strict generated schema (e.g. a replay fixture embeds a
+   * placeholder value that violates a field's pattern). Request building is
+   * identical to `execute`.
    */
   readonly executeRaw: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
@@ -86,12 +85,10 @@ export class SupabaseApiConfigError extends Error {
 export type SupabaseApiInputErrorSource = "generated_client" | "user_input";
 
 /**
- * The generated client's input schema rejected the request input before any
- * request was sent. This defaults to `generated_client` because a schema
- * rejection can be caused by a request assembled incorrectly by its caller;
- * command boundaries may opt a confirmed user-derived request into
- * `user_input` without inspecting the schema error message. The original
- * schema failure is preserved as `cause`.
+ * The generated client's input schema rejected the request before it was sent.
+ * Defaults to `generated_client` since a rejection is usually a caller assembly
+ * bug; command boundaries can reclassify a confirmed user-derived request as
+ * `user_input`. The original schema failure is preserved as `cause`.
  */
 export class SupabaseApiInputError extends Error {
   readonly _tag = "SupabaseApiInputError";
@@ -209,6 +206,7 @@ function applySupabaseRetryPolicy(
   const timeoutMs = options?.requestTimeoutMs ?? 60_000;
 
   return HttpClient.transform(client, (requestEffect, request) => {
+    const retriesTransportErrors = isIdempotentMethod(request.method);
     const attempt = (
       retries: number,
     ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
@@ -226,7 +224,9 @@ function applySupabaseRetryPolicy(
           ),
         ),
         Effect.catchIf(isRetryableTransportError, (error) =>
-          retries < maxRetries ? attempt(retries + 1) : Effect.fail(error),
+          retries < maxRetries && retriesTransportErrors
+            ? attempt(retries + 1)
+            : Effect.fail(error),
         ),
         Effect.flatMap((response) =>
           isRetryableResponse(response) && retries < maxRetries
@@ -266,10 +266,21 @@ function prepareClient(
       }
       return next;
     }),
+    // Trace context stays local; no API consumer reads it.
+    HttpClient.transformResponse(Effect.provideService(HttpClient.TracerPropagationEnabled, false)),
   );
 
   const retried = applySupabaseRetryPolicy(prefixed, options?.retry);
   return options?.transformClient ? options.transformClient(retried) : Effect.succeed(retried);
+}
+
+/**
+ * Whether a query-parameter value is the object form OpenAPI serializes as
+ * `style: deepObject`. Arrays are excluded — they are the repeated-key form
+ * `normalizeUrlValue` already handles.
+ */
+function isDeepObjectValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeUrlValue(value: unknown): string | ReadonlyArray<string> {
@@ -374,11 +385,9 @@ function asBinaryRequestBody(value: unknown): Effect.Effect<Uint8Array, HttpBody
   return Effect.succeed(new TextEncoder().encode(String(revealed)));
 }
 
-// Serialize JSON bodies with alphabetically-sorted keys (recursively) to match
-// Go's `encoding/json`, which emits oapi-codegen's alphabetically-declared
-// struct fields and sorts map keys. Without this, multi-field request bodies
-// serialize in OpenAPI-spec field order and diverge from the Go CLI on the
-// wire (only single/already-sorted bodies happen to match).
+// Serializes JSON bodies with keys sorted alphabetically (recursively) so the
+// wire format matches recorded replay fixtures; the spec's field order would
+// otherwise diverge from them for multi-field bodies.
 function sortJsonKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sortJsonKeysDeep);
@@ -453,9 +462,22 @@ function buildRequest(
   const query: Record<string, string | ReadonlyArray<string>> = {};
   for (const param of definition.queryParams) {
     const value = revealRedactedValue(Reflect.get(input, param));
-    if (value !== undefined) {
-      query[param] = normalizeUrlValue(value);
+    if (value === undefined) {
+      continue;
     }
+    // `style: deepObject` — every object-valued query parameter this spec
+    // declares (the v2 `page` / `filter` pairs) — is one `param[key]=value` on
+    // the wire, not a JSON blob: `page: { size: 100 }` must arrive as
+    // `page[size]=100` or the server reads no page size at all.
+    if (isDeepObjectValue(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (entry !== undefined) {
+          query[`${param}[${key}]`] = normalizeUrlValue(entry);
+        }
+      }
+      continue;
+    }
+    query[param] = normalizeUrlValue(value);
   }
   if (Object.keys(query).length > 0) {
     request = HttpClientRequest.setUrlParams(request, query);
@@ -480,7 +502,7 @@ function executeRequest(
     const request = yield* buildRequest(definition, input);
     const response = yield* client.execute(request);
     return yield* HttpClientResponse.filterStatusOk(response);
-  });
+  }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } }));
 }
 
 function isJsonOperation<Id extends OperationId>(
@@ -577,7 +599,7 @@ export function makeSupabaseApiClient(
             ),
           );
           return yield* prepared.execute(request);
-        }),
+        }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } })),
     };
   });
 }

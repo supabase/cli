@@ -2,57 +2,13 @@ import * as SmolToml from "smol-toml";
 import type { ConfigFormat } from "./config-format.ts";
 
 /**
- * Format-preserving surgical editor for `supabase/config.{toml,json}` (`supabase config
- * pull`, CLI-2064). Pure and synchronous — no Effect, no filesystem: callers own reading the
- * current file text and writing the returned text back out atomically. See ADR 0023 for the
- * rejected alternatives (regenerating the file from the decoded `CliConfig`, adopting a full
- * TOML-AST dependency) and the rationale for span-splicing plus mandatory re-parse
- * verification instead.
- *
- * Design rules:
- * 1. NEVER return unverified text. Every edited document is re-parsed and deep-compared
- *    against a `deepSet` of the original parse before it's returned; any mismatch — whether
- *    from a scanner misjudgment or a genuinely ambiguous document — surfaces as
- *    `verification_mismatch` rather than silently shipping wrong bytes.
- * 2. Refusals are terminal, not best-effort (`ConfigEditRefusalReason`): a document this
- *    module can't safely edit (duplicate table headers, an array-of-tables or inline table
- *    sitting on the edit's path, an existing `env(...)` literal at the destination, a parse
- *    failure) is reported, never patched around.
- * 3. Every edit either REPLACES an existing declared value's span in place, or INSERTS a new
- *    line/table. This module never deletes or reorders anything the caller didn't ask it to
- *    touch, so untouched comments, spacing, and quoting style survive byte-for-byte. An edit
- *    whose value already matches the destination is a no-op: the source is returned
- *    unchanged rather than reformatted.
- * 4. TOML placement (see `planTomlSplices`/`placementOffsetForNewTable`'s doc comments): an existing `[a.b]` table
- *    gets the new key appended after its last declared key; a table only reachable through
- *    dotted-key assignment (no explicit header) gets a sibling dotted key next to the
- *    existing one — never a synthesized header over dotted keys; otherwise a brand new
- *    `[a.b]` header is inserted after whichever existing table shares the longest path
- *    prefix, or at EOF if none does. `[remotes.<label>]` is the one hardcoded exception: a
- *    newly created remote block always lands at EOF, preceded by one blank line, with
- *    `project_id` written first.
- * 5. Multi-line arrays are rewritten single-line when their value is replaced — only the
- *    value span changes, never the surrounding key/comment text.
- * 6. Keys/table labels are written bare when they match `/^[A-Za-z0-9_-]+$/`, basic-quoted
- *    otherwise (`remotes."feature/login"`, `"+15551234"`); new string values are always
- *    basic-quoted with proper escaping. This module never introduces literal-quote syntax of
- *    its own — an existing literal string elsewhere in the file is preserved verbatim because
- *    it's simply never touched.
- *
- * `ConfigEditValue` intentionally allows nested-object values (e.g. rewriting an entire
- * `auth.sms.test_otp` map in one call): such an edit is flattened into one leaf edit per
- * scalar/array field before it's applied, in BOTH formats, so it composes with every rule
- * above without a special "replace a whole table" code path. The WRITTEN text only ever
- * touches the leaves the object actually mentions — it never deletes a sibling key the object
- * left out, matching this module's "never delete" invariant, in TOML and JSON alike. Mandatory
- * verification (rule 1) holds that written result to a stricter standard, though: it's compared
- * against `deepSet`, which — unlike the flattened write — REPLACES the whole destination
- * subtree with the given object. So an object-valued edit that omits an existing sibling key
- * `verification_mismatch`-refuses (the sibling the write left untouched disagrees with the
- * replaced-away expectation) unless the object already covers every key the destination table
- * currently declares, or the destination doesn't exist yet. This contract — merge mentioned
- * leaves, refuse rather than silently drop an unmentioned sibling — is identical across both
- * formats.
+ * Format-preserving surgical editor for `supabase/config.{toml,json}`. Pure and synchronous:
+ * callers own reading the current file text and writing the returned text back out atomically.
+ * Every edited document is re-parsed and deep-compared against the original before being
+ * returned; any mismatch refuses rather than shipping wrong bytes. An edit either replaces an
+ * existing value's span in place or inserts a new line/table — nothing else is touched, so
+ * untouched comments, spacing, and quoting survive byte-for-byte. See ADR 0023 for the design
+ * rationale and rejected alternatives.
  */
 
 export type ConfigEditValue =
@@ -96,11 +52,8 @@ export type ConfigEditOutcome =
   | { readonly kind: "refused"; readonly refusal: ConfigEditRefusal };
 
 /**
- * The `[remotes.<label>]` placement exception's two literals (this file's header comment,
- * rule 4): a newly created remote block always lands at EOF, preceded by one blank line,
- * with `project_id` written first. Named here rather than spelled inline at the sites that
- * test them (`renderMissingTableCluster`, `planTomlSplices`) so the exception reads as one
- * rule instead of four bare strings.
+ * The `[remotes.<label>]` placement exception: a newly created remote block always lands at
+ * EOF, preceded by one blank line, with `project_id` written first.
  */
 const REMOTES_TABLE_NAME = "remotes";
 const REMOTE_PROJECT_ID_KEY = "project_id";
@@ -110,14 +63,9 @@ function isRemotesLabelRoot(path: ReadonlyArray<string>): boolean {
   return path.length === 2 && path[0] === REMOTES_TABLE_NAME;
 }
 
-// ---------------------------------------------------------------------------
-// Small generic helpers shared by both format arms.
-// ---------------------------------------------------------------------------
-
-// Duplicated from `lib/env.ts`'s `ENV_CAPTURE_REGEX` rather than imported: this module is
-// restricted to `smol-toml` as its only import (see this file's header comment / ADR 0023),
-// so it stays independently embeddable wherever a surgical text edit is needed without
-// pulling in this package's wider env-resolution graph.
+// Duplicated from `lib/env.ts` rather than imported: this module is restricted to `smol-toml`
+// as its only import, so it stays independently embeddable without pulling in this package's
+// wider env-resolution graph.
 const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
 
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -233,10 +181,10 @@ function deepSetOne(root: unknown, path: ReadonlyArray<string>, value: unknown):
 }
 
 /** Applies one `path`/`value` pair per entry on top of `root`, immutably. Shared by `deepSet`
- * (the verification ORACLE, built from the original un-flattened edits) and JSON's actual
- * per-leaf MUTATION (built from `flattenEdits`'s output instead) — the two callers intentionally
- * pass different entry sets; see this file's header comment for why they must differ for an
- * object-valued edit. */
+ * (the verification oracle, built from the original un-flattened edits) and the JSON arm's
+ * actual per-leaf mutation (built from `flattenEdits`'s output) — the two intentionally use
+ * different entry sets so an object-valued edit's write only touches leaves it mentions, while
+ * verification still catches a dropped sibling. */
 function applyPathEntries(
   root: unknown,
   entries: ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly value: unknown }>,
@@ -247,10 +195,9 @@ function applyPathEntries(
   );
 }
 
-/** Applies every edit's `path`/`value` on top of `root`, immutably — REPLACING the whole
+/** Applies every edit's `path`/`value` on top of `root`, immutably, replacing the whole
  * destination subtree for an object-valued edit. This is the expected-value side of mandatory
- * verification for both formats; it is never the mutation itself (see `applyPathEntries` for
- * that, and this file's header comment for why the two must differ). */
+ * verification for both formats — see `applyPathEntries` for the actual per-leaf mutation. */
 function deepSet(root: unknown, edits: ReadonlyArray<ConfigEdit>): unknown {
   return applyPathEntries(root, edits);
 }
@@ -282,10 +229,6 @@ function unchangedOutcome(source: string, edits: ReadonlyArray<ConfigEdit>): Con
   };
 }
 
-// ---------------------------------------------------------------------------
-// Leaf flattening: an object-valued edit becomes one leaf edit per scalar/array field.
-// ---------------------------------------------------------------------------
-
 type ConfigEditLeafValue = string | number | boolean | ReadonlyArray<string | number | boolean>;
 
 interface LeafEdit {
@@ -312,11 +255,6 @@ function flattenEdits(edits: ReadonlyArray<ConfigEdit>): ReadonlyArray<LeafEdit>
   edits.forEach((edit, index) => walk(index, edit.path, edit.value));
   return leaves;
 }
-
-// ---------------------------------------------------------------------------
-// Value/key rendering (shared rules: bare-if-safe keys, always-basic-quoted strings,
-// always-single-line arrays).
-// ---------------------------------------------------------------------------
 
 const BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -372,15 +310,9 @@ function renderLeafValue(value: ConfigEditLeafValue): string {
   return isLeafArrayValue(value) ? `[${value.map(renderScalar).join(", ")}]` : renderScalar(value);
 }
 
-// ---------------------------------------------------------------------------
-// TOML character-level scanner.
-//
-// Produces top-level tokens in document order: blank lines, whole-line comments, table
-// headers (`[a.b]` / `[[a.b]]`), and key-value lines (bare/dotted/quoted key, any value type,
-// including multi-line arrays and multi-line strings — both scanned as single opaque spans).
-// Never throws: a construct it can't make sense of yields an `{ error }` result instead, which
-// the caller reports as `parse_error`.
-// ---------------------------------------------------------------------------
+// Character-level TOML scanner. Produces top-level tokens in document order: blank lines,
+// comments, table headers, and key-value lines (multi-line arrays/strings scanned as single
+// opaque spans). Never throws — an unrecognized construct yields an `{ error }` result instead.
 
 interface TomlHeaderToken {
   readonly kind: "header";
@@ -542,10 +474,9 @@ function scanBareValue(source: string, pos: number): number {
     }
     cursor++;
   }
-  // Trailing inline whitespace before a `#` comment (or EOL) belongs to the
-  // comment/line-ending, not the value: without this, replacing `port = 54321
-  // # comment` would fold that space into the replaced span and yield
-  // `port = 54322# comment`, silently eating it (CLI-2064 review finding 1).
+  // Trailing inline whitespace before a `#` comment (or EOL) belongs to the comment/line-ending,
+  // not the value: without this, replacing a value would fold that space into the replaced span
+  // and eat it.
   while (cursor > pos && (source[cursor - 1] === " " || source[cursor - 1] === "\t")) {
     cursor--;
   }
@@ -817,19 +748,11 @@ function scanTomlDocument(source: string): TomlScanResult | TomlScanError {
   }
 
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
-  // Checking `source.endsWith(newline)` breaks on a mixed-EOL file whose
-  // detected flavor is CRLF (because SOME earlier line uses it) but whose
-  // final line ends in a bare `\n` — that string doesn't end with `"\r\n"`,
-  // so this used to read as "no trailing newline" and doubled the EOF
-  // terminator on an EOF-inserted block (CLI-2064 review finding 3). A
-  // string ending in `"\r\n"` always also ends in `"\n"`, so checking for
-  // `"\n"` alone covers both terminators.
+  // A mixed-EOL file may be detected as CRLF overall (because some earlier line uses it) while
+  // its final line ends in a bare `\n`; checking for `"\n"` alone (rather than the detected
+  // flavor) covers both terminators, since a `"\r\n"`-ending string always also ends in `"\n"`.
   return { source, tokens, headers, newline, endsWithNewline: source.endsWith("\n") };
 }
-
-// ---------------------------------------------------------------------------
-// TOML placement + splicing.
-// ---------------------------------------------------------------------------
 
 interface Splice {
   readonly start: number;
@@ -923,7 +846,7 @@ function indentOfLineAt(source: string, lineStart: number): string {
 
 /**
  * Where a brand new table (one with no existing header at all) is inserted: right after
- * whichever EXISTING table shares the longest path prefix with it (ties broken by file order —
+ * whichever existing table shares the longest path prefix with it (ties broken by file order —
  * the later one wins), or at EOF when no existing table shares any prefix at all.
  * `[remotes.<label>]` blocks bypass this entirely (see the caller) — they always go to EOF.
  */
@@ -1007,9 +930,9 @@ interface TomlPlanResult {
 }
 
 /**
- * Resolves every leaf edit's placement against the scanned document (see this file's header
- * comment, rule 4, for the placement priority) and returns the full splice list plus which new
- * tables each leaf caused to be created (for `AppliedConfigEdit.createdTables`).
+ * Resolves every leaf edit's placement against the scanned document (see
+ * {@link placementOffsetForNewTable} for the priority rule for brand-new tables) and returns the
+ * full splice list plus which new tables each leaf caused to be created.
  */
 function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>): TomlPlanResult {
   const keyTokens = scan.tokens.filter((token): token is TomlKeyToken => token.kind === "kv");
@@ -1053,14 +976,10 @@ function planTomlSplices(scan: TomlScanResult, leaves: ReadonlyArray<LeafEdit>):
       if (key.path.length <= parent.length || !startsWithPath(key.path, parent)) {
         continue;
       }
-      // A dotted-sibling candidate must be declared under an ANCESTOR of `parent` (a table
+      // A dotted-sibling candidate must be declared under an ancestor of `parent` (a table
       // header whose path is a prefix of `parent`, root included) via dotted-key assignment —
-      // never a key living inside a genuine DESCENDANT table (e.g. `host` in
-      // `[auth.email.smtp]` when inserting `auth.email.enable_confirmations`). That descendant
-      // case used to match too (its path is also below `parent`), computing an enclosing length
-      // longer than `leaf.path` itself and splicing in an empty, keyless dotted key — refused
-      // only by mandatory re-parse verification, never actually inserted (CLI-2064 review
-      // finding: dotted-sibling search over-matches descendant tables).
+      // never a key living inside a genuine descendant table (e.g. `host` in
+      // `[auth.email.smtp]` when inserting `auth.email.enable_confirmations`).
       const enclosingTablePath =
         key.tableIndex === -1 ? [] : (scan.headers[key.tableIndex]?.path ?? []);
       if (!startsWithPath(parent, enclosingTablePath)) {
@@ -1270,10 +1189,6 @@ function applyTomlEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
   return { kind: "applied", text: nextText, applied };
 }
 
-// ---------------------------------------------------------------------------
-// JSON arm.
-// ---------------------------------------------------------------------------
-
 function detectJsonNewline(source: string): "\n" | "\r\n" {
   return source.includes("\r\n") ? "\r\n" : "\n";
 }
@@ -1299,11 +1214,9 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
     return unchangedOutcome(source, edits);
   }
 
-  // Flattened to one leaf edit per scalar/array field (same as the TOML arm's own
-  // `flattenEdits` call) so an object-valued edit only ever merges the leaves it mentions —
-  // never deletes an unmentioned sibling. The env-reference check runs per LEAF for the same
-  // reason: an object edit's own top-level path is never itself a string, so checking there
-  // (the previous behavior) could never catch a leaf that shadows an existing `env(...)` value.
+  // Flattened to one leaf edit per scalar/array field so an object-valued edit only ever merges
+  // the leaves it mentions, never deletes an unmentioned sibling. The env-reference check runs
+  // per leaf for the same reason: an object edit's own top-level path is never itself a string.
   const leaves = flattenEdits(edits);
 
   for (const leaf of leaves) {
@@ -1331,11 +1244,9 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
   } catch {
     return refused("verification_mismatch", [], "edited document failed to re-parse");
   }
-  // Verified against `deepSet` — built from the ORIGINAL, un-flattened `edits` — not against
-  // `nextValue`, which is the flattened per-leaf mutation. Comparing against the mutation would
-  // make this verification tautological: it could never disagree with itself, so a sibling an
-  // object-valued edit silently drops would never surface as a mismatch (see this file's header
-  // comment).
+  // Verified against `deepSet` (the original, un-flattened `edits`), not `nextValue` (the
+  // flattened per-leaf mutation) — comparing against the mutation would be tautological, so a
+  // sibling an object-valued edit silently drops would never surface as a mismatch.
   const expected = deepSet(parsed, edits);
   if (!deepEqualValue(reparsed, expected)) {
     return refused(
@@ -1353,10 +1264,6 @@ function applyJsonEdits(source: string, edits: ReadonlyArray<ConfigEdit>): Confi
 
   return { kind: "applied", text: nextText, applied };
 }
-
-// ---------------------------------------------------------------------------
-// Public entry point.
-// ---------------------------------------------------------------------------
 
 export function applyConfigEdits(
   source: string,

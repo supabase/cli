@@ -1,33 +1,11 @@
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
+import serviceImagesDockerfile from "./Dockerfile" with { type: "text" };
+import {
+  parseDockerfileServiceImages,
+  type DockerfileImageSpec,
+} from "./parse-dockerfile-service-images.ts";
 import { slimImageForAlias } from "./slim-images.ts";
 
-export interface DockerfileImageSpec {
-  readonly alias: string;
-  readonly image: string;
-}
-
-const FROM_LINE_PATTERN = /^FROM\s+(.+):([^:\s]+)\s+AS\s+([^\s#]+)/i;
-
-export function parseDockerfileServiceImages(
-  dockerfile: string,
-): ReadonlyArray<DockerfileImageSpec> {
-  return dockerfile
-    .split("\n")
-    .map((line) => line.trim())
-    .flatMap((line) => {
-      const match = FROM_LINE_PATTERN.exec(line);
-      if (match === null) {
-        return [];
-      }
-
-      const [, repository, tag, alias] = match;
-      if (repository === undefined || tag === undefined || alias === undefined) {
-        return [];
-      }
-
-      return [{ alias, image: `${repository}:${tag}` }];
-    });
-}
+export { parseDockerfileServiceImages, type DockerfileImageSpec };
 
 export const dockerfileServiceImages = parseDockerfileServiceImages(serviceImagesDockerfile);
 
@@ -47,6 +25,6 @@ export function dockerfileServiceImageRaw(alias: string): string {
  * point for default service images; use `dockerfileServiceImageRaw` where the
  * docker.io identity itself is the contract (user-facing short names).
  */
-export function dockerfileServiceImage(alias: string): string {
-  return slimImageForAlias(alias, dockerfileServiceImageRaw(alias));
+export function dockerfileServiceImage(alias: string, slim: boolean): string {
+  return slimImageForAlias(alias, dockerfileServiceImageRaw(alias), slim);
 }

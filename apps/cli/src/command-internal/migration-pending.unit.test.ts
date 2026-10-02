@@ -24,17 +24,13 @@ describe("findPendingMigrations", () => {
   });
 
   it("is up to date when one version is a string prefix of another (#6036)", () => {
-    // Not limited to long timestamps: any prefix pair inverts, because
-    // `10_name.sql` sorts before `1_name.sql` by name ('0' < '_') while remote
-    // reads back "1" before "10".
+    // Any prefix pair inverts this way: `10_name.sql` sorts before `1_name.sql` by name ('0' <
+    // '_'), while remote reads back "1" before "10".
     const result = findPendingMigrations(local("10", "1"), ["1", "10"]);
     expect(result).toEqual({ kind: "ok", pending: [] });
   });
 
   it("is up to date when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
-    // Local files arrive in name order, where `20260420010000_name.sql` precedes
-    // `20260420_name.sql` ('0' < '_') — the reverse of the version order
-    // `schema_migrations` is read back in.
     const result = findPendingMigrations(local("20260420010000", "20260420"), [
       "20260420",
       "20260420010000",
@@ -82,10 +78,9 @@ describe("findPendingMigrations", () => {
 
 describe("includeAllPending", () => {
   it("slices the version-ordered list, not the name-ordered one (#6036)", () => {
-    // Local files arrive name-ordered as [20, 1, 2]; version order is [1, 2, 20].
-    // With "2" applied, the diff is [1] and the slice must resume at "20".
-    // Indexing the name-ordered list instead would return "2" — already applied —
-    // and silently drop "20".
+    // Name order is [20, 1, 2]; version order is [1, 2, 20]. With "2" applied, the diff is [1]
+    // and the slice must resume at "20" — indexing the name-ordered list would return "2"
+    // (already applied) and silently drop "20".
     const locals = local("20", "1", "2");
     const diff = ["supabase/migrations/1_name.sql"];
     expect(includeAllPending(locals, 1, diff)).toEqual([

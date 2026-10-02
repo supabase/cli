@@ -1,34 +1,16 @@
-import { aqua, bold, green, yellow } from "./colors.ts";
+import { aqua, bold, gray, green, red, yellow } from "./colors.ts";
 import type { StatusOutputNames } from "./status-values.ts";
 
 /**
- * Port of `PrettyPrint` / `OutputGroup.printTable`,
- * reproducing
- * `tablewriter.NewTable` with `tw.StyleRounded` byte-for-byte for the fixed
- * 5-group, 2-column layout `status` needs. This is not a general tablewriter
- * port — column sizing, wrapping, and merge behavior are only implemented to the
- * extent this command's rounded box needs them.
+ * Renders `status`'s fixed 5-group, 2-column layout as rounded-border tables — column 0 caps
+ * at 16 display columns and word-wraps (no fixed label reaches that width today), and this is
+ * distinct from `output/glamour-table.ts`'s single-ASCII-table renderer used elsewhere.
  *
- * Column 0 (the label column) is capped at 16 display columns
- * (`ColMaxWidths.PerColumn[0] = 16`); a label wider than that
- * word-wraps across multiple lines, leaving column 1 blank on the continuation
- * lines (verified against a real `tablewriter@v1.1.4` render — see the port
- * plan). None of the fixed labels below reach 17 characters today, so this is
- * defensive parity rather than an observed case.
- *
- * This does not reuse `output/glamour-table.ts` — that helper
- * byte-matches `glamour.RenderTable(..., AsciiStyle)`, a single ASCII table
- * with a different border style used by other commands. `status`'s Go source
- * renders with `tablewriter`/`tw.StyleRounded` into 5 separate grouped, colored,
- * Unicode-rounded-box tables, which is a different rendering contract entirely.
- *
- * Every color call below styles text written to **stdout** (via `output.raw`
- * with no stream argument in `status.handler.ts`), so each one explicitly passes
- * `process.stdout` to `colors.ts`'s helpers — they default to
- * `process.stderr`, which would check the wrong stream's TTY status here.
+ * Every color call below explicitly passes `process.stdout`, since `colors.ts` defaults to
+ * `process.stderr` and would check the wrong stream's TTY status.
  */
 
-type OutputKind = "text" | "link" | "key";
+type OutputKind = "text" | "link" | "key" | "good" | "pending" | "bad" | "muted";
 
 interface OutputItem {
   readonly label: string;
@@ -36,7 +18,8 @@ interface OutputItem {
   readonly kind: OutputKind;
 }
 
-interface OutputGroup {
+/** One rounded-border table: a title row above label/value rows. */
+export interface StatusGroup {
   readonly name: string;
   readonly items: ReadonlyArray<OutputItem>;
 }
@@ -44,15 +27,13 @@ interface OutputGroup {
 const COLUMN_0_MAX_WIDTH = 16;
 
 /**
- * Builds the 5 fixed groups `PrettyPrint` declares,
- * looking up each label's value by output KEY from the resolved value map —
- * `--override-name` remaps the KEY but never the group layout, matching Go
- * (`values[names.StudioURL]`, not a hardcoded default name).
+ * Builds the 5 fixed display groups, looking up each label's value by its resolved output
+ * key — `--override-name` remaps the key but never the group layout.
  */
-function buildGroups(
+export function statusGroups(
   values: Readonly<Record<string, string>>,
   names: StatusOutputNames,
-): ReadonlyArray<OutputGroup> {
+): ReadonlyArray<StatusGroup> {
   const at = (key: string) => values[key] ?? "";
   return [
     {
@@ -96,40 +77,37 @@ function buildGroups(
 }
 
 /**
- * Display width, matching `go-runewidth`'s treatment closely enough for this
- * command's inputs: URLs/keys/labels are always plain ASCII, so every rune is
- * width 1. The only non-ASCII runes ever rendered are the 5 fixed group-title
- * emoji, whose exact rendered widths are hardcoded in {@link HEADER_DISPLAY_WIDTH}
- * below rather than computed generically (avoids taking a full Unicode
- * East-Asian-Width dependency for a 5-value constant table).
+ * Display width for this command's inputs: URLs/keys/labels are always plain ASCII, so every
+ * rune is width 1. The fixed group-title emoji are the only non-ASCII runes ever rendered,
+ * and their widths are hardcoded in {@link HEADER_DISPLAY_WIDTH} instead of computed
+ * generically.
  */
 function displayWidth(text: string): number {
   return [...text].length;
 }
 
-/** Go-rendered display width of each fixed group title (see `status.pretty.unit.test.ts`). */
+/** Rendered display width of each fixed group title (see `status.pretty.unit.test.ts`). */
 const HEADER_DISPLAY_WIDTH: Readonly<Record<string, number>> = {
   "🔧 Development Tools": 20,
   "🌐 APIs": 7,
   "⛁ Database": 10,
   "🔑 Authentication Keys": 22,
   "📦 Storage (S3)": 15,
+  "🧩 Services": 11,
 };
 
 /**
- * Exported only for direct unit coverage of the fallback branch (a group title
- * outside the 5-entry {@link HEADER_DISPLAY_WIDTH} table) — every call site in
- * this file only ever passes one of those 5 fixed titles.
+ * Exported only for direct unit coverage of the fallback branch — every call site in this
+ * file passes one of the fixed titles in {@link HEADER_DISPLAY_WIDTH}.
  */
 export function statusHeaderWidth(name: string): number {
   return HEADER_DISPLAY_WIDTH[name] ?? displayWidth(name);
 }
 
 /**
- * Greedy word-wrap to `width` columns, mirroring tablewriter's column wrapping.
- * Exported only for direct unit coverage of the >16-char defensive-wrap branch
- * (see the file-level doc comment) — none of this command's real labels reach
- * that width today, so `renderStatusPretty` never exercises it end to end.
+ * Greedy word-wrap to `width` columns. Exported only for direct unit coverage of the
+ * >16-char defensive-wrap branch — no real label reaches that width today, so
+ * `renderStatusPretty` never exercises it end to end.
  */
 export function wrapStatusLabel(text: string, width: number): ReadonlyArray<string> {
   if (displayWidth(text) <= width) return [text];
@@ -149,17 +127,19 @@ export function wrapStatusLabel(text: string, width: number): ReadonlyArray<stri
   return lines.length > 0 ? lines : [text];
 }
 
-/**
- * Value coloring, mirroring the `switch row.Type` in `printTable`:
- * `Link` → Aqua, `Key` → Yellow, `Text` → unstyled (the
- * switch has no `Text` case, so `value` keeps its raw pre-switch assignment).
- */
 function colorValue(kind: OutputKind, value: string): string {
   switch (kind) {
     case "link":
       return aqua(value, process.stdout);
     case "key":
+    case "pending":
       return yellow(value, process.stdout);
+    case "good":
+      return green(value, process.stdout);
+    case "bad":
+      return red(value, process.stdout);
+    case "muted":
+      return gray(value, process.stdout);
     case "text":
       return value;
   }
@@ -172,14 +152,11 @@ interface ColumnLayout {
 }
 
 /**
- * Computes the padded column widths and total inner (header) width for a group,
- * mirroring tablewriter's column-sizing pass: each column is sized from its
- * widest content cell (col 0 capped at 16), then both columns widen evenly
- * (col 0 taking the larger half of an odd remainder) if the header text is
- * wider than the data-driven layout. Exported only for direct unit coverage of
- * the header-widens-the-table branch — none of this command's 5 fixed group
- * titles are wider than their data today, so `renderStatusPretty` never
- * exercises it end to end (see the file-level doc comment).
+ * Computes the padded column widths and total inner (header) width for a group: each column
+ * is sized from its widest content cell (col 0 capped at 16), then both columns widen evenly
+ * if the header text is wider than the data-driven layout. Exported only for direct unit
+ * coverage of that header-widens-the-table branch — no real group title is wider than its
+ * data today.
  */
 export function statusColumnLayout(
   headerWidthValue: number,
@@ -204,13 +181,13 @@ export function statusColumnLayout(
   return { col0Padded, col1Padded, targetInner };
 }
 
-function renderGroupTable(group: OutputGroup): string | undefined {
+function renderGroupTable(group: StatusGroup): string | undefined {
   const rows = group.items.filter((item) => item.value.length > 0);
   if (rows.length === 0) return undefined;
 
-  // Column 0 wraps at 16; column 1 is never capped (Go only sets PerColumn[0]).
-  // Kept as plain text here — color is applied only after padding, below, so an
-  // ANSI escape is never counted toward the padded display width.
+  // Column 0 wraps at 16; column 1 is never capped. Kept as plain text here — color is
+  // applied only after padding, below, so an ANSI escape is never counted toward the padded
+  // display width.
   const wrappedRows = rows.map((row) => ({
     lines: wrapStatusLabel(row.label, COLUMN_0_MAX_WIDTH),
     kind: row.kind,
@@ -229,9 +206,8 @@ function renderGroupTable(group: OutputGroup): string | undefined {
   // must never be counted toward the padded display width.
   const pad = (text: string, width: number) =>
     text + " ".repeat(Math.max(0, width - displayWidth(text)));
-  // The header uses `headerWidth` (the hardcoded emoji-aware width table) rather
-  // than `displayWidth`, so its padding lines up with the border math above,
-  // which sized `targetInner` off the same `headerWidth` call.
+  // The header uses `statusHeaderWidth` (the hardcoded emoji-aware width table) rather than
+  // `displayWidth`, so its padding matches the border math above, sized off the same call.
   const padHeader = (text: string, width: number) =>
     text + " ".repeat(Math.max(0, width - statusHeaderWidth(text)));
 
@@ -241,8 +217,8 @@ function renderGroupTable(group: OutputGroup): string | undefined {
   lines.push(`├${"─".repeat(col0Padded)}┬${"─".repeat(col1Padded)}┤`);
   for (const row of wrappedRows) {
     row.lines.forEach((line, index) => {
-      // Only the first wrapped line carries the value; Go's continuation lines
-      // (from a >16-char label wrapping) leave column 1 blank.
+      // Only the first wrapped line carries the value; continuation lines (from a >16-char
+      // label wrapping) leave column 1 blank.
       const labelCell = green(pad(line, col0Width), process.stdout);
       const paddedValue = pad(index === 0 ? row.value : "", col1Width);
       const valueCell = index === 0 ? colorValue(row.kind, paddedValue) : paddedValue;
@@ -254,16 +230,18 @@ function renderGroupTable(group: OutputGroup): string | undefined {
 }
 
 /**
- * Port of `PrettyPrint`: renders the 5 fixed groups
- * as rounded-border tables, skipping empty rows and empty groups, with a blank
- * line after every group (rendered or not — Go's loop always
- * `fmt.Fprintln(w)`s after a nil-error `printTable`, even when nothing rendered).
+ * Renders the 5 fixed groups as rounded-border tables, skipping empty rows and empty
+ * groups, with a blank line after every group whether or not it rendered.
  */
 export function renderStatusPretty(
   values: Readonly<Record<string, string>>,
   names: StatusOutputNames,
 ): string {
-  const groups = buildGroups(values, names);
+  return renderStatusGroups(statusGroups(values, names));
+}
+
+/** Renders groups as rounded-border tables, followed by one blank line per group. */
+export function renderStatusGroups(groups: ReadonlyArray<StatusGroup>): string {
   const lines: string[] = [];
   for (const group of groups) {
     const table = renderGroupTable(group);

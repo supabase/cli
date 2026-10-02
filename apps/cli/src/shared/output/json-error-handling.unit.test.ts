@@ -5,10 +5,6 @@ import { GoChildExitError } from "../../command-internal/go-child-exit.error.ts"
 import { Output } from "./output.service.ts";
 import { withJsonErrorHandling } from "./json-error-handling.ts";
 
-// ---------------------------------------------------------------------------
-// Test error types
-// ---------------------------------------------------------------------------
-
 class TaggedErrorWithDetail extends Data.TaggedError("TaggedErrorWithDetail")<{
   readonly message: string;
   readonly detail: string;
@@ -25,10 +21,6 @@ class PlainError {
     this.message = message;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Mock output factory
-// ---------------------------------------------------------------------------
 
 type FailCall = {
   code: string;
@@ -56,8 +48,9 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
           fail: (_nextMessage?: string) => Effect.void,
           info: (_nextMessage?: string) => Effect.void,
           cancel: (_nextMessage?: string) => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
+      result: (_data: unknown) => Effect.void,
       success: (_message: string, _data?: Record<string, unknown>) => Effect.void,
       fail: (err: FailCall) =>
         Effect.sync(() => {
@@ -85,13 +78,9 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("withJsonErrorHandling", () => {
   describe("text format", () => {
-    it.live("re-raises the original error in text format", () => {
+    it.effect("re-raises the original error in text format", () => {
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
         const out = mockOutput("text");
@@ -117,7 +106,7 @@ describe("withJsonErrorHandling", () => {
   });
 
   describe("json format", () => {
-    it.live("calls output.fail() with structured error and sets process.exitCode", () => {
+    it.effect("calls output.fail() with structured error and sets process.exitCode", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
@@ -136,10 +125,10 @@ describe("withJsonErrorHandling", () => {
           suggestion: "try again",
         });
         expect(processControl.exitCode).toBe(1);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.merge(out.layer, processControl.layer)));
     });
 
-    it.live("includes detail and suggestion when present on error", () => {
+    it.effect("includes detail and suggestion when present on error", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
@@ -153,10 +142,10 @@ describe("withJsonErrorHandling", () => {
           detail: "in-depth explanation",
           suggestion: "do this instead",
         });
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.merge(out.layer, processControl.layer)));
     });
 
-    it.live("omits detail and suggestion when absent on error", () => {
+    it.effect("omits detail and suggestion when absent on error", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
@@ -168,10 +157,10 @@ describe("withJsonErrorHandling", () => {
         expect(call.message).toBe("minimal error");
         expect("detail" in call).toBe(false);
         expect("suggestion" in call).toBe(false);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.merge(out.layer, processControl.layer)));
     });
 
-    it.live("uses UnknownError code when error has no _tag", () => {
+    it.effect("uses UnknownError code when error has no _tag", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
@@ -180,14 +169,10 @@ describe("withJsonErrorHandling", () => {
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]?.code).toBe("UnknownError");
         expect(out.failCalls[0]?.message).toBe("plain error message");
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.merge(out.layer, processControl.layer)));
     });
 
-    // CLI-1879: a delegated Go child's exact exit code must reach the user under
-    // json/stream-json too, not just a generic 1 — matching the exit code
-    // `runCli`'s text-mode path already propagates via the same
-    // `[Runtime.errorExitCode]` marker.
-    it.live("sets the exact exit code for a GoChildExitError, not a generic 1", () => {
+    it.effect("sets the exact exit code for a GoChildExitError, not a generic 1", () => {
       const out = mockOutput("json");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
@@ -199,7 +184,7 @@ describe("withJsonErrorHandling", () => {
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]?.code).toBe("GoChildExitError");
         expect(processControl.exitCode).toBe(130);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.merge(out.layer, processControl.layer)));
     });
   });
 });

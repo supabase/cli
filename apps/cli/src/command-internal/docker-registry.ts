@@ -1,25 +1,13 @@
 /**
- * Resolve a Docker image through the configured registry, a 1:1 port of Go's
- * `utils.GetRegistryImageUrl` / `GetRegistry`.
- *
- * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (Go's viper `INTERNAL_IMAGE_REGISTRY`)
- * overrides the registry; an unset value uses the default ECR mirror. A value of
- * `docker.io` returns the image unchanged (pull from Docker Hub); any other
- * registry rewrites the image to `<registry>/supabase/<last-path-segment>` so
- * restricted/rate-limited environments pull from their configured mirror instead
- * of Docker Hub.
- *
- * When no registry override is configured, callers that can retry pulls should
- * use `getRegistryImageUrlCandidates`: ECR stays the fast default, with
- * GHCR and the source image as fallbacks for transient registry throttling.
- *
- * Slim images (`isSlimImageRef`) skip every rewrite below and pull from where
- * they exist: both helpers key their rewrite on an image's LAST path segment,
- * which would turn `ghcr.io/supabase/cli/postgres:…` into the unrelated
- * non-slim `…/supabase/postgres:…` mirror. There is no mirror to redirect
- * slim refs to, hence `SUPABASE_INTERNAL_IMAGE_REGISTRY` does not apply to
- * them either.
+ * Resolves a Docker image through the configured registry. `SUPABASE_INTERNAL_IMAGE_REGISTRY`
+ * overrides the default ECR mirror; `docker.io` returns the image unchanged, and any other value
+ * rewrites it to `<registry>/supabase/<last-path-segment>`. Callers that can retry pulls should
+ * use {@link getRegistryImageUrlCandidates} instead, which falls back through GHCR and the
+ * source image. Slim images ({@link isSlimImageRef}) skip every rewrite — there's no mirror to
+ * redirect them to.
  */
+import { Config, ConfigProvider, Effect, Option } from "effect";
+
 import { isSlimImageRef } from "../shared/services/slim-images.ts";
 
 const INTERNAL_IMAGE_REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
@@ -39,60 +27,73 @@ function getLastImageSegment(imageName: string): string {
 }
 
 /**
- * `projectEnvValues` (dotenv-merged env, ambient-wins) is optional and
- * additive — every existing caller that omits it keeps today's ambient-only
- * behavior unchanged. Only callers that already have a project's dotenv
- * values in scope (currently `start`, via `getRegistryImageUrlCandidates`)
- * need to pass it so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
- * `supabase/.env`/project-root dotenv (not the ambient shell) is honored,
- * matching the project dotenv files being loaded into the process env
- * before the registry override is ever read.
+ * `projectEnvValues` is optional: passing a project's dotenv-merged env lets a
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in `supabase/.env` (not the ambient shell) take
+ * effect; omitting it keeps ambient-only behavior.
  */
-function getRegistryOverride(
+const registryOverride = Effect.fnUntraced(function* (
   projectEnvValues?: Readonly<Record<string, string>>,
-): string | undefined {
-  const registry = (
-    projectEnvValues?.[INTERNAL_IMAGE_REGISTRY_ENV] ?? process.env[INTERNAL_IMAGE_REGISTRY_ENV]
-  )?.trim();
-  return registry === undefined || registry.length === 0 ? undefined : registry.toLowerCase();
-}
-
-function getRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
-  return getRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
-}
+) {
+  const ambient = yield* ConfigProvider.ConfigProvider;
+  const provider =
+    projectEnvValues === undefined
+      ? ambient
+      : ConfigProvider.orElse(
+          ConfigProvider.fromEnvRecord(Object.fromEntries(Object.entries(projectEnvValues)), {
+            preserveEmptyStrings: true,
+          }),
+          ambient,
+        );
+  return yield* Config.option(Config.string(INTERNAL_IMAGE_REGISTRY_ENV)).pipe(
+    Effect.provideService(ConfigProvider.ConfigProvider, provider),
+    Effect.map(Option.map((value) => value.trim().toLowerCase())),
+  );
+});
 
 export function getRegistryImageUrl(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-): string {
+): Effect.Effect<string, Config.ConfigError> {
   if (isSlimImageRef(imageName)) {
-    return imageName;
+    return Effect.succeed(imageName);
   }
-  const registry = getRegistry(projectEnvValues);
-  if (registry === DOCKER_HUB_REGISTRY) {
-    return imageName;
-  }
-  return `${registry}/supabase/${getLastImageSegment(imageName)}`;
+  return registryOverride(projectEnvValues).pipe(
+    Effect.map((override) => rewriteRegistryImage(imageName, override)),
+  );
 }
 
 export function getRegistryImageUrlCandidates(
   imageName: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-): ReadonlyArray<string> {
+): Effect.Effect<ReadonlyArray<string>, Config.ConfigError> {
   if (isSlimImageRef(imageName)) {
-    return [imageName];
+    return Effect.succeed([imageName]);
   }
 
-  if (getRegistryOverride(projectEnvValues) !== undefined) {
-    return [getRegistryImageUrl(imageName, projectEnvValues)];
-  }
+  return registryOverride(projectEnvValues).pipe(
+    Effect.map((override) => {
+      const lastPart = getLastImageSegment(imageName);
+      const image = rewriteRegistryImage(imageName, override);
+      if (Option.isSome(override) && override.value.length > 0) {
+        return [image];
+      }
+      return dedupe([
+        image,
+        `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
+        dockerHubFallbackImage(imageName, lastPart),
+      ]);
+    }),
+  );
+}
 
-  const lastPart = getLastImageSegment(imageName);
-  return dedupe([
-    getRegistryImageUrl(imageName, projectEnvValues),
-    `${GHCR_SUPABASE_REGISTRY}/${lastPart}`,
-    dockerHubFallbackImage(imageName, lastPart),
-  ]);
+function rewriteRegistryImage(imageName: string, override: Option.Option<string>): string {
+  const registry = Option.getOrElse(
+    override.pipe(Option.filter((value) => value.length > 0)),
+    () => DEFAULT_REGISTRY,
+  );
+  return registry === DOCKER_HUB_REGISTRY
+    ? imageName
+    : `${registry}/supabase/${getLastImageSegment(imageName)}`;
 }
 
 function dockerHubFallbackImage(imageName: string, lastPart: string): string {

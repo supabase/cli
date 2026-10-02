@@ -1,5 +1,9 @@
 import { schemaToCsvField } from "../../../../command-internal/schema-flags.ts";
 import {
+  shellQuoteArgument,
+  type ShellPlatform,
+} from "../../../../command-internal/shell-quote.ts";
+import {
   declaredSqlExtensions,
   maskSqlComments,
 } from "../../shared/pgdelta-declarative-shadow-prep.ts";
@@ -39,11 +43,7 @@ export interface DeclarativeCompatibilityGap {
   readonly recommendedAction: DeclarativeCompatibilityAction;
 }
 
-/**
- * Pure control-flow helpers ported from the legacy Go implementation (deleted
- * in CLI-1970; last present at commit 7b469f5b3) and kept free of
- * Effect/services so handler decisions remain unit-testable.
- */
+/** Pure control-flow helpers, kept free of Effect/services so handler decisions stay unit-testable. */
 
 export function resolveDeclarativeMigrationName(name: string, file: string): string {
   return name.length > 0 ? name : file;
@@ -86,10 +86,9 @@ export function classifyDeclarativeCompatibilityGap(opts: {
   const ambiguousRemovals = extensions.filter(
     (extension) => !IMPLICIT_EXTENSIONS.some((implicit) => implicit === extension),
   );
-  // Removing a pg_cron job or pgmq queue declaration is an ordinary delete or
-  // rename on a maintained tree, not legacy-export evidence: only a dropped
-  // extension trips the gate (CLI-2282). Their removals are kept as evidence
-  // solely to enumerate the objects a dropped owning extension takes with it.
+  // Removing a pg_cron job or pgmq queue declaration is an ordinary delete/rename, not
+  // legacy-export evidence — only a dropped extension trips the gate. Their removals are kept
+  // solely to enumerate what a dropped owning extension takes with it.
   const extensionIntents = opts.removals.extensionIntents.filter((intent) =>
     extensions.includes(intent.extension),
   );
@@ -231,31 +230,18 @@ export function classifyDeclarativeLoadCompatibility(opts: {
 export const extensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
-/**
- * Shell family the recovery commands are rendered for. The staged-upgrade
- * recipe contains destructive filesystem operations, so it must be runnable as
- * printed: POSIX shells get `rm -rf`/`mv` with `&&` and backslash
- * continuations; Windows gets single-line PowerShell (`Remove-Item`/`Move-Item`
- * with `;`), which also runs unmodified in Windows Terminal's default shell.
- */
-export type ShellPlatform = "posix" | "windows";
-
-export const currentShellPlatform = (): ShellPlatform =>
-  process.platform === "win32" ? "windows" : "posix";
-
 export interface StagedExportContext {
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
+  /** POSIX gets `rm -rf`/`mv` chains; Windows gets single-line PowerShell, runnable as printed. */
   readonly platform: ShellPlatform;
 }
 
 /**
- * Derives the staging directory as a sibling of the declarative directory by
- * suffixing its last path segment. Trailing separators (and `/.` segments) in
- * the configured `declarative_schema_path` are stripped first — appending to
- * `supabase/schemas/` verbatim would nest the staging directory *inside* the
- * active tree, so a later sync would load the staged export recursively and
- * the printed `rm -rf <dir> && mv` adoption command would destroy both copies.
+ * Derives the staging directory as a sibling of the declarative directory by suffixing its last
+ * path segment (trailing separators and `/.` segments stripped first). Appending verbatim would
+ * nest the staging directory inside the active tree, so a later sync would load it recursively
+ * and the printed `rm -rf <dir> && mv` adoption command would destroy both copies.
  */
 export const resolveStagedDeclarativeDir = (declarativeDir: string): string => {
   const isSeparator = (ch: string | undefined) => ch === "/" || ch === "\\";
@@ -272,17 +258,6 @@ export const resolveStagedDeclarativeDir = (declarativeDir: string): string => {
   const trimmed = declarativeDir.slice(0, end);
   return `${trimmed === "" ? declarativeDir : trimmed}-next`;
 };
-
-const BARE_SAFE_ARGUMENT = /^[a-zA-Z0-9_./:@%+=,-]+$/;
-
-function shellQuoteArgument(value: string, platform: ShellPlatform): string {
-  if (BARE_SAFE_ARGUMENT.test(value)) return value;
-  // PowerShell single-quoted strings escape a quote by doubling it; POSIX
-  // shells need the classic '"'"' dance.
-  return platform === "windows"
-    ? `'${value.replaceAll("'", "''")}'`
-    : `'${value.replaceAll("'", `'"'"'`)}'`;
-}
 
 function schemaArguments(schema: ReadonlyArray<string>, platform: ShellPlatform): string {
   return schema
@@ -346,9 +321,8 @@ function stagedExportCommands(context: StagedExportContext): ReadonlyArray<strin
 }
 
 /**
- * Evidence lines for a plan that succeeded but whose removals reveal the tree is
- * a legacy export (the plan-refuse gate). The load-fail gate builds its own
- * evidence from the shadow-load diagnostics instead.
+ * Evidence lines for a plan that succeeded but whose removals reveal the tree is a legacy export
+ * (the plan-refuse gate); the load-fail gate builds its own evidence from shadow-load diagnostics.
  */
 export function formatDeclarativeGapEvidence(
   gap: DeclarativeCompatibilityGap,
@@ -376,17 +350,11 @@ export interface DeclarativeUpgradeGateText {
 }
 
 /**
- * The single template both compatibility gates render. Both mean the same thing
- * ("this declarative tree is a legacy pg-delta export"), so they must read the
- * same; only the evidence block differs. The recovery commands live in
- * `suggestion` so `Output.fail` prints them instead of the generic
- * "rerun with --debug" footer — a deliberate gate is not a crash.
- *
- * Deliberately offers exactly ONE non-interactive recovery: the staged
- * regenerate. Telling a non-interactive user to hand-add an extension
- * declaration is a false trail — on a real CLI tree each declaration only
- * unlocks the next refusal. Interactive flows still offer the repair as an
- * advanced choice.
+ * The single template both compatibility gates render ("this declarative tree is a legacy
+ * pg-delta export"); only the evidence block differs. Recovery commands live in `suggestion` so
+ * `Output.fail` prints them instead of the "rerun with --debug" footer. Offers only the staged
+ * regenerate for non-interactive recovery, since hand-adding one extension only unlocks the next
+ * refusal; interactive flows offer that repair separately.
  */
 export function formatDeclarativeUpgradeGate(opts: {
   readonly evidence: ReadonlyArray<string>;

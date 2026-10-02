@@ -1,9 +1,19 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+  Redacted,
+  Schema,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -17,12 +27,17 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   VALID_REF,
+  jsonResponse,
+  withConfigEnv,
+  withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
+  mockLocalDockerEngineUnavailableLayer,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -41,9 +56,26 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import {
+  StackCatalogSetup,
+  type StackCatalogSetupInput,
+} from "../../../command-internal/stack-catalog-setup.ts";
+import {
+  StackError,
+  type ServiceCreation,
+  type ServiceInstance,
+  type ServiceInstances,
+  type StackCredentials,
+  type Stack,
+  type Observation,
+} from "@supabase/stack/effect";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import type { DbConfigFlags, ResolvedDbConfig } from "../../../command-internal/db-config.types.ts";
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
+import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbExecError } from "../../../command-internal/db-connection.errors.ts";
 import {
   DbConnection,
@@ -79,9 +111,8 @@ const DEFAULT_FLAGS: DbResetFlags = {
 };
 
 /**
- * Tracks every `resolve`/`resolvePoolerFallback` invocation so tests can prove a
- * connection was resolved exactly once per reset — `resolve()` mints/verifies a
- * temporary Postgres login role over the Management API for a `--linked` target.
+ * Tracks every `resolve`/`resolvePoolerFallback` call so tests can prove a connection was
+ * resolved exactly once per reset.
  */
 function mockResolver(opts: {
   isLocal: boolean;
@@ -93,9 +124,8 @@ function mockResolver(opts: {
   const layer = Layer.succeed(DbConfigResolver, {
     resolve: (flags: DbConfigFlags) => {
       calls++;
-      // A threaded `--project-ref` flag takes the same top precedence a real
-      // resolver would give it, so a test can prove the flag (not just the
-      // fixed `opts.ref`) drives the resolved (and later cached) ref.
+      // A threaded `--project-ref` flag takes the same precedence a real resolver gives it, so
+      // a test can prove the flag (not just `opts.ref`) drives the resolved ref.
       const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
       const resolvedRef =
         Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
@@ -131,12 +161,9 @@ function mockResolver(opts: {
 }
 
 /**
- * A single `DbConnection` mock shared by BOTH the remote path (tracks
- * `execs`/`queries` for the drop-schema/migrate/seed assertions) and the native
- * local recreate path (the PG14 branch's `session.exec`/`.query` calls) —
- * `dbReset` composes exactly one `DbConnection` layer, so tests must
- * not register two competing ones (the second would silently shadow the first
- * in `Layer.mergeAll`).
+ * A single `DbConnection` mock shared by both the remote path (tracks `execs`/`queries` for
+ * drop-schema/migrate/seed assertions) and the native local recreate path (the PG14 branch's
+ * `session.exec`/`.query` calls) — `dbReset` composes exactly one `DbConnection` layer.
  */
 function mockConnection(
   opts: {
@@ -220,13 +247,6 @@ function mockConnection(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Native local-reset harness — mirrors `db/start/start.integration.test.ts`'s own
-// `mockContainerCliSpawner`/`defaultRoute`/`fakeDbSession`, adapted for reset's
-// container-REMOVE-then-recreate flow (rather than start's volume-existence probe)
-// and its post-recreate satellite-restart + Kong-reload step.
-// ---------------------------------------------------------------------------
-
 const PROJECT_ID = "test";
 const DB_ID = `supabase_db_${PROJECT_ID}`;
 const KONG_ID = `supabase_kong_${PROJECT_ID}`;
@@ -258,14 +278,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -312,8 +330,7 @@ function fakeContainerId(name: string): string {
 const createArgs = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> | undefined =>
   spawned.find((s) => s.args[0] === "create")?.args;
 
-// `docker container rm -f <id>` / `docker volume rm -f <name>` — the target is
-// argv[3] (after the `-f` flag at argv[2]), not argv[2] itself.
+// `docker ... rm -f <id>` puts the target at argv[3] (after the `-f` flag at argv[2]).
 const removedContainers = (spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> =>
   spawned
     .filter((s) => s.args[0] === "container" && s.args[1] === "rm")
@@ -378,10 +395,8 @@ function defaultLocalResetRoute(opts: DefaultRouteOpts = {}) {
       if (id === STORAGE_ID) {
         if (opts.storageMissing === true)
           return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
-        // A present-but-unhealthy storage container's wait-then-timeout-fails-the-reset
-        // behavior is pinned precisely (exact 30s boundary) by
-        // `await-storage-ready.unit.test.ts`'s own fake-clock tests — no route knob for
-        // it here (review CLI-1958).
+        // A present-but-unhealthy storage container's wait-then-timeout behavior (exact 30s
+        // boundary) is covered by `await-storage-ready.unit.test.ts`'s fake-clock tests instead.
         return { stdout: [HEALTHY_STATE] };
       }
       if (opts.running === false)
@@ -401,6 +416,435 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
     Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
   ),
 );
+
+/** Records every request the reset's bucket-seeding gateway client issues, responding 200 to all. */
+function recordingStackStorageHttpClient() {
+  const requests: Array<{
+    readonly method: string;
+    readonly url: string;
+    readonly authorization: string;
+  }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers["authorization"] ?? "",
+      });
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but a bucket-create POST fails with the given status. */
+function recordingStackStorageHttpClientBucketCreateFails(status: number) {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("server error", { status })),
+        );
+      }
+      const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "bucket" });
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+/** Like `recordingStackStorageHttpClient`, but the bucket-list GET fails at the transport level. */
+function recordingStackStorageHttpClientBucketListTransportFails() {
+  const requests: Array<{ readonly method: string; readonly url: string }> = [];
+  const layer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
+      if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
+        return Effect.fail(transportFailure(request, "ECONNREFUSED"));
+      }
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify({ name: "bucket" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+    }),
+  );
+  return { layer, requests };
+}
+
+const RESET_STACK_ID = "c".repeat(64);
+const RESET_JWT = "stack-jwt-secret-with-at-least-32-characters";
+const RESET_STACK_CREDENTIALS: StackCredentials = {
+  jwtSecret: RESET_JWT,
+  postgresRootKey: "postgres-root-key",
+  databasePassword: "postgres",
+  publishableKey: "publishable-key",
+  secretKey: "secret-key",
+  anonKey: "anon-key",
+  serviceRoleKey: generateGoJwt(RESET_JWT, "service_role"),
+  jwks: '{"keys":[]}',
+  gotrueJwtKeys: "[]",
+  remoteJwks: "[]",
+  anonKeyIsOverride: false,
+  serviceRoleKeyIsOverride: false,
+};
+
+type ResetServiceKind = "database" | "auth" | "storage" | "realtime" | "pooler";
+type StackService = ServiceInstances[ResetServiceKind];
+
+const serviceCreation = (
+  service: ResetServiceKind,
+  databaseUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+): Extract<ServiceCreation, { readonly service: ResetServiceKind }> => {
+  switch (service) {
+    case "database":
+      return {
+        service,
+        config: {
+          version: "15",
+          databasePassword: Redacted.make("postgres"),
+          jwtSecret: Redacted.make(RESET_JWT),
+          jwtExpiry: 3600,
+        },
+        endpoints: {},
+      };
+    case "auth":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+    case "storage":
+      return {
+        service,
+        config: { databaseUrl, filePath: "/tmp/storage", jwtSecret: RESET_JWT },
+        endpoints: {},
+      };
+    case "realtime":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+    case "pooler":
+      return { service, config: { databaseUrl, jwtSecret: RESET_JWT }, endpoints: {} };
+  }
+};
+
+const stackService = (
+  id: string,
+  creation: Extract<ServiceCreation, { readonly service: ResetServiceKind }>,
+  observation: Effect.Effect<Observation, StackError>,
+  overrides: {
+    readonly start?: Effect.Effect<void>;
+    readonly ready?: Effect.Effect<void>;
+    readonly stop?: Effect.Effect<void>;
+    readonly resetData?: Effect.Effect<void>;
+    readonly credentials?: Effect.Effect<Readonly<Record<string, string>>, StackError>;
+  } = {},
+): StackService => {
+  const base = {
+    id,
+    start: overrides.start ?? Effect.void,
+    ready: overrides.ready ?? Effect.void,
+    stop: overrides.stop ?? Effect.void,
+    restart: () => Effect.void,
+    destroy: Effect.void,
+    prepare: Effect.void,
+    status: observation,
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () => Effect.succeed({}),
+  } satisfies Omit<ServiceInstance, "service">;
+  switch (creation.service) {
+    case "database":
+      return {
+        ...base,
+        service: "database",
+        credentials: () =>
+          overrides.credentials ??
+          Effect.succeed({ databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres" }),
+        saveSnapshot: () => Effect.die("unused"),
+        restoreSnapshot: () => Effect.die("unused"),
+        resetData: overrides.resetData ?? Effect.die("unused"),
+      };
+    case "auth":
+      return { ...base, service: "auth" };
+    case "storage":
+      return { ...base, service: "storage" };
+    case "realtime":
+      return { ...base, service: "realtime" };
+    case "pooler":
+      return { ...base, service: "pooler" };
+  }
+};
+
+function makeStackObservation(
+  id: string,
+  creation: Extract<ServiceCreation, { readonly service: ResetServiceKind }>,
+  opts: {
+    lifecycle?: "stopped" | "starting" | "running" | "stopping";
+    health?: "starting" | "healthy" | "unhealthy";
+    wakeEnabled?: boolean;
+    endpoints?: ReadonlyArray<{
+      name: string;
+      protocol: "tcp" | "http";
+      host: string;
+      port: number;
+    }>;
+    error?: { readonly _tag: "ServiceError"; readonly operation: string; readonly message: string };
+  } = {},
+): Observation {
+  return {
+    id,
+    endpoints: opts.endpoints ?? [],
+    config: creation,
+    lifecycle: opts.lifecycle ?? "stopped",
+    health: opts.health,
+    error: opts.error,
+    cleanupError: undefined,
+    exit: undefined,
+    currentOperation: undefined,
+    launchId: undefined,
+    intentRevision: 0,
+    wakeEnabled: opts.wakeEnabled ?? false,
+    registered: true,
+  };
+}
+
+function mockResetStackApi(opts: {
+  readonly workdir: string;
+  readonly ready: boolean;
+  readonly storageReady?: boolean;
+  /** Overrides the derived storage observation state (default: `ready` when `storageReady`, else `stopped`). */
+  readonly storageState?:
+    | "ready"
+    | "dormant"
+    | "starting"
+    | "stopping"
+    | "stopped"
+    | "failed"
+    | "disabled";
+  readonly storageError?: string;
+  readonly apiEndpoint?: { readonly url: string; readonly port: number };
+  /** Models the `db start` overlay, whose composition holds only the database. */
+  readonly postgresOnly?: boolean;
+  /** Makes the database address unavailable once the reset has started it again. */
+  readonly unavailableAfterReset?: boolean;
+  /** Fails every database status read, as an unreachable or mismatched owner does. */
+  readonly statusFailure?: StackError;
+}) {
+  let resetCalls = 0;
+  let stopCalls = 0;
+  let startCalls = 0;
+  let databaseRunning = opts.ready;
+  const database = serviceCreation("database");
+  const storage = serviceCreation("storage");
+  const auth = serviceCreation("auth");
+  const realtime = serviceCreation("realtime");
+  const pooler = serviceCreation("pooler");
+  const endpoint =
+    opts.apiEndpoint === undefined
+      ? []
+      : [
+          {
+            name: "http",
+            protocol: "http" as const,
+            host: "127.0.0.1",
+            port: opts.apiEndpoint.port,
+          },
+        ];
+  const storageState = opts.storageState ?? (opts.storageReady === true ? "ready" : "stopped");
+  const storageMember =
+    storageState === "disabled"
+      ? undefined
+      : stackService(
+          STORAGE_ID,
+          storage,
+          Effect.succeed(
+            makeStackObservation(STORAGE_ID, storage, {
+              lifecycle:
+                storageState === "dormant"
+                  ? "stopped"
+                  : storageState === "stopping"
+                    ? "stopping"
+                    : storageState === "failed"
+                      ? "running"
+                      : storageState === "starting"
+                        ? "running"
+                        : storageState === "ready"
+                          ? "running"
+                          : "stopped",
+              health:
+                storageState === "ready"
+                  ? "healthy"
+                  : storageState === "starting"
+                    ? "starting"
+                    : storageState === "failed"
+                      ? "unhealthy"
+                      : undefined,
+              wakeEnabled:
+                storageState === "dormant" ||
+                storageState === "starting" ||
+                storageState === "stopping",
+              endpoints: endpoint,
+              ...(opts.storageError === undefined
+                ? {}
+                : {
+                    error: {
+                      _tag: "ServiceError" as const,
+                      operation: "start",
+                      message: opts.storageError,
+                    },
+                  }),
+            }),
+          ),
+        );
+  const dbStatus =
+    opts.statusFailure === undefined
+      ? Effect.sync(() =>
+          makeStackObservation(DB_ID, database, {
+            lifecycle: databaseRunning ? "running" : "stopped",
+            health: databaseRunning ? "healthy" : undefined,
+            endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54329 }],
+          }),
+        )
+      : Effect.fail(opts.statusFailure);
+  const db = stackService(DB_ID, database, dbStatus, {
+    resetData: Effect.suspend(() =>
+      databaseRunning
+        ? Effect.die("database reset while running")
+        : Effect.sync(() => {
+            resetCalls++;
+          }),
+    ),
+    start: Effect.sync(() => {
+      databaseRunning = true;
+      startCalls++;
+    }),
+    ready: Effect.void,
+    ...(opts.unavailableAfterReset === true
+      ? {
+          credentials: Effect.fail(
+            new StackError({ operation: "credentials", message: "owner unavailable" }),
+          ),
+        }
+      : {}),
+  });
+  const composed: Array<StackService> = [
+    db,
+    stackService(
+      "supabase_auth_test",
+      auth,
+      Effect.succeed(makeStackObservation("supabase_auth_test", auth)),
+    ),
+    ...(storageMember === undefined ? [] : [storageMember]),
+    stackService(
+      "supabase_realtime_test",
+      realtime,
+      Effect.succeed(makeStackObservation("supabase_realtime_test", realtime)),
+    ),
+    stackService(
+      "supabase_pooler_test",
+      pooler,
+      Effect.succeed(makeStackObservation("supabase_pooler_test", pooler)),
+    ),
+  ];
+  const members = opts.postgresOnly === true ? [db] : composed;
+  const stack: Stack = {
+    id: RESET_STACK_ID,
+    services: {
+      create: () => Effect.die("unused"),
+      get: (id) => {
+        const found = members.find((member) => member.id === id);
+        return found === undefined ? Effect.die(`missing service ${id}`) : Effect.succeed(found);
+      },
+      list: Effect.succeed(members),
+    },
+    credentials: { get: Effect.succeed(RESET_STACK_CREDENTIALS) },
+    composition: {
+      plan: () => Effect.succeed([]),
+      describe: Effect.succeed({
+        members: members.map(({ id }, index) => ({
+          id,
+          activation: index === 0 ? ("eager" as const) : ("lazy" as const),
+        })),
+        dependencies: [],
+      }),
+      supabase: () => Effect.die("unused"),
+      configure: () => Effect.die("unused"),
+      stop: Effect.sync(() => {
+        stopCalls++;
+        databaseRunning = false;
+        return members.map((member) =>
+          makeStackObservation(member.id, serviceCreation(member.service), {
+            lifecycle: "stopped",
+          }),
+        );
+      }),
+      start: Effect.sync(() => {
+        startCalls++;
+        databaseRunning = true;
+        return members.map((member) =>
+          makeStackObservation(member.id, serviceCreation(member.service), {
+            lifecycle: "running",
+            health: "healthy",
+          }),
+        );
+      }),
+      restart: Effect.die("unused"),
+    },
+    stop: Effect.die("unused"),
+    destroy: Effect.die("unused"),
+    commands: { run: () => Effect.die("unused") },
+  };
+  return {
+    layer: Layer.succeed(StackApi, {
+      create: () => Effect.die("unused"),
+      discover: () => Effect.die("unused"),
+      find: () =>
+        Effect.succeed(
+          Option.some({
+            definition: {
+              id: RESET_STACK_ID,
+              identity: { projectRoot: opts.workdir, branchContext: "main", stackName: "default" },
+              runtime: "native" as const,
+              instances: members.map((member) => ({
+                id: member.id,
+                creation: { service: "mail" as const, config: {} },
+              })),
+              lifetime: "detached" as const,
+              composition: { members: [], dependencies: [] },
+              ports: [],
+            },
+            host: undefined,
+          }),
+        ),
+      open: () => Effect.succeed(stack),
+    }),
+    get resetCalls() {
+      return resetCalls;
+    },
+    get stopCalls() {
+      return stopCalls;
+    },
+    get startCalls() {
+      return startCalls;
+    },
+  };
+}
 
 function setup(
   workdir: string,
@@ -424,31 +868,67 @@ function setup(
     // Local-reset-only knobs.
     route?: (args: ReadonlyArray<string>) => RouteResult;
     routeOpts?: DefaultRouteOpts;
+    /**
+     * Storage-gateway routes (method + URL substring → JSON body) for the bucket-seed step;
+     * replaces the always-200 HTTP client with a recording one, 404 on no match.
+     */
+    storageRoutes?: ReadonlyArray<{
+      readonly method: string;
+      readonly match: string;
+      readonly status?: number;
+      readonly body?: unknown;
+    }>;
+    /** Piped (non-TTY) stdin content, one line consumed per confirmation prompt. */
+    pipedStdin?: string;
+    /** Whether stdin is a TTY. Defaults to `true`. */
+    stdinIsTty?: boolean;
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
-    // `ProjectRefNotLinkedError` absent an explicit `--project-ref` flag,
-    // instead of silently falling back to `opts.ref ?? VALID_REF`.
+    // Simulates an unlinked workdir: `loadProjectRef` fails with `ProjectRefNotLinkedError`
+    // absent an explicit `--project-ref` flag, instead of falling back to `opts.ref`.
     linkedFails?: boolean;
+    stackBackend?: boolean;
+    stackDatabaseReady?: boolean;
+    stackStorageReady?: boolean;
+    stackStorageState?:
+      | "ready"
+      | "dormant"
+      | "starting"
+      | "stopping"
+      | "stopped"
+      | "failed"
+      | "disabled";
+    stackStorageError?: string;
+    stackApiEndpoint?: { readonly url: string; readonly port: number };
+    stackPostgresOnly?: boolean;
+    stackUnavailableAfterReset?: boolean;
+    stackStatusFailure?: StackError;
+    httpClient?: Layer.Layer<HttpClient.HttpClient>;
   },
 ) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const workdirLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (opts.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+      }
+      for (const [rel, content] of Object.entries(opts.files ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFileString(abs, content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
   const telemetry = mockTelemetryStateTracked();
   const linkedCache = mockLinkedProjectCacheTracked();
-  // The local-reset bucket-seed core statically requires the (lazy) Management-API
-  // factory; never invoked on `--local` (projectRef === "").
+  // The local-reset bucket-seed core statically requires the (lazy) Management-API factory,
+  // though `--local` never invokes it.
   const platformApi = mockCommandPlatformApiService({});
   const resolver = mockResolver({
     isLocal: opts.isLocal ?? false,
@@ -458,6 +938,55 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
+  const stackApi = mockResetStackApi({
+    workdir,
+    ready: opts.stackDatabaseReady !== false,
+    storageReady: opts.stackStorageReady,
+    storageState: opts.stackStorageState,
+    storageError: opts.stackStorageError,
+    apiEndpoint: opts.stackApiEndpoint,
+    postgresOnly: opts.stackPostgresOnly,
+    unavailableAfterReset: opts.stackUnavailableAfterReset,
+    statusFailure: opts.stackStatusFailure,
+  });
+  const catalog =
+    opts.stackBackend === true
+      ? (() => {
+          const applied: Array<StackCatalogSetupInput> = [];
+          return {
+            layer: Layer.succeed(StackCatalogSetup, {
+              apply: (input) => Effect.sync(() => void applied.push(input)),
+            }),
+            applied,
+          };
+        })()
+      : undefined;
+  const requests: Array<{ method: string; url: string; body: unknown }> = [];
+  const storageRoutes = opts.storageRoutes;
+  const httpLayer =
+    storageRoutes === undefined
+      ? alwaysReadyHttpClientLayer
+      : Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const reqBody = request.body;
+            let body: unknown;
+            if (reqBody._tag === "Uint8Array") {
+              try {
+                body = JSON.parse(new TextDecoder().decode(reqBody.body));
+              } catch {
+                body = undefined;
+              }
+            }
+            requests.push({ method: request.method, url: request.url, body });
+            const matched = storageRoutes.find(
+              (r) => r.method === request.method && request.url.includes(r.match),
+            );
+            return matched === undefined
+              ? Effect.succeed(jsonResponse(request, 404, { message: "no mock route" }))
+              : Effect.succeed(jsonResponse(request, matched.status ?? 200, matched.body ?? {}));
+          }),
+        );
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
@@ -465,21 +994,19 @@ function setup(
     mockCommandSettings({ workdir }),
     BunServices.layer,
     child.layer,
+    mockLocalDockerEngineUnavailableLayer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
-    alwaysReadyHttpClientLayer,
+    opts.httpClient ?? httpLayer,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     Layer.succeed(NetworkIdFlag, Option.none()),
-    // The remote-reset confirmation is answered through mockOutput's
-    // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
-    // only referenced by promptYesNo's non-TTY branch (unreached here) but must
-    // be present to satisfy the effect's requirements.
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true),
-    // The linked ref is pre-loaded (for the post-run cache) before the DB
-    // config is resolved. `loadProjectRef` gives an explicit `--project-ref`
-    // flag top precedence — mirror that so a test can prove the flag (not just
-    // `opts.ref`) drives the linked ref.
+    // Default: a TTY whose remote-reset confirmation is answered through mockOutput's
+    // `promptConfirmResponses` (the clack path); `stdinIsTty: false` + `pipedStdin` model a
+    // real pipe for the non-interactive bucket-seed prompts instead.
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true }),
+    mockStdin(opts.stdinIsTty ?? true, opts.pipedStdin),
+    // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, mirrored here so a
+    // test can prove the flag (not just `opts.ref`) drives the linked ref.
     Layer.succeed(ProjectRefResolver, {
       resolve: () => Effect.succeed(opts.ref ?? VALID_REF),
       resolveForLink: () => Effect.succeed(opts.ref ?? VALID_REF),
@@ -502,7 +1029,10 @@ function setup(
     Layer.succeed(DebugFlag, opts.debug ?? false),
     telemetry.layer,
     linkedCache.layer,
-  );
+    ...(opts.stackBackend === true && catalog !== undefined
+      ? [stackBackendLayer("stack"), stackApi.layer, catalog.layer]
+      : []),
+  ).pipe(Layer.provide(workdirLayer));
   return {
     layer,
     out,
@@ -511,6 +1041,9 @@ function setup(
     linkedCache,
     resolver,
     child,
+    stackApi,
+    catalogApplied: catalog?.applied ?? [],
+    requests,
   };
 }
 
@@ -531,33 +1064,36 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Resetting local database...");
-        expect(out.stderrText).toContain("Recreating database...\n");
-        expect(removedContainers(child.spawned)).toContain(DB_ID);
-        expect(removedVolumes(child.spawned)).toContain(DB_ID);
-        expect(createArgs(child.spawned)).not.toBeUndefined();
-        // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
-        expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(out.stderrText).toContain("Restarting containers...\n");
-        // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
-        expect(restartedContainers(child.spawned)).toEqual(
-          expect.arrayContaining([
-            "supabase_storage_test",
-            "supabase_auth_test",
-            "supabase_realtime_test",
-            "supabase_pooler_test",
-          ]),
-        );
-        expect(kongReloadCalls(child.spawned)).toHaveLength(1);
-        expect(out.stderrText).toContain("Finished ");
-        expect(out.stderrText).toContain("on branch ");
-        // The local-reset composition now lives in the shared
-        // `resetLocalDatabase` (CLI-2062) — confirm this handler's own
-        // single `Effect.ensuring` finalizer still fires exactly once through it.
-        expect(telemetry.flushCount).toBe(1);
-      });
+      return withEnvVar(
+        "GITHUB_HEAD_REF",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Resetting local database...");
+          expect(out.stderrText).toContain("Recreating database...\n");
+          expect(removedContainers(child.spawned)).toContain(DB_ID);
+          expect(removedVolumes(child.spawned)).toContain(DB_ID);
+          expect(createArgs(child.spawned)).not.toBeUndefined();
+          // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+          expect(out.stderrText).toContain("Restarting containers...\n");
+          // Satellite restarts (storage/auth/realtime/pooler), then Kong reload.
+          expect(restartedContainers(child.spawned)).toEqual(
+            expect.arrayContaining([
+              "supabase_storage_test",
+              "supabase_auth_test",
+              "supabase_realtime_test",
+              "supabase_pooler_test",
+            ]),
+          );
+          expect(kongReloadCalls(child.spawned)).toHaveLength(1);
+          // The temp workdir sits outside any git checkout, so the branch is unknown and
+          // the "Finished" line omits the clause instead of falsely claiming "main".
+          expect(out.stderrText).toContain("Finished supabase db reset.\n");
+          // Confirms the single `Effect.ensuring` finalizer still fires exactly once.
+          expect(telemetry.flushCount).toBe(1);
+        }),
+      );
     });
 
     it.live(
@@ -578,13 +1114,9 @@ describe("db reset", () => {
             local: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
-          // The migration up to (and including) the resolved version IS re-applied through
-          // the recreated database's own session (positive assertion — proves MigrateAndSeed
-          // actually ran, not just that the cutoff excluded something)...
           expect(conn.execs.some((sql) => sql.includes("create table version_one_marker ()"))).toBe(
             true,
           );
-          // ...but the second migration must not be applied at all.
           expect(conn.execs.some((sql) => sql.includes("create table version_two_marker ()"))).toBe(
             false,
           );
@@ -653,10 +1185,539 @@ describe("db reset", () => {
         return Effect.gen(function* () {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+          if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
           );
+        });
+      },
+    );
+
+    it.live(
+      "refuses a local reset from the direct Engine answer without touching the container CLI",
+      () => {
+        const { layer, child } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          routeOpts: { running: true },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(
+            Effect.provide(
+              Layer.merge(
+                layer,
+                Layer.succeed(LocalDockerEngine, {
+                  containerExists: () => Effect.succeed(Option.some(false)),
+                }),
+              ),
+            ),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
+          expect(
+            child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
+          ).toBe(false);
+        });
+      },
+    );
+
+    it.live("resets the stack database without Compose volume recreate", () => {
+      const { layer, child, stackApi, catalogApplied, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(stackApi.resetCalls).toBe(1);
+        expect(stackApi.stopCalls).toBe(1);
+        expect(stackApi.startCalls).toBe(2);
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+        expect(catalogApplied[0]?.target).not.toHaveProperty("jwtSecret");
+        expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
+          false,
+        );
+        // No `[storage.buckets]`/`[storage.vector.buckets]` configured, so there is nothing to
+        // skip even though this fixture's storage capability defaults to "stopped".
+        expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.live("preserves the existing stack composition while rebuilding the database", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "storage", "realtime"]);
+      });
+    });
+
+    it.live("keeps a service excluded from the saved stack out of schema provisioning", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "disabled",
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
+      });
+    });
+
+    it.live("provisions configured service schemas for a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime", "storage"]);
+      });
+    });
+
+    it.live("skips schemas for services disabled in config on a postgres-only stack", () => {
+      const { layer, catalogApplied } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage]\nenabled = false\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackPostgresOnly: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(catalogApplied[0]?.target.databaseServices).toEqual(["auth", "realtime"]);
+      });
+    });
+
+    it.live("leaves the stopped composition after a migration failure", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { ...migrationFile("20240101000000", "create table stack_reset_failure ();") },
+        execFailsOn: "create table stack_reset_failure",
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(stackApi.stopCalls).toBe(1);
+        expect(stackApi.startCalls).toBe(1);
+      });
+    });
+
+    it.live("seeds stack buckets through the stack API listener with stack JWTs", () => {
+      const requests: Array<{ readonly url: string; readonly authorization: string }> = [];
+      const { layer } = setup(tmp.current, {
+        toml: [
+          'project_id = "test"',
+          "[api]",
+          "port = 54321",
+          "[storage.buckets.dogfood]",
+          "public = true",
+          "[auth]",
+          'jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"',
+        ].join("\n"),
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageReady: true,
+        stackApiEndpoint: { url: "http://127.0.0.1:55421", port: 55421 },
+        httpClient: Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push({
+              url: request.url,
+              authorization: request.headers["authorization"] ?? "",
+            });
+            const body = request.method === "GET" ? "[]" : JSON.stringify({ name: "dogfood" });
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(body, {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              ),
+            );
+          }),
+        ),
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(requests.some((request) => request.url.includes("127.0.0.1:55421/storage/v1"))).toBe(
+          true,
+        );
+        expect(requests.some((request) => request.url.includes("127.0.0.1:54321"))).toBe(false);
+        expect(
+          requests.some(
+            (request) =>
+              request.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it.live("fails --local reset when the stack database is not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackDatabaseReady: false,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("is not running.");
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("reports a stack whose owner is absent as not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStatusFailure: new StackError({
+          operation: "status",
+          message: "Stack owner is not running",
+          reason: "owner-unavailable",
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ResetLocalDbNotRunningError",
+          message: "The local stack is not running.",
+        });
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("surfaces a release mismatch instead of reporting the stack as not running", () => {
+      const message =
+        "Stack test is served by release 1.0.0+old, but this client is release 1.0.0+new; stop or destroy the stack (both work across releases) and retry";
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStatusFailure: new StackError({
+          operation: "status",
+          message,
+          reason: "release-mismatch",
+        }),
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({ _tag: "StackError", message });
+        expect(stackApi.resetCalls).toBe(0);
+      });
+    });
+
+    it.live("reports a database that becomes unavailable after the reset as not running", () => {
+      const { layer, stackApi } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackUnavailableAfterReset: true,
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "ResetLocalDbNotRunningError",
+          message: "owner unavailable",
+        });
+        expect(stackApi.resetCalls).toBe(1);
+      });
+    });
+
+    const BUCKET_TOML = ['project_id = "test"', "[storage.buckets.dogfood]", "public = true"].join(
+      "\n",
+    );
+
+    it.live("seeds stack buckets through the gateway when storage is dormant", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageState: "dormant",
+        stackApiEndpoint: { url: "http://127.0.0.1:55422", port: 55422 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(client.requests.some((r) => r.url.includes("127.0.0.1:55422/storage/v1"))).toBe(
+          true,
+        );
+        expect(
+          client.requests.some(
+            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+          ),
+        ).toBe(true);
+      });
+    });
+
+    it.live("skips seeding storage buckets and issues no requests when storage is disabled", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "disabled",
+        stackApiEndpoint: { url: "http://127.0.0.1:55423", port: 55423 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARNING: skipped seeding storage buckets: Storage is disabled for this stack.",
+        );
+        expect(out.stderrText).toContain(
+          "Set [storage] enabled = true in supabase/config.toml, run supabase stack stop " +
+            "followed by supabase stack start without -x storage, then supabase seed buckets --local.",
+        );
+        expect(out.stderrText).not.toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
+        expect(client.requests).toHaveLength(0);
+      });
+    });
+
+    it.live(
+      "skips seeding storage buckets silently when storage is disabled and no buckets are configured",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "disabled",
+          stackApiEndpoint: { url: "http://127.0.0.1:55429", port: 55429 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live("skips seeding storage buckets and issues no requests when storage is stopped", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        stackBackend: true,
+        stackStorageState: "stopped",
+        stackApiEndpoint: { url: "http://127.0.0.1:55424", port: 55424 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          "WARNING: skipped seeding storage buckets: Storage is stopped for this stack.",
+        );
+        expect(out.stderrText).toContain(
+          "Run supabase seed buckets --local once Storage is available.",
+        );
+        expect(client.requests).toHaveLength(0);
+      });
+    });
+
+    it.live(
+      "seeds immediately when storage is starting, without waiting for it to become ready",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "starting",
+          stackApiEndpoint: { url: "http://127.0.0.1:55425", port: 55425 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(client.requests.some((r) => r.url.includes("127.0.0.1:55425/storage/v1"))).toBe(
+            true,
+          );
+          expect(
+            client.requests.some(
+              (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+            ),
+          ).toBe(true);
+        });
+      },
+    );
+
+    it.live("seeds immediately when storage is stopping, letting the gateway wake it", () => {
+      const client = recordingStackStorageHttpClient();
+      const { layer, out } = setup(tmp.current, {
+        toml: BUCKET_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        yes: true,
+        stackBackend: true,
+        stackStorageState: "stopping",
+        stackApiEndpoint: { url: "http://127.0.0.1:55430", port: 55430 },
+        httpClient: client.layer,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(client.requests.some((r) => r.url.includes("127.0.0.1:55430/storage/v1"))).toBe(
+          true,
+        );
+        expect(
+          client.requests.some(
+            (r) => r.authorization === `Bearer ${generateGoJwt(RESET_JWT, "service_role")}`,
+          ),
+        ).toBe(true);
+        expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+      });
+    });
+
+    it.live(
+      "warns and completes the reset when the bucket-create gateway request fails (500)",
+      () => {
+        const client = recordingStackStorageHttpClientBucketCreateFails(500);
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55426", port: 55426 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when the bucket-list gateway request fails at the transport level",
+      () => {
+        const client = recordingStackStorageHttpClientBucketListTransportFails();
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          yes: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          stackApiEndpoint: { url: "http://127.0.0.1:55427", port: 55427 },
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain("WARNING: skipped seeding storage buckets:");
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).toContain("Finished ");
+        });
+      },
+    );
+
+    it.live(
+      "reports the specific failed-storage reason (with underlying error) in the pre-check warning",
+      () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "failed",
+          stackStorageError: "boom",
+          stackApiEndpoint: { url: "http://127.0.0.1:55428", port: 55428 },
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: Storage failed to start for this stack: boom. Run supabase seed buckets --local once Storage is available.",
+          );
+          expect(out.stderrText).not.toContain("Storage is failed");
+        });
+      },
+    );
+
+    it.live(
+      "warns and completes the reset when storage is seedable but the stack has no API gateway endpoint",
+      () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: BUCKET_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          // `stackApiEndpoint` intentionally omitted so `status.endpoints.api` is undefined.
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain(
+            "WARNING: skipped seeding storage buckets: The stack exposes no Storage endpoint.",
+          );
+          expect(out.stderrText).toContain(
+            "Run supabase seed buckets --local once Storage is available.",
+          );
+        });
+      },
+    );
+
+    it.live(
+      "skips seeding silently when no buckets are configured even without an API gateway endpoint",
+      () => {
+        const client = recordingStackStorageHttpClient();
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          stackBackend: true,
+          stackStorageState: "dormant",
+          // `stackApiEndpoint` intentionally omitted so `status.endpoints.api` is undefined.
+          httpClient: client.layer,
+        });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("skipped seeding storage buckets");
+          expect(client.requests).toHaveLength(0);
         });
       },
     );
@@ -673,7 +1734,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+            expect(Cause.pretty(exit.cause)).toContain("failed to load config");
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
@@ -689,9 +1750,8 @@ describe("db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        // No buckets configured -> the seed-buckets core short-circuits, but
-        // the storage gate is still consulted (storage is inspected before
-        // buckets are seeded).
+        // No buckets configured, so the seed-buckets core short-circuits, but storage is still
+        // inspected first.
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(
           child.spawned.some(
@@ -714,25 +1774,162 @@ describe("db reset", () => {
       });
     });
 
+    it.live(
+      "confirms overwriting an existing bucket non-interactively and applies the yes default",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.buckets.images]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            {
+              method: "GET",
+              match: "/storage/v1/bucket",
+              body: [{ name: "images", id: "images" }],
+            },
+            { method: "PUT", match: "/storage/v1/bucket/images", body: {} },
+          ],
+        });
+        // Ambient `SUPABASE_YES` would take the auto-confirm branch and echo a trailing `y`.
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain(
+              "already exists. Do you want to overwrite its properties? [Y/n]",
+            );
+            expect(out.stderrText).not.toContain("overwrite its properties? [Y/n] y");
+            expect(out.stderrText).toContain("Updating Storage bucket: images");
+            expect(
+              requests.some((r) => r.method === "PUT" && r.url.includes("/bucket/images")),
+            ).toBe(true);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live(
+      "keeps a vector bucket that is missing from config.toml (prune declines by default)",
+      () => {
+        const { layer, out, requests } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          storageRoutes: [
+            { method: "GET", match: "/storage/v1/bucket", body: [] },
+            {
+              method: "POST",
+              match: "/storage/v1/vector/ListVectorBuckets",
+              body: {
+                vectorBuckets: [
+                  { vectorBucketName: "embeddings" },
+                  { vectorBucketName: "stale-vec" },
+                ],
+              },
+            },
+          ],
+        });
+        return withEnvVar(
+          "SUPABASE_YES",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+            expect(out.stderrText).toContain("Do you want to prune it? [y/N]");
+            expect(out.stderrText).not.toContain("Pruning vector bucket");
+            expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(false);
+            expect(out.stderrText).toContain("Finished ");
+          }),
+        );
+      },
+    );
+
+    it.live("prunes a stale vector bucket when SUPABASE_YES is set in the project dotenv", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        files: { "supabase/.env": "SUPABASE_YES=true\n" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      // Shell `SUPABASE_YES` (any value) would shadow the project dotenv under test.
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          const deleteBodies = yield* Effect.forEach(
+            requests.filter((r) => r.url.includes("DeleteVectorBucket")),
+            (r) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(r.body ?? ""),
+          );
+          expect(deleteBodies.some((body) => body.includes("stale-vec"))).toBe(true);
+        }),
+      );
+    });
+
+    it.live("prunes a stale vector bucket when a piped y answers the confirmation", () => {
+      const { layer, out, requests } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[storage.vector]\nenabled = true\n[storage.vector.buckets.embeddings]\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        pipedStdin: "y\n",
+        stdinIsTty: false,
+        storageRoutes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: "/storage/v1/vector/ListVectorBuckets",
+            body: {
+              vectorBuckets: [
+                { vectorBucketName: "embeddings" },
+                { vectorBucketName: "stale-vec" },
+              ],
+            },
+          },
+          { method: "POST", match: "/storage/v1/vector/DeleteVectorBucket", body: {} },
+        ],
+      });
+      return withEnvVar(
+        "SUPABASE_YES",
+        undefined,
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+          expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+          expect(requests.some((r) => r.url.includes("DeleteVectorBucket"))).toBe(true);
+        }),
+      );
+    });
+
     it.live("uses the detected git branch in the Finished line", () => {
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      const previous = process.env["GITHUB_HEAD_REF"];
-      process.env["GITHUB_HEAD_REF"] = "feature-x";
-      return Effect.gen(function* () {
-        yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("on branch ");
-        expect(out.stderrText).toContain("feature-x");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["GITHUB_HEAD_REF"];
-            else process.env["GITHUB_HEAD_REF"] = previous;
-          }),
-        ),
+      return withConfigEnv(
+        { GITHUB_HEAD_REF: "feature-x" },
+        Effect.gen(function* () {
+          yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("on branch ");
+          expect(out.stderrText).toContain("feature-x");
+        }),
       );
     });
 
@@ -766,7 +1963,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to remove container");
+          expect(Cause.pretty(exit.cause)).toContain("failed to remove container");
         }
         expect(telemetry.flushed).toBe(true);
       });
@@ -835,7 +2032,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to restart supabase_storage_test");
+          expect(Cause.pretty(exit.cause)).toContain("failed to restart supabase_storage_test");
         }
       });
     });
@@ -869,8 +2066,8 @@ describe("db reset", () => {
           // initDatabase: schema SQL execs directly over the session — no PG15+ one-shot jobs.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
           expect(conn.execs.length).toBeGreaterThan(4);
-          // RestartDatabase: "Restarting containers..." then a real `docker restart` of `db`,
-          // THEN the satellite restarts + Kong reload (RestartDatabase-then-restartServices).
+          // Restarting containers logs first, then a real `docker restart` of `db`, then the
+          // satellite restarts + Kong reload.
           expect(out.stderrText).toContain("Restarting containers...\n");
           const dbRestartIndex = child.spawned.findIndex(
             (s) => s.args[0] === "restart" && s.args[1] === DB_ID,
@@ -887,10 +2084,8 @@ describe("db reset", () => {
     it.live(
       "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
       () => {
-        // These four statements are built as a migration file and run through
-        // a batch executor, so a failure gets the same rich context
-        // (`At statement: <index>` + the statement text) a real migration
-        // file failure would — not the bare driver error (review CLI-1958).
+        // Built as a migration file and run through a batch executor, so a failure gets the same
+        // rich context (`At statement: <index>` + statement text) a real migration failure would.
         const { layer } = setup(tmp.current, {
           toml: PG14_TOML,
           args: ["db", "reset", "--local"],
@@ -904,10 +2099,10 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("permission denied to create database");
-            expect(cause).toContain("At statement: 1");
-            expect(cause).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("permission denied to create database");
+            expect(causeText).toContain("At statement: 1");
+            expect(causeText).toContain("CREATE DATABASE postgres WITH OWNER postgres");
           }
         });
       },
@@ -926,7 +2121,6 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        // The reset still completes: the swallowed failure does not abort the recreate.
         expect(
           conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
         ).toBe(true);
@@ -948,14 +2142,12 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to disconnect clients");
+          expect(Cause.pretty(exit.cause)).toContain("failed to disconnect clients");
         }
       });
     });
 
     it.live("swallows a disconnect-clients failure that is not a PgError at all", () => {
-      // A non-PgError failure (network blip) is swallowed too — only a genuine PgError
-      // whose code differs from 3D000 surfaces.
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
         args: ["db", "reset", "--local"],
@@ -967,7 +2159,6 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        // Swallowed: no PgError code at all -> the reset still completes.
         expect(
           conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
         ).toBe(true);
@@ -977,12 +2168,9 @@ describe("db reset", () => {
     it.live(
       "swallows a disconnect-clients failure carrying a node system errno, not a real SQLSTATE",
       () => {
-        // `toExecError`'s fallback (`db-connection.sql-pg.layer.ts`) sets `code`
-        // from `extractSqlState`, which returns ANY string `code` found in the cause
-        // chain — including a bare node system errno like `ECONNRESET`/`ETIMEDOUT`, which is
-        // NOT a Postgres SQLSTATE. A socket error should never match as a real
-        // SQLSTATE either, so the discriminator must check `isSqlState(code)`
-        // before comparing against `3D000`, not just `code !== undefined`.
+        // `extractSqlState` returns any string `code` found in the cause chain, including a bare
+        // node errno like `ECONNRESET` — not a real SQLSTATE. The discriminator must check
+        // `isSqlState(code)` before comparing against `3D000`, not just `code !== undefined`.
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
           args: ["db", "reset", "--local"],
@@ -995,7 +2183,6 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-          // Swallowed: a node errno is not a SQLSTATE -> the reset still completes.
           expect(
             conn.execs.some((sql) => sql === "CREATE DATABASE postgres WITH OWNER postgres"),
           ).toBe(true);
@@ -1032,7 +2219,7 @@ describe("db reset", () => {
         const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to count replication slots");
+          expect(Cause.pretty(exit.cause)).toContain("failed to count replication slots");
         }
         // A single attempt — the permanent failure never retries.
         const countCalls = conn.queries.filter((q) => q.sql === COUNT_REPLICATION_SLOTS);
@@ -1053,7 +2240,7 @@ describe("db reset", () => {
           const exit = yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("replication slots still active");
+            expect(Cause.pretty(exit.cause)).toContain("replication slots still active");
           }
         });
       },
@@ -1074,10 +2261,6 @@ describe("db reset", () => {
     });
 
     it.live("reapplies migrations and seeds after a default local reset (PG14)", () => {
-      // Positive assertion: proves the final MigrateAndSeed step actually runs and
-      // re-applies the user's migrations/seed — this step is currently deletable with
-      // every OTHER PG14 assertion (DROP/CREATE statements, restart ordering,
-      // disconnect/replication-slot behavior) staying green.
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
         files: {
@@ -1114,9 +2297,8 @@ describe("db reset", () => {
         const migrationIndex = conn.execs.findIndex((sql) => sql.includes("https://example.com"));
         expect(pgNetIndex).toBeGreaterThanOrEqual(0);
         expect(migrationIndex).toBeGreaterThan(pgNetIndex);
-        // Same drop-then-recreate order as fresh setup: the PG14 dump installs pg_net
-        // unconditionally, so it is dropped first and only recreated because webhooks
-        // are enabled.
+        // The PG14 dump installs pg_net unconditionally, so it's dropped first and only
+        // recreated because webhooks are enabled.
         const dropIndex = conn.execs.findIndex((sql) =>
           sql.includes("drop extension if exists pg_net"),
         );
@@ -1126,9 +2308,8 @@ describe("db reset", () => {
     });
 
     it.live("drops the PG14 dump's implicit pg_net when Database Webhooks is disabled", () => {
-      // Fresh setup already removed it here; without the same drop on the reset path a
-      // PG14 `db reset` left pg_net installed and diverged from `supabase start`,
-      // surfacing as pg_net drift in the next engine's shadow baseline.
+      // Without this drop, a PG14 `db reset` would leave pg_net installed and diverge from
+      // `supabase start`, surfacing as drift in the next engine's shadow baseline.
       const { layer, conn } = setup(tmp.current, {
         toml: PG14_TOML,
         args: ["db", "reset", "--local"],
@@ -1165,11 +2346,9 @@ describe("db reset", () => {
             local: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
-          // Positive: the migration up to (and including) the resolved version IS re-applied.
           expect(conn.execs.some((sql) => sql.includes("create table version_one_marker ()"))).toBe(
             true,
           );
-          // The second migration must not be applied at all.
           expect(conn.execs.some((sql) => sql.includes("create table version_two_marker ()"))).toBe(
             false,
           );
@@ -1187,10 +2366,7 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-          // PG14 reset's own init calls the schema-init step directly — unlike
-          // `db start`'s own PG14 path, which execs globals.sql first. A fingerprint unique
-          // to `START_DB_GLOBALS_SQL` (see `templates/db-globals.sql.ts`) must never
-          // appear in this reset's execs.
+          // A fingerprint unique to `START_DB_GLOBALS_SQL` must never appear in this reset's execs.
           expect(conn.execs.some((sql) => sql.includes("CREATE ROLE anon"))).toBe(false);
         });
       },
@@ -1199,12 +2375,9 @@ describe("db reset", () => {
     it.live(
       "resolves db.migrations.schema_paths against supabase/ before applying it on an experimental PG14 reset",
       () => {
-        // `recreateLocalDatabase14` must pass the NORMALIZED `toml.schemaPaths`
-        // (`supabase/`-prefix-resolved by `checkDbToml`) into the final
-        // `migrateAndSeed` call, not the raw, unresolved config value — the raw
-        // `["schema.sql"]` pattern would glob-match against the WORKDIR root (where no
-        // such file exists), failing the whole reset, instead of `supabase/schema.sql`
-        // (where this test actually places the file).
+        // `recreateLocalDatabase14` must pass the normalized `toml.schemaPaths` (resolved by
+        // `checkDbToml`) into the final `migrateAndSeed` call — the raw `["schema.sql"]` pattern
+        // would glob-match against the workdir root instead of `supabase/schema.sql`.
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n[db]\nmajor_version = 14\n[db.migrations]\nschema_paths = ["schema.sql"]\n',
           files: { "supabase/schema.sql": "create table schema_paths_marker ();" },
@@ -1247,10 +2420,7 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          // Config loads through the established reader (`checkDbToml`),
-          // so a malformed config aborts with `failed to load config`, same
-          // as the other db commands (diff/dump/pull/migration).
-          expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+          expect(Cause.pretty(exit.cause)).toContain("failed to load config");
         }
       });
     });
@@ -1259,23 +2429,18 @@ describe("db reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`checkDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
-      const previous = process.env["MIGRATIONS_ENABLED"];
-      process.env["MIGRATIONS_ENABLED"] = "true";
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
       });
-      return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["MIGRATIONS_ENABLED"];
-            else process.env["MIGRATIONS_ENABLED"] = previous;
-          }),
-        ),
+      return withEnvVar(
+        "MIGRATIONS_ENABLED",
+        "true",
+        Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+        }),
       );
     });
 
@@ -1300,7 +2465,7 @@ describe("db reset", () => {
           last: Option.some(1),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("[last version]");
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("[last version]");
       });
     });
 
@@ -1316,8 +2481,6 @@ describe("db reset", () => {
         if (Exit.isFailure(exit)) {
           const failure = Cause.findErrorOption(exit.cause);
           expect(Option.isSome(failure) && failure.value._tag).toBe("DbResetInvalidVersionError");
-          // The bare "invalid version number" is returned unwrapped — no
-          // `failed to parse <v>:` wrapper (that belongs to `migration repair`).
           expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
         }
       });
@@ -1333,7 +2496,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "glob supabase/migrations/20240101000000_*.sql: file does not exist",
           );
         }
@@ -1341,9 +2504,6 @@ describe("db reset", () => {
     });
 
     it.live("rejects an out-of-int64-range --version", () => {
-      // Rejects magnitudes outside the int64 range even though the text is
-      // all digits. `INTEGER_PATTERN` alone would have accepted this and
-      // fallen through to the glob check instead.
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* dbReset({
@@ -1361,9 +2521,6 @@ describe("db reset", () => {
     });
 
     it.live("treats an empty --version like no version at all", () => {
-      // An empty --version skips validation entirely, so it must fall through
-      // to a full reset rather than glob-checking "" or rejecting it as an
-      // invalid version.
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         confirm: [true],
@@ -1390,7 +2547,7 @@ describe("db reset", () => {
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
         expect(conn.execs).toHaveLength(0);
       });
     });
@@ -1407,9 +2564,7 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
-        // No "Connecting to ... database..." line (established output contract).
         expect(out.stderrText).not.toContain("Connecting to");
-        // Drop block ran, then the migration applied.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
         expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
@@ -1418,11 +2573,8 @@ describe("db reset", () => {
     });
 
     it.live("fails a remote reset before dropping schemas on an undecryptable secret", () => {
-      // Regression: the old point-of-use vault decryption ran AFTER `dropUserSchemas`,
-      // so an undecryptable `encrypted:` secret dropped the schemas before failing.
-      // Every secret is decrypted while loading config before the reset runs,
-      // so the reset must abort before any destructive work — matched here by
-      // `checkDbToml` at load time.
+      // Every secret is decrypted while loading config, before the reset runs, so an
+      // undecryptable secret must abort before any destructive work.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
         confirm: [true],
@@ -1434,19 +2586,13 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
-            "failed to parse config: missing private key",
-          );
+          expect(Cause.pretty(exit.cause)).toContain("failed to parse config: missing private key");
         }
-        // Config load failed before ResetAll → schemas were never dropped.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
       });
     });
 
     it.live("fails a remote reset before dropping schemas on an empty project_id", () => {
-      // Config validation rejects an explicit `project_id = ""` before the
-      // reset prompt, so the native remote reset must abort before
-      // `dropUserSchemas`.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = ""\n',
         confirm: [true],
@@ -1458,7 +2604,7 @@ describe("db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "Missing required field in config: project_id",
           );
         }
@@ -1467,13 +2613,10 @@ describe("db reset", () => {
     });
 
     it.live("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
-      // The project `.env` is applied before the reset prompt reads `yes`,
-      // so a `SUPABASE_YES` in supabase/.env auto-confirms the destructive
-      // prompt (default false).
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: { "supabase/.env": "SUPABASE_YES=true\n" },
-        // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
+        // No `confirm` responses: the prompt must auto-confirm.
       });
       return Effect.gen(function* () {
         yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
@@ -1482,10 +2625,6 @@ describe("db reset", () => {
     });
 
     it.live("still caches the linked ref when DB-config resolution fails", () => {
-      // The linked-project cache is refreshed unconditionally after the
-      // command returns even on error, and the project ref is loaded BEFORE
-      // the fallible temp-role/connection step — so a failed linked resolve
-      // must not skip the post-run linked-project cache write.
       const { layer, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         resolveFails: true,
@@ -1502,8 +2641,6 @@ describe("db reset", () => {
     });
 
     it.live("resets the project given via --project-ref without a linked workdir", () => {
-      // The fake resolver fails as "unlinked" (`ProjectRefNotLinkedError`)
-      // absent the flag — only the flag can resolve a ref here.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, conn, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
@@ -1524,8 +2661,6 @@ describe("db reset", () => {
 
     it.live("--project-ref overrides an already-linked workdir's project ref", () => {
       const FLAG_REF = "flagflagflagflagflag";
-      // The workdir already resolves to VALID_REF (e.g. via
-      // .temp/project-ref) — the flag must win over it.
       const { layer, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         ref: VALID_REF,
@@ -1544,8 +2679,6 @@ describe("db reset", () => {
     });
 
     it.live("rejects --project-ref on the default local target", () => {
-      // reset defaults to local when no target flag is set — the guard must
-      // fire from the flag alone, with no explicit --local/--db-url needed.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
@@ -1558,7 +2691,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
           );
         }
@@ -1643,8 +2776,8 @@ describe("db reset", () => {
     it.live(
       "applies configured schema files instead of replaying migrations on an experimental remote reset",
       () => {
-        // `--linked=false` still selects the linked/remote target (Cobra `Changed`
-        // semantics) — exercised here alongside the schema-files branch itself.
+        // `--linked=false` still selects the linked/remote target, exercised here alongside the
+        // schema-files branch itself.
         const { layer, out, conn, resolver, linkedCache } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = false\n',
           files: {
@@ -1659,17 +2792,10 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           yield* dbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
-          // The configured schema file ran...
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
-          // ...but the timestamped migration did NOT — the if/else-if is
-          // mutually exclusive; taking the schema-files branch means
-          // migrations never run at all.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
-          // Seeding still runs afterward — it sits outside the if/else-if.
           expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
-          // A real connection is resolved now — this is a fully native path, not a
-          // delegated one that discarded the resolve (CLI-1958 removed the delegate).
           expect(resolver.calls).toBe(1);
           expect(linkedCache.cached).toBe(true);
           expect(linkedCache.cachedRef).toBe(VALID_REF);
@@ -1680,9 +2806,6 @@ describe("db reset", () => {
     it.live(
       "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
       () => {
-        // Matches are sorted WITHIN each pattern but preserve DECLARATION
-        // order ACROSS patterns (no global re-sort) — `zz/*.sql`'s files
-        // must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
           files: {
@@ -1707,9 +2830,6 @@ describe("db reset", () => {
     it.live(
       "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
       () => {
-        // `[db.migrations].schema_paths` resolves through the SQL-files glob
-        // (not a plain-files glob), which expands a directory match to its
-        // regular `.sql` files, recursively — unlike a plain glob pattern.
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
           files: {
@@ -1730,9 +2850,6 @@ describe("db reset", () => {
     it.live(
       "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
       () => {
-        // `schema_paths` defaults to `[]`. With no patterns to glob, the
-        // schema-files apply is a silent no-op — it does NOT fall back to
-        // replaying migrations (a hard if/else-if).
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
           files: migrationFile("20240101000000", "create table migrated_table ();"),
@@ -1741,9 +2858,7 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          // Schemas are still dropped (ResetAll drops before MigrateAndSeed)...
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
-          // ...but the local migration is silently skipped, not applied.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
         });
@@ -1764,8 +2879,6 @@ describe("db reset", () => {
         });
         return Effect.gen(function* () {
           yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          // pg-delta being enabled disables the schema-files branch even
-          // though `--experimental` and `schema_paths` are both set.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
           expect(out.stderrText).toContain("Applying migration");
@@ -1791,8 +2904,6 @@ describe("db reset", () => {
             linked: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
-          // A resolved --version disables the schema-files branch (it
-          // requires an empty version), even with `--experimental` set.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
         });
@@ -1814,26 +2925,26 @@ describe("db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("no files matched pattern: supabase/nomatch/*.sql");
-            // No CmdSuggestion on this failure mode — only a per-file exec failure sets one.
-            expect(cause).not.toContain("See schema file");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("no files matched pattern: supabase/nomatch/*.sql");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({ suggestion: expect.stringContaining("See schema file") }),
+              ),
+            );
           }
-          // Schemas were already dropped before the failed apply step (drop-then-apply order).
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         });
       },
     );
 
     it.live("ignores a partial schema_paths glob failure once at least one pattern matches", () => {
-      // The joined glob error only surfaces when NO pattern matched anything
-      // at all; a partial failure is silently dropped.
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
         files: {
           "supabase/schemas/01_users.sql": "create table schema_users ();",
-          // Present so the (unrelated) seed glob's own "no files matched" WARN line
-          // doesn't show up and get confused with the schema-files warning below.
+          // Present so the seed glob's own "no files matched" warning doesn't show up here too.
           "supabase/seed.sql": "insert into t values (1);",
         },
         experimental: true,
@@ -1864,91 +2975,143 @@ describe("db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("syntax error at or near");
-            // The suggestion is `"See schema file: <Bold(fp)>"` (established output contract).
-            expect(cause).toContain("See schema file:");
-            expect(cause).toContain("supabase/schemas/01_users.sql");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("syntax error at or near");
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              suggestion: expect.stringContaining("See schema file:"),
+            });
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              suggestion: expect.stringContaining("supabase/schemas/01_users.sql"),
+            });
           }
         });
       },
     );
 
-    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    // Windows ignores POSIX modes and root bypasses them; both get an injected failure instead.
+    const posixModesEnforced = process.platform !== "win32" && process.getuid?.() !== 0;
 
-    it.live.skipIf(isRoot)(
+    /** Denies `method` on `target` for the enclosing scope and returns the FileSystem to run with. */
+    const denyAccess = Effect.fnUntraced(function* (
+      target: string,
+      method: "readFileString" | "readDirectory",
+      restoreMode: number,
+    ) {
+      const fs = yield* FileSystem.FileSystem;
+      if (posixModesEnforced) {
+        yield* Effect.acquireRelease(fs.chmod(target, 0o000), () =>
+          fs.chmod(target, restoreMode).pipe(Effect.orDie),
+        );
+        return fs;
+      }
+      const denied = (p: string) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method,
+            pathOrDescriptor: p,
+            description: "permission denied",
+          }),
+        );
+      const overridden: FileSystem.FileSystem =
+        method === "readFileString"
+          ? {
+              ...fs,
+              readFileString: (p, encoding) =>
+                p === target ? denied(p) : fs.readFileString(p, encoding),
+            }
+          : {
+              ...fs,
+              readDirectory: (p, options) =>
+                p === target ? denied(p) : fs.readDirectory(p, options),
+            };
+      return overridden;
+    });
+
+    it.live(
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
-        // The file-read/parse step returns BEFORE the suggestion is ever set —
-        // only a later statement-execution failure attaches it. A file that
-        // glob-matches but can't be read (permissions changed after the glob)
-        // must fail WITHOUT the suggestion, unlike the exec-failure case above.
-        const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
-          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemaFile, 0o000);
         return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const schemaFile = path.join(tmp.current, "supabase", "schemas", "01_users.sql");
+          yield* fs.makeDirectory(path.dirname(schemaFile), { recursive: true });
+          yield* fs.writeFileString(schemaFile, "create table schema_users ();");
+          const deniedFs = yield* denyAccess(schemaFile, "readFileString", 0o644);
           const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
             Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).not.toContain("See schema file");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to open migration file");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
           }
-          // The statement was never reached, so it was never executed.
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemaFile, 0o644))));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
-    it.live.skipIf(isRoot)(
+    it.live(
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
-        // Directory walking stops on the first read failure and only silently
-        // drops that error when at least one OTHER file was still found; with
-        // a single pattern matching only the unreadable directory, `declared`
-        // stays empty and the command aborts — it must not report success
-        // having applied nothing.
-        const schemasDir = join(tmp.current, "supabase", "schemas");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
-          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemasDir, 0o000);
         return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const schemasDir = path.join(tmp.current, "supabase", "schemas");
+          yield* fs.makeDirectory(schemasDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(schemasDir, "01_users.sql"),
+            "create table schema_users ();",
+          );
+          const deniedFs = yield* denyAccess(schemasDir, "readDirectory", 0o755);
           const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provideService(FileSystem.FileSystem, deniedFs),
             Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
-            expect(cause).toContain("failed to walk matched directory");
-            expect(cause).not.toContain("See schema file");
+            const causeText = Cause.pretty(exit.cause);
+            expect(causeText).toContain("failed to walk matched directory");
+            expect(causeText).not.toContain("See schema file");
+            expect(Cause.findErrorOption(exit.cause)).not.toEqual(
+              Option.some(
+                expect.objectContaining({
+                  suggestion: expect.stringContaining("See schema file"),
+                }),
+              ),
+            );
           }
-          // Schemas were already dropped before the failed apply step (drop-then-apply order).
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer));
       },
     );
 
     it.live(
       "takes the native experimental schema-files path via SUPABASE_EXPERIMENTAL in the project .env",
       () => {
-        // The project `.env` is applied before EXPERIMENTAL is read, so a
-        // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` reaches the
-        // native three-conjunct gate the same way an explicit `--experimental` does.
-        const previous = process.env["SUPABASE_EXPERIMENTAL"];
-        delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {
@@ -1959,18 +3122,15 @@ describe("db reset", () => {
           confirm: [true],
           // No experimental flag / shell env — only the project .env sets it.
         });
-        return Effect.gen(function* () {
-          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
-          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
-          expect(out.stderrText).not.toContain("Applying migration");
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-              else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-            }),
-          ),
+        return withEnvVar(
+          "SUPABASE_EXPERIMENTAL",
+          undefined,
+          Effect.gen(function* () {
+            yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+            expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+            expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+            expect(out.stderrText).not.toContain("Applying migration");
+          }),
         );
       },
     );
@@ -1985,9 +3145,10 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
-          // The established suggestion, rendered as a Suggestion: line.
-          expect(JSON.stringify(exit.cause)).toContain("Use either");
+          expect(Cause.pretty(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            suggestion: expect.stringContaining("Use either"),
+          });
         }
       });
     });
@@ -2010,8 +3171,6 @@ describe("db reset", () => {
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("insert into"))).toBe(false);
-          // A `--db-url` target always resolves a real connection — this is no longer
-          // delegated at all (CLI-1958).
           expect(resolver.calls).toBe(1);
         });
       },
@@ -2077,7 +3236,6 @@ describe("db reset", () => {
       });
       return Effect.gen(function* () {
         yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        // Schemas are still dropped, but nothing is applied or seeded.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         expect(out.stderrText).not.toContain("Applying migration");
         expect(out.stderrText).not.toContain("Seeding data from");
@@ -2105,12 +3263,11 @@ describe("db reset", () => {
         format: "json",
       });
       return Effect.gen(function* () {
-        // json mode is non-interactive → prompt takes the default (false) → cancel.
+        // json mode's default-false prompt has no confirm response, so it declines and cancels.
         const exit = yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
           Effect.provide(layer),
           Effect.exit,
         );
-        // default-false prompt in non-text mode declines → context canceled.
         expect(Exit.isFailure(exit)).toBe(true);
         expect(out).toBeDefined();
       });
@@ -2127,7 +3284,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(Cause.pretty(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
         }
       });
     });
@@ -2142,7 +3299,7 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Cause.pretty(exit.cause)).toContain(
             "--sql-paths requires a non-empty path or glob pattern",
           );
         }
@@ -2159,30 +3316,34 @@ describe("db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const cause = JSON.stringify(exit.cause);
-          expect(cause).toContain("invalid argument");
-          expect(cause).toContain("strconv.ParseUint");
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("invalid argument");
+          expect(causeText).toContain("strconv.ParseUint");
         }
       });
     });
 
     it.live("seeds an absolute --sql-paths file on a remote reset", () => {
-      const absSeed = join(tmp.current, "external-seed.sql");
-      writeFileSync(absSeed, "insert into t values (3);");
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const absSeed = path.join(tmp.current, "external-seed.sql");
+        yield* fs.writeFileString(absSeed, "insert into t values (3);");
         yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
           sqlPaths: [absSeed],
         }).pipe(Effect.provide(layer));
-        // Absolute paths are preserved (not prefixed with supabase/) and seeded.
-        expect(out.stderrText).toContain(`Seeding data from ${absSeed}...`);
-      });
+        // Seed paths are reported forward-slashed on every platform, drive letter included.
+        expect(out.stderrText).toContain(
+          `Seeding data from ${absSeed.replaceAll(path.sep, "/")}...`,
+        );
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("warns and seeds from --sql-paths overriding config on a remote reset", () => {
@@ -2209,9 +3370,6 @@ describe("db reset", () => {
     it.live(
       "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
       () => {
-        // `--sql-paths` overrides `[db.seed].sql_paths` regardless of which
-        // branch of the migrate-and-seed step ran — seeding sits outside the
-        // if/else-if, and the seed override is resolved entirely upstream of it.
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {

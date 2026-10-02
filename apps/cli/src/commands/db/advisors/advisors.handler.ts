@@ -41,7 +41,7 @@ import { splitLintsSql } from "./advisors.lints-sql.ts";
 const loginSuggestion = (): string => `Run ${aqua("supabase login")} first.`;
 
 /** Queries and scans the lints, minus the transaction the caller owns. */
-const queryLints = Effect.fnUntraced(function* (session: DbSession) {
+const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSession) {
   const [setupSql, querySql] = splitLintsSql();
   yield* session.exec(setupSql).pipe(
     Effect.mapError(
@@ -58,11 +58,12 @@ const queryLints = Effect.fnUntraced(function* (session: DbSession) {
         (cause) => new DbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
       ),
     );
+  yield* Effect.annotateCurrentSpan("advisor.count", rows.length);
   return rows.map(scanAdvisorLintRow);
 });
 
 /** Gathers lints from a local (or `--db-url`) database connection. */
-const runLocal = Effect.fnUntraced(function* (
+const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
@@ -108,7 +109,7 @@ const runLocal = Effect.fnUntraced(function* (
 });
 
 /** Gathers lints from the Management API for the linked project. */
-const runLinked = Effect.fnUntraced(function* (
+const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
@@ -118,23 +119,19 @@ const runLinked = Effect.fnUntraced(function* (
   const credentials = yield* CommandCredentials;
   const projectRefResolver = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
-  // Every Management API response is wrapped in identity stitching; the
-  // raw-HTTP advisor GETs run the same stitch. One stitcher shared across both
-  // endpoint calls so it fires at most once per session.
+  // Every Management API response is wrapped in identity stitching, including the raw-HTTP
+  // advisor GETs; one stitcher is shared across both calls so it fires at most once per session.
   const { stitch } = yield* IdentityStitch;
 
-  // The linked-project cache is written whenever the project ref was resolved,
-  // even when the DB-config resolve below fails (e.g. the IPv6 error). Load
-  // the ref first (non-prompting `loadProjectRef`, honoring an explicit
-  // `--project-ref`; not-linked → empty ref → nothing to cache) and wrap
-  // everything after it in the cache finalizer.
+  // The linked-project cache is written whenever the project ref was resolved, even when the
+  // DB-config resolve below fails. Load the ref first (non-prompting, honoring an explicit
+  // `--project-ref`) and wrap everything after it in the cache finalizer.
   const ref = yield* projectRefResolver.loadProjectRef(flags.projectRef);
 
   return yield* Effect.gen(function* () {
-    // The host probe / login-role mint ("Initialising login role...") / pooler
-    // / IPv6 fallback. The linked lint-gathering path ignores the resolved
-    // config, so resolve-and-discard — purely for the side effects and
-    // early-failure ordering (before the token gate).
+    // The host probe / login-role mint / pooler / IPv6 fallback. The linked lint-gathering path
+    // ignores the resolved config — this runs purely for the side effects and early-failure
+    // ordering (before the token gate).
     yield* resolver.resolve({
       dbUrl: Option.none(),
       connType: "linked",
@@ -142,10 +139,8 @@ const runLinked = Effect.fnUntraced(function* (
       linkedProjectRef: flags.projectRef,
     });
 
-    // The access token is validated (env/keyring/file) against the `sbp_`
-    // pattern and fails before calling the API. `CommandCredentials.getAccessToken`
-    // is the validating equivalent: map a malformed token to the invalid-token
-    // error and an absent token to missing.
+    // The access token is validated against the `sbp_` pattern before calling the API: a
+    // malformed token maps to the invalid-token error, an absent token to missing.
     const tokenOpt = yield* credentials.getAccessToken.pipe(
       Effect.catchTag("InvalidAccessTokenError", (cause) =>
         Effect.fail(
@@ -160,12 +155,10 @@ const runLinked = Effect.fnUntraced(function* (
       ),
     );
     if (Option.isNone(tokenOpt)) {
-      return yield* Effect.fail(
-        new DbAdvisorsNotLoggedInError({
-          message: missingAccessTokenMessage(),
-          suggestion: loginSuggestion(),
-        }),
-      );
+      return yield* new DbAdvisorsNotLoggedInError({
+        message: missingAccessTokenMessage(),
+        suggestion: loginSuggestion(),
+      });
     }
 
     const lints: Array<AdvisorLint> = [];
@@ -209,7 +202,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
     // Echoes the raw `--fail-on` flag value.
     const message = `fail-on is set to ${failOn}, non-zero exit`;
     if (output.format === "text") {
-      return yield* Effect.fail(new DbAdvisorsFailOnError({ message }));
+      return yield* new DbAdvisorsFailOnError({ message });
     }
     yield* processControl.setExitCode(1);
   }
@@ -224,29 +217,29 @@ const runAdvisors = Effect.fnUntraced(function* (
   // explicitly-set flags, not the `--local` default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new DbAdvisorsMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
-  // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // for the full TS-only rationale. advisors defaults to the local/db-url path
-  // (`runLocal`) whenever `--linked` isn't the resolved target selector.
+  // `--project-ref` never implies `--linked` and must not be silently discarded on a non-linked
+  // target (see push.handler.ts's identical guard). Defaults to the local/db-url path otherwise.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new DbAdvisorsMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new DbAdvisorsMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
+  yield* Effect.annotateCurrentSpan({
+    "db.conn_type": target.connType ?? "local",
+    "advisor.type": advisorType,
+    "advisor.level": level,
+    "advisor.fail_on": failOn,
+  });
 
   // Branches on whether `--linked` was explicitly set: linked → Management
   // API; otherwise local / `--db-url`.
@@ -254,6 +247,7 @@ const runAdvisors = Effect.fnUntraced(function* (
     target.connType === "linked"
       ? yield* runLinked(flags, dnsResolver, advisorType, level)
       : yield* runLocal(flags, dnsResolver, advisorType, level, target);
+  yield* Effect.annotateCurrentSpan("advisor.reported_count", filtered.length);
 
   yield* outputAndCheck(filtered, failOn);
 });

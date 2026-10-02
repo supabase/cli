@@ -1,10 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  Effect,
+  FileSystem,
+  Exit,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+} from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
@@ -17,14 +23,22 @@ import {
   ProjectNotLinkedError,
 } from "./project-link-state.service.ts";
 
-function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-project-link-state-"));
-}
+const makeTempDir = Effect.flatMap(FileSystem.FileSystem, (fs) =>
+  fs.makeTempDirectoryScoped({ prefix: "supabase-project-link-state-" }),
+);
 
-function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?: string }) {
+function buildLayer(
+  path: Path.Path,
+  opts: {
+    cwd: string;
+    env?: Record<string, string>;
+    homeDir?: string;
+    fs?: Layer.Layer<FileSystem.FileSystem>;
+  },
+) {
   const runtimeInfoLayer = mockRuntimeInfo({
     cwd: opts.cwd,
-    homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
+    homeDir: opts.homeDir ?? path.join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
   const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
@@ -33,6 +47,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
+    Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
@@ -43,7 +58,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
-    Layer.provide(BunServices.layer),
+    Layer.provide(opts.fs ?? BunServices.layer),
     Layer.provide(discoveredCliProjectHomeLayer),
   );
 
@@ -80,24 +95,60 @@ const SAMPLE_STATE = {
 } as const;
 
 describe("projectLinkStateLayer", () => {
-  it.live("saves and loads repo-local project link state", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
-
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), 'project_id = "repo"\n'),
+  it.live("surfaces a clear permission failure", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const linkPath = path.join(projectRoot, ".supabase", "project.json");
+      const fsLayer = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          remove: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "remove",
+                description: "permission denied",
+                pathOrDescriptor: linkPath,
+              }),
+            ),
+        }),
       );
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const cliProjectHome = yield* Effect.gen(function* () {
-        return yield* CliProjectHome;
-      }).pipe(Effect.provide(layer));
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      const layer = buildLayer(path, { cwd: projectRoot, fs: fsLayer });
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
+
+      const exit = yield* Effect.exit(linkState.clear);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("saves and loads repo-local project link state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
+
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", "config.toml"),
+        'project_id = "repo"\n',
+      );
+
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const cliProjectHome = yield* CliProjectHome.pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save(SAMPLE_STATE);
       const loaded = yield* linkState.load;
@@ -107,60 +158,53 @@ describe("projectLinkStateLayer", () => {
         expect(loaded.value).toEqual(SAMPLE_STATE);
       }
 
-      const rawFile = yield* Effect.tryPromise(() =>
-        readFile(cliProjectHome.projectLinkPath, "utf8"),
-      );
+      const rawFile = yield* fs.readFileString(cliProjectHome.projectLinkPath);
       expect(rawFile).toContain('"project":');
       expect(rawFile).toContain('"active_branch":');
-      const raw = JSON.parse(rawFile) as typeof SAMPLE_STATE;
+      const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(rawFile);
       expect(raw).toEqual(SAMPLE_STATE);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("clears repo-local link state", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("clears repo-local link state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), 'project_id = "repo"\n'),
+      yield* fs.makeDirectory(path.join(projectRoot, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, "supabase", "config.toml"),
+        'project_id = "repo"\n',
       );
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const cliProjectHome = yield* Effect.gen(function* () {
-        return yield* CliProjectHome;
-      }).pipe(Effect.provide(layer));
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const cliProjectHome = yield* CliProjectHome.pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save(SAMPLE_STATE);
+      yield* linkState.clear;
       yield* linkState.clear;
 
       const loaded = yield* linkState.load;
       expect(Option.isNone(loaded)).toBe(true);
-      yield* Effect.tryPromise(() => readFile(cliProjectHome.projectLinkPath, "utf8")).pipe(
-        Effect.flip,
-        Effect.asVoid,
-      );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+      yield* fs.readFileString(cliProjectHome.projectLinkPath).pipe(Effect.flip, Effect.asVoid);
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with a tagged error when repo-local link state is malformed", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("fails with a tagged error when repo-local link state is malformed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".supabase"), { recursive: true }));
+      yield* fs.makeDirectory(path.join(projectRoot, ".supabase"), { recursive: true });
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
       const { cliProjectHome, linkState } = yield* Effect.gen(function* () {
         return {
           cliProjectHome: yield* CliProjectHome,
@@ -168,7 +212,7 @@ describe("projectLinkStateLayer", () => {
         };
       }).pipe(Effect.provide(layer));
 
-      yield* Effect.tryPromise(() => writeFile(cliProjectHome.projectLinkPath, "{not-json"));
+      yield* fs.writeFileString(cliProjectHome.projectLinkPath, "{not-json");
 
       const exit = yield* linkState.load.pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -183,43 +227,39 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("getActiveBranch returns none when not linked", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("getActiveBranch returns none when not linked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* fs.makeDirectory(path.join(projectRoot, ".git"), { recursive: true });
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       const activeBranch = yield* linkState.getActiveBranch;
       expect(Option.isNone(activeBranch)).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
-  it.live("getActiveBranch returns the persisted active_branch", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("getActiveBranch returns the persisted active_branch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* fs.makeDirectory(path.join(projectRoot, ".git"), { recursive: true });
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save(SAMPLE_STATE);
 
@@ -232,25 +272,23 @@ describe("projectLinkStateLayer", () => {
           is_default: true,
         });
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "setActiveBranch updates only active_branch, leaving project and versions unchanged",
-    () => {
-      const tempDir = makeTempDir();
-      const projectRoot = join(tempDir, "repo");
-      const supabaseHome = join(tempDir, "supabase-home");
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* makeTempDir;
+        const projectRoot = path.join(tempDir, "repo");
+        const supabaseHome = path.join(tempDir, "supabase-home");
 
-      return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+        yield* fs.makeDirectory(path.join(projectRoot, ".git"), { recursive: true });
 
-        const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-        const linkState = yield* Effect.gen(function* () {
-          return yield* ProjectLinkState;
-        }).pipe(Effect.provide(layer));
+        const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+        const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
         yield* linkState.save(SAMPLE_STATE);
 
@@ -265,24 +303,21 @@ describe("projectLinkStateLayer", () => {
           expect(loaded.value.versions).toEqual(SAMPLE_STATE.versions);
           expect(loaded.value.fetchedAt).toBe(SAMPLE_STATE.fetchedAt);
         }
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
-    },
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
-    const supabaseHome = join(tempDir, "supabase-home");
+  it.live("setActiveBranch fails with ProjectNotLinkedError when project is not linked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* makeTempDir;
+      const projectRoot = path.join(tempDir, "repo");
+      const supabaseHome = path.join(tempDir, "supabase-home");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* fs.makeDirectory(path.join(projectRoot, ".git"), { recursive: true });
 
-      const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const layer = buildLayer(path, { cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       const exit = yield* linkState
         .setActiveBranch({ ref: "branchrefabcdefghijk", name: "feature-x", is_default: false })
@@ -300,8 +335,6 @@ describe("projectLinkStateLayer", () => {
           });
         }
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
 });

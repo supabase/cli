@@ -1,6 +1,6 @@
 import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -109,7 +109,7 @@ describe("orgs create integration", () => {
     return Effect.gen(function* () {
       yield* orgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
-      // PascalCase field names at the top level — no table header (CLI-1975).
+      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "Acme"');
     }).pipe(Effect.provide(layer));
   });
@@ -166,9 +166,9 @@ describe("orgs create integration", () => {
       const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsCreateUnexpectedStatusError");
-        expect(json).toContain("unexpected create organization status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsCreateUnexpectedStatusError");
+        expect(causeText).toContain("unexpected create organization status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -179,9 +179,9 @@ describe("orgs create integration", () => {
       const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsCreateNetworkError");
-        expect(json).toContain("failed to create organization");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsCreateNetworkError");
+        expect(causeText).toContain("failed to create organization");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -194,8 +194,8 @@ describe("orgs create integration", () => {
       const exit = yield* Effect.exit(orgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("OrgsCreateNetworkError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("OrgsCreateNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });

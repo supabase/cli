@@ -1,15 +1,8 @@
 {
-  // Compiles the published `dist/` output for `pnpm build`. Extends the same
-  // `@tsconfig/bun` strictness baseline as `tsconfig.json` (dev/tests, run
-  // under Bun) but swaps its bundler-mode settings for a real Node-compatible
-  // ESM emit, so the two configs share strictness without fighting over
-  // `module`/`moduleResolution`/`types`/`noEmit`, which this file overrides.
-  //
-  // `"types": []` drops the ambient `bun` global types from `tsconfig.json`
-  // and doubles as the @types/bun leak audit CLI-2234 requires: if any
-  // compiled module reaches for a Bun-only global (`Bun.*`, `Bun.env`, ...),
-  // this compile fails on a missing name instead of silently type-checking
-  // against `bun-types`.
+  // Compiles the published `dist/` output for `pnpm build`, swapping the `@tsconfig/bun`
+  // baseline's bundler-mode settings for a real Node-compatible ESM emit. `"types": []` drops
+  // the ambient `bun` globals, so a compiled module reaching for a Bun-only global (`Bun.*`)
+  // fails to compile instead of silently type-checking against `bun-types`.
   "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
     "lib": ["ESNext"],

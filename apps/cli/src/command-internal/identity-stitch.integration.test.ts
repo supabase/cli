@@ -6,9 +6,6 @@ import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { mockAnalytics, mockTelemetryRuntime } from "../../tests/helpers/mocks.ts";
 import { IdentityStitch, identityStitchLayer } from "./identity-stitch.ts";
 
-/**
- * Build a minimal fake HttpClientResponse carrying the given headers.
- */
 function fakeResponse(headers: Record<string, string>): HttpClientResponse.HttpClientResponse {
   const request = HttpClientRequest.get("https://api.supabase.com/v1/projects");
   return HttpClientResponse.fromWeb(request, new Response(null, { status: 200, headers }));
@@ -58,16 +55,12 @@ describe("identityStitchLayer — stitchedDistinctId()", () => {
 
       const svc = yield* IdentityStitch;
 
-      // Before any stitch, stitchedDistinctId() is undefined.
       expect(svc.stitchedDistinctId()).toBeUndefined();
 
-      // Stitch with a response carrying x-gotrue-id.
       yield* svc.stitch(fakeResponse({ "x-gotrue-id": "gotrue-abc-123" }));
 
-      // Now stitchedDistinctId() returns the gotrue id.
       expect(svc.stitchedDistinctId()).toBe("gotrue-abc-123");
 
-      // The alias was fired once.
       expect(analytics.aliased).toHaveLength(1);
       expect(analytics.aliased[0]).toEqual({ distinctId: "gotrue-abc-123", alias: "device-001" });
     }).pipe(
@@ -95,10 +88,8 @@ describe("identityStitchLayer — stitchedDistinctId()", () => {
       yield* svc.stitch(fakeResponse({ "x-gotrue-id": "first-id" }));
       yield* svc.stitch(fakeResponse({ "x-gotrue-id": "second-id" }));
 
-      // stitchedDistinctId() must still reflect the first stitched id.
       expect(svc.stitchedDistinctId()).toBe("first-id");
 
-      // alias fired exactly once.
       expect(analytics.aliased).toHaveLength(1);
       expect(analytics.aliased[0]?.distinctId).toBe("first-id");
     }).pipe(
@@ -121,10 +112,7 @@ describe("identityStitchLayer — hybrid stamp/alias", () => {
 
       yield* svc.stitch(fakeResponse({ "x-gotrue-id": "gotrue-ci-1" }));
 
-      // Stamped in memory so this process's captures carry the real user id
-      // (restores CI/Docker/npx attribution)...
       expect(svc.stitchedDistinctId()).toBe("gotrue-ci-1");
-      // ...but no alias is fired and nothing is persisted to the throwaway home.
       expect(analytics.aliased).toHaveLength(0);
       const exists = yield* fs.exists(path.join(configDir, "telemetry.json"));
       expect(exists).toBe(false);
@@ -142,13 +130,10 @@ describe("identityStitchLayer — hybrid stamp/alias", () => {
     return Effect.gen(function* () {
       const svc = yield* IdentityStitch;
 
-      // An identity already exists (telemetry.json held a previous user, surfaced
-      // via runtime.identity) but the live token belongs to someone else.
+      // distinctId seeds an existing identity, so this exercises the no-realias branch.
       yield* svc.stitch(fakeResponse({ "x-gotrue-id": "new-user" }));
 
-      // Memory is stamped with the live user so captures attribute correctly...
       expect(svc.stitchedDistinctId()).toBe("new-user");
-      // ...but we never alias — that would merge two unrelated person graphs.
       expect(analytics.aliased).toHaveLength(0);
     }).pipe(
       Effect.provide(makeStitchLayer({ analytics, configDir, distinctId: "old-user" })),
@@ -172,8 +157,6 @@ describe("identityStitchLayer — hybrid stamp/alias", () => {
 
       const svc = yield* IdentityStitch;
 
-      // The stitchAttempted guard is set before the first yield, so two responses
-      // racing through the shared stitcher alias at most once.
       yield* Effect.all(
         [
           svc.stitch(fakeResponse({ "x-gotrue-id": "id-a" })),

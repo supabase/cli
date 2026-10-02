@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -88,8 +88,7 @@ describe("secrets list integration", () => {
     });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
-      // Reference pipeline: markdown `\|` → glamour decodes to literal `|`.
-      // Our renderer skips the markdown step and emits the literal pipe directly.
+      // The renderer skips markdown escaping entirely, so the pipe passes through literally.
       expect(out.stdoutText).toContain("with|pipe");
     }).pipe(Effect.provide(layer));
   });
@@ -122,8 +121,6 @@ describe("secrets list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
-      // Sorted (BAR before FOO) and alphabetical-key JSON, matching the
-      // SecretResponse {Name, UpdatedAt, Value} field order.
       expect(out.stdoutText).toBe(
         `[
   {
@@ -155,7 +152,6 @@ describe("secrets list integration", () => {
     return Effect.gen(function* () {
       yield* secretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[secrets]]");
-      // PascalCase field names with BurntSushi's 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "BAR"');
       expect(out.stdoutText).toContain('  Value = "digest-bar"');
     }).pipe(Effect.provide(layer));
@@ -167,9 +163,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsEnvNotSupportedError");
-        expect(errJson).toContain("--output env flag is not supported");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsEnvNotSupportedError");
+        expect(causeText).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -219,9 +215,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsListUnexpectedStatusError");
-        expect(errJson).toContain("unexpected list secrets status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsListUnexpectedStatusError");
+        expect(causeText).toContain("unexpected list secrets status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -232,9 +228,9 @@ describe("secrets list integration", () => {
       const exit = yield* Effect.exit(secretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
-        expect(errJson).toContain("SecretsListNetworkError");
-        expect(errJson).toContain("failed to list secrets");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("SecretsListNetworkError");
+        expect(causeText).toContain("failed to list secrets");
       }
     }).pipe(Effect.provide(layer));
   });

@@ -42,18 +42,17 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
         response: gateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new SsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
-        );
-      }
-      return yield* Effect.fail(
-        new SsoListUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new SsoListSamlDisabledError({
+          message: SAML_DISABLED_MESSAGE,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new SsoListUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
     return yield* Effect.fail(mapped);
   });
@@ -76,7 +75,7 @@ export const ssoList = Effect.fn("sso.list")(function* (flags: SsoListFlags) {
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch((cause) => handleListError(ref, cause)),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
       const payload = { providers: response.items };

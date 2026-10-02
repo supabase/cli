@@ -18,7 +18,7 @@ import {
   SsoShowUnexpectedStatusError,
   SsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { quoteSsoString, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { SsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapHttpError({
@@ -31,14 +31,11 @@ const mapStatusOrNetwork = mapHttpError({
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    // `show` is intentionally omitted from the upgrade-suggestion paths
-    // (see plan §"Telemetry parity").
+    // `show` does not fire upgrade-suggestion telemetry, unlike add/update/list.
     if (mapped._tag === "SsoShowUnexpectedStatusError" && mapped.status === 404) {
-      return yield* Effect.fail(
-        new SsoShowNotFoundError({
-          message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-        }),
-      );
+      return yield* new SsoShowNotFoundError({
+        message: `An identity provider with ID ${quoteSsoString(providerId)} could not be found.`,
+      });
     }
     return yield* Effect.fail(mapped);
   });
@@ -65,7 +62,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
         Effect.catch((cause) => handleShowError(providerId, cause)),
       );
-      yield* fetching?.clear() ?? Effect.void;
+      yield* fetching?.clear ?? Effect.void;
 
       // `--metadata` short-circuits regardless of `--output`.
       if (flags.metadata) {
@@ -76,12 +73,9 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "env") {
-        // Established `--output env` unsupported error message.
-        return yield* Effect.fail(
-          new SsoShowEnvNotSupportedError({
-            message: "--output env flag is not supported",
-          }),
-        );
+        return yield* new SsoShowEnvNotSupportedError({
+          message: "--output env flag is not supported",
+        });
       }
       if (goFmt === "json") {
         yield* output.raw(encodeGoJson(response));
@@ -92,8 +86,7 @@ export const ssoShow = Effect.fn("sso.show")(function* (flags: SsoShowFlags) {
         return;
       }
       if (goFmt === "toml") {
-        // TOML encode failure wrapping (e.g. a nil element in an
-        // attribute-mapping `default` array).
+        // TOML encoding can fail on a nil element in an attribute-mapping `default` array.
         const toml = yield* Effect.try({
           try: () => encodeGoToml(response, GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>

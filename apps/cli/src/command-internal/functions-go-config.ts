@@ -8,19 +8,14 @@ function toError(cause: unknown): Error {
 }
 
 /**
- * Go-parity config resolution for the native `functions` Docker paths
- * (`deploy`/`download`/`serve`), injected into `functions-config.ts`'s
- * `loadFunctionsCliConfig` so `shared/functions/` never imports
- * the command tree's validation directly (same isolation rationale as
- * `styleEmphasis`/`styleAqua`).
+ * Config resolution for the native `functions` Docker paths (`deploy`/`download`/`serve`),
+ * injected into `functions-config.ts`'s `loadFunctionsCliConfig` so `shared/functions/` never
+ * imports the command tree's validation directly.
  *
- * Delegates entirely to the SAME two functions `start`/`stop`/`status`
- * already share — `loadLocalProjectContext` (dotenv + config load) and
- * `resolveLocalConfigValues` (`Config.Validate`, one home per
- * `apps/cli/CLAUDE.md`) — rather than re-implementing either. Their
- * derived local-dev values (JWTs, URLs) are discarded here; only
- * `projectId`/`edgeRuntimeDenoVersion` and the validation side effect
- * (throws on the first Go-parity failure) matter to these three commands.
+ * Delegates to the same `loadLocalProjectContext`/`resolveLocalConfigValues` pair
+ * `start`/`stop`/`status` already use, rather than re-implementing either. Their derived
+ * local-dev values (JWTs, URLs) are discarded here; only `projectId`/`edgeRuntimeDenoVersion` and
+ * the validation side effect (throws on the first failure) matter to these three commands.
  */
 export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
   load: ({ projectRoot, projectRef }) =>
@@ -34,16 +29,12 @@ export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
             projectRoot,
             context.projectEnvValues,
             context.loaded?.document,
-            // No `[remotes.<ref>]` override-tier gating (empty set, the
-            // parameter default): the remote block itself already merged over
-            // the base config at file level via `loadLocalProjectContext`'s
-            // `projectRef` threading above. Known narrow divergence: without
-            // the key set, an ambient `SUPABASE_EDGE_RUNTIME_DENO_VERSION`
-            // still beats a matched remote block's own `deno_version`, where
-            // Go's OVERRIDE-tier `v.Set` would win — computing the keys here
-            // needs `db-config.toml-read.ts`'s remote-resolution
-            // pipeline, which this `loadCliConfig`-based path doesn't run
-            // (review round on CLI-1963).
+            // No `[remotes.<ref>]` override-tier gating (empty set, the default): the remote
+            // block already merged over the base config at file level via
+            // `loadLocalProjectContext`'s `projectRef` threading above. Known narrow divergence:
+            // an ambient `SUPABASE_EDGE_RUNTIME_DENO_VERSION` still beats a matched remote
+            // block's own `deno_version` here, since computing the override keys needs
+            // `db-config.toml-read.ts`'s remote-resolution pipeline, which this path doesn't run.
             undefined,
             projectRef,
           ),
@@ -52,15 +43,12 @@ export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
       return {
         loaded: context.loaded,
         projectEnvValues: context.projectEnvValues,
-        // `context.projectId`, NOT `validated.projectId`: the context's id is
-        // the one built for Docker naming/labels — sanitized, `--project-ref`
-        // defaulted, and `SUPABASE_PROJECT_ID`-gated when a `[remotes.<ref>]`
-        // block matched (Go installs the remote's own `project_id` at viper's
-        // OVERRIDE tier, above `AutomaticEnv` — `pkg/config/config.go:718-724`;
-        // see `local-project-context.ts`'s gate, review
-        // PRRT_kwDOErm0O86XHGDL). `validated.projectId` exists only to feed
-        // `validateResolvedConfig`'s emptiness check and deliberately
-        // skips that gate — see its own doc comment.
+        // `context.projectId`, not `validated.projectId`: the context's id is the one built for
+        // Docker naming/labels — sanitized, `--project-ref` defaulted, and
+        // `SUPABASE_PROJECT_ID`-gated when a `[remotes.<ref>]` block matched (see
+        // `local-project-context.ts`'s gate). `validated.projectId` exists only to feed
+        // `validateResolvedConfig`'s emptiness check and skips that gate — see its own doc
+        // comment.
         projectId: context.projectId,
         denoVersion: validated.edgeRuntimeDenoVersion,
       };

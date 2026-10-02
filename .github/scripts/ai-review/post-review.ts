@@ -1,56 +1,38 @@
 /**
- * AI review poster: validates the structured findings both model passes
- * produce, and posts the ONE consolidated PR review the pipeline is allowed
- * to post per run.
+ * AI review poster: validates the structured findings the two model passes
+ * produce, and posts the one consolidated PR review this pipeline posts per run.
  *
- * Four subcommands, dispatched from `argv`:
- *   - `validate-findings <path>` — checks a Claude findings JSON file against
- *     the shape `.github/ai-review/findings.schema.json` describes. The
- *     `--json-schema` flag passed to `claude` is a hint to the model, not a
- *     runtime guarantee, so the CI step re-checks the extracted output here
- *     before it is trusted.
- *   - `validate-merged <path>` — same idea for the Codex-adjudicated merged
- *     review, against `.github/ai-review/merged-review.schema.json`.
- *   - `redact <path>` — reads a JSON file, deep-walks every string value
- *     through `redactSecrets`, and writes it back in place. Run on every
- *     model-output JSON file before it's uploaded as a (public-repo)
- *     artifact, so a prompt-injected `Read` of a secret-bearing path can't
- *     smuggle a credential out through the artifact even though the posted
- *     review is already scrubbed at render time.
- *   - `post` — snapshots the PR's prior AI reviews, posts the consolidated
- *     review, THEN best-effort supersedes the snapshotted ones (the
- *     marker/dedup guard in `resolve.ts` should normally prevent a second
- *     run, but `/ai-review` lets a maintainer force one). The snapshot must
- *     happen BEFORE the POST — the fresh review is itself a marker-bearing
- *     bot review, so a post-hoc listing would sweep it into its own
- *     supersede pass and every new review would collapse itself. Posting
- *     before superseding, and treating both the snapshot and the supersede
- *     as best-effort, means a cosmetic failure can never cost the real
- *     review.
+ * Subcommands, dispatched from `argv`:
+ *   - `validate-findings <path>` / `validate-merged <path>` — check a model's
+ *     findings/merged-review JSON against its schema under `.github/ai-review/`.
+ *     The `--json-schema` flag passed to `claude` is only a hint to the model,
+ *     so this re-validates its output before it's trusted.
+ *   - `redact <path>` — scrubs secret-shaped strings from a JSON file in
+ *     place; run on every model-output file before it's uploaded as a
+ *     (public-repo) artifact.
+ *   - `post` — builds and posts the consolidated review, then supersedes any
+ *     prior AI reviews on the PR (see `listPriorRunsBestEffort` for why the
+ *     snapshot must happen before the POST).
  *
  * `parseDiffAnchors`, `partitionFindings`, `renderReviewBody`,
  * `renderInlineComment`, `buildReviewPayload`, `foldInlineCommentsIntoBody`,
  * `supersededBody`, `isSuperseded`, `sanitizeFilePath`, and `redactSecrets`
- * are pure and exported for tests. `postConsolidatedReview` is the I/O
- * orchestration function for the `post` subcommand; it's exported so a test can drive it against
- * an injected `ReviewIo` fake without the network, the same way
- * `resolveDecision` is tested in `resolve.ts`. `main()` wires up the real
- * GitHub I/O and argv dispatch.
+ * are pure and exported for tests. `postConsolidatedReview` drives the `post`
+ * subcommand against an injected `ReviewIo` fake in tests.
  *
  * Run in CI as: `bun .github/scripts/ai-review/post-review.ts <command>`.
  */
 
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
 const SUPERSEDED_SUMMARY = "Superseded by a newer AI review";
-/** Hidden marker `isSuperseded` looks for. Kept out of the human-readable
- * `SUPERSEDED_SUMMARY` text and broken by `sanitizeModelText` so a model
- * can't forge or evade a supersede by echoing the visible text into a
- * `claim`/`summary` field. */
+/** Hidden marker `isSuperseded` checks for. Kept out of the human-readable
+ * `SUPERSEDED_SUMMARY` text, and broken by `sanitizeModelText`, so a model
+ * can't forge or evade a supersede by echoing it into a `claim`/`summary` field. */
 const SUPERSEDED_MARKER = "<!-- supabase-ai-review:superseded -->";
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 const GITHUB_REVIEW_BODY_MAX = 65536;
 
-// --- Shared types (mirror the two schema files by hand; keep in sync) ---
+// Mirrors the two schema files under `.github/ai-review/`; keep them in sync by hand.
 
 export type Severity = "critical" | "major" | "minor" | "nit";
 export type Verdict = "confirmed" | "refuted" | "uncertain";
@@ -107,12 +89,8 @@ export interface MergedReview {
   stats: MergedReviewStats;
 }
 
-// --- Hand-rolled schema validators ---
-//
-// `.github/ai-review/findings.schema.json` and `merged-review.schema.json`
-// are the model-facing contract (passed as `--json-schema`/`output-schema-file`);
-// these validators are the runtime enforcement and must be kept in sync with
-// them by hand whenever either shape changes.
+// Runtime enforcement for the schemas in `.github/ai-review/`; keep these in
+// sync by hand whenever either shape changes.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -219,12 +197,11 @@ function expectCategory(value: unknown, path: string, context: string): string {
   return str;
 }
 
-/** `file` is model-controlled and rendered inside `` `code` `` spans at
- * several sites; a backtick, newline, other ASCII control char, or `<` in it
- * could break out of the span (markdown/HTML injection, mention/#ref pings)
- * or forge one of the hidden HTML-comment markers. Reject those at parse
- * time as the primary defense; `sanitizeFilePath` neutralizes the same
- * characters again at render time in case a caller ever skips validation. */
+/** `file` is model-controlled and rendered inside `` `code` `` spans; a
+ * backtick, newline, other ASCII control char, or `<` in it could break out
+ * of the span or forge a hidden marker, so reject those at parse time.
+ * `sanitizeFilePath` neutralizes the same characters again at render time in
+ * case a caller skips validation. */
 // eslint-disable-next-line no-control-regex -- matching control characters is the point of this pattern
 const FILE_PATH_FORBIDDEN_PATTERN = /[`<\x00-\x1f\x7f]/;
 
@@ -385,8 +362,6 @@ export function assertMergedReview(value: unknown): asserts value is MergedRevie
   parseMergedReview(value);
 }
 
-// --- Diff anchoring ---
-
 const DIFF_GIT_HEADER = /^diff --git /;
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 const NEW_FILE_HEADER = /^\+\+\+ (?:b\/(.+)|\/dev\/null)$/;
@@ -408,15 +383,13 @@ function stripTrailingTab(path: string): string {
 }
 
 /**
- * Parses a unified diff into, for each file, the set of new-side (RIGHT) line
- * numbers present in the diff — i.e. the lines a PR review comment can
- * anchor to. Context and `+` lines advance the RIGHT counter and are
- * anchorable; `-` lines don't exist on the new side and are skipped.
+ * Parses a unified diff into, for each file, the new-side (RIGHT) line
+ * numbers a PR review comment can anchor to. Context and `+` lines advance
+ * the RIGHT counter; `-` lines don't exist on the new side and are skipped.
  *
- * Tracks whether we're inside a hunk so a `+++ ` file header is only ever
- * recognized between a `diff --git` boundary and that file's first `@@`
- * hunk — otherwise an added/context line whose literal content happens to
- * start with `+++ ` (a `+++`-lookalike) could hijack `currentFile`.
+ * A `+++ ` file header is only recognized between a `diff --git` boundary and
+ * that file's first `@@` hunk, so an added/context line that happens to start
+ * with `+++ ` can't hijack `currentFile`.
  */
 export function parseDiffAnchors(diff: string): Map<string, Set<number>> {
   const anchors = new Map<string, Set<number>>();
@@ -460,8 +433,6 @@ export function parseDiffAnchors(diff: string): Map<string, Set<number>> {
 function isAnchorable(anchors: Map<string, Set<number>>, file: string, line: number): boolean {
   return anchors.get(file)?.has(line) ?? false;
 }
-
-// --- Findings partitioning and rendering ---
 
 export interface PartitionedFindings {
   /** Confirmed/uncertain findings whose start line lands on a diff hunk; posted as inline comments. */
@@ -510,17 +481,14 @@ const HTML_COMMENT_OPENER_PATTERN = /<!--/g;
 
 const REDACTED_SECRET = "«redacted»";
 
-/** Credential shapes commonly seen in Anthropic/OpenAI API keys and GitHub
- * personal-access/app/OAuth/Actions tokens. Not exhaustive — this is
- * defense-in-depth alongside a dedicated, spend-capped, rotatable
- * `ANTHROPIC_API_KEY` (see the README); the dedicated key is the real
- * containment. */
+/** Credential shapes seen in Anthropic/OpenAI API keys and GitHub
+ * personal-access/app/OAuth/Actions tokens. Not exhaustive — defense-in-depth
+ * alongside a dedicated, spend-capped, rotatable `ANTHROPIC_API_KEY`. */
 const SECRET_PATTERNS: readonly RegExp[] = [
   /sk-ant-[A-Za-z0-9_-]{20,}/g,
   // OpenAI keys embed hyphenated prefixes (`sk-proj-…`, `sk-svcacct-…`,
   // `sk-admin-…`) as well as the legacy `sk-<40 alnum>` shape, so the class
-  // must allow `-`/`_` — otherwise the match stops at the first hyphen and a
-  // leaked project-scoped key reaches the posted review/artifact unredacted.
+  // must allow `-`/`_` or a leaked project-scoped key reaches the review unredacted.
   /sk-[A-Za-z0-9_-]{20,}/g,
   /ghp_[A-Za-z0-9]{36}/g,
   /github_pat_[A-Za-z0-9_]{22,}/g,
@@ -530,21 +498,17 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * Replaces common credential formats with a redaction marker. Pure; composed
- * into `sanitizeModelText` below so every model-provided string rendered into
- * the posted review is scrubbed, and applied again (via the `redact`
- * subcommand) to the raw JSON artifacts before upload. Defense-in-depth
- * against a prompt-injected model `Read`-ing a secret-bearing path (e.g.
- * `/proc/self/environ`) and echoing the value back in a finding.
+ * Replaces common credential formats with a redaction marker. Composed into
+ * `sanitizeModelText` so every rendered model string is scrubbed, and applied
+ * again via the `redact` subcommand to raw JSON artifacts before upload —
+ * defense-in-depth against a prompt-injected model echoing a leaked secret
+ * back into a finding.
  */
 export function redactSecrets(text: string): string {
   return SECRET_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, REDACTED_SECRET), text);
 }
 
-/** Deep-walks an arbitrary JSON value, redacting every string it contains.
- * Exported for tests; the `redact` subcommand (see `runRedact` below) is the
- * thin file-I/O wrapper around it that scrubs the raw JSON artifacts before
- * they're uploaded. */
+/** Deep-walks an arbitrary JSON value, redacting every string it contains. */
 export function redactSecretsDeep(value: unknown): unknown {
   if (typeof value === "string") {
     return redactSecrets(value);
@@ -564,13 +528,10 @@ export function redactSecretsDeep(value: unknown): unknown {
 
 /**
  * Neutralizes a model-provided string before it's rendered into a
- * `github-actions[bot]` review: redacts secret-shaped substrings first, breaks
- * HTML comment openers (so injected diff content can't forge the hidden
- * `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER` comments), then breaks
- * `@mention`/`#123` syntax with a zero-width HTML comment so GitHub never
- * renders them as a live mention or issue reference. Pure; apply to every
- * model-provided string (`summary`, `claim`, `evidence`, `suggested_fix`,
- * `adjudication.reason`) at render time.
+ * `github-actions[bot]` review: redacts secrets, breaks HTML comment openers
+ * so injected diff content can't forge the hidden `AI_REVIEW_MARKER`/
+ * `SUPERSEDED_MARKER` comments, then breaks `@mention`/`#123` syntax so
+ * GitHub never renders a live mention or issue reference.
  */
 export function sanitizeModelText(text: string): string {
   return redactSecrets(text)
@@ -579,12 +540,10 @@ export function sanitizeModelText(text: string): string {
     .replace(ISSUE_REF_PATTERN, "#<!---->");
 }
 
-/** Neutralizes the same characters `expectFile` rejects at parse time
- * (backtick, `<`, ASCII control chars) inside a model-provided `file` path
- * before it's rendered into a `` `code` `` span. Every finding reaching a
- * render site will already have passed `expectFile`; this is defense-in-depth
- * for any caller that renders a `MergedFinding` without going through
- * `assertMergedReview` first. */
+/** Strips the same characters `expectFile` rejects at parse time (backtick,
+ * `<`, ASCII control chars) so a caller that renders a `MergedFinding`
+ * without going through `assertMergedReview` first still can't break a
+ * rendered `` `code` `` span. */
 // eslint-disable-next-line no-control-regex -- matching control characters is the point of this pattern
 const FILE_PATH_UNSAFE_CHARS = /[`<\x00-\x1f\x7f]/g;
 
@@ -629,9 +588,8 @@ export function renderInlineComment(finding: MergedFinding): string {
 export interface ReviewFooterInfo {
   trigger: Trigger;
   runUrl: string;
-  /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Passed in from the workflow's
-   * `CLAUDE_MODEL`/`CODEX_MODEL` env vars instead of being hardcoded here, so
-   * the model names have one source of truth. */
+  /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Sourced from the workflow's
+   * model env vars so there's one source of truth for the model names. */
   modelsFooter: string;
 }
 
@@ -768,10 +726,8 @@ export function buildReviewPayload(
   const partitioned = partitionFindings(review.findings, anchors);
   const comments = partitioned.anchorable.map((finding) => buildInlineComment(finding, anchors));
   const body = renderReviewBody(review, partitioned, footer);
-  // A body-only review (many non-anchorable findings, few or no inline
-  // comments) has no fold-retry path to truncate it on a 422 — truncate the
-  // very first payload too, so an oversized body posts truncated instead of
-  // throwing when GitHub rejects it for exceeding the review body cap.
+  // A body-only review has no 422 fold-retry to truncate it later, so
+  // truncate the first payload too rather than posting an oversized body.
   return { event: "COMMENT", body: truncateReviewBody(body, footer.runUrl), comments };
 }
 
@@ -791,10 +747,7 @@ export function foldInlineCommentsIntoBody(payload: ReviewPayload): ReviewPayloa
 }
 
 /** Truncates a review body to GitHub's 65536-char review body cap, appending
- * an explicit truncation marker + the workflow run URL. Applied to both the
- * very first payload (`buildReviewPayload`) and the folded 422-retry body
- * (every inline comment stuffed into one body), a no-op when the body is
- * already under the cap. */
+ * a truncation marker with the workflow run URL. No-op under the cap. */
 export function truncateReviewBody(body: string, runUrl: string): string {
   if (body.length <= GITHUB_REVIEW_BODY_MAX) {
     return body;
@@ -821,8 +774,6 @@ export function supersededBody(oldBody: string): string {
     SUPERSEDED_MARKER,
   ].join("\n");
 }
-
-// --- Injected GitHub I/O ---
 
 export interface MarkedEntry {
   id: number;
@@ -863,12 +814,10 @@ function isSupersedableAiEntry(entry: MarkedEntry): boolean {
   );
 }
 
-/** Snapshots the prior AI reviews/comments to supersede. MUST run before the
- * new review is posted: the fresh review is itself a marker-bearing bot
- * review, so a post-hoc listing would sweep it into its own supersede pass
- * and every new review would immediately collapse as "superseded".
- * Best-effort — a listing failure degrades to an empty snapshot (prior runs
- * stay unwrapped) rather than costing the real review. */
+/** Snapshots the prior AI reviews/comments to supersede. Must run before the
+ * new review is posted, or a post-hoc listing would sweep the fresh review
+ * into its own supersede pass. Best-effort — a listing failure degrades to
+ * an empty snapshot rather than costing the real review. */
 async function listPriorRunsBestEffort(io: ReviewIo, prNumber: number): Promise<PriorRuns> {
   try {
     const [reviews, comments] = await Promise.all([
@@ -886,9 +835,8 @@ async function listPriorRunsBestEffort(io: ReviewIo, prNumber: number): Promise<
 }
 
 /** Wraps the snapshotted prior AI reviews/comments in a superseded `<details>`
- * block. Best-effort: a cosmetic failure here (e.g. a transient 404 on a
- * review that was deleted mid-run) must never fail the pipeline after the
- * real review has already been posted. */
+ * block. Best-effort: a cosmetic failure here must never fail the pipeline
+ * after the real review has already been posted. */
 async function supersedePriorRunsBestEffort(
   io: ReviewIo,
   prNumber: number,
@@ -945,8 +893,6 @@ export async function postConsolidatedReview(
   await supersedePriorRunsBestEffort(io, prNumber, prior);
 }
 
-// --- Real GitHub I/O (only runs when executed directly) ---
-
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -995,11 +941,7 @@ function isRecordEntry(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * The validated boundary between `Response.json()` (typed `Promise<unknown>`
- * under `@tsconfig/bun`) and this file's typed shapes: `assert` narrows the
- * parsed value to `T` before any caller reads a field off it.
- */
+/** Narrows `Response.json()`'s `unknown` result to `T` via `assert` before any caller reads a field off it. */
 async function githubJson<T>(
   response: Response,
   assert: (value: unknown) => asserts value is T,
@@ -1132,9 +1074,7 @@ async function postReview(
     "application/vnd.github+json",
     [422],
   );
-  // `githubFetch` only returns without throwing for a 2xx or the allowed
-  // 422; read the body for the 422 case too so a second failed retry can
-  // surface it instead of discarding it.
+  // Read the body for the 422 case too so a second failed retry can surface it.
   if (response.status === 422) {
     return { status: response.status, body: await response.text() };
   }
@@ -1172,9 +1112,6 @@ async function runPost(): Promise<void> {
   const trigger = parseTrigger(requireEnv("TRIGGER"));
   const runUrl = requireEnv("RUN_URL");
   const mergedReviewPath = requireEnv("MERGED_REVIEW_PATH");
-  // Sourced from the workflow's top-level `env:` block (the same values fed
-  // to the `claude`/`codex-action` invocations), not hardcoded here, so the
-  // model names have one source of truth.
   const claudeModel = requireEnv("CLAUDE_MODEL");
   const codexModel = requireEnv("CODEX_MODEL");
 
@@ -1189,8 +1126,7 @@ async function runPost(): Promise<void> {
   console.log(`Posted AI review on PR #${prNumber} (${raw.findings.length} finding(s)).`);
 }
 
-/** Reads a JSON file, redacts every string value in place through
- * `redactSecretsDeep`, and writes it back — the `redact` subcommand's I/O. */
+/** Reads a JSON file, redacts every string value in place, and writes it back. */
 async function runRedact(path: string): Promise<void> {
   const raw: unknown = JSON.parse(await Bun.file(path).text());
   const redacted = redactSecretsDeep(raw);

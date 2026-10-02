@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
 import { Effect, Layer, Stdio } from "effect";
+import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../tests/helpers/mocks.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -58,7 +59,6 @@ vi.mock("@clack/prompts", () => ({
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.useRealTimers();
   mockClack.isCancel.mockReturnValue(false);
   mockClack.spinnerFactory.mockReturnValue(mockClack.spinnerHandle);
 });
@@ -70,14 +70,12 @@ describe("quietProgressTextOutputLayer", () => {
 
   it.effect("never starts a spinner, even after the spinner delay elapses", () =>
     Effect.gen(function* () {
-      vi.useFakeTimers();
       const out = yield* Output;
       const task = yield* out.task("Fetching branches...");
       yield* task.message("Still fetching...");
-      // Past TASK_SPINNER_DELAY_MS (200ms) — the text layer would have shown a
-      // spinner by now; the quiet wrapper must not.
-      vi.advanceTimersByTime(500);
-      yield* task.clear();
+      // TASK_SPINNER_DELAY_MS is 200ms; the text layer would show a spinner by now.
+      yield* TestClock.adjust(500);
+      yield* task.clear;
 
       expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
       expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
@@ -99,9 +97,8 @@ describe("quietProgressTextOutputLayer", () => {
   it.effect("stays on the text layer so errors keep Go parity (red text on stderr)", () =>
     Effect.gen(function* () {
       const out = yield* Output;
-      // `format === "text"` is what routes withJsonErrorHandling back to the
-      // top-level text `output.fail` (red text on stderr) instead of a JSON
-      // envelope on stdout — i.e. it preserves Go error-output parity.
+      // `format === "text"` routes `withJsonErrorHandling` to the top-level text `output.fail`
+      // (red text on stderr) instead of a JSON envelope on stdout.
       expect(out.format).toBe("text");
     }).pipe(Effect.provide(layer)),
   );

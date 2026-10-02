@@ -1,6 +1,6 @@
 import { type V1GetNetworkRestrictionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -246,9 +246,9 @@ describe("network-restrictions get integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsGetUnexpectedStatusError");
-        expect(errorJson).toContain("failed to retrieve network restrictions; received:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsGetUnexpectedStatusError");
+        expect(causeText).toContain("failed to retrieve network restrictions; received:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -259,9 +259,9 @@ describe("network-restrictions get integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsGetNetworkError");
-        expect(errorJson).toContain("failed to retrieve network restrictions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsGetNetworkError");
+        expect(causeText).toContain("failed to retrieve network restrictions:");
       }
     }).pipe(Effect.provide(layer));
   });

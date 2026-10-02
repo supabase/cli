@@ -171,11 +171,9 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
     throw new Error("RECORD=true requires SUPABASE_STAGING_URL to be set");
   }
 
-  // In record mode, wipe both fixture stores before serving any traffic.  The
-  // recording session will repopulate only what the running tests exercise, so
-  // any orphan from a prior session (e.g. a scenario whose test became test.todo,
-  // or a recorded key the current run doesn't touch) is dropped.  Replay mode is
-  // unaffected.
+  // In record mode, wipe both fixture stores before serving any traffic, so the
+  // recording session repopulates only what the running tests exercise and any
+  // orphan from a prior session is dropped.
   if (isRecord) {
     rmSync(join(options.fixturesDir, "recorded"), { recursive: true, force: true });
     rmSync(join(options.fixturesDir, "scenarios"), { recursive: true, force: true });
@@ -288,8 +286,8 @@ export async function startReplayServer(options: ReplayServerOptions): Promise<R
       }
 
       // Replay mode: scenario takes priority for matching requests; out-of-band
-      // requests (e.g., post-command telemetry calls inserted by the Go CLI after
-      // every --project-ref command) fall through to the per-endpoint fixture store.
+      // requests (e.g. post-command telemetry calls) fall through to the
+      // per-endpoint fixture store.
       if (scenario.name !== null) {
         const expected = scenario.queue[scenario.index];
         if (
@@ -382,9 +380,8 @@ async function proxyAndRecord(
   dockerProxySocketPath?: string,
 ): Promise<Response> {
   const isStoragePath = pathname.startsWith("/storage/v1/");
-  // Docker versioned API paths start with /v1. (decimal) to distinguish from
-  // management API paths which start with /v1/ (slash). /_ping is the Docker
-  // health-check endpoint (no version prefix).
+  // Docker versioned API paths start with /v1. (decimal), not /v1/ (slash, the
+  // management API). /_ping is the Docker health-check endpoint (no version prefix).
   const isDockerPath = pathname.startsWith("/v1.") || pathname === "/_ping";
 
   const FORWARD_HEADERS = new Set(["authorization", "content-type", "accept", "user-agent"]);
@@ -575,8 +572,7 @@ function recordFixture(params: {
     request: FixtureRequest;
     response: FixtureResponse;
   };
-  // Scenario interactions use unnumbered path placeholders so that comparison
-  // against incoming paths (normalized the same way) is always idempotent.
+  // Normalized so comparison against incoming paths (normalized the same way) is idempotent.
   normalized.request.path = normalizeUrlPath(params.pathname);
 
   const key = fixtureKey(params.method, params.pathname);
@@ -594,9 +590,7 @@ function recordFixture(params: {
   mkdirSync(keyDir, { recursive: true });
 
   const nextIndex = nextFixtureIndex(keyDir);
-  // Cap: the matcher's `index % entries.length` wrap means more than a few
-  // entries adds bytes without adding coverage.  Stop persisting after the cap
-  // is reached; the proxied response is still returned to the caller.
+  // Beyond the cap, the proxied response is still returned but no longer persisted.
   if (nextIndex <= MAX_FIXTURE_ENTRIES) {
     const indexStr = nextIndex === 1 ? "default" : String(nextIndex);
 
@@ -610,7 +604,6 @@ function recordFixture(params: {
     );
   }
 
-  // If a scenario is active, also append this interaction to interactions.json.
   if (params.scenario.name !== null) {
     params.scenario.log.push({ request: normalized.request, response: normalized.response });
     writeScenarioInteractions(params.fixturesDir, params.scenario.name, params.scenario.log);
@@ -630,10 +623,9 @@ interface DockerProxyResult {
   bodyPromise: Promise<Buffer>;
 }
 
-/** Idle timeout: abort if the upstream socket goes silent for this long.  The
- *  previous hard timeout (60s wall-clock) killed legitimate slow operations
- *  like first-time image pulls.  An idle timeout only kills truly stuck
- *  connections — anything still emitting progress events stays alive. */
+/** Idle timeout: abort if the upstream socket goes silent for this long. Only
+ *  kills truly stuck connections — a slow but still-active operation (e.g. a
+ *  first-time image pull) stays alive as long as it keeps emitting progress. */
 const DOCKER_SOCKET_IDLE_TIMEOUT_MS = 60_000;
 
 async function proxyToDockerSocket(
@@ -956,8 +948,8 @@ async function handleControl(req: Request, url: URL, ctx: ControlContext): Promi
     }
 
     if (req.method === "DELETE") {
-      // In record mode, always flush interactions.json (even when empty) so that
-      // tests which trigger a global error before any API call still get a scenario file.
+      // Flush interactions.json even when empty, so a test that hits a global
+      // error before any API call still gets a scenario file.
       if (ctx.isRecord && ctx.scenario.name !== null) {
         writeScenarioInteractions(ctx.fixturesDir, ctx.scenario.name, ctx.scenario.log);
       }

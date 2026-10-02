@@ -56,7 +56,6 @@ describe("isIPv6ConnectivityError", () => {
   });
 
   it("requires an IPv6 literal for the ambiguous dial errors", () => {
-    // "no route to host" / "cannot assign requested address" only count with an IPv6 literal.
     expect(isIPv6ConnectivityError("dial tcp [2600:1f18::1]:5432: connect: no route to host")).toBe(
       true,
     );
@@ -65,7 +64,6 @@ describe("isIPv6ConnectivityError", () => {
         "failed to connect to `host=db port=5432`: cannot assign requested address (2600:1f18::1)",
       ),
     ).toBe(true);
-    // Same errors over IPv4 must NOT classify as IPv6.
     expect(isIPv6ConnectivityError("dial tcp 10.0.0.1:5432: no route to host")).toBe(false);
     expect(isIPv6ConnectivityError("cannot assign requested address")).toBe(false);
   });
@@ -104,9 +102,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("surfaces the last dial attempt of a dual-stack AggregateError (pgconn last-fallback parity)", () => {
-    // node dials ::1 then 127.0.0.1 for `localhost` and aggregates both failures
-    // into an AggregateError with an EMPTY message; pgconn's fallback loop
-    // likewise surfaces the last attempt's error.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [
@@ -126,8 +121,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("stages a DNS failure as hostname resolving error (Bun getaddrinfo shape)", () => {
-    // Bun's getaddrinfo failure omits the hostname from the message; the host is
-    // already carried by the `host=…` identity.
     const dns = Object.assign(new Error("getaddrinfo ENOTFOUND"), {
       code: "ENOTFOUND",
       syscall: "getaddrinfo",
@@ -135,7 +128,6 @@ describe("connectFailureMessage", () => {
     expect(connectFailureMessage(target, realSqlConnectError(dns))).toBe(
       `${prefix} hostname resolving error (getaddrinfo ENOTFOUND)`,
     );
-    // A transient resolver failure classifies by code alone (no syscall field).
     const eaiAgain = Object.assign(new Error("getaddrinfo EAI_AGAIN db.x.supabase.co"), {
       code: "EAI_AGAIN",
     });
@@ -154,7 +146,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("stages TLS failures as tls error", () => {
-    // node-postgres' own refusal message carries no code.
     expect(
       connectFailureMessage(
         target,
@@ -167,7 +158,6 @@ describe("connectFailureMessage", () => {
     expect(connectFailureMessage(target, realSqlConnectError(selfSigned))).toBe(
       `${prefix} tls error (self-signed certificate in certificate chain)`,
     );
-    // node's ERR_TLS_* family (e.g. a hostname mismatch under verify-full).
     const altname = Object.assign(new Error("Hostname/IP does not match certificate's altnames"), {
       code: "ERR_TLS_CERT_ALTNAME_INVALID",
     });
@@ -177,11 +167,7 @@ describe("connectFailureMessage", () => {
   });
 
   it("stages every documented X509 certificate-verification code as tls error", () => {
-    // pgconn stages by connection phase — ANY startTLS failure is `tls error (…)` —
-    // so the complete Node/OpenSSL verification family
-    // (Node tls docs "X509 certificate error codes") must keep the staged
-    // rendering under sslmode=verify-ca / verify-full. Pinned code-by-code so a
-    // future trim of the allowlist regresses loudly.
+    // Pinned code-by-code so a future trim of the allowlist regresses loudly.
     const x509Codes = [
       "UNABLE_TO_GET_ISSUER_CERT",
       "UNABLE_TO_GET_CRL",
@@ -223,10 +209,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("stages a mid-handshake TLS disconnect as tls error despite its ECONNRESET code", () => {
-    // Node/Bun's `_tls_wrap.js` onConnectEnd shape: the server accepted
-    // SSLRequest but closed the socket before the handshake completed. The
-    // message is phase-specific (only ever raised pre-secure-connection), so it
-    // stages like pgconn's startTLS wrap (`tls error (…)`).
     const midHandshake = Object.assign(
       new Error("Client network socket disconnected before secure TLS connection was established"),
       { code: "ECONNRESET" },
@@ -237,9 +219,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("renders a raw socket reset verbatim — not phase-specific, so no stage is guessed", () => {
-    // Node's hard-RST shape (`read ECONNRESET`, syscall "read") is identical
-    // before and after the handshake, so unlike the message above it must NOT
-    // be staged as tls error.
     const rawReset = Object.assign(new Error("read ECONNRESET"), {
       code: "ECONNRESET",
       syscall: "read",
@@ -250,8 +229,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("renders an unrecognized cause verbatim (CLI-1942 session-pooler EOF shape)", () => {
-    // node-postgres raises `Connection terminated unexpectedly` where pgconn
-    // says `failed to receive message (unexpected EOF)` — no stage is guessed.
     const eof = new Error("Connection terminated unexpectedly");
     expect(connectFailureMessage(target, realSqlConnectError(eof))).toBe(
       `${prefix} Connection terminated unexpectedly`,
@@ -259,7 +236,6 @@ describe("connectFailureMessage", () => {
   });
 
   it("handles a bare driver error (raw-client path) and non-object failures", () => {
-    // `acquireRawClient` maps the node-postgres rejection without a SqlError wrapper.
     expect(connectFailureMessage(target, dialError("ECONNREFUSED", "127.0.0.1", 6543))).toBe(
       `${prefix} dial error (connect ECONNREFUSED 127.0.0.1:6543)`,
     );
@@ -281,8 +257,6 @@ describe("connectSuggestion", () => {
     isLocal: false,
   } as const;
 
-  // The @effect/sql SqlError wraps the node driver error on `.cause`; a multi-address
-  // dial wraps an AggregateError whose `.errors[]` carry the per-IP system errors.
   const sqlError = (cause: unknown) =>
     Object.assign(new Error("PgClient: Failed to connect"), { cause });
   const systemError = (message: string, code: string) =>
@@ -325,7 +299,6 @@ describe("connectSuggestion", () => {
     expect(connectSuggestion(err, ctx)).toBe(SUGGEST_ENV_VAR);
   });
 
-  // `ssl` comes from the DSN alone, so a server demanding it blames the DSN, not the flag.
   it("does not blame --debug when the server demands SSL", () => {
     const err = sqlError(new Error("SSL connection is required"));
     expect(connectSuggestion(err, ctx)).toBeUndefined();
@@ -342,15 +315,11 @@ describe("connectSuggestion", () => {
   });
 
   it("maps node's no-route-to-host (EHOSTUNREACH over IPv4) to the wrong-profile hint", () => {
-    // Go matches pgconn's `connect: no route to host`; node renders the same
-    // failure as `connect EHOSTUNREACH <ip>:<port>` with errno fields.
     const err = realSqlConnectError(dialError("EHOSTUNREACH", "10.1.2.3", 5432));
     expect(connectSuggestion(err, ctx)).toBe("Make sure your project exists on profile: supabase");
   });
 
   it("maps an IPv6 no-route-to-host (EHOSTUNREACH) to the IPv6 pooler suggestion", () => {
-    // `no route to host` counts as IPv6 when the message carries an IPv6
-    // literal; node carries the dialed address as a structured field instead.
     const err = realSqlConnectError(dialError("EHOSTUNREACH", "2600:1f18::1", 5432));
     expect(connectSuggestion(err, ctx)).toBe(ipv6Suggestion());
   });
@@ -368,12 +337,6 @@ describe("connectSuggestion", () => {
   });
 
   it("classifies only the LAST attempt of a mixed-family aggregate (pgconn last-fallback parity)", () => {
-    // Go can never blame an abandoned attempt: pgconn's fallback loop keeps only
-    // the last error and `SetConnectSuggestion` classifies
-    // that same rendered string. An earlier IPv6 EHOSTUNREACH
-    // followed by a final unclassified IPv4 timeout must NOT fire the IPv6 hint.
-    // The parent carries `code` copied from errors[0] (node's `aggregateErrors`),
-    // which must not leak into the wrong-profile branch either.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "EHOSTUNREACH",
       errors: [
@@ -385,9 +348,6 @@ describe("connectSuggestion", () => {
   });
 
   it("fires the IPv6 pooler suggestion when the LAST aggregate attempt is the IPv6 dial failure", () => {
-    // The surfaced (last) attempt drives both the rendered cause and the
-    // suggestion — an earlier refused IPv4 attempt is ignored, like Go, even
-    // though node copies its `code` onto the aggregate parent.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [
@@ -399,12 +359,6 @@ describe("connectSuggestion", () => {
   });
 
   it("ignores the parent aggregate's copied first-attempt code (node aggregateErrors shape)", () => {
-    // Node's `aggregateErrors` (`lib/internal/errors.js`, Bun matches) copies
-    // `errors[0].code` onto the AggregateError itself. A refused first attempt
-    // followed by a final unreachable-IPv6 attempt must classify the LAST
-    // attempt (IPv6 pooler hint), not the parent's copied ECONNREFUSED —
-    // otherwise the suggestion disagrees with the rendered cause, which pgconn's
-    // own connect flow makes impossible.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [
@@ -416,9 +370,6 @@ describe("connectSuggestion", () => {
   });
 
   it("classifies a refused LAST attempt as network restrictions despite an IPv6 first attempt", () => {
-    // Reverse direction: the parent's copied ENETUNREACH (from the abandoned
-    // IPv6 first attempt) must not fabricate the IPv6 hint when the surfaced
-    // last attempt is a plain refusal.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ENETUNREACH",
       errors: [
@@ -432,9 +383,6 @@ describe("connectSuggestion", () => {
   });
 
   it("sets no suggestion for a mid-handshake TLS disconnect, like Go", () => {
-    // `SetConnectSuggestion` has no branch matching
-    // resets or TLS failures — the staged `tls error (…)` rendering must not
-    // change that.
     const midHandshake = Object.assign(
       new Error("Client network socket disconnected before secure TLS connection was established"),
       { code: "ECONNRESET" },
@@ -457,9 +405,6 @@ describe("connectSuggestion", () => {
   });
 
   it("keeps the CLI-1942 session-pooler EOF unclassified so the generic --debug suggestion applies", () => {
-    // Go's SetConnectSuggestion has no branch for pgconn's `unexpected EOF`
-    // (the session-pooler drop in CLI-1942); node-postgres' equivalent
-    // `Connection terminated unexpectedly` must stay unclassified too.
     const err = realSqlConnectError(new Error("Connection terminated unexpectedly"));
     expect(connectSuggestion(err, ctx)).toBeUndefined();
   });

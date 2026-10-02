@@ -10,7 +10,8 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import { toSlimImage } from "../shared/services/slim-images.ts";
+import { expectedPinnedImage, GHCR_SLIM_IMAGE_PATTERN } from "../../tests/helpers/slim-images.ts";
+import { slimImagesEnabled } from "../shared/services/slim-images.ts";
 import { resolveEdgeRuntimeImage } from "./edge-runtime-image.ts";
 
 const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");
@@ -26,10 +27,10 @@ const resolve = (workdir: string, denoVersion: number) =>
 describe("resolveEdgeRuntimeImage", () => {
   it.effect("returns the edge-runtime image from the Dockerfile when nothing is pinned", () => {
     const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
-    return resolve(dir, 2).pipe(
-      Effect.tap((image) =>
+    return Effect.zip(resolve(dir, 2), slimImagesEnabled).pipe(
+      Effect.tap(([image, slim]) =>
         Effect.sync(() => {
-          expect(image).toBe(dockerfileServiceImage("edgeruntime"));
+          expect(image).toBe(dockerfileServiceImage("edgeruntime", slim));
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -82,7 +83,7 @@ describe("resolveEdgeRuntimeImage", () => {
       );
     });
 
-    it.effect("rewrites the current Dockerfile pin onto the slim base", () => {
+    it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
       const dir = mkdtempSync(join(tmpdir(), "edge-img-"));
       mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
@@ -90,10 +91,12 @@ describe("resolveEdgeRuntimeImage", () => {
         join(dir, "supabase", ".temp", "edge-runtime-version"),
         `${currentEdgeRuntimeTag}\n`,
       );
+      const pinned = expectedPinnedImage("edgeruntime", currentEdgeRuntime);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return resolve(dir, 2).pipe(
         Effect.tap((image) =>
           Effect.sync(() => {
-            expect(image).toBe(toSlimImage("edgeruntime", currentEdgeRuntime));
+            expect(image).toBe(pinned);
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

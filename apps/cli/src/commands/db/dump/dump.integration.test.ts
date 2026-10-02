@@ -1,10 +1,19 @@
-import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -13,6 +22,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { DnsResolverFlag, NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -32,8 +42,15 @@ import type { PgConnInput } from "../../../command-internal/db-connection.servic
 import { DbConfigConnectTempRoleError } from "../../../command-internal/db-config.errors.ts";
 import { DockerRunError } from "../../../command-internal/docker-run.errors.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
+import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
+import type { RunPostgresClientOptions } from "../../../command-internal/bundled-postgres-client.ts";
+import type { DatabaseInstance, ServiceCreation, Stack, StackError } from "@supabase/stack/effect";
+import type { InitializationCommand, PostgresCommand } from "@supabase/stack/commands";
+import type { InitializationCommandOptions, PostgresCommandOptions } from "@supabase/stack/effect";
 import type { DbDumpFlags } from "./dump.command.ts";
 import { dbDump } from "./dump.handler.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
 
 const LOCAL_CONN: PgConnInput = {
   host: "127.0.0.1",
@@ -50,6 +67,123 @@ const REMOTE_CONN: PgConnInput = {
   database: "postgres",
 };
 
+const managedDumpStackApi = (runtime: "native" | "docker") => {
+  const id = "m".repeat(64);
+  const creation: Extract<ServiceCreation, { service: "database" }> = {
+    service: "database",
+    config: {
+      version: "17.6.1.173",
+      databasePassword: Redacted.make("secret"),
+      jwtSecret: Redacted.make("secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: { sql: { port: 54322 } },
+  };
+  function runCommand<E, R>(
+    command: PostgresCommand,
+    options: PostgresCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E = never, R = never>(
+    command: InitializationCommand,
+    options?: InitializationCommandOptions<E, R>,
+  ): Effect.Effect<{ readonly jobId: string; readonly exitCode: number }, E | StackError, R>;
+  function runCommand<E, R>(
+    command: PostgresCommand | InitializationCommand,
+    options?: PostgresCommandOptions<E, R> | InitializationCommandOptions<E, R>,
+  ) {
+    if ("type" in command) return Effect.die("initializer is unused");
+    if (options?.stdout === undefined) return Effect.die("Postgres command requires a stdout sink");
+    const stdout = options.stdout;
+    return Effect.gen(function* () {
+      yield* stdout(new TextEncoder().encode('CREATE TABLE "public" (id integer);\n'));
+      return { jobId: "job", exitCode: 0 };
+    });
+  }
+  const database: DatabaseInstance = {
+    id,
+    service: "database",
+    start: Effect.void,
+    ready: Effect.void,
+    stop: Effect.void,
+    restart: () => Effect.void,
+    destroy: Effect.void,
+    prepare: Effect.void,
+    status: Effect.succeed({
+      id,
+      endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: 54322 }],
+      config: creation,
+      lifecycle: "running",
+      health: "healthy",
+      error: undefined,
+      cleanupError: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      launchId: undefined,
+      intentRevision: 0,
+      wakeEnabled: true,
+      registered: true,
+    }),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () =>
+      Effect.succeed({ databaseUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres" }),
+    saveSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
+  };
+  const stack = {
+    id,
+    services: {
+      create: () => Effect.die("unused"),
+      get: () => Effect.succeed(database),
+      list: Effect.succeed([database]),
+    },
+    credentials: { get: Effect.die("unused") },
+    composition: {
+      plan: () => Effect.succeed([]),
+      describe: Effect.succeed({
+        members: [{ id, activation: "eager" as const }],
+        dependencies: [],
+      }),
+      supabase: () => Effect.succeed([database]),
+      configure: () => Effect.void,
+      start: Effect.succeed([]),
+      stop: Effect.succeed([]),
+      restart: Effect.succeed([]),
+    },
+    stop: Effect.void,
+    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    commands: { run: runCommand },
+  } satisfies Stack;
+  return Layer.succeed(StackApi, {
+    create: () => Effect.succeed(stack),
+    open: () => Effect.succeed(stack),
+    discover: () => Effect.die("unused"),
+    find: () =>
+      Effect.succeed(
+        Option.some({
+          definition: {
+            id,
+            identity: { projectRoot: "/work/project", branchContext: "main", stackName: "default" },
+            runtime,
+            instances: [],
+            composition: { members: [{ id, activation: "eager" as const }], dependencies: [] },
+            lifetime: "detached" as const,
+            ports: [],
+          },
+          host: undefined,
+        }),
+      ),
+  });
+};
+
+const unusedStackApi = Layer.succeed(StackApi, {
+  create: () => Effect.die("unused"),
+  open: () => Effect.die("unused"),
+  discover: () => Effect.die("unused"),
+  find: () => Effect.die("unused"),
+});
+
 function mockResolver(opts: {
   conn?: PgConnInput;
   isLocal?: boolean;
@@ -63,17 +197,15 @@ function mockResolver(opts: {
   const layer = Layer.succeed(DbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
-      // Simulate connection resolution failing (IPv6 probe / pooler / temp
-      // login-role) after the ref is already loaded.
+      // Simulates connection resolution failing (IPv6 probe/pooler/temp login-role)
+      // after the ref is already loaded.
       if (opts.resolveFails === true) {
         return Effect.fail(
           new DbConfigConnectTempRoleError({ message: "failed to create temp role" }),
         );
       }
-      // A threaded `--project-ref` flag wins over the fixed `opts.ref` test
-      // fixture, same top precedence a real resolver would give it — lets a
-      // test prove the flag (not just `opts.ref`) drives the resolved (and
-      // later cached) ref.
+      // A threaded `--project-ref` flag wins over the fixed `opts.ref` fixture,
+      // matching real resolver precedence.
       const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
       const ref =
         Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
@@ -104,16 +236,10 @@ function mockResolver(opts: {
 }
 
 /**
- * Mocks `ProjectRefResolver` for the up-front `loadProjectRef` pre-capture
- * (`dump.handler.ts`), mirroring push/diff's identical mock (`push.integration.test.ts`,
- * `diff.integration.test.ts`): `loadProjectRef` gives an explicit `--project-ref` flag
- * top precedence, same as Go's `flags.LoadProjectRef` — a real (non-empty) ref pattern
- * is validated so a malformed flag surfaces `InvalidProjectRefError`, matching the
- * real service. `opts.projectId` stands in for `CommandSettings.projectId`
- * (`SUPABASE_PROJECT_ID`/`project_id`), which `loadProjectRef` consults before falling
- * back to `opts.ref` (the SAME ref `mockResolver`'s own mock embeds in its resolved
- * `ref`, so both stay consistent regardless of which fixture a test sets).
- * `opts.linkedFails` simulates a genuinely unlinked workdir absent an explicit flag.
+ * Mocks `ProjectRefResolver` for the up-front `loadProjectRef` pre-capture, mirroring
+ * push/diff's identical mock: an explicit `--project-ref` flag wins, a malformed value
+ * fails with `InvalidProjectRefError`, and `opts.projectId` stands in for
+ * `CommandSettings.projectId` consulted before falling back to `opts.ref`.
  */
 function mockProjectRefResolver(opts: {
   projectId: Option.Option<string>;
@@ -188,13 +314,11 @@ function mockDockerRun(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new DockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const next = queue.shift();
         const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
@@ -214,11 +338,49 @@ function mockDockerRun(opts: {
   };
 }
 
-const runtimeInfoLayer = (platform: NodeJS.Platform) =>
+function mockBundledPostgresClient(opts: {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  runFails?: boolean;
+  results?: ReadonlyArray<DockerResult>;
+}) {
+  const allOpts: Array<RunPostgresClientOptions<unknown>> = [];
+  const queue = [...(opts.results ?? [])];
+  const layer = Layer.succeed(BundledPostgresClient, {
+    run: (runOpts) =>
+      Effect.gen(function* () {
+        allOpts.push(runOpts);
+        if (opts.runFails === true) {
+          return yield* new DockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
+        }
+        const next = queue.shift();
+        const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
+        const bytes = new TextEncoder().encode(r.stdout ?? "");
+        if (bytes.length > 0) yield* runOpts.onStdout(bytes);
+        return { exitCode: r.exitCode ?? 0, stderr: r.stderr ?? "" };
+      }),
+  });
+  return {
+    layer,
+    get allOpts() {
+      return allOpts;
+    },
+    get lastOpts() {
+      return allOpts[allOpts.length - 1];
+    },
+  };
+}
+
+const runtimeInfoLayer = (platform: NodeJS.Platform, arch?: NodeJS.Architecture) =>
   Layer.succeed(RuntimeInfo, {
     cwd: "/work/project",
     platform,
-    arch: "x64",
+    arch: arch ?? (platform === "darwin" ? "arm64" : "x64"),
     homeDir: "/home/user",
     execPath: "/usr/bin/supabase",
     pid: 1234,
@@ -242,8 +404,10 @@ interface SetupOpts {
   ref?: string;
   linkedFails?: boolean;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
   stdoutIsPipe?: boolean;
   env?: Readonly<Record<string, string>>;
+  dockerInstalled?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -264,18 +428,21 @@ function setup(opts: SetupOpts = {}) {
     linkedFails: opts.linkedFails,
   });
   const docker = mockDockerRun(opts);
+  const bundled = mockBundledPostgresClient(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     projectRef.layer,
     docker.layer,
+    bundled.layer,
+    unusedStackApi,
     mockCommandSettings({
       workdir: opts.workdir ?? "/work/project",
       projectId: opts.projectId ?? Option.none(),
     }),
     telemetry.layer,
     cache.layer,
-    runtimeInfoLayer(opts.platform ?? "linux"),
+    runtimeInfoLayer(opts.platform ?? "linux", opts.arch),
     mockTty({ stdoutIsPipe: opts.stdoutIsPipe }),
     processEnvLayer(opts.env ?? {}),
     Layer.succeed(
@@ -285,7 +452,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(DnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker, cache };
+  return { layer, out, telemetry, resolver, docker, bundled, cache };
 }
 
 const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
@@ -303,6 +470,13 @@ const flags = (over: Partial<DbDumpFlags> = {}): DbDumpFlags => ({
   password: over.password ?? Option.none(),
   schema: over.schema ?? [],
 });
+
+const readUtf8 = (file: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const bytes = yield* fs.readFile(file);
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  });
 
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
@@ -329,8 +503,6 @@ describe("db dump integration", () => {
   it.live(
     "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
     () => {
-      // The required-flag check keys off explicit presence, so `--data-only=false`
-      // satisfies it; the command proceeds and runs the schema dump with dataOnly=false.
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
         const exit = yield* dbDump(
@@ -405,8 +577,6 @@ describe("db dump integration", () => {
   });
 
   it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
-    // The target mutex keys off explicit presence, so the explicit-false
-    // `--linked` still counts as set and conflicts with `--local`.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* dbDump(
@@ -433,8 +603,6 @@ describe("db dump integration", () => {
   });
 
   it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
-    // Local is selected on explicit presence of `--local` before the linked
-    // default, so `--local=false` resolves the local target, not the linked one.
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -448,31 +616,27 @@ describe("db dump integration", () => {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain("Dumping schemas from local database...");
-      // The script must have $PGHOST expanded from the resolved local connection.
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
       expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
-    // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
-    // still printed, with no dry-run guard and without touching the file.
-    const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "dry.sql");
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }));
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       expect(docker.lastOpts).toBeUndefined();
-      expect(existsSync(filePath)).toBe(false);
+      expect(yield* fs.exists(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
-    // Every --file branch keys off len(path) > 0, not flag presence; an
-    // explicit empty --file means stdout, with no "Dumped schema to …" line
-    // and no file ever touched.
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -483,15 +647,15 @@ describe("db dump integration", () => {
   });
 
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
-    // The merged config is validated before the dump runs, even for
-    // --dry-run, so an invalid config fails without printing.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
-    );
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
+      );
       const exit = yield* dbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(
         Effect.exit,
       );
@@ -515,7 +679,6 @@ describe("db dump integration", () => {
         expect.stringContaining("pg_dump"),
         "--",
       ]);
-      // host networking, no security-opt
       expect(docker.lastOpts?.network).toEqual({ _tag: "host" });
       expect(docker.lastOpts?.securityOpt).toEqual([]);
       expect(docker.lastOpts?.env["EXCLUDED_SCHEMAS"]).toBeDefined();
@@ -559,9 +722,8 @@ describe("db dump integration", () => {
   });
 
   it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
-    // CSV-splitting of `--schema` happens at the flag level via
-    // `parseSchemaFlags`, so the handler receives the already-split
-    // array and the env builder pipe-joins it.
+    // The handler receives an already-split array (CSV-split at the flag level by
+    // `parseSchemaFlags`) and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* dbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
@@ -570,8 +732,6 @@ describe("db dump integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // A relative `--file` is resolved against the workdir, so it is written
-    // under the workdir, not the original cwd.
     const { layer } = setup({
       isLocal: true,
       stdout: "CREATE SCHEMA public;\n",
@@ -579,7 +739,8 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
-      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe("CREATE SCHEMA public;\n");
+      const path = yield* Path.Path;
+      expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe("CREATE SCHEMA public;\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -594,26 +755,20 @@ describe("db dump integration", () => {
   it.live(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
     () => {
-      // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
-      // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
-      // still wins over host.
-      const prev = process.env["SUPABASE_NETWORK_ID"];
-      delete process.env["SUPABASE_NETWORK_ID"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+      // A `SUPABASE_NETWORK_ID` sourced only from `supabase/.env` still overrides host
+      // networking.
       const { layer, docker } = setup({ isLocal: true, workdir: tmp.current });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", ".env"),
+          "SUPABASE_NETWORK_ID=dotenv-net\n",
+        );
         yield* dbDump(flags({ local: Option.some(true) }));
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-            else process.env["SUPABASE_NETWORK_ID"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
-      );
+      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body), Effect.provide(layer));
     },
   );
 
@@ -622,6 +777,74 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       yield* dbDump(flags({}));
       expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps an explicit local db-url on the bundled client path", () => {
+    const { layer, bundled } = setup({
+      conn: {
+        host: "127.0.0.1",
+        port: 54322,
+        user: "custom",
+        password: "secret",
+        database: "custom",
+      },
+      isLocal: true,
+      stdout: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({
+          dbUrl: Option.some("postgresql://custom:secret@127.0.0.1:54322/custom"),
+        }),
+      );
+      expect(bundled.lastOpts?.env).toMatchObject({
+        PGHOST: "127.0.0.1",
+        PGPORT: "54322",
+        PGUSER: "custom",
+        PGPASSWORD: "secret",
+        PGDATABASE: "custom",
+      });
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("points a Windows tool container at the host for a loopback stack db-url", () => {
+    const conn = {
+      host: "127.0.0.1",
+      port: 55432,
+      user: "postgres",
+      password: "postgres",
+      database: "postgres",
+    };
+    const { layer, bundled } = setup({ conn, isLocal: false, platform: "win32", stdout: "" });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+      );
+      expect(bundled.lastOpts?.runtime).toEqual({ kind: "container", engine: "docker" });
+      expect(bundled.lastOpts?.network).toBe("host");
+      expect(bundled.lastOpts?.env).toMatchObject({
+        PGHOST: "host.docker.internal",
+        PGPORT: "55432",
+      });
+    }).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+  });
+
+  it.live("points a named-network legacy tool container at the host for a loopback db-url", () => {
+    const { layer, docker } = setup({
+      conn: { ...LOCAL_CONN, port: 55432 },
+      isLocal: false,
+      networkId: "custom_net",
+    });
+    return Effect.gen(function* () {
+      yield* dbDump(
+        flags({ dbUrl: Option.some("postgresql://postgres:postgres@127.0.0.1:55432/postgres") }),
+      );
+      expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "custom_net" });
+      expect(docker.lastOpts?.env).toMatchObject({
+        PGHOST: "host.docker.internal",
+        PGPORT: "55432",
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -646,12 +869,8 @@ describe("db dump integration", () => {
   it.live(
     "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
     () => {
-      // The pre-connect `linkedRefForCache` chain must check `flags.projectRef`
-      // FIRST — before config.toml's `project_id` and the `.temp/project-ref`
-      // file — so a `--project-ref` override still wins even when `resolve()`
-      // fails before ever returning its own `ref`. `opts.projectId` here stands
-      // in for the workdir's own linked ref (e.g. config.toml `project_id`);
-      // it must lose to the flag.
+      // `linkedRefForCache` must check `flags.projectRef` before config.toml's
+      // `project_id`, so the flag still wins even when `resolve()` fails first.
       const FLAG_REF = "flagflagflagflagflag";
       const { layer, cache } = setup({
         projectId: Option.some("abcdefghijklmnopqrst"),
@@ -670,10 +889,8 @@ describe("db dump integration", () => {
   );
 
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
-    // No config project_id and no .temp/project-ref file (workdir is a throwaway
-    // path), so the up-front `loadProjectRef` pre-capture itself fails "not linked"
-    // (linkedFails) before `resolve()` is ever reached; the cache is only written
-    // when a ref is known, so nothing is cached.
+    // No config project_id or .temp/project-ref file, so the up-front pre-capture
+    // itself fails "not linked" before `resolve()` is reached; nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
@@ -696,8 +913,7 @@ describe("db dump integration", () => {
   });
 
   it.live("dumps the project given via --project-ref without a linked workdir", () => {
-    // No fixed `opts.ref` fixture — only the flag can resolve a ref for the
-    // resolver call and the linked-project cache.
+    // No fixed `opts.ref`; only the flag can resolve a ref here.
     const FLAG_REF = "flagflagflagflagflag";
     const { layer, cache, resolver } = setup({
       conn: REMOTE_CONN,
@@ -714,8 +930,7 @@ describe("db dump integration", () => {
 
   it.live("--project-ref overrides an already-linked workdir's project ref", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    // The workdir already resolves to a fixed ref (e.g. via .temp/project-ref) —
-    // the flag must win over it.
+    // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
     const { layer, cache } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -733,11 +948,8 @@ describe("db dump integration", () => {
   it.live(
     "rejects a malformed --project-ref on the linked path before resolving or caching",
     () => {
-      // The pre-capture now runs the SAME validated `loadProjectRef` the resolver
-      // would raise right after (codex review on dump.handler.ts:182), so a malformed
-      // flag value must fail fast — never reaching `resolver.resolve()` (no
-      // connection/API work) and never writing the linked-project cache (no
-      // `GET /v1/projects/*`).
+      // `loadProjectRef` validates before `resolver.resolve()` runs, so a malformed
+      // flag fails fast with no connection/API work and no cache write.
       const { layer, cache, resolver } = setup();
       return Effect.gen(function* () {
         const exit = yield* dbDump(
@@ -768,11 +980,12 @@ describe("db dump integration", () => {
   });
 
   it.live("writes the dump to --file and reports the absolute path on stderr", () => {
-    const filePath = join(tmp.current, "out.sql");
     const { layer, out } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "out.sql");
       yield* dbDump(flags({ local: Option.some(true), file: Option.some(filePath) }));
-      expect(readFileSync(filePath, "utf8")).toBe("CREATE SCHEMA public;\n");
+      expect(yield* readUtf8(filePath)).toBe("CREATE SCHEMA public;\n");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       // Nothing written to stdout in --file mode.
@@ -811,13 +1024,10 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags());
-      // Retried once: two container runs, one fallback resolution.
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(resolver.fallbackCalls[0]).toMatchObject({ connType: "linked" });
-      // The retry targeted the pooler host (PGHOST in the rebuilt env).
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
-      // The IPv6 warning was printed to stderr; only the retry's output reached stdout.
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
@@ -825,8 +1035,6 @@ describe("db dump integration", () => {
   });
 
   it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
-    // Any fallback-resolution error reports the original pg_dump failure — the
-    // optional retry must not replace it.
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -836,7 +1044,6 @@ describe("db dump integration", () => {
     return Effect.gen(function* () {
       const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      // Original container failure, NOT the fallback-resolution error.
       expect(failMessage(exit)).toBe("error running container: exit 1");
       expect(resolver.fallbackCalls).toHaveLength(1); // attempted
       expect(docker.allOpts).toHaveLength(1); // no retry container ran
@@ -870,11 +1077,8 @@ describe("db dump integration", () => {
       const exit = yield* dbDump(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
-      // The fallback was attempted (classified IPv6) but returned no pooler.
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(docker.allOpts).toHaveLength(1);
-      // The IPv6 pooler guidance is attached on the no-fallback path; the bare
-      // container error must carry it.
       expect(failSuggestion(exit)).toContain(
         "Your network does not support IPv6, which is required for direct connections",
       );
@@ -883,8 +1087,6 @@ describe("db dump integration", () => {
   });
 
   it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
-    // The IPv6 pooler guidance is also attached to the retry's stderr when the
-    // pooler retry also fails; an IPv6 retry failure surfaces the same guidance.
     const { layer, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -942,32 +1144,63 @@ describe("db dump integration", () => {
   const NON_ASCII_WARNING = "The dump contains non-ASCII characters";
   const PIPED_WIN32 = { platform: "win32", stdoutIsPipe: true } as const;
 
-  // Real-runtime probe of the classification `ttyLayer` ships for
-  // `stdoutIsPipe`. A shell pipeline is used for the pipe case: spawnSync's
-  // own "pipe" stdio is a socketpair under Bun, which fstats as a socket.
-  const PROBE = 'process.stdout.write(String(require("node:fs").fstatSync(1).isFIFO()));';
-
-  it.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () => {
-    const result = spawnSync("/bin/sh", ["-c", `"${process.execPath}" -e '${PROBE}' | cat`], {
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("true");
+  // A shell pipeline gets a genuine FIFO for the pipe probe below; Bun's spawnSync
+  // "pipe" stdio is a socketpair, which fstats as a socket instead.
+  const ttyProbe = Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const module = (file: string) =>
+      path
+        .fromFileUrl(new URL(`../../../shared/runtime/${file}`, import.meta.url))
+        .pipe(Effect.flatMap(Schema.encodeEffect(Schema.fromJsonString(Schema.String))));
+    const service = yield* module("tty.service.ts");
+    const layer = yield* module("tty.layer.ts");
+    return `import { Effect } from "effect"; import { Tty } from ${service}; import { ttyLayer } from ${layer}; Effect.runPromise(Tty.pipe(Effect.provide(ttyLayer))).then((tty) => process.stdout.write(String(tty.stdoutIsPipe)));`;
   });
 
-  it.skipIf(process.platform === "win32")("classifies a file-backed stdout as not a pipe", () => {
-    const file = join(tmp.current, "pipe-probe.txt");
-    const fd = openSync(file, "w");
-    try {
-      const result = spawnSync(process.execPath, ["-e", PROBE], {
-        stdio: ["ignore", fd, "inherit"],
-      });
-      expect(result.status).toBe(0);
-    } finally {
-      closeSync(fd);
-    }
-    expect(readFileSync(file, "utf8")).toBe("false");
-  });
+  it.live.skipIf(process.platform === "win32")("classifies a real piped stdout as a pipe", () =>
+    Effect.gen(function* () {
+      const probe = yield* ttyProbe;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("/bin/sh", ["-c", '"$1" -e "$2" | cat', "sh", process.execPath, probe], {
+          cwd: import.meta.dirname,
+          stdin: "ignore",
+          stderr: "ignore",
+        }),
+      );
+      const [exitCode, stdout] = yield* Effect.all(
+        [child.exitCode, Stream.mkString(Stream.decodeText(child.stdout))],
+        { concurrency: "unbounded" },
+      );
+      expect(exitCode).toBe(0);
+      expect(stdout).toBe("true");
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "classifies a file-backed stdout as not a pipe",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const file = path.join(tmp.current, "pipe-probe.txt");
+        const probe = yield* ttyProbe;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const exitCode = yield* spawner.exitCode(
+          ChildProcess.make(
+            "/bin/sh",
+            ["-c", '"$1" -e "$2" > "$3"', "sh", process.execPath, probe, file],
+            {
+              cwd: import.meta.dirname,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "inherit",
+            },
+          ),
+        );
+        expect(exitCode).toBe(0);
+        expect(yield* readUtf8(file)).toBe("false");
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live("windows: warns when a piped stdout dump contains non-ASCII text", () => {
     const { layer, out } = setup({
@@ -994,7 +1227,8 @@ describe("db dump integration", () => {
     });
     return Effect.gen(function* () {
       yield* dbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
-      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe(UNICODE_SQL);
+      const path = yield* Path.Path;
+      expect(yield* readUtf8(path.join(tmp.current, "out.sql"))).toBe(UNICODE_SQL);
       expect(out.stderrText).not.toContain(NON_ASCII_WARNING);
     }).pipe(Effect.provide(layer));
   });
@@ -1022,4 +1256,20 @@ describe("db dump integration", () => {
       }).pipe(Effect.provide(layer));
     });
   }
+
+  describe("managed stack dump", () => {
+    for (const runtime of ["native", "docker"] as const) {
+      it.live(`streams schema output through the ${runtime} stack tool`, () => {
+        const { layer, out } = setup({ isLocal: true, stdout: "" });
+        return Effect.gen(function* () {
+          yield* dbDump(flags({ local: Option.some(true) }));
+          expect(out.stdoutText).toContain('CREATE TABLE IF NOT EXISTS "public"');
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(layer, stackBackendLayer("stack"), managedDumpStackApi(runtime)),
+          ),
+        );
+      });
+    }
+  });
 });

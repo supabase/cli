@@ -25,10 +25,8 @@ const {
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-// mkdtemp against the OS temp dir (never a path under the repo) — a real
-// project's ancestor-search would otherwise be able to walk up into this
-// repo's own `apps/cli/docs/supabase` and resolve a project that isn't the
-// one the test created.
+// Under the OS temp dir, never a path under this repo — otherwise ancestor-search could
+// walk up into this repo's own `apps/cli/docs/supabase` fixture.
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-promise-facade-"));
 }
@@ -54,9 +52,6 @@ describe("promise-facade via the Bun entrypoint", () => {
       const loaded = await loadCliConfig(cwd);
 
       expect(loaded?.config.project_id).toBe("facade-loaded-ref");
-      // `db.major_version` is never set in the fixture above — asserting it
-      // resolves to the schema default proves the facade runs the real
-      // decode path, not just a raw TOML parse.
       expect(loaded?.config.db.major_version).toBe(17);
       expect(loaded?.format).toBe("toml");
       expect(loaded?.path).toBe(join(cwd, "supabase", "config.toml"));
@@ -130,9 +125,7 @@ describe("promise-facade via the Bun entrypoint", () => {
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
       await writeFile(join(cwd, "supabase", ".env"), "GREETING=hello-from-dotenv\n");
 
-      // `baseEnv` is passed explicitly (never the default `process.env`) so
-      // this assertion can't be satisfied by an unrelated variable leaking in
-      // from the real process environment.
+      // Explicit empty baseEnv, so no ambient process.env variable can satisfy this assertion.
       const projectEnv = await loadCliProjectEnvironment({ cwd, baseEnv: {} });
 
       expect(projectEnv?.values.GREETING).toBe("hello-from-dotenv");
@@ -186,10 +179,6 @@ describe("promise-facade via the Bun entrypoint", () => {
       await mkdir(join(cwdB, "supabase"), { recursive: true });
       await writeFile(join(cwdB, "supabase", "config.toml"), 'project_id = "second-ref"\n');
 
-      // The runtime is built lazily on the first call below and cached for
-      // reuse — a second, independent call on the same module-level facade
-      // must still resolve correctly rather than reusing stale state from
-      // the first.
       const first = await loadCliConfig(cwdA);
       const second = await loadCliConfig(cwdB);
 
@@ -213,9 +202,6 @@ const expectedFacadeFunctionNames = [
 ];
 
 describe("promise-facade parity between bun.ts, node.ts, and io-browser.ts", () => {
-  // io-browser.ts must export the same facade names as bun.ts/node.ts: a
-  // bundler resolving the "browser" condition needs every named import to
-  // exist at build time.
   test("io-browser.ts exports the same seven facade function names as bun.ts and node.ts", () => {
     for (const facade of [bunFacade, nodeFacade, ioBrowserFacade]) {
       for (const name of expectedFacadeFunctionNames) {
@@ -224,10 +210,6 @@ describe("promise-facade parity between bun.ts, node.ts, and io-browser.ts", () 
     }
   });
 
-  // Each module also re-exports every pure symbol from `.` (see
-  // `describe("./io is a superset of src/index.ts", ...)` below), so this
-  // asserts the three modules' full export surfaces stay identical to each
-  // other, not just on the seven facade names above.
   test("bun.ts, node.ts, and io-browser.ts export the identical set of names", () => {
     expect(Object.keys(nodeFacade).sort()).toEqual(Object.keys(bunFacade).sort());
     expect(Object.keys(ioBrowserFacade).sort()).toEqual(Object.keys(bunFacade).sort());
@@ -238,8 +220,6 @@ describe("./io is a superset of src/index.ts", () => {
   test("every runtime export key of index.ts is present, with an identical (not shadowed) binding, in bun.ts, node.ts, and io-browser.ts", () => {
     const defaultKeys = Object.keys(defaultEntrypoint);
 
-    // Guards against `defaultEntrypoint` being empty due to a broken
-    // import, which would otherwise make the loop below pass trivially.
     expect(defaultKeys.length).toBeGreaterThan(0);
 
     for (const [label, facade] of [
@@ -262,11 +242,8 @@ describe("./io is a superset of src/index.ts", () => {
 });
 
 describe("io-browser.ts stays side-effect-free", () => {
-  // Uses a dynamic `import()` (rather than relying on the static import at
-  // the top of this file) so this assertion is meaningful on its own: a
-  // regression back to a bare top-level `throw` would fail this specific
-  // test with the rejection below, instead of crashing the whole file at
-  // module-load time before any test runs.
+  // Dynamic import so a regression back to a top-level throw fails this test
+  // specifically, instead of crashing the whole file at module-load time.
   test("importing the module does not throw", async () => {
     await expect(import("./io-browser.ts")).resolves.toBeDefined();
   });
@@ -306,8 +283,6 @@ describe("promise-facade singleton runtime", () => {
 });
 
 describe("promise-facade via the Node entrypoint", () => {
-  // The "default"-condition path (`@supabase/config/io` resolving to
-  // `./node.ts` outside Bun) otherwise has zero execution coverage.
   test("loadCliConfig loads and decodes a real supabase/config.toml", async () => {
     const cwd = makeTempProject();
 
@@ -351,6 +326,5 @@ describe("promise-facade rejection shapes", () => {
   });
 });
 
-// The stdin-leak guard lives in `promise-facade.stdin.unit.test.ts`: it must
-// observe the facade's FIRST call, which only a dedicated vitest-isolated
-// file can guarantee.
+// The stdin-leak guard lives in `promise-facade.stdin.unit.test.ts`, which needs its own
+// vitest-isolated file to observe the facade's first call.

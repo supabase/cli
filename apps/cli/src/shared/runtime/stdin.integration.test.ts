@@ -1,7 +1,9 @@
 import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Stream } from "effect";
 import { systemError, type PlatformError } from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";
@@ -10,17 +12,14 @@ import { stdinLayerFrom } from "./stdin.layer.ts";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
-// Exercises the real `stdinLayer` (its persistent, lazily-opened line reader) over a
-// controllable byte stream, instead of the array-indexing `mockStdin` double, so stdin
-// can be driven with deliberate chunking / delays; `Tty` is satisfied by `mockTty`.
+// Exercises the real `stdinLayer` over a controllable byte stream (not the
+// array-indexing `mockStdin` double) so stdin can be driven with deliberate chunking/delays.
 const withStdin = (stdin: Stream.Stream<Uint8Array, PlatformError>, stdinIsTty = false) =>
   stdinLayerFrom(stdin).pipe(Layer.provide(mockTty({ stdinIsTty, stdoutIsTty: false })));
 
 describe("stdinLayer", () => {
   it.live("dispenses successive lines across calls, buffering multi-line chunks", () => {
-    // Two chunks, the second carrying two lines: one persistent reader returns a, b, c
-    // across successive calls, holding the rest of a chunk for the next call instead of
-    // starting over. A final call on the exhausted stream yields None (the prompt default).
+    // Two chunks; the second carries two lines to prove buffering across calls.
     const layer = withStdin(Stream.fromIterable([enc("a\n"), enc("b\nc\n")]));
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -45,8 +44,7 @@ describe("stdinLayer", () => {
   });
 
   it.live("preserves interior blank lines so answers stay aligned", () => {
-    // splitLines keeps blank interior lines: a caller that pipes "\ny\n" sees the
-    // blank line first (→ prompt default) and the y second, not y first.
+    // A caller piping "\ny\n" must see the blank line first, then "y" — not "y" first.
     const layer = withStdin(Stream.fromIterable([enc("\ny\n")]));
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -56,8 +54,6 @@ describe("stdinLayer", () => {
   });
 
   it.live("times out to None when no line arrives within the window", () => {
-    // A pipe that stays open without sending a line: readLine must give up with None so
-    // the prompt takes its default instead of waiting for EOF.
     const layer = withStdin(Stream.never);
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
@@ -67,10 +63,8 @@ describe("stdinLayer", () => {
 
   it.live("waits for a non-blocking pipe that has nothing to read yet", () =>
     Effect.gen(function* () {
-      // A non-blocking fd 0 with nothing to read yet fails the read with `WouldBlock` (how the
-      // layer reports `EAGAIN`, pinned over a real fd 0 below). That is "nothing yet", not EOF:
-      // the reader keeps asking until the answer lands, instead of taking the default for this
-      // prompt and every one after it.
+      // A non-blocking fd 0 with nothing to read fails with `WouldBlock` (how
+      // the layer reports `EAGAIN`) — "nothing yet", not EOF.
       let attempts = 0;
       const layer = withStdin(
         Stream.suspend(() => {
@@ -90,9 +84,8 @@ describe("stdinLayer", () => {
 
   it.effect("keeps waiting on a non-blocking pipe across a prompt that gave up", () =>
     Effect.gen(function* () {
-      // The first prompt times out between two looks, interrupting the wait. The next prompt
-      // must take the wait back up and see the answer once it lands, instead of inheriting the
-      // failed read as the reader's last word.
+      // A timed-out prompt must not leave the reader stuck on the failed read;
+      // the next prompt resumes waiting and sees the answer once it lands.
       const ready = yield* Ref.make(false);
       const layer = withStdin(
         Stream.unwrap(
@@ -120,9 +113,8 @@ describe("stdinLayer", () => {
 
   it.effect("collects a pipe across a non-blocking read that had nothing yet", () =>
     Effect.gen(function* () {
-      // The whole-pipe collects wait a non-blocking fd 0 out the same way, and a fresh reader
-      // over the still-open descriptor carries on where the last one stopped, so what came
-      // before the empty read and what comes after it read as one stream.
+      // `readPipedText` waits out a non-blocking fd 0 the same way readLine does,
+      // and a fresh reader continues where the last one stopped.
       let attempts = 0;
       const layer = withStdin(
         Stream.suspend(() => {
@@ -147,8 +139,8 @@ describe("stdinLayer", () => {
 
   it.effect("keeps reading after a prompt times out, finishing the line it was waiting on", () =>
     Effect.gen(function* () {
-      // A slow producer: the first prompt times out holding a partial line, and the bytes
-      // that complete it must still reach the next prompt.
+      // A slow producer: the first prompt times out mid-line; the bytes that
+      // complete it must still reach the next prompt.
       const queue = yield* Queue.unbounded<Uint8Array>();
       const layer = withStdin(Stream.fromQueue(queue));
       yield* Effect.gen(function* () {
@@ -166,9 +158,8 @@ describe("stdinLayer", () => {
 
   it.live("lets one prompt at a time pull from the pipe", () =>
     Effect.gen(function* () {
-      // Two prompts wait at once. The second must get `2`, held back from the chunk the first
-      // one pulled, instead of pulling a chunk of its own and skipping it. Each pull yields
-      // once, so a second pull could slip in while the first is in flight.
+      // Two prompts wait at once; the second must get the value held back from
+      // the first prompt's chunk, not pull (and skip) a chunk of its own.
       let pulls = 0;
       const layer = withStdin(
         Stream.fromEffectRepeat(
@@ -191,8 +182,8 @@ describe("stdinLayer", () => {
 
   it.live("reads a pipe only while a prompt is waiting", () =>
     Effect.gen(function* () {
-      // An endless producer, counted per chunk: nothing is pulled before the first prompt
-      // or between prompts, so whatever the prompts do not ask for stays in the pipe.
+      // Nothing is pulled before the first prompt or between prompts; the
+      // producer is counted per chunk to prove that.
       const pulled = yield* Ref.make(0);
       const layer = withStdin(
         Stream.fromEffectRepeat(
@@ -211,9 +202,8 @@ describe("stdinLayer", () => {
   );
 
   it.live("answers every prompt in order when a producer floods the pipe", () => {
-    // The 10,000th prompt still gets the 10,000th line, and an unbounded producer is only
-    // read as far as the prompts ask. The lines total well over 64 KiB, so the pending-line
-    // bound must reset at each line break.
+    // 10,000 lines total well over the 64 KiB pending-line bound, so that
+    // bound must reset at each line break, not accumulate across lines.
     const flood = Array.from({ length: 10_000 }, (_, index) => enc(`line-${index}\n`));
     const layer = withStdin(Stream.fromIterable(flood).pipe(Stream.concat(Stream.never)));
     return Effect.gen(function* () {
@@ -226,9 +216,9 @@ describe("stdinLayer", () => {
 
   it.live("gives up on a line that never ends instead of buffering it", () =>
     Effect.gen(function* () {
-      // A producer that never sends a newline (`yes | tr -d '\n'`), counted per 16 KiB
-      // chunk: the reader stops pulling once the pending line outgrows its 64 KiB bound
-      // (the fifth chunk), and every prompt from then on takes its default.
+      // A newline-less producer (`yes | tr -d '\n'`), counted per 16 KiB chunk:
+      // the reader stops pulling once the pending line exceeds its 64 KiB
+      // bound (at the fifth chunk).
       const pulled = yield* Ref.make(0);
       const chunk = enc("y".repeat(16 * 1024));
       const layer = withStdin(
@@ -245,9 +235,9 @@ describe("stdinLayer", () => {
   );
 
   it.live("answers the lines ahead of a runaway tail that shares their chunk", () => {
-    // `{ printf 'y\n'; cat blob-without-newline; } | …` can land the answer and the start
-    // of the blob in one pull. The answer is still delivered; the tail then trips the bound,
-    // so the `n` behind it is never read and every later prompt takes its default.
+    // The answer and the start of an unterminated blob can land in one pull;
+    // the answer still delivers, then the blob trips the bound so the "n"
+    // behind it is never read.
     const layer = withStdin(
       Stream.fromArray([enc("y\n"), enc("z".repeat(64 * 1024 + 1))]).pipe(
         Stream.concat(Stream.make(enc("n\n"))),
@@ -282,27 +272,49 @@ describe("stdinLayer", () => {
   });
 });
 
+const killOnTimeout =
+  (child: ChildProcessSpawner.ChildProcessHandle, stderr: Fiber.Fiber<string, PlatformError>) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    self.pipe(
+      Effect.timeout("20 seconds"),
+      Effect.catchTag("TimeoutError", () =>
+        child.kill().pipe(
+          Effect.andThen(Fiber.join(stderr)),
+          Effect.flatMap((text) => Effect.die(new Error(`child timed out: ${text}`))),
+        ),
+      ),
+    );
+
 describe("stdinLayer over fd 0", () => {
-  it("waits out a non-blocking fd 0 until the answer lands", async () => {
-    // A parent that hands fd 0 down in non-blocking mode: perl flips `O_NONBLOCK` on the pipe
-    // (Bun cannot), confirms the mode on stderr and execs the reader. The first prompt finds
-    // the pipe empty and must run out its window to None instead of taking the empty read as a
-    // dead descriptor; the second must read the answer written once that window has closed.
-    const bun = Bun.which("bun");
-    const perl = Bun.which("perl");
-    if (!bun || !perl) throw new Error("bun and perl executables not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const child = Bun.spawn(
-      [
-        perl,
-        "-e",
-        `use Fcntl;
+  it.live(
+    "waits out a non-blocking fd 0 until the answer lands",
+    () =>
+      Effect.gen(function* () {
+        // perl flips `O_NONBLOCK` on stdin (Bun cannot) and execs into the reader
+        // so fd 0 stays non-blocking. The first prompt must run its window out to
+        // None rather than treat the empty read as a dead descriptor; the second
+        // reads the answer once that window closes.
+        const bun = Bun.which("bun");
+        const perl = Bun.which("perl");
+        if (!bun || !perl) {
+          return yield* Effect.die(new Error("bun and perl executables not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            perl,
+            [
+              "-e",
+              `use Fcntl;
          fcntl(STDIN, F_SETFL, O_NONBLOCK) or die "fcntl: $!";
          print STDERR ((fcntl(STDIN, F_GETFL, 0) & O_NONBLOCK) ? "nonblock\\n" : "block\\n");
          exec @ARGV or die "exec: $!";`,
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+              bun,
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -314,52 +326,70 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      { cwd: import.meta.dirname, stdin: "pipe", stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const stdout = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
-    let buffered = "";
-    const nextLine = async () => {
-      while (!buffered.includes("\n")) {
-        const { value, done } = await stdout.read();
-        if (done) throw new Error(`child exited early: ${await new Response(child.stderr).text()}`);
-        buffered += value;
-      }
-      const [line, ...rest] = buffered.split("\n");
-      buffered = rest.join("\n");
-      return line;
-    };
-    try {
-      expect(await nextLine()).toBe("<none>");
-      await child.stdin.write("y\n");
-      await child.stdin.flush();
-      expect(await nextLine()).toBe("y");
-      await child.stdin.end();
-      const [exitCode, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stderr).text(),
-      ]);
-      expect(exitCode, stderr).toBe(0);
-      expect(stderr).toContain("nonblock");
-    } finally {
-      // A failed assertion must not leave the child waiting on its second prompt.
-      child.kill();
-    }
-  }, 30_000);
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.fromQueue(input),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          ),
+        );
+        const lines = yield* Stream.toQueue(Stream.splitLines(Stream.decodeText(child.stdout)), {
+          capacity: "unbounded",
+        });
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        const nextLine = Queue.take(lines).pipe(
+          Effect.catchTag("Done", () =>
+            Fiber.join(stderrFiber).pipe(
+              Effect.flatMap((stderr) => Effect.die(new Error(`child exited early: ${stderr}`))),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          expect(yield* nextLine).toBe("<none>");
+          yield* Queue.offer(input, enc("y\n"));
+          expect(yield* nextLine).toBe("y");
+          yield* Queue.end(input);
+          const [exitCode, stderr] = yield* Effect.all([child.exitCode, Fiber.join(stderrFiber)], {
+            concurrency: "unbounded",
+          });
+          expect(exitCode, stderr).toBe(0);
+          expect(stderr).toContain("nonblock");
+        }).pipe(killOnTimeout(child, stderrFiber));
+      }).pipe(
+        // A failed assertion must not leave the child waiting on its second prompt.
+        Effect.scoped,
+        Effect.provide(BunServices.layer),
+      ),
+    30_000,
+  );
 
-  it("answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0", async () => {
-    // The production adapter in a real process: 2 MiB of lines are piped in, three prompts
-    // take the first three, then a child inheriting fd 0 counts what is left in the pipe.
-    // A reader that drained stdin would leave it nothing; this one reads a chunk ahead.
-    const bun = Bun.which("bun");
-    if (!bun) throw new Error("Bun executable not found");
-    const here = (file: string) => JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
-    const payload = enc(Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""));
-    const child = Bun.spawn(
-      [
-        bun,
-        "-e",
-        `import { Effect, Layer, Option } from "effect";
+  it.live(
+    "answers prompts from a flooded pipe and leaves the rest for a child inheriting fd 0",
+    () =>
+      Effect.gen(function* () {
+        // 2 MiB of lines piped in; three prompts take the first three, then a
+        // child inheriting fd 0 counts what's left. A reader that fully drained
+        // stdin would leave it nothing.
+        const bun = Bun.which("bun");
+        if (!bun) {
+          return yield* Effect.die(new Error("Bun executable not found"));
+        }
+        const here = (file: string) =>
+          JSON.stringify(fileURLToPath(new URL(file, import.meta.url)));
+        const payload = enc(
+          Array.from({ length: 200_000 }, (_, index) => `line-${index}\n`).join(""),
+        );
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            bun,
+            [
+              "-e",
+              `import { Effect, Layer, Option } from "effect";
          import { Stdin } from ${here("./stdin.service.ts")};
          import { stdinLayer } from ${here("./stdin.layer.ts")};
          import { ttyLayer } from ${here("./tty.layer.ts")};
@@ -379,19 +409,33 @@ describe("stdinLayer over fd 0", () => {
          Effect.runPromise(program.pipe(Effect.provide(stdinLayer.pipe(Layer.provide(ttyLayer))))).then(
            () => process.exit(0),
          );`,
-      ],
-      // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
-      // vitest's 30 s guard, so the failure still carries its stderr.
-      { cwd: import.meta.dirname, stdin: payload, stdout: "pipe", stderr: "pipe", timeout: 20_000 },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode, stderr).toBe(0);
-    const [answers, left] = stdout.trim().split("\n");
-    expect(answers).toBe("line-0 line-1 line-2");
-    expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
-  }, 30_000);
+            ],
+            {
+              cwd: import.meta.dirname,
+              stdin: Stream.make(payload),
+              stdout: "pipe",
+              stderr: "pipe",
+            },
+          ),
+        );
+        const stderrFiber = yield* Effect.forkChild(
+          Stream.mkString(Stream.decodeText(child.stderr)),
+        );
+        // Prompts give up after 3 x 5 s; a child that hangs anyway is killed at 20 s, ahead of
+        // vitest's 30 s guard, so the failure still carries its stderr.
+        const [exitCode, stdout, stderr] = yield* Effect.all(
+          [
+            child.exitCode,
+            Stream.mkString(Stream.decodeText(child.stdout)),
+            Fiber.join(stderrFiber),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(killOnTimeout(child, stderrFiber));
+        expect(exitCode, stderr).toBe(0);
+        const [answers, left] = stdout.trim().split("\n");
+        expect(answers).toBe("line-0 line-1 line-2");
+        expect(payload.length - Number(left)).toBeLessThanOrEqual(256 * 1024);
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    30_000,
+  );
 });

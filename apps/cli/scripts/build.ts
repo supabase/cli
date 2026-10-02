@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -14,7 +15,7 @@ const MUSL_TARGETS = [
     nfpmArch: "arm64",
   },
   {
-    bunTarget: "bun-linux-x64-musl-baseline",
+    bunTarget: "bun-linux-x64-baseline-musl",
     pkg: "cli-linux-x64-musl",
     nfpmArch: "amd64",
   },
@@ -86,13 +87,15 @@ const TARGETS = [
 const entrypoint = path.join(root, "apps/cli/src/main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
-const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
-)}`;
-const posthogBuildDefines = [
-  `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
-  `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
-] as const;
+const buildDefines = {
+  ...(await stackReleaseDefine()),
+  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+  SUPABASE_CLI_POSTHOG_KEY: JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
+  SUPABASE_CLI_POSTHOG_HOST: JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
+  // Skips msgpackr's startup probe for its native addon at the build host's store path, which
+  // on macOS goes through the automounter and can hang every command (supabase/cli#6771).
+  "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
+};
 
 type BunTarget = (typeof TARGETS)[number]["bunTarget"];
 
@@ -107,22 +110,14 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
 
 type SignMode = "adhoc" | "off";
 
-function libcForBunTarget(target: string): "glibc" | "musl" | "" {
-  if (!target.startsWith("bun-linux-")) {
-    return "";
-  }
-  return target.includes("-musl") ? "musl" : "glibc";
-}
-
-async function runBunBuild(args: ReadonlyArray<string>) {
-  const child = Bun.spawn({
-    cmd: ["bun", ...args],
-    stdout: "inherit",
-    stderr: "inherit",
+async function runBunBuild(config: Bun.BuildConfig) {
+  const result = await Bun.build({
+    ...config,
+    ...compileOptions,
+    plugins: config.plugins ?? [],
   });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    throw new Error(`bun build failed with exit code ${exitCode}`);
+  for (const log of result.logs) {
+    console.warn(log);
   }
 }
 
@@ -131,21 +126,16 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   await mkdir(binDir, { recursive: true });
 
   const outfile = path.join(binDir, `supabase${target.ext}`);
-  const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await runBunBuild([
-    "build",
-    entrypoint,
-    "--compile",
-    "--minify",
-    `--target=${target.bunTarget}`,
-    `--define=SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
-    `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
-    serveMainTemplateDefine,
-    ...posthogBuildDefines,
-    `--outfile=${outfile}`,
-  ]);
+  await runBunBuild({
+    entrypoints: [entrypoint],
+    compile: { target: target.bunTarget, outfile },
+    define: {
+      ...buildDefines,
+      SUPABASE_CLI_VERSION: JSON.stringify(version),
+    },
+  });
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -181,13 +171,9 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
 }
 
 /**
- * Decide how to sign the macOS binaries.
- *
- * `rcodesign` (the apple-codesign project) signs Mach-O binaries from Linux,
- * so signing happens inline on the existing build runner. Release CI installs
- * it and sets SUPABASE_CLI_REQUIRE_SIGNING=1 so a missing tool fails the build;
- * local builds without rcodesign degrade to "off" with a warning so
- * contributors can still produce (unsigned) binaries.
+ * Decides how to sign macOS binaries. `rcodesign` signs Mach-O binaries from Linux, so signing
+ * runs inline on this build runner; falls back to "off" with a warning unless
+ * SUPABASE_CLI_REQUIRE_SIGNING=1, which fails the build when the tool is missing.
  */
 function resolveSignMode(): SignMode {
   if (Bun.which("rcodesign")) {
@@ -224,15 +210,12 @@ async function signDarwinBinaries(mode: SignMode) {
       const identifier = MACOS_IDENTIFIERS[binary];
 
       console.log(`[${target.pkg}] Ad-hoc signing ${binary} (${identifier})...`);
-      // No key material => rcodesign emits a complete ad-hoc signature
-      // (CodeDirectory + RequirementSet + empty CMS), equivalent to
-      // `codesign --sign -`, replacing Bun/Go's linker-signed signature.
+      // No key material, so rcodesign produces an ad-hoc signature, equivalent to
+      // `codesign --sign -`, replacing Bun/Go's linker-signed one.
       await $`rcodesign sign --binary-identifier ${identifier} ${binPath}`;
 
-      // Linux-side verification that runs on every build: the signature must
-      // carry exactly our identifier (matched on the whole value, so the SFE's
-      // `com.supabase.cli` can't satisfy the sidecar's `com.supabase.cli-go`)
-      // and must no longer be linker-signed.
+      // Matches the identifier's whole value, so the SFE's `com.supabase.cli` can't satisfy
+      // the sidecar's `com.supabase.cli-go`, and confirms the signature is no longer linker-signed.
       const info = await $`rcodesign print-signature-info ${binPath}`.text();
       const signedIdentifier = info.match(/^\s*identifier:\s*(\S+)\s*$/m)?.[1];
       if (signedIdentifier !== identifier) {
@@ -260,9 +243,8 @@ async function archiveTarget(target: (typeof TARGETS)[number]) {
     ];
     await $`zip -j ${archivePath} ${files}`;
 
-    // setup-cli and other download clients always fetch a .tar.gz, including on
-    // Windows where tc.extractTar handles the archive. Publish a matching
-    // tar.gz alongside the .zip so those clients keep working. See #5257.
+    // setup-cli and other download clients always fetch a .tar.gz, even on Windows, so
+    // publish one alongside the .zip. See #5257.
     const tarArchive = target.archive.replace(/\.zip$/, ".tar.gz");
     const tarArchivePath = path.join(distDir, tarArchive);
     const tarFiles = [`supabase${target.ext}`, `supabase-go${target.ext}`];
@@ -281,24 +263,18 @@ async function buildMuslBinaries() {
       await mkdir(binDir, { recursive: true });
 
       const outfile = path.join(binDir, "supabase");
-      const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await runBunBuild([
-        "build",
-        entrypoint,
-        "--compile",
-        "--minify",
-        `--target=${target.bunTarget}`,
-        `--define=SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
-        `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
-        serveMainTemplateDefine,
-        ...posthogBuildDefines,
-        `--outfile=${outfile}`,
-      ]);
+      await runBunBuild({
+        entrypoints: [entrypoint],
+        compile: { target: target.bunTarget, outfile },
+        define: {
+          ...buildDefines,
+          SUPABASE_CLI_VERSION: JSON.stringify(version),
+        },
+      });
 
-      // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
-      // musl too. Copy it from the matching glibc package so the published musl npm
-      // package contains the supabase-go binary that GoProxy resolves to.
+      // The Go binary is fully static (CGO_ENABLED=0), so the glibc build works on musl too;
+      // copy it into the musl package so GoProxy finds supabase-go there.
       const glibcTarget = TARGETS.find(
         (candidate) => "nfpmArch" in candidate && candidate.nfpmArch === target.nfpmArch,
       );
@@ -329,9 +305,8 @@ async function buildLinuxPackages(version: string) {
       const outPath = path.join(distDir, outFile);
       const binDir = fmt === "apk" ? muslBinDir : glibcBinDir;
 
-      // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
-      // musl too. For apk (musl), binDir is muslBinDir for the TS binary but we still
-      // reference supabase-go from the glibc dir where it was built.
+      // The Go binary is fully static, so apk (musl) still references supabase-go
+      // from the glibc dir where it was built.
       const contents: Array<{ src: string; dst: string }> = [
         { src: path.join(binDir, "supabase"), dst: "/usr/bin/supabase" },
         { src: path.join(glibcBinDir, "supabase-go"), dst: "/usr/bin/supabase-go" },
@@ -408,9 +383,8 @@ await Promise.all(TARGETS.map(buildTarget));
 console.log("\nCompiling Go CLI for all targets...");
 await Promise.all(TARGETS.map(buildGoTarget));
 
-// Sign macOS binaries before archiving so every channel (npm platform
-// packages, Homebrew, GitHub Release archives, checksums) ships the signed
-// bytes. Must run before archiveTarget / buildLinuxPackages / generateChecksums.
+// Must run before archiveTarget / buildLinuxPackages / generateChecksums so every
+// distribution channel ships the signed bytes.
 const signMode = resolveSignMode();
 console.log(`\nSigning macOS binaries (mode: ${signMode})...`);
 await signDarwinBinaries(signMode);

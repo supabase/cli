@@ -1,14 +1,10 @@
 /**
- * PostgreSQL statement splitter, ported 1:1 from `pkg/parser`
- * (`token.go` + `state.go`). A finite-state machine tracks string literals
- * (`'…'`, `"…"`), line/block comments, dollar-quoted bodies (`$tag$…$tag$`),
- * backslash escapes, and `BEGIN ATOMIC … END` / parenthesised bodies, so a `;`
- * inside any of those is not mistaken for a statement separator. This matters
- * for declarative diffs, which contain `CREATE FUNCTION` bodies full of `;`.
+ * PostgreSQL statement splitter. A finite-state machine tracks string literals, comments,
+ * dollar-quoted bodies (`$tag$…$tag$`), backslash escapes, and `BEGIN ATOMIC … END`/
+ * parenthesised bodies, so a `;` inside any of those isn't mistaken for a statement
+ * separator — this matters for declarative diffs, whose `CREATE FUNCTION` bodies are full of `;`.
  *
- * Operates on Unicode code points (JS strings) rather than raw bytes; the ASCII
- * delimiters are described as slash-star, star-slash, semicolon, quotes, and
- * dollar signs; suffix comparison is identical to Go's byte-window logic.
+ * Operates on Unicode code points (JS strings), not raw bytes.
  */
 
 interface State {
@@ -19,31 +15,85 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): Go's
-// `unicode.IsDigit` — what `isIdentifierRune`/`TagState.next` port — is an alias for
-// category `Nd` alone, so it rejects `No`/`Nl` runes like superscript-2 (`²`) that
-// `\p{N}` would wrongly accept as a valid identifier/dollar-tag character.
-const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
+// PostgreSQL's scan.l treats every code point at or above 0x80 as an identifier/dollar-tag
+// character (`ident_cont`/`dolq_cont`), whatever its Unicode category.
+const isIdentifierRune = (rune: string): boolean => {
+  const codePoint = rune.codePointAt(0);
+  return codePoint !== undefined && (codePoint >= 0x80 || /[A-Za-z0-9_$]/u.test(rune));
+};
+
+// A code point spans at most two UTF-16 units, so the last one before `offset` lies within
+// the preceding two.
+const hasIdentifierRuneBefore = (data: string, offset: number): boolean => {
+  if (offset <= 0) return false;
+  const rune = Array.from(data.slice(Math.max(0, offset - 2), offset)).at(-1);
+  return rune !== undefined && isIdentifierRune(rune);
+};
+
+const asciiUpper = (text: string): string => text.replace(/[a-z]/g, (c) => c.toUpperCase());
+
+function endsWithKeyword(data: string, keyword: string): boolean {
+  const offset = data.length - keyword.length;
+  if (offset < 0 || asciiUpper(data.slice(offset)) !== keyword) return false;
+  return !hasIdentifierRuneBefore(data, offset);
+}
+
+const isSqlWhitespace = (rune: string): boolean => " \t\n\r\f\v".includes(rune);
+
+// scan.l `newline`: a `--` comment ends at either.
+const isNewline = (rune: string): boolean => rune === "\n" || rune === "\r";
 
 function isBeginAtomic(data: string): boolean {
-  let offset = data.length - BEGIN_ATOMIC.length;
-  if (offset < 0 || data.slice(offset).toUpperCase() !== BEGIN_ATOMIC) return false;
-  if (offset > 0 && isIdentifierRune(data[offset - 1]!)) return false;
-  const prefix = data.slice(0, offset).replace(/\s+$/u, "");
-  offset = prefix.length - "BEGIN".length;
-  if (offset < 0 || prefix.slice(offset).toUpperCase() !== "BEGIN") return false;
-  if (offset === 0) return true;
-  return !isIdentifierRune(prefix[offset - 1]!);
+  if (!endsWithKeyword(data, BEGIN_ATOMIC)) return false;
+  let end = data.length - BEGIN_ATOMIC.length;
+  while (end > 0 && isSqlWhitespace(data[end - 1]!)) end -= 1;
+  return endsWithKeyword(data.slice(0, end), "BEGIN");
+}
+
+function isCommentsAndWhitespace(text: string): boolean {
+  let i = 0;
+  while (i < text.length) {
+    if (isSqlWhitespace(text[i]!)) {
+      i += 1;
+    } else if (text.startsWith("--", i)) {
+      const newline = text.slice(i + 2).search(/[\n\r]/u);
+      if (newline === -1) return true;
+      i += newline + 3;
+    } else if (text.startsWith("/*", i)) {
+      // Match `BlockState`'s sliding-window scan so both agree on overlapping delimiters.
+      let depth = 1;
+      i += 2;
+      while (i < text.length && depth > 0) {
+        const window = text.slice(i - 1, i + 1);
+        if (window === "/*") depth += 1;
+        else if (window === "*/") depth -= 1;
+        i += 1;
+      }
+      if (depth > 0) return true;
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 class ReadyState implements State {
   next(rune: string, data: string): State | null {
     switch (rune) {
-      case "$":
-        return new TagState(data.length - rune.length);
+      case "$": {
+        // A `$` after an identifier rune continues the identifier (`pending$$foo$`), not a
+        // dollar quote. A digit counts too (`1$$`), unlike PostgreSQL; valid SQL never has that.
+        const offset = data.length - rune.length;
+        if (hasIdentifierRuneBefore(data, offset)) return this;
+        return new TagState(offset);
+      }
       case "'":
+        // `E'…'` is an escape string constant only when the `E` starts a token (scan.l
+        // `xestart`); in `type'…'` it ends an identifier. A digit or `$` before the `E`
+        // counts as one too, unlike PostgreSQL; valid SQL never has that.
+        return new QuoteState(rune, endsWithKeyword(data.slice(0, -1), "E"));
       case '"':
-        return new QuoteState(rune);
+        return new QuoteState(rune, false);
       case "-":
         return new CommentState();
       case "/":
@@ -53,10 +103,10 @@ class ReadyState implements State {
       case ";":
         return null;
       case "(":
-        return new AtomicState(new ReadyState(), ")");
+        return new ParenState(new ReadyState());
       case "c":
       case "C":
-        if (isBeginAtomic(data)) return new AtomicState(new ReadyState(), END_ATOMIC);
+        if (isBeginAtomic(data)) return new AtomicState(new ReadyState(), data.length);
         return this;
       default:
         return this;
@@ -66,9 +116,14 @@ class ReadyState implements State {
 
 class CommentState implements State {
   next(rune: string, data: string): State | null {
-    // A line comment escapes nothing until the newline — same shape as a dollar quote.
-    if (rune === "-") return new DollarState("\n");
+    if (rune === "-") return new LineCommentState();
     return new ReadyState().next(rune, data);
+  }
+}
+
+class LineCommentState implements State {
+  next(rune: string): State {
+    return isNewline(rune) ? new ReadyState() : this;
   }
 }
 
@@ -91,7 +146,11 @@ class BlockState implements State {
 
 class QuoteState implements State {
   private escape = false;
-  constructor(private readonly delimiter: string) {}
+  private backslash = false;
+  constructor(
+    private readonly delimiter: string,
+    private readonly backslashEscapes: boolean,
+  ) {}
   next(rune: string, data: string): State | null {
     if (this.escape) {
       // Preserve a doubled quote ('' or "").
@@ -99,10 +158,48 @@ class QuoteState implements State {
         this.escape = false;
         return this;
       }
+      if (this.backslashEscapes) return new QuoteContinueState().next(rune, data);
       return new ReadyState().next(rune, data);
+    }
+    if (this.backslash) {
+      // Preserve the rune after a backslash (\' or \\).
+      this.backslash = false;
+      return this;
+    }
+    if (this.backslashEscapes && rune === "\\") {
+      this.backslash = true;
+      return this;
     }
     if (rune === this.delimiter) this.escape = true;
     return this;
+  }
+}
+
+// After an escape string's closing quote, whitespace holding a newline and then a quote
+// continues the same literal (scan.l `quotecontinue`); `--` comments count as whitespace.
+class QuoteContinueState implements State {
+  private newline = false;
+  private dashes = 0;
+  next(rune: string, data: string): State | null {
+    if (this.dashes === 2) {
+      if (isNewline(rune)) {
+        this.dashes = 0;
+        this.newline = true;
+      }
+      return this;
+    }
+    if (rune === "-") {
+      this.dashes += 1;
+      return this;
+    }
+    if (this.dashes === 0) {
+      if (isSqlWhitespace(rune)) {
+        this.newline ||= isNewline(rune);
+        return this;
+      }
+      if (this.newline && rune === "'") return new QuoteState(rune, true);
+    }
+    return new ReadyState().next(rune, data);
   }
 }
 
@@ -118,9 +215,7 @@ class TagState implements State {
   constructor(private readonly offset: number) {}
   next(rune: string, data: string): State | null {
     if (rune === "$") return new DollarState(data.slice(this.offset));
-    // Valid dollar-tag characters — see `isIdentifierRune`'s comment on why `\p{Nd}`,
-    // not `\p{N}`.
-    if (/[\p{L}\p{Nd}_]/u.test(rune)) return this;
+    if (isIdentifierRune(rune)) return this;
     return new ReadyState().next(rune, data);
   }
 }
@@ -131,30 +226,63 @@ class EscapeState implements State {
   }
 }
 
+class ParenState implements State {
+  constructor(private prev: State) {}
+  next(rune: string, data: string): State | null {
+    const curr = this.prev.next(rune, data);
+    if (curr === null) {
+      this.prev = new ReadyState();
+      return this;
+    }
+    this.prev = curr;
+    if (!(this.prev instanceof ReadyState)) return this;
+    return rune === ")" ? new ReadyState() : this;
+  }
+}
+
 class AtomicState implements State {
+  private pendingEnd = false;
+  private statementStart: number;
+  private statementHasContent = false;
   constructor(
     private prev: State,
-    private readonly delimiter: string,
-  ) {}
+    start: number,
+  ) {
+    this.statementStart = start;
+  }
   next(rune: string, data: string): State | null {
-    // A delimiter inside a nested quote/comment doesn't count.
+    const pendingEnd = this.pendingEnd;
+    this.pendingEnd = false;
+    if (pendingEnd && !isIdentifierRune(rune)) return new ReadyState().next(rune, data);
+    // An `END` inside a nested quote/comment doesn't count.
     const curr = this.prev.next(rune, data);
-    if (curr !== null) this.prev = curr;
-    if (this.prev instanceof ReadyState) {
-      const window = data.slice(-this.delimiter.length);
-      if (window.toUpperCase() === this.delimiter.toUpperCase()) return new ReadyState();
+    if (curr === null) {
+      this.prev = new ReadyState();
+      this.statementStart = data.length;
+      this.statementHasContent = false;
+      return this;
+    }
+    this.prev = curr;
+    if (!(this.prev instanceof ReadyState)) return this;
+    // PostgreSQL requires each inner statement to end with `;`, so the closing `END` is
+    // always the first token of a statement; a later `END` is expression text.
+    if (!this.statementHasContent && endsWithKeyword(data, END_ATOMIC)) {
+      if (
+        isCommentsAndWhitespace(data.slice(this.statementStart, data.length - END_ATOMIC.length))
+      ) {
+        this.pendingEnd = true;
+      } else {
+        this.statementHasContent = true;
+      }
     }
     return this;
   }
 }
 
 /**
- * One raw token from {@link splitRaw}. `terminated` is `false` only for a
- * trailing statement emitted at EOF with no closing delimiter (the
- * `acc.length > 0` fallback below) — every other token was emitted because the
- * FSM itself found a boundary (a bare `;` in `ReadyState`, or `AtomicState`
- * closing). Only ever `false` on the LAST element `splitRaw` returns, since
- * that fallback fires at most once, after the main loop.
+ * One raw token from {@link splitRaw}. `terminated` is `false` only for a trailing
+ * statement emitted at EOF with no closing delimiter — the FSM found a boundary for every
+ * other token. Only ever `false` on the last element `splitRaw` returns.
  */
 interface RawToken {
   readonly text: string;
@@ -165,26 +293,31 @@ interface RawToken {
 function splitRaw(sql: string): RawToken[] {
   let state: State = new ReadyState();
   const tokens: RawToken[] = [];
-  let acc = "";
-  for (const rune of Array.from(sql)) {
-    acc += rune;
-    const next = state.next(rune, acc);
+  // Slice each token from `sql` instead of growing it with `+=`: states read the token's tail every
+  // rune, which would rebuild the whole string each time and go quadratic on large tokens. `data`
+  // starts at the token, so offsets held by states are token-relative.
+  let start = 0;
+  let end = 0;
+  for (const rune of sql) {
+    end += rune.length;
+    const data = sql.slice(start, end);
+    const next = state.next(rune, data);
     if (next === null) {
-      tokens.push({ text: acc, terminated: true });
-      acc = "";
+      tokens.push({ text: data, terminated: true });
+      start = end;
       state = new ReadyState();
     } else {
       state = next;
     }
   }
   // Trailing non-terminated statement at EOF.
-  if (acc.length > 0) tokens.push({ text: acc, terminated: false });
+  if (end > start) tokens.push({ text: sql.slice(start), terminated: false });
   return tokens;
 }
 
 /**
- * Splits `sql` into raw statements (comments/whitespace preserved), then applies
- * the optional transforms to each. Mirrors `parser.Split`.
+ * Splits `sql` into raw statements (comments/whitespace preserved), then applies the
+ * optional transforms to each.
  */
 export function splitSql(
   sql: string,
@@ -199,57 +332,36 @@ export function splitSql(
   return statements;
 }
 
-/** `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
+/** Per-token transform: trim trailing `;` then surrounding whitespace. */
 const trimStatement = (token: string): string => token.replace(/;+$/u, "").trim();
 
-/** Mirrors `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
+/** Trims trailing `;` then surrounding whitespace from each statement. */
 export function splitAndTrim(sql: string): string[] {
   return splitSql(sql, trimStatement);
 }
 
-/** One statement, paired with both its RAW and trimmed forms. */
+/** One statement, paired with both its raw and trimmed forms. */
 export interface SplitSqlToken {
   /** The exact text `splitSql(sql)` (no transforms) would emit for this statement. */
   readonly raw: string;
   /** `trimStatement(raw)` — what `splitAndTrim` emits, including when empty. */
   readonly trimmed: string;
   /**
-   * `false` only for a trailing statement with no closing delimiter, emitted at
-   * real EOF (`splitRaw`'s `acc.length > 0` fallback) — see {@link RawToken}.
-   * `checkScannerBufferSize` (`migration-apply.ts`) needs this to decide
-   * `>` vs `>=` against the effective buffer limit: `bufio.Scanner` can
-   * only apply its too-long check (`len(s.buf) >= s.maxTokenSize`) once it has
-   * given up looking for a delimiter and still needs more data — for a
-   * delimiter-terminated token the delimiter is found (and the token emitted)
-   * in the SAME `Scan()` call that fills the buffer to capacity, before that
-   * check is ever reached, so a token exactly AT the limit still succeeds. An
-   * unterminated trailing token has no delimiter to find: once the buffer
-   * fills to the effective limit without one, the too-long check fires
-   * immediately — there's never a chance to attempt the extra `Read()` that would
-   * reveal real EOF and let the split function emit the trailing token
-   * instead. Verified empirically against `pkg/parser.Split`: a
-   * single terminated statement of exactly `maxbuf` bytes always succeeds,
-   * while an unterminated one of exactly `maxbuf` bytes always fails with
-   * `bufio.ErrTooLong` (one byte under still succeeds; one byte over always
-   * fails either way).
+   * `false` only for a trailing statement with no closing delimiter, emitted at real EOF —
+   * see {@link RawToken}. `checkScannerBufferSize` needs this to decide `>` vs `>=` against
+   * the effective buffer limit: a delimiter-terminated token exactly at the limit still
+   * succeeds (the delimiter is found before the too-long check is reached), while an
+   * unterminated one exactly at the limit always fails.
    */
   readonly terminated: boolean;
 }
 
 /**
- * Same FSM traversal as {@link splitAndTrim}, but pairs each statement's RAW
- * (pre-trim) text with its trimmed form instead of discarding the raw text once
- * emitted. `bufio.Scanner`-based `parser.Split`
- * enforces `SUPABASE_SCANNER_BUFFER_SIZE` against the untransformed
- * `scanner.Text()` — the RAW form — and its `bufio.ErrTooLong` message reports
- * that same raw text for the LAST successfully scanned statement, so a caller
- * replicating that check (`migration-apply.ts`'s `execMigrationBatch`)
- * needs both forms, not just the trimmed one `splitAndTrim` returns.
+ * Same FSM traversal as {@link splitAndTrim}, but pairs each statement's raw (pre-trim) text
+ * with its trimmed form, since `SUPABASE_SCANNER_BUFFER_SIZE` enforcement needs the raw form.
  *
- * Unlike `splitSql`/`splitAndTrim`, this does NOT drop a statement
- * whose trimmed form is empty — callers that replicate `len(stats)` counter
- * (which only increments for a non-empty trimmed statement) need to see every raw
- * token, including the ones `splitAndTrim` itself would filter out.
+ * Unlike `splitSql`/`splitAndTrim`, this does not drop a statement whose trimmed form is
+ * empty, so callers counting only non-empty trimmed statements still see every raw token.
  */
 export function splitSqlTokens(sql: string): ReadonlyArray<SplitSqlToken> {
   return splitRaw(sql).map(({ text: raw, terminated }) => ({
@@ -259,13 +371,12 @@ export function splitSqlTokens(sql: string): ReadonlyArray<SplitSqlToken> {
   }));
 }
 
-// `(?i)drop\s+` — `dropStatementPattern`.
+// Case-insensitive: matches "drop" followed by whitespace.
 const DROP_STATEMENT_PATTERN = /drop\s+/i;
 
 /**
- * Extracts DROP statements from a schema diff for the safety warning shown by
- * `db diff` / `db pull` / declarative `sync`. Mirrors `findDropStatements`:
- * split the SQL into statements, then keep those matching `(?i)drop\s+`.
+ * Extracts DROP statements from a schema diff for the safety warning shown by `db diff`,
+ * `db pull`, and declarative `sync`.
  */
 export function findDropStatements(sql: string): ReadonlyArray<string> {
   return splitAndTrim(sql).filter((statement) => DROP_STATEMENT_PATTERN.test(statement));

@@ -1,37 +1,19 @@
 /**
- * Per-service identity catalog for the local dev stack — the single source of
- * truth `start` and `status` both read so they can never drift on container
- * name suffixes or `--exclude` keys.
+ * Per-service identity catalog for the local dev stack — the single source of truth `start`
+ * and `status` share, so container name suffixes and `--exclude` keys never drift between them.
  *
- * `containerSuffix` matches the suffix strings `serviceContainerIds`/
- * `localDbContainerId` feed into `serviceContainerName` (`docker-ids.ts`)
- * — cross-check by exact string, not by array position, since that function's
- * array order (Go's `utils.GetDockerIds()`, `apps/cli-go/internal/utils/config.go:82-98`)
- * differs from this catalog's order.
- *
- * `excludeKey` matches `utils.ShortContainerImageName(image)` for each of
- * `config.Images.Services()` (`apps/cli-go/pkg/config/constants.go:60-76`) — the
- * value Go's `--exclude` flag matches against. Go's own `ExcludableContainers()`
- * (formerly `apps/cli-go/internal/start/start.go:1297-1303`) was deleted along
- * with the rest of `internal/start` as unreachable (CLI-1966; last present at
- * commit a253ccba2) — the equivalent logic now lives inline in
- * `apps/cli-go/cmd/start.go`'s `excludableContainers()`. Postgres has no
- * `excludeKey` — it is never excludable in Go.
- *
- * Array order matches Go's actual container start sequence (formerly
- * `apps/cli-go/internal/start/start.go`'s "Start <service>" comments, lines
- * 293-1267, deleted in CLI-1966; last present at commit a253ccba2): Postgres,
- * then each service's `if` block in file order. `startOrder` (1-14) mirrors
- * that same order as an explicit field.
+ * `containerSuffix` matches a suffix string exactly (cross-check by string, not array
+ * position). Postgres has no `excludeKey` (never excludable). `startOrder` (1-14) matches the
+ * container start sequence.
  */
 export interface ServiceCatalogEntry {
   /** Stable service key, independent of both the container suffix and the exclude key. */
   readonly service: string;
   /** Matches a `serviceContainerIds`/`localDbContainerId` suffix string exactly. */
   readonly containerSuffix: string;
-  /** `--exclude` key (`utils.ShortContainerImageName`). Absent for Postgres — never excludable. */
+  /** `--exclude` key. Absent for Postgres — never excludable. */
   readonly excludeKey?: string;
-  /** 1-14, matching Go's real container start sequence in the now-deleted `internal/start/start.go` (CLI-1966; last present at commit a253ccba2). */
+  /** 1-14, matching the container start sequence. */
   readonly startOrder: number;
 }
 

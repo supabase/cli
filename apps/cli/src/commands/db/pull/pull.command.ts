@@ -96,9 +96,7 @@ export const dbPullCommand = Command.make("pull", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // Not on the established `--project-ref` safeFlags allowlist, so it stays redacted.
         aliases: { s: "schema", p: "password" },
         config,
       }),

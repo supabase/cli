@@ -4,7 +4,7 @@ import {
   type V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -21,8 +21,8 @@ import {
 import { networkRestrictionsUpdateDbAllowCidrFlag } from "./update.command.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
 
-// Runs the real `--db-allow-cidr` flag pipeline (pflag StringSlice CSV parity —
-// `cmd/restrictions.go:40`) so these scenarios cover raw CLI values → request body.
+// Runs the real --db-allow-cidr flag pipeline so these scenarios cover raw CLI values
+// through to the request body.
 const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
   networkRestrictionsUpdateDbAllowCidrFlag
     .parse({ flags: { "db-allow-cidr": rawValues }, arguments: [] })
@@ -247,7 +247,7 @@ describe("network-restrictions update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse IP: notacidr");
+        expect(Cause.pretty(exit.cause)).toContain("failed to parse IP: notacidr");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -310,9 +310,9 @@ describe("network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsInvalidCidrError");
-        expect(errorJson).toContain("failed to parse IP: 12.3.4.5");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsInvalidCidrError");
+        expect(causeText).toContain("failed to parse IP: 12.3.4.5");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -328,17 +328,16 @@ describe("network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsPrivateIpError");
-        expect(errorJson).toContain("private IP provided: 10.0.0.0/8");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsPrivateIpError");
+        expect(causeText).toContain("private IP provided: 10.0.0.0/8");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
-    // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the
-    // private check because the IPv6 first-byte is 0, not 0xfc. parseCidr now
-    // reclassifies these as v4 via `net.IP.To4()` semantics; the v4 path
+    // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the private check
+    // (its IPv6 first byte is 0, not 0xfc); parseCidr reclassifies it as v4 so the v4 path
     // catches 10.0.0.0/8.
     const { layer } = setup();
     return Effect.gen(function* () {
@@ -350,9 +349,9 @@ describe("network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsPrivateIpError");
-        expect(errorJson).toContain("private IP provided: ::ffff:10.0.0.0/104");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsPrivateIpError");
+        expect(causeText).toContain("private IP provided: ::ffff:10.0.0.0/104");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -399,9 +398,9 @@ describe("network-restrictions update integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsUpdateNetworkError");
-        expect(errorJson).toContain("failed to apply network restrictions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsUpdateNetworkError");
+        expect(causeText).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -412,9 +411,9 @@ describe("network-restrictions update integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
-        expect(errorJson).toContain("failed to apply network restrictions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
+        expect(causeText).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -425,9 +424,9 @@ describe("network-restrictions update integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsUpdateNetworkError");
-        expect(errorJson).toContain("failed to apply network restrictions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsUpdateNetworkError");
+        expect(causeText).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -438,9 +437,9 @@ describe("network-restrictions update integration", () => {
       const exit = yield* Effect.exit(networkRestrictionsUpdate({ ...baseFlags, append: true }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
-        expect(errorJson).toContain("failed to apply network restrictions:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("NetworkRestrictionsUpdateUnexpectedStatusError");
+        expect(causeText).toContain("failed to apply network restrictions:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -528,7 +527,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Output modes — PATCH (cover encoders against V2 response shape)
+  // Output modes — PATCH
 
   it.live("emits a structured JSON success payload via --output-format=json after PATCH", () => {
     const { layer, out } = setup({ format: "json", patchResponse: PATCH_APPLIED });
@@ -622,7 +621,7 @@ describe("network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("InvalidProjectRefError");
+        expect(Cause.pretty(exit.cause)).toContain("InvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -641,7 +640,7 @@ describe("network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // PersistentPostRun parity (telemetry + linked-project cache)
+  // Telemetry and linked-project cache
 
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ postResponse: POST_APPLIED });

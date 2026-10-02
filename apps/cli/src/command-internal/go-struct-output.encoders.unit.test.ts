@@ -23,13 +23,12 @@ import {
 } from "./go-struct-output.encoders.ts";
 
 /**
- * Every golden byte string in this file was captured from a scratch Go
- * program calling the established `utils.EncodeOutput`
- * with BurntSushi toml v1.6.0 and
- * yaml.v3 v3.0.1 — the exact library versions pinned in the reference `go.mod`.
+ * Golden byte strings in this file were captured from a scratch Go program calling
+ * `utils.EncodeOutput`, using the same BurntSushi toml and yaml.v3 versions pinned in the
+ * reference `go.mod`.
  */
 
-// Mirror of `api.BranchResponse` (apps/cli-go/pkg/api/types.gen.go).
+// Mirrors the branch response struct.
 const BRANCH_RESPONSE = goStruct([
   ["created_at", goTime],
   ["deletion_scheduled_at", goPtr(goTime)],
@@ -131,7 +130,7 @@ WithData = true
   });
 
   it("nests sub-tables after primitives with 2-space indentation (hostnames shape)", () => {
-    // Mirror of api.UpdateCustomHostnameResponse.
+    // Mirrors the custom-hostname update response struct.
     const spec = goStruct([
       ["custom_hostname", goString],
       [
@@ -397,9 +396,6 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("quotes comma-fraction timestamp-shaped STRINGS like yaml.v3's resolver", () => {
-    // Probed on go1.26: the string field "2026-01-01T00:00:00,123Z" is
-    // double-quoted exactly like the dot form — yaml.v3 resolves timestamps
-    // through time.Parse, which accepts either separator (review r3685767963).
     const spec = goStruct([["s", goString, "S"]]);
     expect(encodeGoYaml({ s: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       's: "2026-01-01T00:00:00,123Z"\n',
@@ -407,10 +403,6 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("leaves overflowing float-shaped strings plain like yaml.v3's ParseFloat gate", () => {
-    // Probed on go1.26: resolve()'s strconv.ParseFloat ERRORS on overflow
-    // (±Inf), so the value stays string-tagged and needs no quoting; an
-    // underflowing exponent (1e-999 → 0) parses successfully and IS quoted
-    // (review r3685767974).
     const spec = goStruct([["s", goString, "S"]]);
     expect(encodeGoYaml({ s: "1e999" }, spec)).toBe("s: 1e999\n");
     expect(encodeGoYaml({ s: "-1e999" }, spec)).toBe("s: -1e999\n");
@@ -420,9 +412,6 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("wraps 19+-digit numeric key runs like Go's unchecked int64 accumulation", () => {
-    // Probed on go1.26: `keyList.Less` accumulates into `int64` without
-    // overflow checks, so `a10000000000000000000` wraps negative and sorts
-    // BEFORE `a9000000000000000000` (review r3689635556).
     const spec = goStruct([["default", goAny, "Default"]]);
     expect(
       encodeGoYaml({ default: { a9000000000000000000: 1, a10000000000000000000: 2 } }, spec),
@@ -430,9 +419,6 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("orders Unicode-digit map keys with yaml.v3's naive rune arithmetic", () => {
-    // Probed on go1.26: keyList.Less finds digit runs with unicode.IsDigit
-    // but accumulates values as `rune - '0'`, so the Arabic-Indic key `a٢`
-    // (U+0662) sorts AFTER a10, not as the number 2 (review r3685767973).
     const spec = goStruct([["default", goAny, "Default"]]);
     expect(encodeGoYaml({ default: { a٢: 1, a3: 2, a10: 3, a9: 4 } }, spec)).toBe(
       "default:\n    a3: 2\n    a9: 4\n    a10: 3\n    a٢: 1\n",
@@ -440,9 +426,6 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("normalizes Go's accepted comma fractional separator to the dot Go re-emits", () => {
-    // Probed on go1.26: `time.Time.UnmarshalJSON` parses `…00,123Z`
-    // (`commaOrPeriod`, `time/format.go`) and `json.Marshal` re-emits
-    // `…00.123Z` — the encoders must match on both output formats.
     const spec = goStruct([["t", goTime, "T"]]);
     expect(encodeGoToml({ t: "2026-01-01T00:00:00,123Z" }, spec)).toBe(
       "T = 2026-01-01T00:00:00.123Z\n",
@@ -453,8 +436,8 @@ SUPABASE_ANON_KEY = "anon"
   });
 
   it("sorts map keys by UTF-8 byte order like Go's sort.Strings", () => {
-    // Go orders U+E000/U+FF21 before the astral U+1D400/U+1F600 (UTF-8 byte
-    // order); JS `<` on UTF-16 units would sort both astral keys first.
+    // U+E000/U+FF21 sort before the astral U+1D400/U+1F600 in UTF-8 byte order; JS `<` on UTF-16
+    // units would sort both astral keys first.
     const spec = goMap(goString);
     expect(
       encodeGoToml(
@@ -803,10 +786,8 @@ z: "1"
   });
 
   it("sorts unicode map keys by rune and escapes astral keys like yaml.v3", () => {
-    // keyList.Less compares runes, so the astral U+1F600/U+1D400 sort after
-    // U+E000/U+FF21 (JS `<` on UTF-16 units would say the opposite), and the
-    // emitter double-quotes astral characters (4-byte UTF-8 is not printable
-    // to libyaml) as \U-escapes.
+    // keyList.Less compares runes, so the astral U+1F600/U+1D400 sort after U+E000/U+FF21; the
+    // emitter double-quotes astral characters as \U-escapes (not printable to libyaml).
     const spec = goMap(goString);
     expect(
       encodeGoYaml(
@@ -870,8 +851,6 @@ t12: 1900-02-29
 
   it("truncates time fractions to nanoseconds like time.Time's decoder", () => {
     const spec = goStruct([["t", goTime, "T"]]);
-    // time's `parseNanoseconds` keeps at most 9 fractional digits (truncation,
-    // not rounding), then RFC3339Nano trims trailing zeros.
     expect(encodeGoYaml({ t: "2026-01-01T00:00:00.1234567895Z" }, spec)).toBe(
       "t: 2026-01-01T00:00:00.123456789Z\n",
     );
@@ -946,8 +925,8 @@ describe("goFormatFloat", () => {
   });
 
   it("breaks exact shortest-digit ties to even like Ryu, not half-up", () => {
-    // 4249.03125 sits exactly between the two shortest 8-digit candidates;
-    // strconv keeps the even final digit both downward and upward.
+    // 4249.03125 sits exactly between the two shortest 8-digit candidates, rounding to the even
+    // final digit both ways.
     expect(goFormatFloat(4249.03125, 32)).toBe("4249.0312");
     expect(goFormatFloat(4249.09375, 32)).toBe("4249.0938");
     expect(goFormatFloat(123456789, 32)).toBe("1.2345679e+08");

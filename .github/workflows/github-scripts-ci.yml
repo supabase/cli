@@ -9,8 +9,13 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - "apps/cli/src/shared/services/Dockerfile"
+      - "apps/cli/src/shared/services/parse-dockerfile-service-images.ts"
+      - "apps/cli/src/shared/services/slim-images.ts"
+      - "packages/stack/src/Artifacts.ts"
       - ".github/workflows/ai-review.yml"
       - ".github/workflows/github-scripts-ci.yml"
+      - ".github/workflows/mirror-slim-image.yml"
 
 permissions: {}
 
@@ -46,11 +51,12 @@ jobs:
       - name: Run tests
         run: |
           set -uo pipefail
-          # The leading "./" is load-bearing: `bun test .github/scripts`
-          # (without it) silently discovers ZERO tests and still exits 0.
-          # Capture output to a file instead of piping it, so `test_exit`
-          # below is `bun test`'s own exit code, not `tee`/`grep`'s.
-          bun test ./.github/scripts > /tmp/github-scripts-test-output.txt 2>&1
+          # The root `test:github-scripts` script runs `bun test ./.github/scripts`;
+          # its leading "./" is load-bearing, since `bun test .github/scripts`
+          # silently discovers ZERO tests and still exits 0. Capture output to a
+          # file instead of piping it, so `test_exit` below is the script's own
+          # exit code, not `tee`/`grep`'s.
+          pnpm run test:github-scripts > /tmp/github-scripts-test-output.txt 2>&1
           test_exit=$?
           cat /tmp/github-scripts-test-output.txt
           if [ "$test_exit" -ne 0 ]; then

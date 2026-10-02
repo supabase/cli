@@ -7,13 +7,9 @@ import {
 } from "../shared/telemetry/error-actionability.ts";
 
 /**
- * Raised by {@link validateWorkdirIsDirectory} when the target path
- * doesn't exist or isn't a directory. Callers map this into their own
- * command-specific error type. Only reachable when the user explicitly set
- * `--workdir`/`SUPABASE_WORKDIR` to a bad path — the default walk-up
- * resolution can never fail this check (see the doc comment on
- * {@link validateWorkdirIsDirectory} below) — so the fix is always
- * "pass a different `--workdir`/`SUPABASE_WORKDIR`".
+ * Raised by {@link validateWorkdirIsDirectory} when the target path doesn't exist or isn't a
+ * directory. Only reachable when the user explicitly set `--workdir`/`SUPABASE_WORKDIR` to a bad
+ * path; the fix is always to pass a different one.
  */
 export class WorkdirValidationError extends Data.TaggedError("WorkdirValidationError")<{
   readonly message: string;
@@ -24,19 +20,12 @@ export class WorkdirValidationError extends Data.TaggedError("WorkdirValidationE
 }
 
 /**
- * Validates that `workdir` exists and is a directory, the way Go's
- * `ChangeWorkDir` implicitly does via `os.Chdir` (`apps/cli-go/internal/utils/
- * misc.go:231-250`, called from `PersistentPreRunE`, `apps/cli-go/cmd/root.go:
- * 93-105`, before any command runs): a missing path or a path that isn't a
- * directory fails immediately, before config load or any Docker/API access.
+ * Validates that `workdir` exists and is a directory, failing immediately before config load or
+ * any Docker/API access.
  *
- * Callers that resolve `workdir` via `CommandSettings` only need this check
- * when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — `command-settings.
- * layer.ts`'s default walk-up-for-`supabase/config.toml` resolution always
- * returns a real, already-existing directory (either one containing
- * `supabase/config.toml`, or the process's own `cwd`), so it can never fail
- * this check; calling it unconditionally is therefore safe and simpler than
- * threading "was this explicit?" through every caller.
+ * Only needed when `--workdir`/`SUPABASE_WORKDIR` was set explicitly — the default walk-up
+ * resolution always returns an already-existing directory, so calling this unconditionally is
+ * safe and simpler than threading "was this explicit?" through every caller.
  */
 export function validateWorkdirIsDirectory(
   workdir: string,

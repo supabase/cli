@@ -6,10 +6,16 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
+    "./defaults": "./src/Defaults.ts",
     "./testing": "./src/testing.ts",
-    "./internal/supervisor": "./src/internal/supervisor-process.ts"
+    "./commands": "./src/Commands.ts",
+    "./internal/dispatch": "./src/internal/dispatch.ts",
+    "./internal/artifacts": "./src/internal/artifacts.ts",
+    "./internal/release": "./src/internal/release.ts",
+    "./internal/test-run-label": "./src/internal/test-run-label.ts"
   },
   "scripts": {
+    "generate": "bun run scripts/generate-functions-bootstrap.ts",
     "test": "pnpm run test:unit && pnpm run test:integration",
     "test:unit": "pnpm exec turbo run @supabase/stack#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit",

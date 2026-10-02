@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Predicate } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -16,13 +16,10 @@ import {
 } from "../../../tests/helpers/command-mocks.ts";
 import { ssoCommand } from "./sso.command.ts";
 
-// All four sso domain-list flags are CSV string-slice flags, so malformed
-// CSV aborts flag parsing before the handler runs — and before
-// `managementApiRuntimeLayer`'s eager access-token resolution — with
-// an `invalid argument %q for %q flag: %v` line on stderr. These scenarios
-// run the whole command tree (`Command.runWith`) so the assertion covers
-// the real flag wiring plus the renderer's pflag passthrough
-// (`formatInvalidValueMessage`).
+// All four sso domain-list flags are CSV string-slice flags, so malformed CSV
+// aborts flag parsing — before the handler and its eager token resolution —
+// with an `invalid argument %q for %q flag: %v` line on stderr. These run
+// through the whole command tree to cover the real flag wiring and renderer.
 
 const tempRoot = useTempWorkdir("supabase-sso-string-slice-int-");
 
@@ -48,17 +45,13 @@ function setup() {
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
     // An ambient SUPABASE_ACCESS_TOKEN or keyring entry would let a
-    // hypothetical regression (parse error NOT winning) reach the real
-    // Management API layer nondeterministically. Wipe process.env and disable
-    // the keyring fallback.
+    // regression reach the real Management API layer nondeterministically.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     Layer.succeed(
       TelemetryRuntime,
       TelemetryRuntime.of({
         configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
         consent: "granted",
-        showDebug: false,
         deviceId: "test-device-id",
         sessionId: "test-session-id",
         identity: makeTelemetryIdentity(undefined),
@@ -113,9 +106,11 @@ describe("sso StringSlice flags (pflag CSV parity)", () => {
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          // Parse-time failure: the command's Management API layer (and its
-          // eager token resolution) must never have been built.
-          expect(JSON.stringify(exit.cause)).not.toContain("AccessTokenRequiredError");
+          expect(
+            exit.cause.reasons
+              .filter(Cause.isFailReason)
+              .some((reason) => Predicate.isTagged(reason.error, "AccessTokenRequiredError")),
+          ).toBe(false);
           expect(normalizeCause(exit.cause).message).toBe(message);
         }
         expect(api.requests).toHaveLength(0);

@@ -21,9 +21,6 @@ describe("linkedProjectCacheLayer", () => {
   it.live(
     "stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)",
     () => {
-      // Go runs ensureProjectGroupsCached's GET through GetSupabase()'s
-      // identityTransport, so the X-Gotrue-Id stitches the session identity — the
-      // only stitch opportunity for a password-only `--linked` run. Mirror that here.
       const workdir = mkdtempSync(join(tmpdir(), "linked-cache-"));
       const analytics = mockAnalytics();
       const api = mockCommandPlatformApi({
@@ -68,23 +65,19 @@ describe("linkedProjectCacheLayer", () => {
         Layer.provide(mockCommandSettings({ workdir })),
         Layer.provide(mockCommandCredentialsLayer),
         Layer.provide(identityStitch),
-        // The cache now also fires org/project groupIdentify (Go parity); it reads
-        // Analytics directly, so provide the same mock the stitcher uses.
+        // The cache also fires org/project groupIdentify; it reads Analytics directly, so
+        // provide the same mock the stitcher uses.
         Layer.provide(analytics.layer),
         Layer.provide(BunServices.layer),
       );
       return Effect.gen(function* () {
         const cache = yield* LinkedProjectCache;
         yield* cache.cache(VALID_REF, workdir);
-        // Identity stitched from the cache response's X-Gotrue-Id.
         expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
-        // The linked-project cache is still written.
         const written: unknown = JSON.parse(
           readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
         );
         expect((written as { ref: string }).ref).toBe(VALID_REF);
-        // Go's CacheProjectAndIdentifyGroups also publishes org + project groups on
-        // the same cache miss (telemetry/project.go:66-88).
         expect(analytics.groupIdentified).toEqual([
           {
             groupType: "organization",
@@ -103,8 +96,6 @@ describe("linkedProjectCacheLayer", () => {
   );
 
   it.live("does not re-identify groups when the linked-project cache already exists", () => {
-    // Cache hit → Go's HasLinkedProject guard returns early, so no write and no
-    // GroupIdentify. The TS `exists` early-return must match.
     const workdir = mkdtempSync(join(tmpdir(), "linked-cache-hit-"));
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
     writeFileSync(
@@ -147,10 +138,10 @@ describe("linkedProjectCacheLayer", () => {
   it.live(
     "skips the fill when project-ref names a DIFFERENT ref: the cache must describe the linked workdir, not the resolved ref (PR #6168 review)",
     () => {
-      // A mid-flight `link --project-ref B` failure still reaches the fill via
-      // Effect.ensuring while `project-ref` holds the OLD link — caching B
-      // would make the parent chain prefer a never-linked project. The guard
-      // runs before any token/network work, so the GET must never fire.
+      // A mid-flight `link --project-ref B` failure still reaches the fill via `Effect.ensuring`
+      // while `project-ref` holds the old link — caching B would make the parent chain prefer a
+      // never-linked project. The guard runs before any token/network work, so the GET must
+      // never fire.
       const OTHER_REF = "otherprojectrefabcde";
       const workdir = mkdtempSync(join(tmpdir(), "linked-cache-diverge-"));
       mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });

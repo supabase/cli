@@ -10,12 +10,10 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { unlink } from "./unlink.handler.ts";
 
-// `unlink` makes no Management API calls (no access token is needed), so it
-// deliberately avoids `managementApiRuntimeLayer` — that layer eagerly resolves
-// an access token and would fail with "Access token not provided" for a token-less
-// `unlink`. It provides only the services the handler + instrumentation consume.
-// `commandSettingsLayer` is provided to credentials AND exposed at the top level
-// (Layer.provide does not share to siblings inside a merge — CLAUDE.md invariant 5).
+// `unlink` makes no Management API calls, so it avoids `managementApiRuntimeLayer`,
+// which eagerly resolves an access token and would fail for a token-less `unlink`.
+// `commandSettingsLayer` is exposed at the top level too, since `Layer.provide`
+// doesn't share to merge siblings.
 const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
 const credentials = commandCredentialsLayer.pipe(
   Layer.provide(cliSettings),

@@ -9,6 +9,7 @@ import {
   isTransientLiveError,
   isTransientStorageStatus,
   resolvePoolerDatabaseUrl,
+  resolvePoolerDomain,
   retryLiveEffect,
   selectPrimaryPoolerConfig,
   supportedRegion,
@@ -153,6 +154,25 @@ describe("live project lifecycle", () => {
     const primary = poolerConfig();
 
     expect(selectPrimaryPoolerConfig([replica, primary])).toBe(primary);
+  });
+
+  it("derives the profile's pooler domain from a pooler database url", () => {
+    expect(
+      resolvePoolerDomain(
+        "postgresql://postgres.ref:pw@aws-0-us-east-1.pooler.supabase.com:5432/postgres",
+      ),
+    ).toBe("supabase.com");
+    expect(
+      resolvePoolerDomain(
+        "postgresql://postgres.ref:pw@aws-0-eu-central-1.pooler.supabase.green:5432/postgres",
+      ),
+    ).toBe("supabase.green");
+  });
+
+  it("fails rather than leaving the pooler domain assertion disabled", () => {
+    expect(() =>
+      resolvePoolerDomain("postgresql://postgres.ref:pw@localhost:5432/postgres"),
+    ).toThrow(/pooler domain from localhost/);
   });
 
   it("translates transaction pooler port and encodes the password", () => {

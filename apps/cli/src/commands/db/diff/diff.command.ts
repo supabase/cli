@@ -8,10 +8,9 @@ import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
-  // The four engine flags are a mutually-exclusive group, and `--use-migra`
-  // defaults to true, so they are modelled as `Option` to track whether the flag
-  // was passed: the mutex check and `resolveDiffEngine`'s `useMigraChanged` key
-  // off whether the flag was passed, not its value.
+  // The four engine flags are a mutually-exclusive group, and `--use-migra` defaults to true, so
+  // they are modelled as `Option` to track whether the flag was passed: the mutex check and
+  // `resolveDiffEngine`'s `useMigraChanged` key off whether it was passed, not its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -21,11 +20,10 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    // Deprecated in favor of the pg-delta engine (or the default migra engine) —
-    // a keep-in-Go exception (in-process stripe/pg-schema-diff library, no
-    // TS/container equivalent — see SIDE_EFFECTS.md). This description-only
-    // notice is not enforced by the flag framework — see diff.handler.ts's
-    // runtime warning for the enforced half of the deprecation.
+    // Deprecated in favor of the pg-delta engine (or the default migra engine): pg-schema-diff
+    // has no TS/container equivalent, so this stays proxied — see SIDE_EFFECTS.md. This
+    // description-only notice isn't enforced by the flag framework; see diff.handler.ts's
+    // runtime warning for the enforced half.
     Flag.withDescription(
       "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
     ),
@@ -73,7 +71,7 @@ const config = {
     Flag.withDescription("Diffs local migration files against the local database."),
     Flag.optional,
   ),
-  // TS-only override of the linked project ref — see push.command.ts.
+  // Overrides the linked project ref; the same flag exists on `config push`.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -124,9 +122,7 @@ export const dbDiffCommand = Command.make("diff", config).pipe(
           file: flags.file,
           schema: flags.schema,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // No established telemetry-safety baseline for --project-ref, so it stays redacted.
         aliases: { o: "output", f: "file", s: "schema" },
       }),
       withJsonErrorHandling,

@@ -10,8 +10,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { configDiff } from "./diff.handler.ts";
 
 const config = {
-  // `link`'s settled vocabulary (CLI-2167): one flag that accepts either a
-  // project ref or a branch of the linked project — no separate `--target`.
+  // Accepts either a project ref or a branch of the linked project; no separate `--target` flag.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
@@ -22,37 +21,27 @@ const config = {
     Flag.withDescription(
       "Exit with status 2 when any difference is found (errors keep exiting 1).",
     ),
-    // Without an explicit default a boolean flag is REQUIRED by the parser,
-    // making plain `supabase config diff` fail with `required flag(s)
-    // "exit-code" not set` — pinned by diff.e2e.test.ts, since integration
-    // tests hand the handler a pre-built flags object and never parse.
+    // Boolean flags are required by the parser without an explicit default, which would break
+    // plain `supabase config diff` with a missing-required-flag error.
     Flag.withDefault(false),
   ),
 } as const;
 
 export type ConfigDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring
-// `Command.withHandler` uses below (same precedent as `configPushHandler`).
 export const configDiffHandler = (flags: ConfigDiffFlags) =>
   configDiff(flags).pipe(
-    // `--project-ref` accepts branch names here (CLI-2167 vocabulary), so
-    // its value is only safe to log verbatim when it is actually ref-shaped
-    // — a user-created branch name must never reach PostHog. Same guard as
-    // `link`.
+    // `--project-ref` also accepts branch names, so its value is safe to log only when it's
+    // actually ref-shaped — a user-created branch name must never reach PostHog.
     withCommandTelemetry({
       flags,
       safeFlags:
         Option.isSome(flags.projectRef) && PROJECT_REF_PATTERN.test(flags.projectRef.value)
           ? ["project-ref"]
           : [],
-      // Net-new TS command, no Go parity contract (CLI-2156): the handler
-      // itself rejects every `-o/--output` value with a message pointing at
-      // `--output-format`, so the full global choice set — single-sourced
-      // from the flag's own definition — is declared "allowed" here.
-      // Otherwise the wrapper's own per-command enum check would reject an
-      // out-of-set value (e.g. `-o table`) with its generic pflag-style
-      // message before the handler ever gets a chance to run.
+      // This command rejects every `-o/--output` value itself with a message pointing at
+      // `--output-format`, so the wrapper must allow the full choice set through — otherwise its
+      // own generic enum-check message would fire first and the handler would never run.
       outputFormats: GLOBAL_OUTPUT_FORMATS,
     }),
     withJsonErrorHandling,

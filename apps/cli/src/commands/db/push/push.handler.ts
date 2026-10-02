@@ -7,11 +7,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import {
-  applyProjectEnv,
-  checkDbToml,
-  loadProjectEnv,
-} from "../../../command-internal/db-config.toml-read.ts";
+import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
 import { resolveDbTargetFlags } from "../../../command-internal/db-target-flags.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -46,33 +42,26 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    yield* applyProjectEnv(projectEnv);
     const target = resolveDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group, keyed off the
     // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new DbPushTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbPushTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      });
     }
     // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
 
-    // TS-only guard: `--project-ref` never implies `--linked` and must not be
-    // silently discarded on a non-linked target. Deliberately STRICTER than the
-    // `SUPABASE_PROJECT_ID` env var, which is read unconditionally but simply
-    // goes unused (no error) on a `--local`/`--db-url` target — an explicitly
-    // typed `--project-ref` flag silently doing nothing on e.g. `db push
-    // --local` is a footgun the env var doesn't share, so this errors instead.
+    // `--project-ref` never implies `--linked` and must not be silently discarded on a
+    // non-linked target. This is stricter than `SUPABASE_PROJECT_ID`, which is read
+    // unconditionally but simply goes unused on `--local`/`--db-url` — an explicitly
+    // typed flag doing nothing silently would be a footgun the env var doesn't share.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbPushTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbPushTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // The linked path resolves the project ref before loading config so a
@@ -85,16 +74,11 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       linkedRefForCache = projectRef;
     }
 
-    // Single config load, except that `--skip-vault` omits only `[db.vault]`
-    // secret resolution: decodes the whole config with env-expansion +
-    // weak-typed boolean parsing (so `enabled = "env(SEED_ENABLED)"` etc.
-    // load), applies `SUPABASE_*` env overrides, merges a matching
-    // `[remotes.<ref>]` block, and decrypts selected `encrypted:` secrets
-    // with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys — aborting
-    // here (before connecting or writing) on any undecryptable/invalid
-    // config. This must resolve BEFORE `resolver.resolve()`'s network
-    // activity (temp-role minting, pooler fallback) so a matching
-    // `[remotes.<ref>]` override prints before it.
+    // Single config load (except `--skip-vault`, which omits `[db.vault]` secret
+    // resolution): decodes with env-expansion + weak-typed booleans, applies
+    // `SUPABASE_*` overrides, merges a matching `[remotes.<ref>]` block, and decrypts
+    // `encrypted:` secrets — aborting here on any invalid config, before
+    // `resolver.resolve()`'s network activity, so a remote override prints first.
     const toml = yield* checkDbToml(fs, path, workdir, projectRef !== "" ? projectRef : undefined, {
       resolveVaultSecrets: !flags.skipVault,
     });
@@ -109,6 +93,15 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       password: flags.password,
       resolveVaultSecrets: !flags.skipVault,
       linkedProjectRef: flags.projectRef,
+    });
+
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": connType,
+      "db.is_local": cfg.isLocal,
+      "db.push.dry_run": flags.dryRun,
+      "db.push.include_all": flags.includeAll,
+      "db.push.include_roles": flags.includeRoles,
+      "db.push.include_seed": flags.includeSeed,
     });
 
     yield* dbPushCore({

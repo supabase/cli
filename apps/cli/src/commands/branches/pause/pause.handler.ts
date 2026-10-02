@@ -27,14 +27,12 @@ export const branchesPause = Effect.fn("branches.pause")(function* (flags: Branc
   const api = yield* CommandPlatformApi;
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
-  // Force `Tty` into the handler's R channel so `promptBranchId` (which
-  // requires it) resolves. The yielded value itself is unused.
-  void (yield* Tty);
+  void (yield* Tty); // ensures Tty is in handler R so promptBranchId resolves
 
-  // `branches` is PARENT-scoped: after `supabase link <branch>`,
-  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
+  // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);
@@ -45,6 +43,6 @@ export const branchesPause = Effect.fn("branches.pause")(function* (flags: Branc
       Effect.tapError(() => pausing?.fail() ?? Effect.void),
       Effect.catch(mapPauseError),
     );
-    yield* pausing?.clear() ?? Effect.void;
+    yield* pausing?.clear ?? Effect.void;
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

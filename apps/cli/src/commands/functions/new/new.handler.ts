@@ -38,13 +38,8 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Established behavior checks the *parsed* config map after a best-effort
-// config load. This intentionally scans the raw TOML text instead:
-// config loading here is non-fatal (a malformed `config.toml` must still
-// allow scaffolding), so a raw-text section scan is the deterministic
-// fallback that does not depend on a successful parse. The strict
-// `^\s*\[functions\.<slug>\]\s*$` anchoring keeps this in practical
-// lock-step with the parsed-map check for all well-formed configs.
+// Scans the raw TOML text rather than a parsed config map, since a malformed
+// config.toml here is non-fatal and must still allow scaffolding.
 function readDeclaredFunctionSlugs(contents: string): ReadonlySet<string> {
   const slugs = new Set<string>();
   const pattern = /^\s*\[functions\.([^\]\s]+)\]\s*$/gm;
@@ -62,7 +57,9 @@ function hasFunctionConfigDeclaration(contents: string, slug: string): boolean {
   return pattern.test(contents);
 }
 
-const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) {
+const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(function* (
+  workdir: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -90,10 +87,11 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
     }
   }
 
+  yield* Effect.annotateCurrentSpan("function.count", slugs.size);
   return slugs;
 });
 
-const resolveTemplateInputs = Effect.fnUntraced(function* (
+const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   slug: string,
 ) {
@@ -101,6 +99,7 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
     goViperCompat: true,
     search: shouldSearchAncestors(cliSettings),
   }).pipe(Effect.orElseSucceed(() => null));
+  yield* Effect.annotateCurrentSpan("config.found", loaded !== null);
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
   const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
   return {
@@ -109,19 +108,18 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
   };
 });
 
-// Console-driven IDE-settings prompt. Only invoked in text mode — the
-// caller gates on `output.format === "text"` so json / stream-json runs stay payload-only and
+// Only invoked in text mode: json/stream-json runs stay payload-only and
 // never scaffold IDE settings as an undisclosed side effect.
-const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
+const promptForIdeSettings = Effect.fn("functions.new.promptIdeSettings")(function* (
+  workdir: string,
+) {
   const output = yield* Output;
-  // `--yes` OR `SUPABASE_YES`.
+  // Also honors `SUPABASE_YES`, not just the `--yes` flag.
   const yes = yield* resolveYes;
 
-  // Both questions route through `promptYesNo`: `--yes`/
-  // `SUPABASE_YES` auto-accepts VS Code with the `[Y/n] y` stderr echo; a
-  // non-TTY stdin prints the label and scans one piped line (100ms), so
-  // `echo n | supabase functions new` declines VS Code and falls through to
-  // the IntelliJ question instead of hardcoding the default.
+  // `promptYesNo` auto-accepts VS Code under `--yes`/`SUPABASE_YES`, and
+  // otherwise scans one piped line from non-TTY stdin, so `echo n | ...`
+  // declines VS Code and falls through to the IntelliJ question.
   if (yield* promptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
     yield* writeVscodeConfig(workdir).pipe(Effect.mapError(mapFunctionsNewWriteError(".vscode")));
     return;
@@ -151,10 +149,9 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
     return;
   }
 
-  // Append (never rewrite) the rendered section, matching Go's
-  // `os.OpenFile(ConfigPath, O_WRONLY|O_CREATE|O_APPEND)`: the existing file is left
-  // byte-for-byte untouched and a partial write can never truncate it. The template begins
-  // with a newline, so it attaches cleanly whether or not the file ends with one.
+  // Appends rather than rewrites, so the existing file is left byte-for-byte
+  // untouched and a partial write can never truncate it. The template starts
+  // with a newline, so it attaches cleanly regardless of the file's trailing newline.
   yield* fs
     .writeFileString(configPath, renderFunctionsNewConfig(slug, verifyJwt), { flag: "a" })
     .pipe(
@@ -183,12 +180,10 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
 
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
     if (invalidSlugMessage !== undefined) {
-      return yield* Effect.fail(
-        new FunctionsNewInvalidSlugError({
-          message: invalidSlugMessage,
-          detail: invalidFunctionSlugDetail,
-        }),
-      );
+      return yield* new FunctionsNewInvalidSlugError({
+        message: invalidSlugMessage,
+        detail: invalidFunctionSlugDetail,
+      });
     }
 
     const existingSlugs = yield* listExistingFunctionSlugs(cliSettings.workdir);
@@ -214,13 +209,11 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
       .exists(entrypointPath)
       .pipe(Effect.orElseSucceed(() => false));
     if (entrypointExists) {
-      return yield* Effect.fail(
-        new FunctionsNewFileExistsError({
-          path: relEntrypoint,
-          message: "failed to create entrypoint: file already exists",
-          suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
-        }),
-      );
+      return yield* new FunctionsNewFileExistsError({
+        path: relEntrypoint,
+        message: "failed to create entrypoint: file already exists",
+        suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
+      });
     }
 
     const templateInputs = yield* resolveTemplateInputs(cliSettings, flags.functionName);
@@ -263,8 +256,7 @@ export const functionsNew = Effect.fn("functions.new")(function* (flags: Functio
       );
     }
 
-    // IDE scaffolding is a human-facing nicety: only offer it in text mode so json /
-    // stream-json runs stay payload-only and never write IDE files as an undisclosed side effect.
+    // Text mode only: json/stream-json runs stay payload-only.
     if (isFirstFunction && output.format === "text") {
       yield* promptForIdeSettings(cliSettings.workdir);
     }

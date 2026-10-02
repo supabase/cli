@@ -1,24 +1,31 @@
-import { join } from "node:path";
+import { Option, type Path } from "effect";
 
 /**
  * Resolves the global Supabase CLI state root.
  *
- * `SUPABASE_HOME` overrides the location when set to a non-empty value after
- * trimming surrounding whitespace (an absolute path is expected; the value is
- * used verbatim). Otherwise it defaults to `<homeDir>/.supabase`.
- *
- * This is the single source of truth for the `SUPABASE_HOME` contract in the
- * TypeScript CLI. It is a pure function: callers pass their own environment and
- * home directory so it stays trivially testable and free of global state. The
- * All CLI callers resolve through this function, keeping the `SUPABASE_HOME`
- * contract in one place.
+ * `SUPABASE_HOME` overrides the location when set to a non-empty value after trimming
+ * surrounding whitespace (an absolute path is expected; the value is used verbatim). Otherwise it
+ * defaults to `<homeDir>/.supabase`. A pure function, so every caller resolves through it with
+ * its own environment and home directory, keeping the contract in one place.
  */
-export const resolveSupabaseHome = (
-  env: Readonly<Record<string, string | undefined>>,
+export const resolveSupabaseHomeValue = (
+  path: Path.Path,
+  value: Option.Option<string>,
   homeDir: string,
 ): string => {
-  const configured = env["SUPABASE_HOME"]?.trim();
+  const configured = Option.isSome(value) ? value.value.trim() : undefined;
   return configured !== undefined && configured.length > 0
     ? configured
-    : join(homeDir, ".supabase");
+    : path.join(homeDir, ".supabase");
 };
+
+export const resolveSupabaseHome = (
+  path: Path.Path,
+  env: Readonly<Record<string, string | undefined>>,
+  homeDir: string,
+): string =>
+  resolveSupabaseHomeValue(
+    path,
+    env["SUPABASE_HOME"] === undefined ? Option.none() : Option.some(env["SUPABASE_HOME"]),
+    homeDir,
+  );

@@ -17,12 +17,9 @@ import { listContainerIdsAndNames, type ContainerIdName } from "./docker-lifecyc
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Failure taxonomy for {@link dockerRemoveAll}. Each variant is a neutral, stage-tagged
- * cause carrying only a `.message` — same generalization pattern as `docker-lifecycle.ts`'s
- * `DockerLifecycleListError`/`DockerLifecycleInspectError`. Callers (`stop.handler.ts`
- * via `Effect.catchTags`; `command-internal/db-bootstrap/rollback.ts` via a blanket swallow) discriminate/consume these by
- * their string `_tag`, never by importing the classes themselves. The classes
- * are exported so the exhaustive telemetry guard can verify their declarations.
+ * Failure taxonomy for {@link dockerRemoveAll}. Callers discriminate these by their string
+ * `_tag` rather than importing the classes; they're exported only so the exhaustive telemetry
+ * guard can verify each declaration.
  */
 class DockerRemoveAllListError extends Data.TaggedError("DockerRemoveAllListError")<{
   readonly message: string;
@@ -85,10 +82,8 @@ function parsePrunedNames(stdout: string): ReadonlyArray<string> {
 }
 
 /**
- * `--debug` prune reports: `fmt.Fprintln(os.Stderr,
- * "Pruned containers:", report.ContainersDeleted)` and siblings — the `[]string`
- * renders as `[a b c]` (empty: `[]`), always on stderr regardless of the writer
- * the caller passed, and only when `viper.GetBool("DEBUG")` is set.
+ * Prints a `--debug`-only report of pruned names to stderr, formatted as a bracketed
+ * space-separated list (e.g. `[a b c]`, empty: `[]`).
  */
 const reportPruned = (debug: boolean, label: string, stdout: string) =>
   Effect.sync(() => {
@@ -105,32 +100,11 @@ export type DockerRemoveAllError =
   | DockerRemoveAllNetworkPruneError;
 
 /**
- * Port of `DockerRemoveAll`: list every
- * container matching `filterValue` regardless of state -> stop them all concurrently, joining
- * every failure rather than short-circuiting on the first one (`WaitAll`) -> `container
- * prune --force --filter label=<filterValue>` -> when `deleteVolumes`, `volume prune --force
- * [--all] --filter label=<filterValue>` (the `--all` flag itself gated on
- * {@link dockerSupportsVolumePruneAllFlag}, Docker API >= 1.42) -> `network prune --force
- * --filter label=<filterValue>`.
- *
- * `onContainersRemoved`, if given, fires synchronously once `container prune` (the actual
- * removal step below) has EXITED SUCCESSFULLY — not at the initial listing, and not before
- * containers are even stopped — with the exact containers that listing found, id/name/workdir
- * together. A TS-port-only hook with no Go equivalent, for callers (`stop.handler.ts`,
- * `command-internal/db-bootstrap/rollback.ts`) that need those same containers for {@link cleanupStartSecrets}
- * (Go itself doesn't stage host-disk secrets, so it has no reason to know them). It exists so
- * those callers get this data from THIS function's own single `docker ps` listing instead of
- * issuing a second, separately-formatted `docker ps` call, which would double the real Docker
- * Engine API request count relative to Go and fail the cli-e2e-ci request-log parity check.
- *
- * Firing AFTER `container prune` succeeds (rather than at listing time) matters: the listing
- * only snapshots what MIGHT be torn down, before the stop/prune stages have actually run — firing
- * there let a caller reclaim a container's staged-secret directory even when the stop stage fails
- * outright (so `container prune` never even runs and nothing was actually removed) or a
- * still-running container survives. Firing here instead means a caller only ever reclaims
- * secrets for containers `container prune` has ACTUALLY removed. It still fires even if a LATER
- * stage (volume/network prune) then fails, so those confirmed-removed containers' secrets are
- * still reclaimed on that partial failure — matching the fix landed in `983eab92`.
+ * Lists every container matching `filterValue` (any state), stops them all concurrently —
+ * joining every failure rather than stopping at the first — then prunes containers, volumes
+ * (when `deleteVolumes`), and networks scoped to the same label. `onContainersRemoved`, when
+ * given, fires once `container prune` exits successfully with the containers the initial listing
+ * found, so callers don't have to re-list; it still fires even if a later prune stage fails.
  */
 export const dockerRemoveAll = (
   spawner: Spawner,
@@ -146,16 +120,13 @@ export const dockerRemoveAll = (
     }).pipe(Effect.mapError((cause) => new DockerRemoveAllListError({ message: cause.message })));
     const containerIds = containers.map((container) => container.id);
 
-    // Go stops containers concurrently via `WaitAll`, joining every failure rather than
-    // short-circuiting on the first one.
+    // Stop every container concurrently, joining every failure rather than short-circuiting on
+    // the first one.
     //
-    // `stdout`/`stderr: "ignore"` on the exit-code-only `stop` calls below: they never read the
-    // child's own output, and the default `"pipe"` stdio otherwise leaves an OS pipe unread —
-    // once `docker`/`podman` write enough to it, the child blocks on write() and this hangs.
-    // Matches the existing `stdio: "ignore"` precedent for the same "exit-code-only" shape in
-    // `pgdelta.seam.layer.ts`. The prune calls further down instead COLLECT stdout (via
-    // `containerCliExitCodeAndStdout`, which reads the pipe, equally avoiding the hang)
-    // because their deleted-ID reports back `--debug` `Pruned …:` stderr lines.
+    // `stdout`/`stderr: "ignore"`: these exit-code-only calls never read the child's output, and
+    // the default `"pipe"` stdio would leave an unread OS pipe — once docker/podman writes enough
+    // to it, the child blocks on write() and this hangs. The prune calls below instead collect
+    // stdout (avoiding the hang the same way) because they need it for the `--debug` report.
     const stopResults = yield* Effect.all(
       containerIds.map((id) =>
         containerCliExitCode(spawner, ["stop", id], {
@@ -181,10 +152,8 @@ export const dockerRemoveAll = (
       );
     }
 
-    // The prune calls collect stdout (the CLI's deleted-ID report) instead of
-    // ignoring it — reading the pipe equally avoids the unread-pipe hang the
-    // exit-code-only calls above dodge with `stdout: "ignore"`, and the report
-    // backs `--debug` `Pruned …:` stderr lines.
+    // Collects stdout instead of ignoring it — reading the pipe avoids the same hang, and the
+    // report backs the `--debug` output below.
     const containerPrune = yield* containerCliExitCodeAndStdout(spawner, [
       "container",
       "prune",
@@ -205,26 +174,15 @@ export const dockerRemoveAll = (
       );
     }
     yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
-    // Containers are now CONFIRMED removed — see `onContainersRemoved`'s doc comment for why this
-    // must fire here rather than at the listing above, and why it still must fire even if a later
-    // stage (volume/network prune, below) goes on to fail.
+    // Containers are confirmed removed only now — see {@link dockerRemoveAll}'s doc comment.
     onContainersRemoved?.(containers);
 
     if (deleteVolumes) {
-      // The `--all` filter arg is gated on Docker API >= 1.42: Docker CLI's own `volume
-      // prune --all` flag is annotated `version: "1.42"` and enforced by
-      // its own arg validator before the command runs —
-      // on an older daemon, passing `--all` unconditionally
-      // would hard-fail this whole call and prune nothing, not just prune a narrower set. There's
-      // no persistent Engine API client here to ask the negotiated version directly, so
-      // {@link dockerSupportsVolumePruneAllFlag} asks the `docker` CLI itself via `docker
-      // version` and applies the same gate.
-      //
-      // Podman is a Docker-CLI-compatible fallback — but `--all` isn't a real flag on any
-      // released Podman `volume prune` (only `--filter`/`--force`/`--help`, checked v4.3 through
-      // the current v5.7; `--all` only exists in unreleased dev docs), so it hard-fails on a real
-      // Podman-only host. Podman already prunes every unused volume by default, so omitting
-      // `--all` on the Podman fallback is a lossless fix.
+      // `--all` requires Docker API >= 1.42 and is validated by the Docker CLI itself, so passing
+      // it unconditionally would hard-fail on an older daemon; ask `docker version` via
+      // {@link dockerSupportsVolumePruneAllFlag} instead of negotiating the API version directly.
+      // Podman has no `--all` flag on `volume prune` at all, but already prunes every unused
+      // volume by default, so omitting `--all` there is a lossless fallback.
       const dockerSupportsAll = yield* dockerSupportsVolumePruneAllFlag(spawner);
       const volumePrune = yield* containerCliExitCodeAndStdout(
         spawner,
@@ -250,8 +208,6 @@ export const dockerRemoveAll = (
           new DockerRemoveAllVolumePruneError({ message: "failed to prune volumes" }),
         );
       }
-      // Inside the `deleteVolumes` branch, like Go's report inside the
-      // `NoBackupVolume` block.
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
@@ -274,6 +230,6 @@ export const dockerRemoveAll = (
         new DockerRemoveAllNetworkPruneError({ message: "failed to prune networks" }),
       );
     }
-    // Go: singular "network", unlike the other two reports.
+    // Established output text: singular "network", unlike the container/volume reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
   });

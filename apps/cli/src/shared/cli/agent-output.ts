@@ -2,10 +2,9 @@ import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 
-// The union of every command's `--output` values (see
-// `command-internal/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
-// `db query` adds `table|csv`. An explicit `-o` of any of these suppresses the
-// coding-agent JSON auto-default below.
+// Every command's `--output` value (see `command-internal/global-flags.ts`): resource commands
+// accept `env|pretty|json|toml|yaml`, `db query` adds `table|csv`. An explicit `-o` value
+// suppresses the coding-agent JSON auto-default below.
 type GoOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 type AgentOverride = "auto" | "yes" | "no";
 
@@ -90,20 +89,17 @@ function agentOverrideFromArg(value: string | undefined): AgentOverride {
   }
 }
 
-// These predicates run pre-parse to pick the formatter a built-in ACTION
-// renders through, so they must also know the CLI library's built-in flags:
-// `--completions bash --version` serves the Version action (Version precedes
-// Completions), and missing entries here rendered it as JSON under agent
-// detection instead of the plain version line. The flag set is the shared
-// derived registry, not a fourth hand-written copy (issue #6482).
+// These predicates run pre-parse to pick the formatter a built-in action renders through, so
+// they must mirror the CLI library's own flags: `--completions bash --version` serves the
+// Version action, and missing an entry here would render agent JSON instead of the plain
+// version line.
 function isRootValueFlag(arg: string): boolean {
   return GLOBAL_VALUE_FLAG_TOKENS.has(arg);
 }
 
 function isRootValueFlagWithInlineValue(arg: string): boolean {
-  // Attached `-o<value>` — kept from the pre-derivation predicate; the
-  // shipped parser rejects this spelling, so it only ever classifies argv
-  // that already fails the parse.
+  // The shipped parser rejects `-o<value>` (no `=`), so this only classifies argv that
+  // already fails to parse.
   if (arg.length > 2 && arg.startsWith("-o")) return true;
   for (const token of GLOBAL_VALUE_FLAG_TOKENS) {
     if (arg.startsWith(`${token}=`)) return true;
@@ -111,7 +107,7 @@ function isRootValueFlagWithInlineValue(arg: string): boolean {
   return false;
 }
 
-const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
+export const ROOT_BOOLEAN_FLAGS: ReadonlyArray<string> = [
   "--debug",
   "--experimental",
   "--yes",
@@ -125,12 +121,13 @@ function isFlagOccurrence(arg: string, name: string): boolean {
 }
 
 /**
- * Inline values the CLI's boolean primitive ACCEPTS (lowercase only) — an
- * acceptance set: any of these serves the flag's action, `=false` included.
- * `run.ts`'s `PFLAG_BOOL_TRUE` answers a DIFFERENT question (ParseBool
- * truthiness, for the pflag-modeled upgrade-notice scans); do not merge them.
+ * Inline values the CLI's boolean primitive accepts (lowercase only); any of these serves the
+ * flag's action, including `=false`.
+ *
+ * Distinct from `run.ts`'s `PFLAG_BOOL_TRUE`, which answers ParseBool truthiness for the
+ * pflag-modeled upgrade-notice scans — do not merge them.
  */
-const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
+export const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
   "true",
   "false",
   "1",
@@ -143,27 +140,23 @@ const BOOLEAN_FLAG_VALUES: ReadonlySet<string> = new Set([
   "off",
 ]);
 
-// An action flag's own inline value must be one the boolean primitive
-// accepts: `--version=true` (any accepted value, `false` included) serves the
-// Version action, while `--version=bogus` fails the flag's own parse — no
-// action is served, and the error keeps the agent JSON envelope.
+// The action flag's own inline value must be one the boolean primitive accepts:
+// `--version=true` serves the Version action, but `--version=bogus` fails to parse, so no
+// action fires and the error keeps the agent JSON envelope.
 function isBooleanActionOccurrence(arg: string, name: string): boolean {
   if (arg === name) return true;
   return arg.startsWith(`${name}=`) && BOOLEAN_FLAG_VALUES.has(arg.slice(name.length + 1));
 }
 
-// Inline spellings count for the skipped booleans with ANY value: the Version
-// action is scanned on presence before `--wizard=bogus` ever parses, so even
-// an invalid inline value there still renders the plain version line.
+// Skipped booleans count on presence, so an invalid inline value like `--wizard=bogus` still
+// lets `--version` scan through and render the plain version line.
 function isRootBooleanFlag(arg: string): boolean {
   return ROOT_BOOLEAN_FLAGS.some((name) => isFlagOccurrence(arg, name));
 }
 
-// Deliberately bails at the first token that is not a known root flag
-// (subcommand names included): the renderer serves the Version action at any
-// depth, but several leaves declare their own `--version` (e.g. `db reset`),
-// so `<group> --version` resolving conservatively to JSON is the accepted
-// trade-off, ledgered with the walk-consolidation follow-up.
+// Bails at the first token that isn't a known root flag, subcommand names included: some
+// leaves declare their own `--version` (e.g. `db reset`), so `<group> --version` resolving
+// conservatively to JSON is the accepted trade-off.
 function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

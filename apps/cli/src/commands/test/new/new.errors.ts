@@ -19,10 +19,17 @@ export class TestNewFileExistsError extends Data.TaggedError("TestNewFileExistsE
   }
 }
 
-/**
- * Writing the test file failed (e.g. permission denied). Mirrors Go's
- * `utils.WriteFile` error (`new.go:28`).
- */
+/** The test name resolves outside `supabase/tests`. */
+export class TestNewInvalidNameError extends Data.TaggedError("TestNewInvalidNameError")<{
+  readonly path: string;
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+/** Writing the test file failed (e.g. permission denied). */
 export class TestNewWriteError extends Data.TaggedError("TestNewWriteError")<{
   readonly path: string;
   readonly message: string;

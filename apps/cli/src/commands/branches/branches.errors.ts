@@ -7,11 +7,6 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
-// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
-// ---------------------------------------------------------------------------
-
 export class BranchesListNetworkError extends Data.TaggedError("BranchesListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -55,10 +50,8 @@ export class BranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A non-gated 409 on `branches create` means the branch name already
-    // exists — user input, not a raw API status. The gate
-    // guard stays ahead so a confirmed plan-limited 409 still classifies as
-    // plan_limit via the shared policy.
+    // A non-gated 409 means the branch name already exists (user input, not a raw API status);
+    // the gate check stays ahead so a plan-limited 409 still classifies as plan_limit.
     if (this.upgradeSuggested !== true && this.status === 409) {
       return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };
     }
@@ -93,8 +86,7 @@ export class BranchesFindUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// `branches get` detail phase + the resolver's UUID branch (both use
-// V1GetABranchConfig; Go shares the same error template).
+// `branches get` detail phase + the resolver's UUID branch (both use V1GetABranchConfig).
 export class BranchesGetNetworkError extends Data.TaggedError("BranchesGetNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -293,10 +285,6 @@ export class BranchesDisableUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, prompt-time semantics, user cancellation).
-// ---------------------------------------------------------------------------
-
 export class BranchesEnvNotSupportedError extends Data.TaggedError("BranchesEnvNotSupportedError")<{
   readonly message: string;
 }> {
@@ -326,9 +314,8 @@ export class BranchesBranchingDisabledError extends Data.TaggedError(
 )<{
   readonly message: string;
   /**
-   * Established suggestion text: "Create your first branch with: supabase
-   * branches create". Picked up by `normalizeCliError` and printed after the
-   * error message in text mode.
+   * Suggestion text ("Create your first branch with: supabase branches create") picked up by
+   * `normalizeCliError` and printed after the error message in text mode.
    */
   readonly suggestion: string;
 }> {

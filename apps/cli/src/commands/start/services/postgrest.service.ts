@@ -1,19 +1,10 @@
 /**
- * PostgREST container spec builder.
+ * Builds the `docker create` spec for the PostgREST container. Gated on `config.api.enabled` by
+ * the caller.
  *
- * Enabled gate: `config.api.enabled`. Gating (this field, plus
- * `!isContainerExcluded`) is the caller's responsibility — see
- * `start.services.ts`'s `postgrest` catalog entry (`enabledGate:
- * "api.enabled"`).
- *
- * No `Healthcheck` field at all: PostgREST does not expose a shell for
- * health checks. PostgREST readiness is instead checked at runtime via an
- * HTTP HEAD through the local Kong gateway
- * (`checkHttpReady`/`POSTGREST_READY_PATH`,
- * `../../../shared/db-bootstrap/health-check.ts`) — this builder correctly
- * omits `healthcheck` so `buildStartContainerCreateArgs` never emits a
- * `--health-*` flag for this container, matching `docker-create-args.ts`'s
- * own documented PostgREST exception.
+ * Omits `healthcheck`: PostgREST has no shell to run a Docker health check command, so its
+ * readiness is checked at runtime via an HTTP HEAD through the local Kong gateway instead
+ * (`checkHttpReady`/`POSTGREST_READY_PATH`).
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -34,21 +25,16 @@ export interface PostgrestEnvInput {
   readonly maxRows: CliConfig["api"]["max_rows"];
   /** The `db` container's own Docker name (`serviceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** See `startInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
+  /** See {@link startInternalDbPassword}. */
   readonly dbPassword: string;
   /**
-   * `resolveLocalJwks`'s resolved JWKS JSON string — feeds
-   * `PGRST_JWT_SECRET` directly (despite the env var's name, PostgREST is
-   * fed the JWKS document, not the raw `auth.jwt_secret`).
+   * The resolved JWKS JSON string, fed into `PGRST_JWT_SECRET` — despite the name, PostgREST
+   * receives the JWKS document, not the raw `auth.jwt_secret`.
    */
   readonly jwks: string;
 }
 
-/**
- * Pure env-var builder, split out from
- * {@link buildPostgrestContainerSpec} so the full env set is
- * unit-testable without constructing a whole container spec.
- */
+/** Builds the env vars for the PostgREST container. */
 export function buildPostgrestEnv(input: PostgrestEnvInput): Record<string, string> {
   return {
     PGRST_DB_URI: startInternalDbUrl("authenticator", input.dbHost, input.dbPassword),
@@ -62,11 +48,11 @@ export function buildPostgrestEnv(input: PostgrestEnvInput): Record<string, stri
 }
 
 export interface PostgrestContainerSpecInput {
-  /** The sanitized project id — see `serviceContainerName`'s callers. */
+  /** The sanitized project id. */
   readonly projectId: string;
-  /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
+  /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `utils.Config.Api.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
+  /** `config.api.image`, already resolved/pulled by the caller. */
   readonly image: string;
   readonly schemas: CliConfig["api"]["schemas"];
   readonly extraSearchPath: CliConfig["api"]["extra_search_path"];
@@ -99,7 +85,6 @@ export function buildPostgrestContainerSpec(
     binds: [],
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // The PostgREST network alias.
     networkAliases: ["rest"],
     labels: {},
   };

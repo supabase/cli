@@ -237,17 +237,13 @@ describe("makeSupabaseApiClient", () => {
     expect(requests).toBe(0);
   });
 
-  test("retries transport errors for POST requests", async () => {
+  test("retries transport errors for GET requests", async () => {
     let attempts = 0;
 
     const result = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
-          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
-            db_pass: "hunter2",
-            name: "project-name",
-            organization_slug: "my-org",
-          }),
+          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
         ),
         Effect.provide(
           httpClientLayer((request) => {
@@ -256,25 +252,14 @@ describe("makeSupabaseApiClient", () => {
               return Effect.fail(transportError(request, "socket reset"));
             }
 
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-              }),
-            );
+            return Effect.succeed(jsonResponse(request, 200, []));
           }),
         ),
       ),
     );
 
     expect(attempts).toBe(3);
-    expect(result.ref).toBe("abcdefghijklmnopqrst");
+    expect(result).toEqual([]);
   });
 
   test("reveals redacted auth tokens only at the transport boundary", async () => {
@@ -468,9 +453,8 @@ describe("makeSupabaseApiClient", () => {
     ]);
   });
 
-  // Both payloads are the shapes reported against 2.112.0, where the spec's
-  // Z-anchored pattern rejected them and broke `link` and `branches list`
-  // outright (supabase/cli#6115).
+  // Regression payloads: the spec's Z-anchored pattern used to reject these and
+  // break `link` and `branches list` outright.
   test("decodes timestamps with a numeric UTC offset", async () => {
     const apiKeys = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(
@@ -573,7 +557,7 @@ describe("makeSupabaseApiClient", () => {
       ),
     );
 
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts missing custom-hostname ownership verification", async () => {
@@ -612,7 +596,7 @@ describe("makeSupabaseApiClient", () => {
     );
 
     expect(result.data.result.ownership_verification).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("accepts processing custom-hostname responses without top-level status or hostname", async () => {
@@ -655,7 +639,7 @@ describe("makeSupabaseApiClient", () => {
 
     expect(result.status).toBeUndefined();
     expect(result.custom_hostname).toBeUndefined();
-    expect(result.data.result.ssl.validation_records).toBeUndefined();
+    expect(result.data.result.ssl?.validation_records).toBeUndefined();
   });
 
   test("does not retry 5xx responses for POST requests", async () => {
@@ -688,6 +672,68 @@ describe("makeSupabaseApiClient", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
+  test("does not retry transport errors for POST requests", async () => {
+    let attempts = 0;
+
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
+            db_pass: "hunter2",
+            name: "project-name",
+            organization_slug: "my-org",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(transportError(request, "connection reset"))
+              : Effect.succeed(
+                  jsonResponse(request, 409, {
+                    message: "project already exists",
+                  }),
+                );
+          }),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
+  test("does not retry transport errors for PATCH requests", async () => {
+    let attempts = 0;
+
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1PatchAMigration">(operationDefinitions.v1PatchAMigration, {
+            ref: "abcdefghijklmnopqrst",
+            version: "20240101000000",
+            name: "renamed",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(transportError(request, "connection reset"))
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response(null, { status: 204 })),
+                );
+          }),
+        ),
+      ),
+    );
+
+    expect(attempts).toBe(1);
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
   test("stops after the configured number of transport retries", async () => {
     let attempts = 0;
 
@@ -698,11 +744,7 @@ describe("makeSupabaseApiClient", () => {
         },
       }).pipe(
         Effect.flatMap((client) =>
-          client.execute<"v1CreateAProject">(operationDefinitions.v1CreateAProject, {
-            db_pass: "hunter2",
-            name: "project-name",
-            organization_slug: "my-org",
-          }),
+          client.execute<"v1ListAllProjects">(operationDefinitions.v1ListAllProjects, {}),
         ),
         Effect.exit,
         Effect.provide(
@@ -723,10 +765,8 @@ describe("makeSupabaseApiClient", () => {
       makeSupabaseApiClient(config).pipe(
         Effect.flatMap((client) =>
           client.execute<"v1DiffABranch">(operationDefinitions.v1DiffABranch, {
-            // 20-letter project ref. Used to be "branch-ref" but the UUID
-            // branch of the oneOf union now has an actual pattern check, so
-            // free-form strings like "branch-ref" no longer match either
-            // branch.
+            // Must satisfy the oneOf union's project-ref/uuid pattern; a free-form
+            // string like "branch-ref" doesn't match either branch.
             branch_id_or_ref: "abcdefghijklmnopqrst",
           }),
         ),
@@ -1126,10 +1166,13 @@ describe("makeSupabaseApiClient", () => {
                         },
                         vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
                       },
-                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      capabilities: {
+                        list_v2: true,
+                        iceberg_catalog: true,
+                        object_versioning: true,
+                      },
                       upstream_target: "main",
                       migration_version: "1",
-                      database_pool_mode: "transaction",
                     },
                   },
                 },
@@ -1144,5 +1187,44 @@ describe("makeSupabaseApiClient", () => {
     expect(result.data.attributes.database.major_version).toBe(17);
     expect(result.data.attributes.storage.upstream_target).toBe("main");
     expect(result.data.attributes.api.db_pool).toBeNull();
+  });
+  // `style: deepObject` — every object-valued query parameter in the spec — is
+  // one `param[key]=value` pair per entry. Serialized as a JSON blob instead,
+  // the server reads no page size and no cursor, so a paginated walk silently
+  // returns the first default-sized page forever.
+  test("expands deepObject query parameters into one pair per entry", async () => {
+    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 200, {
+                data: [],
+                links: { first: null, last: null, prev: null, next: null },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.execute(operationDefinitions.v2ListNotebooks, {
+        ref: "abcdefghijklmnopqrst",
+        page: { size: 100, after: "cursor-1" },
+        filter: { name: "sales" },
+      }),
+    );
+
+    expect(seenRequest).toBeDefined();
+    expect(requestUrlParam(seenRequest!, "page[size]")).toBe("100");
+    expect(requestUrlParam(seenRequest!, "page[after]")).toBe("cursor-1");
+    expect(requestUrlParam(seenRequest!, "filter[name]")).toBe("sales");
+    // The un-expanded names never reach the wire.
+    expect(requestUrlParam(seenRequest!, "page")).toBeUndefined();
+    expect(requestUrlParam(seenRequest!, "filter")).toBeUndefined();
   });
 });

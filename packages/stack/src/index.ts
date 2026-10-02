@@ -1,55 +1,64 @@
-export {
-  createStack,
-  openStack,
-  findStack,
-  listStacks,
-  inspectStack,
-} from "./public/PromiseStack.ts";
+import { Effect, Option } from "effect";
+import * as StackEffect from "./effect.ts";
+import { acquire, runOnce, stackAdapter, type CallOptions, type Client } from "./PromiseClient.ts";
+
 export type {
-  PromiseStack,
-  PromiseStackConfig,
-  PromiseStartStackOptions,
-  PromisePrepareStackOptions,
-  CreateStackOptions,
-  FindStackOptions,
-  ListStacksOptions,
-  PreparedCapability,
-} from "./public/PromiseStack.ts";
+  CallOptions,
+  DatabaseInstance,
+  ServiceCreationInput,
+  ServiceInstance,
+  ServiceInstances,
+  InitializationCommandOptions,
+  PostgresCommandOptions,
+  Stack,
+} from "./PromiseClient.ts";
+export type { StackCredentials, StackKeysInput } from "./State.ts";
+export { initialization, postgres } from "./Commands.ts";
+export { StackError } from "./Rpc.ts";
+export type { CompositionConfig } from "./Orchestrator.ts";
+export type { Observation } from "./Rpc.ts";
 export type {
-  CapabilityName,
-  CapabilityStatus,
-  StackLifecycle,
-  DesiredStackLifecycle,
-  NetworkPort,
-  StackEndpoint,
-  StackStatus,
-  ArtifactPreparationState,
-  ArtifactPreparationStatus,
-  StackDescriptor,
-  StackInspection,
-} from "./public/index.ts";
-export { StackIdSchema, isStackId } from "./public/StackId.ts";
-export type { StackId } from "./public/StackId.ts";
-export { StackRuntimeSchema, RuntimeEngineSchema } from "./public/Runtime.ts";
-export type { StackRuntime, RuntimeEngine, StackRuntimePreference } from "./public/Runtime.ts";
-export {
-  StackEndpointsSchema,
-  CapabilityVersionsSchema,
-  ArtifactPreparationStateSchema,
-  ArtifactPreparationStatusSchema,
-} from "./public/Status.ts";
-export {
-  CapabilityNameSchema,
-  CapabilityStatusSchema,
-  ActivationModeSchema,
-} from "./public/Capability.ts";
-export { PreparationModeSchema } from "./public/Config.ts";
-export type { PreparationMode } from "./public/Config.ts";
-export {
-  LogCursorSchema,
-  LogQuerySchema,
-  StackLogBatchSchema,
-  StackLogEntrySchema,
-} from "./public/Logs.ts";
-export type { LogCursor, LogQuery, StackLogBatch, StackLogEntry } from "./public/Logs.ts";
-export * from "./public/Errors.ts";
+  CreateOptions,
+  CreationChange,
+  DatabaseSnapshotOptions,
+  DestroyResult,
+  FindOptions,
+  FoundStack,
+  OpenOptions,
+  PgProveOptions,
+  PlannedInstance,
+  SavedStack,
+  StackLocations,
+  SupabaseCompositionOptions,
+} from "./effect.ts";
+
+const adaptStack = (acquired: { readonly value: StackEffect.Stack; readonly client: Client }) =>
+  stackAdapter(acquired.client).stack(acquired.value);
+
+/** Registers a new stack identity. */
+export const create = (options: StackEffect.CreateOptions, callOptions?: CallOptions) =>
+  acquire(StackEffect.create(options), callOptions).then(adaptStack);
+/** Opens an existing stack without launching its services. */
+export const open = (options: StackEffect.OpenOptions, callOptions?: CallOptions) =>
+  acquire(StackEffect.open(options), callOptions).then(adaptStack);
+/** Discovers readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+export const discover = (
+  options: Pick<StackEffect.StackLocations, "stateRoot"> & {
+    readonly onInvalidState?: (id: string, error: Error) => void;
+  },
+  callOptions?: CallOptions,
+) => {
+  const onInvalidState = options.onInvalidState;
+  return runOnce(
+    StackEffect.discover({
+      stateRoot: options.stateRoot,
+      ...(onInvalidState === undefined
+        ? {}
+        : { onInvalidState: (id, error) => Effect.sync(() => onInvalidState(id, error)) }),
+    }),
+    callOptions,
+  );
+};
+/** Reads one saved stack by id or by project identity; resolves `undefined` when none is saved. */
+export const find = (options: StackEffect.FindOptions, callOptions?: CallOptions) =>
+  runOnce(StackEffect.find(options).pipe(Effect.map(Option.getOrUndefined)), callOptions);

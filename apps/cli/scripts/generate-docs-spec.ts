@@ -1,15 +1,11 @@
 /**
- * Emits the `clispec 001` CLI reference document for the supabase.com docs
- * site (`supabase/supabase` `apps/docs/spec/cli_v1_commands.yaml`) from the
- * Effect command tree plus the content under `apps/cli/docs/`
- * (`supabase/` description overlays, `templates/examples.yaml`).
+ * Emits the `clispec 001` CLI reference document for the supabase.com docs site from the Effect
+ * command tree plus the content under `apps/cli/docs/`. Run as
+ * `bun scripts/generate-docs-spec.ts [version] > cli_v1_commands.yaml`; only the spec YAML goes
+ * to stdout, diagnostics go to stderr.
  *
- * Contract (documented in `docs/README.md`): the spec YAML is the ONLY thing
- * written to stdout, so `bun scripts/generate-docs-spec.ts > cli_v1_commands.yaml`
- * yields a clean parseable file; diagnostics go to stderr. The spec version
- * defaults to `latest` and can be overridden with an argument (a leading
- * `v` is stripped) — the workspace package.json version is a semantic-release
- * placeholder, so it is never used.
+ * The version defaults to `latest` (a leading `v` is stripped); the workspace `package.json`
+ * version is a semantic-release placeholder and is never used here.
  */
 import path from "node:path";
 import process from "node:process";

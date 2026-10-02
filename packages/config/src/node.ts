@@ -17,7 +17,6 @@ export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
 // `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without
 // a second import from `@supabase/config` — `index.ts`'s own graph is pure,
-// so this doesn't drag anything platform-specific into it. No name
-// collisions with the seven facade functions above (verified against
-// `index.ts`'s export surface).
+// so this doesn't drag anything platform-specific into it, and none of its names collide with
+// the facade functions above.
 export * from "./index.ts";

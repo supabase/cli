@@ -79,10 +79,6 @@ describe("cleanupStartSecrets", () => {
   it.effect(
     "refuses to delete outside the staging root when container.name contains path-traversal segments",
     () => {
-      // `container.name` is a `docker ps` field value read back off whatever containers
-      // matched the caller's project-label filter — external metadata, not something this
-      // process generated. A crafted name containing `..` segments must never be able to walk
-      // `rm -rf` outside `start-secrets/` and onto an unrelated host directory.
       const workdir = mkdtempSync(join(tmpdir(), "start-secrets-cleanup-"));
       const canary = join(workdir, "important");
       return Effect.gen(function* () {
@@ -101,9 +97,6 @@ describe("cleanupStartSecrets", () => {
   );
 
   it.effect("refuses to delete the whole staging root when container.name is empty", () => {
-    // Degenerate case: an empty `name` would otherwise resolve to the staging root itself
-    // (`<workdir>/supabase/.temp/start-secrets`) and wipe every project's staged secrets in
-    // one call, not just this one container's.
     const workdir = mkdtempSync(join(tmpdir(), "start-secrets-cleanup-"));
     const stagingRoot = join(workdir, "supabase", ".temp", "start-secrets");
     const otherProjectSecretDir = join(stagingRoot, "supabase_kong_other");

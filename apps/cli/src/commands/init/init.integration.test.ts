@@ -1,10 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
+import * as SmolToml from "smol-toml";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Stdio,
+} from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag, WorkdirFlag, YesFlag } from "../../command-internal/global-flags.ts";
 import { normalizeCause } from "../../shared/output/normalize-error.ts";
@@ -12,11 +19,17 @@ import { textOutputLayer } from "../../shared/output/output.layer.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
+import { useTempWorkdir, withEnvVar } from "../../../tests/helpers/command-mocks.ts";
 import { init } from "./init.handler.ts";
 
-function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-init-"));
-}
+const tempRoot = useTempWorkdir("supabase-init-");
+
+const readTextFile = (...segments: Array<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(path.join(...segments));
+  }).pipe(Effect.provide(BunServices.layer));
 
 function setup(
   cwd: string,
@@ -29,6 +42,7 @@ function setup(
     /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
     stdinInput?: string;
     platform?: NodeJS.Platform;
+    env?: Readonly<Record<string, string | undefined>>;
   } = {},
 ) {
   const out = mockOutput({ format: "text", interactive: opts.interactive ?? false });
@@ -47,6 +61,9 @@ function setup(
       Layer.succeed(WorkdirFlag, opts.workdir ?? Option.none()),
       Layer.succeed(YesFlag, opts.yes ?? false),
       Layer.succeed(CliArgs, { args: [] }),
+      ConfigProvider.layer(
+        ConfigProvider.fromEnvRecord(opts.env ?? {}, { preserveEmptyStrings: true }),
+      ),
     ),
   };
 }
@@ -63,10 +80,9 @@ function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown>
 }
 
 /**
- * Renders a handler failure exactly like the real CLI does — `normalizeCause`
- * followed by the production text output layer's `fail` — and returns the
- * captured stderr writes (ANSI-stripped). This locks the composed two-line
- * stderr contract documented in SIDE_EFFECTS.md, not just the error fields.
+ * Renders a handler failure exactly like the real CLI does and returns the captured stderr
+ * writes (ANSI-stripped). Locks the composed stderr contract from SIDE_EFFECTS.md, not just
+ * the error fields.
  */
 function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
   return Effect.gen(function* () {
@@ -102,7 +118,7 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
 
 describe("init", () => {
   it.live("creates config.toml natively without the Go proxy", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
@@ -116,51 +132,42 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* Effect.tryPromise(() =>
-        readFile(join(tempDir, "supabase", "config.toml"), "utf8"),
-      );
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
       expect(content).toContain("major_version = 17");
+      expect(content).toContain("port = 54321");
+      expect(content).not.toContain("stack = true");
       expect(out.stdoutText).toBe("Finished supabase init.\n");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
-  it.live("requires --experimental when --use-orioledb is set, with cobra's exact wording", () => {
-    const tempDir = makeTempDir();
+  it.live.each([
+    { experimental: false, label: "without --experimental" },
+    { experimental: true, label: "with --experimental" },
+  ])("writes OrioleDB config $label", ({ experimental }) => {
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
-      const { layer } = setup(tempDir, { experimental: false });
+      const { layer, out } = setup(tempDir, { experimental });
 
-      const exit = yield* init({
+      yield* init({
         interactive: false,
         useOrioledb: true,
         force: false,
         withVscodeWorkspace: false,
         withVscodeSettings: false,
         withIntellijSettings: false,
-      }).pipe(Effect.provide(layer), Effect.exit);
+      }).pipe(Effect.provide(layer));
 
-      // `experimental` is marked required in PreRun, so the user sees
-      // cobra's standard message. No suggestion — the text output layer
-      // appends the generic `--debug` troubleshooting hint instead.
-      const error = findFailure(exit);
-      expect(error["_tag"]).toBe("InitExperimentalRequiredError");
-      expect(error["message"]).toBe(`required flag(s) "experimental" not set`);
-      expect(error["suggestion"]).toBeUndefined();
-
-      // Composed stderr byte-matches `recoverAndExit`'s output.
-      expect(yield* renderFailureToStderr(exit)).toEqual([
-        `required flag(s) "experimental" not set\n`,
-        "Try rerunning the command with --debug to troubleshoot the error.\n",
-      ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(SmolToml.parse(content)).toMatchObject({
+        db: { major_version: 17, orioledb_version: "17.11.0.002" },
+      });
+      expect(out.stdoutText).toBe("Finished supabase init.\n");
+    });
   });
 
   it.live("fails with Go's exact error when config.toml already exists", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     const initFlags = {
       interactive: false,
@@ -177,8 +184,6 @@ describe("init", () => {
       yield* init(initFlags).pipe(Effect.provide(layer));
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
-      // Byte-matches the wrapped `O_EXCL` `*os.PathError` from
-      // `utils.InitConfig` (`config.go:243-246`) plus its CmdSuggestion.
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
@@ -188,18 +193,15 @@ describe("init", () => {
         "Run supabase init --force to overwrite existing config file.",
       );
 
-      // Composed stderr byte-matches `recoverAndExit`'s output (Linux/macOS).
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase/config.toml: file exists\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("renders the Windows form of the already-exists error on win32", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     const initFlags = {
       interactive: false,
@@ -216,11 +218,6 @@ describe("init", () => {
       yield* init(initFlags).pipe(Effect.provide(layer));
       const exit = yield* init(initFlags).pipe(Effect.provide(layer), Effect.exit);
 
-      // On Windows, `utils.ConfigPath` is built with `filepath.Join`
-      // (`utils/misc.go:82`) — backslash separator — and the `O_EXCL` open
-      // fails with `ERROR_FILE_EXISTS`, rendered by `syscall.Errno.Error()` as
-      // `The file exists.`. The suggestion is unchanged because
-      // `errors.Is(err, os.ErrExist)` matches on Windows too.
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("InitConfigExistsError");
       expect(error["message"]).toBe(
@@ -230,18 +227,15 @@ describe("init", () => {
         "Run supabase init --force to overwrite existing config file.",
       );
 
-      // Composed stderr byte-matches `recoverAndExit`'s output (Windows).
       expect(yield* renderFailureToStderr(exit)).toEqual([
         "failed to create config file: open supabase\\config.toml: The file exists.\n",
         "Run supabase init --force to overwrite existing config file.\n",
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("supports the hidden IDE flags natively", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir);
@@ -255,27 +249,22 @@ describe("init", () => {
         withIntellijSettings: true,
       }).pipe(Effect.provide(layer));
 
-      expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, ".vscode", "extensions.json"), "utf8"),
-        ),
-      ).toContain('"recommendations"');
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".idea", "deno.xml"), "utf8")),
-      ).toContain('<component name="DenoSettings">');
+      expect(yield* readTextFile(tempDir, ".vscode", "extensions.json")).toContain(
+        '"recommendations"',
+      );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+      expect(yield* readTextFile(tempDir, ".idea", "deno.xml")).toContain(
+        '<component name="DenoSettings">',
+      );
       expect(out.stdoutText).toContain("Generated VS Code settings in .vscode/settings.json.");
       expect(out.stdoutText).toContain("Generated IntelliJ settings in .idea/deno.xml.");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("respects the legacy --workdir global flag", () => {
-    const tempDir = makeTempDir();
-    const workdir = join(tempDir, "nested");
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer } = setup(tempDir, { workdir: Option.some("nested") });
@@ -289,20 +278,10 @@ describe("init", () => {
         withIntellijSettings: false,
       }).pipe(Effect.provide(layer));
 
-      const content = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const content = yield* readTextFile(tempDir, "nested", "supabase", "config.toml");
       expect(content).toContain("major_version = 17");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    });
   });
-
-  // ---------------------------------------------------------------------------
-  // `-i` + `--yes`/`SUPABASE_YES` — `PromptForIDESettings` goes through
-  // `PromptYesNo`, so the global YES auto-accepts the VS Code question with the
-  // `[Y/n] y` stderr echo instead of prompting anyway (CLI-1974).
-  // ---------------------------------------------------------------------------
 
   const BASE_INIT_FLAGS = {
     useOrioledb: false,
@@ -313,7 +292,7 @@ describe("init", () => {
   } as const;
 
   it.live("init -i --yes writes VS Code settings with the Go echo instead of prompting", () => {
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true, yes: true });
@@ -322,46 +301,35 @@ describe("init", () => {
 
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      // Go returns after writing VS Code settings — IntelliJ is never asked.
       expect(out.stderrText).not.toContain("IntelliJ");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
   });
 
   it.live("init -i with SUPABASE_YES=1 auto-accepts the VS Code prompt like --yes", () => {
-    const tempDir = makeTempDir();
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
+    const tempDir = tempRoot.current;
 
-    return Effect.gen(function* () {
-      const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
+    return withEnvVar(
+      "SUPABASE_YES",
+      "1",
+      Effect.gen(function* () {
+        const { layer, out } = setup(tempDir, { interactive: true, stdinIsTty: true });
 
-      yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
+        yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
-      expect(out.promptConfirmCalls).toHaveLength(0);
-      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+        expect(out.promptConfirmCalls).toHaveLength(0);
+        expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
+        expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+          '"deno.enablePaths"',
+        );
+      }),
     );
   });
 
   it.live("init -i --yes writes VS Code settings even when stdout is piped (Go parity)", () => {
-    // Go gates the IDE prompts on `-i` + a TTY stdin only (`cmd/init.go:40`); with
-    // YES set no clack UI is rendered, so a piped stdout must not skip the write.
-    const tempDir = makeTempDir();
+    const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
       const { layer, out } = setup(tempDir, { interactive: false, stdinIsTty: true, yes: true });
@@ -369,11 +337,62 @@ describe("init", () => {
       yield* init({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(tempDir, ".vscode", "settings.json"), "utf8")),
-      ).toContain('"deno.enablePaths"');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readTextFile(tempDir, ".vscode", "settings.json")).toContain(
+        '"deno.enablePaths"',
+      );
+    });
+  });
+
+  it.live("writes the stack-opt-in template when SUPABASE_EXPERIMENTAL_STACK=1", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const { layer, out } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "1" } });
+
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(content).toContain("stack = true");
+      expect(content).not.toMatch(/^shadow_port = 54320$/m);
+      expect(content).not.toMatch(/^port = 54321$/m);
+      expect(content).not.toMatch(/^inspector_port = 8083$/m);
+      expect(out.stdoutText).toBe("Finished supabase init.\n");
+    });
+  });
+
+  it.live("keeps the established template when SUPABASE_EXPERIMENTAL_STACK=0", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "0" } });
+
+      yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(Effect.provide(layer));
+
+      const content = yield* readTextFile(tempDir, "supabase", "config.toml");
+      expect(content).not.toContain("stack = true");
+      expect(content).toContain("port = 54321");
+    });
+  });
+
+  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+    const tempDir = tempRoot.current;
+
+    return Effect.gen(function* () {
+      const { layer } = setup(tempDir, { env: { SUPABASE_EXPERIMENTAL_STACK: "yes" } });
+
+      const exit = yield* init({ ...BASE_INIT_FLAGS, interactive: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      const error = findFailure(exit);
+      expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
+      expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+
+      expect(yield* renderFailureToStderr(exit)).toEqual([
+        "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
+        "Try rerunning the command with --debug to troubleshoot the error.\n",
+      ]);
+    });
   });
 });

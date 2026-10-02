@@ -1,6 +1,5 @@
-import * as nodePath from "node:path";
-
 import type { CliConfig } from "@supabase/config";
+import { BunPath } from "@effect/platform-bun";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -67,14 +66,12 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   const resolver = yield* ProjectRefResolver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
-  // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
-  // uint parse error. The remaining clamp handles `--jobs 0` specifically: a
-  // zero-sized job queue with an unbuffered channel and a zero-run priming
-  // loop deadlocks the first Put. We clamp `0 → 1` to avoid that hang — do
-  // not remove it.
+  // `--jobs 0` clamps to 1 to avoid a job-queue deadlock on the first item; a non-uint `--jobs`
+  // is already rejected in `cp.command.ts`.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
@@ -86,16 +83,12 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -105,8 +98,8 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse both URLs leniently (NOT the strict storage-URL parser), BEFORE
-    // building the client — an invalid url fails without an api-keys lookup.
+    // Parses both URLs leniently (not the strict storage-URL parser) before building the
+    // client, so an invalid URL fails without an api-keys lookup.
     const srcUrl = yield* parseCpUrl(flags.src, "src");
     const dstUrl = yield* parseCpUrl(flags.dst, "dst");
     const srcIsStorage = srcUrl.scheme === STORAGE_SCHEME;
@@ -121,7 +114,17 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
           if (srcIsStorage && dstUrl.scheme === "") {
             const localPath = absLocal(path, runtimeInfo.cwd, flags.dst);
             if (flags.recursive) {
-              yield* downloadAll(gateway, output, fs, path, srcUrl.path, localPath, jobs, summary);
+              yield* downloadAll(
+                gateway,
+                output,
+                fs,
+                path,
+                posixPath,
+                srcUrl.path,
+                localPath,
+                jobs,
+                summary,
+              );
             } else {
               yield* downloadSingle(gateway, fs, srcUrl.path, localPath, summary);
             }
@@ -132,6 +135,7 @@ export const storageCp = Effect.fn("storage.cp")(function* (flags: StorageCpFlag
               output,
               fs,
               path,
+              posixPath,
               contentTypeFlag,
               cacheControl,
               config: loaded.config,
@@ -186,7 +190,7 @@ const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeA
 
 // Download (remote → local)
 
-/** Go `api.DownloadObject` (`objects.go:135-142`): O_EXCL create, then stream. */
+/** Downloads a single object: creates the file exclusively (fails if it exists), then streams into it. */
 const downloadSingle = (
   gateway: StorageGateway,
   fs: FileSystem.FileSystem,
@@ -211,88 +215,82 @@ const downloadSingle = (
     }),
   );
 
-/** Go `DownloadStorageObjectAll` (`cp.go:63-97`): BFS, O_TRUNC, mkdir parents. */
-const downloadAll = (
+/** Recursively downloads a remote prefix: BFS walk, truncating existing files, creating parent dirs. */
+const downloadAll = Effect.fn("storage.cp.downloadAll")(function* (
   gateway: StorageGateway,
   output: typeof Output.Service,
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  posixPath: Path.Path,
   remotePath: string,
   localPath0: string,
   jobs: number,
   summary: CpSummary,
-) =>
-  Effect.gen(function* () {
-    // If the destination is an existing directory, nest under base(remotePath).
-    const isDir = yield* fs.stat(localPath0).pipe(
-      Effect.map((i) => i.type === "Directory"),
-      Effect.orElseSucceed(() => false),
-    );
-    const localPath = isDir
-      ? path.join(localPath0, nodePath.posix.basename(remotePath))
-      : localPath0;
+) {
+  // If the destination is an existing directory, nest under base(remotePath).
+  const isDir = yield* fs.stat(localPath0).pipe(
+    Effect.map((i) => i.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
+  const localPath = isDir ? path.join(localPath0, posixPath.basename(remotePath)) : localPath0;
 
-    const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
-    // Capture the walk error as a value rather than failing on it immediately:
-    // Go returns `errors.Join(walkErr, jq.Collect())` (`cp.go:96`), so two
-    // ordering rules hold. (1) The `count == 0 → "Object not found"` check
-    // precedes the join (`cp.go:93-95`), masking a walk error when nothing was
-    // visited. (2) A walk that errors partway still runs the already-queued
-    // downloads before the walk error surfaces — so the check is sequenced after
-    // the download pass below, not before it.
-    const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
-      Effect.gen(function* () {
-        const relPath = objectPath.startsWith(remotePath)
-          ? objectPath.slice(remotePath.length)
-          : objectPath;
-        const dstPath = path.join(localPath, relPath);
-        yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
-        tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
-      }),
-    ).pipe(
-      Effect.as<StorageGatewayError | undefined>(undefined),
-      Effect.catch((error) => Effect.succeed(error)),
-    );
+  const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
+  // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
+  // mask a walk error, and a walk that errors partway must still run the already-queued
+  // downloads before the walk error surfaces — so this is checked after the download pass below.
+  const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
+    Effect.gen(function* () {
+      const relPath = objectPath.startsWith(remotePath)
+        ? objectPath.slice(remotePath.length)
+        : objectPath;
+      const dstPath = path.join(localPath, relPath);
+      yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
+      tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
+    }),
+  ).pipe(
+    Effect.as<StorageGatewayError | undefined>(undefined),
+    Effect.catch((error) => Effect.succeed(error)),
+  );
 
-    if (tasks.length === 0) {
-      return yield* new StorageObjectNotFoundError(remotePath);
-    }
+  yield* Effect.annotateCurrentSpan({ "file.count": tasks.length });
 
-    yield* Effect.forEach(
-      tasks,
-      (task) =>
-        task.isDir
-          ? makeDirIfNotExist(fs, task.dstPath)
-          : Effect.gen(function* () {
-              yield* makeDirIfNotExist(fs, path.dirname(task.dstPath));
-              yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const handle = yield* fs.open(task.dstPath, { flag: "w" }).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new StorageFileError({
-                          message: `failed to create file: ${String(cause.cause ?? cause)}`,
-                        }),
-                    ),
-                  );
-                  yield* gateway
-                    .downloadObject(task.objectPath)
-                    .pipe(Stream.runForEach((c) => writeChunk(handle, c)));
-                }),
-              );
-              summary.downloaded.push({ from: task.objectPath, to: task.dstPath });
-            }),
-      { concurrency: jobs },
-    );
+  if (tasks.length === 0) {
+    return yield* new StorageObjectNotFoundError(remotePath);
+  }
 
-    // Surface the walk error only after the queued downloads have run, matching
-    // `errors.Join(walkErr, jq.Collect())`. A download failure propagates from
-    // the pass above (the job queue's first error); the rare walk-error +
-    // download-error pair is collapsed to whichever fails first.
-    if (iterError !== undefined) {
-      return yield* Effect.fail(iterError);
-    }
-  });
+  yield* Effect.forEach(
+    tasks,
+    (task) =>
+      task.isDir
+        ? makeDirIfNotExist(fs, task.dstPath)
+        : Effect.gen(function* () {
+            yield* makeDirIfNotExist(fs, path.dirname(task.dstPath));
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const handle = yield* fs.open(task.dstPath, { flag: "w" }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StorageFileError({
+                        message: `failed to create file: ${String(cause.cause ?? cause)}`,
+                      }),
+                  ),
+                );
+                yield* gateway
+                  .downloadObject(task.objectPath)
+                  .pipe(Stream.runForEach((c) => writeChunk(handle, c)));
+              }),
+            );
+            summary.downloaded.push({ from: task.objectPath, to: task.dstPath });
+          }),
+    { concurrency: jobs },
+  );
+
+  // Surfaced only after the queued downloads have run; a download failure propagates from the
+  // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
+  if (iterError !== undefined) {
+    return yield* iterError;
+  }
+});
 
 const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
   fs.makeDirectory(dir, { recursive: true }).pipe(
@@ -311,6 +309,7 @@ interface UploadCtx {
   readonly output: typeof Output.Service;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
+  readonly posixPath: Path.Path;
   readonly contentTypeFlag: string;
   readonly cacheControl: string;
   readonly config: CliConfig;
@@ -327,7 +326,7 @@ const resolveContentType = (ctx: UploadCtx, filePath: string) =>
     return contentTypeForUpload(sniff, filePath);
   });
 
-/** Go `api.UploadObject` single (`cp.go:55`): no x-upsert, no "Uploading:" line. */
+/** Uploads a single file without overwrite and without an "Uploading:" progress line. */
 const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) =>
   Effect.gen(function* () {
     const contentType = yield* resolveContentType(ctx, localPath);
@@ -339,50 +338,56 @@ const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) 
     ctx.summary.uploaded.push({ from: localPath, to: remoteDstPath });
   });
 
-/** Go `UploadStorageObjectAll` (`cp.go:99-172`): walk + dst-key + auto-create. */
-const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: number) =>
-  Effect.gen(function* () {
-    const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
+/** Recursively uploads a local directory: walks files, resolves each destination key, auto-creating the bucket if needed. */
+const uploadAll = Effect.fn("storage.cp.uploadAll")(function* (
+  ctx: UploadCtx,
+  remotePath: string,
+  localPath: string,
+  jobs: number,
+) {
+  const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
 
-    // Detect whether base(noSlash) already exists remotely as a file or dir.
-    let dirExists = false;
-    let fileExists = false;
-    if (noSlash.length > 0) {
-      const base = nodePath.posix.basename(noSlash);
-      yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
-        Effect.sync(() => {
-          if (objectName === base) fileExists = true;
-          if (objectName === `${base}/`) dirExists = true;
-        }),
-      );
-    }
-
-    const baseName = ctx.path.basename(localPath);
-    const files = yield* collectUploadFiles(ctx.fs, ctx.path, localPath);
-
-    const tasks: Array<{ filePath: string; dstPath: string }> = [];
-    for (const file of files) {
-      const dstPath = resolveUploadDstPath({
-        remotePath,
-        relPath: file.relPath,
-        fileName: ctx.path.basename(file.filePath),
-        baseName,
-        noSlash,
-        dirExists,
-        fileExists,
-      });
-      yield* ctx.output.raw(`Uploading: ${file.filePath} => ${dstPath}\n`, "stderr");
-      tasks.push({ filePath: file.filePath, dstPath });
-    }
-
-    yield* Effect.forEach(
-      tasks,
-      (task) => uploadOneWithAutoCreate(ctx, task.dstPath, task.filePath),
-      {
-        concurrency: jobs,
-      },
+  // Detect whether base(noSlash) already exists remotely as a file or dir.
+  let dirExists = false;
+  let fileExists = false;
+  if (noSlash.length > 0) {
+    const base = ctx.posixPath.basename(noSlash);
+    yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
+      Effect.sync(() => {
+        if (objectName === base) fileExists = true;
+        if (objectName === `${base}/`) dirExists = true;
+      }),
     );
-  });
+  }
+
+  const baseName = ctx.path.basename(localPath);
+  const files = yield* collectUploadFiles(ctx.fs, ctx.path, localPath);
+
+  const tasks: Array<{ filePath: string; dstPath: string }> = [];
+  for (const file of files) {
+    const dstPath = resolveUploadDstPath(ctx.posixPath, {
+      remotePath,
+      relPath: file.relPath,
+      fileName: ctx.path.basename(file.filePath),
+      baseName,
+      noSlash,
+      dirExists,
+      fileExists,
+    });
+    yield* ctx.output.raw(`Uploading: ${file.filePath} => ${dstPath}\n`, "stderr");
+    tasks.push({ filePath: file.filePath, dstPath });
+  }
+
+  yield* Effect.annotateCurrentSpan({ "file.count": tasks.length });
+
+  yield* Effect.forEach(
+    tasks,
+    (task) => uploadOneWithAutoCreate(ctx, task.dstPath, task.filePath),
+    {
+      concurrency: jobs,
+    },
+  );
+});
 
 /** One recursive upload (overwrite), retrying after bucket auto-create on 404. */
 const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: string) =>
@@ -412,9 +417,9 @@ const autoCreateAndRetry = (
 ) =>
   Effect.gen(function* () {
     const [bucket, prefix] = splitBucketPrefix(dstPath);
-    // Go only auto-creates when a prefix follows the bucket (`cp.go:154`).
+    // Only auto-creates the bucket when a prefix follows it; a bare bucket destination fails instead.
     if (prefix.length === 0) {
-      return yield* Effect.fail(original);
+      return yield* original;
     }
     const props = yield* bucketAutoCreateProps(ctx, bucket);
     yield* ctx.gateway.createBucket(bucket, props);
@@ -482,17 +487,17 @@ const walkUploadDir = (
     const names = [...(yield* fs.readDirectory(dir))].sort();
     for (const name of names) {
       const abs = path.join(dir, name);
-      // afero.Walk uses Lstat (no-follow); a symlink is not regular → skipped.
+      // Symlinks are detected via `readLink` and skipped without following them.
       const isSymlink = yield* fs.readLink(abs).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) continue;
       const info = yield* fs.stat(abs);
       if (info.type === "Directory") {
         yield* walkUploadDir(fs, path, root, abs, out);
       } else if (info.type === "File") {
-        out.push({ filePath: abs, relPath: path.relative(root, abs) });
+        out.push({ filePath: abs, relPath: path.relative(root, abs).split(path.sep).join("/") });
       }
     }
   });

@@ -8,7 +8,7 @@ import { telemetryStateLayer } from "../../../../../telemetry/telemetry-state.la
 import {
   pgDeltaCommandRuntimeLayer,
   pgDeltaDbConfigRuntimeLayer,
-} from "../../../shared/pgdelta-engine.layer.ts";
+} from "../../../../../command-internal/pgdelta-engine-runtime.layer.ts";
 
 export const dbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   pgDeltaDbConfigRuntimeLayer,

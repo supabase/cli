@@ -1,9 +1,22 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunCrypto } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
+import {
+  Config,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -18,6 +31,7 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
@@ -27,6 +41,7 @@ import { downloadFunctions } from "../../../shared/functions/download.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../shared/functions/download.errors.ts";
+import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
 import { functionsDownloadHandler } from "./download.command.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import { functionsDownload } from "./download.handler.ts";
@@ -34,12 +49,9 @@ import { functionsDownload } from "./download.handler.ts";
 const PROJECT_ID = "abcdefghijklmnopqrst";
 
 /**
- * Mutates the shared spawner options object from inside `onSpawn`, scoped to
- * the `docker run ... unbundle` invocation specifically — every earlier
- * Docker call (`info`, `network inspect`, `volume create`) in the same test
- * already resolved by the time this fires, since `download.ts` awaits each
- * child process sequentially, so this only ever affects the unbundle step's
- * own exit code/stdio.
+ * Sets the spawner's exit code/stdio only for the `docker run ... unbundle`
+ * step; earlier Docker calls in the same test already resolved by the time
+ * this fires, since `download.ts` awaits each child process sequentially.
  */
 function mockDockerUnbundle(
   opts: {
@@ -65,18 +77,11 @@ function mockDockerUnbundle(
 }
 
 /**
- * A real ENOENT-style spawn failure for the `docker run ... unbundle` step
- * specifically — distinct from `mockDockerUnbundle`'s non-zero exit code,
- * which models the container starting but the `unbundle` binary itself
- * failing. This models `child_process.spawn` (or the container runtime
- * binary) never starting at all, which `runChildProcess` surfaces as an
- * `unknown` cause rather than an `{ exitCode, stdout, stderr }` result.
- * Mirrors `container-cli.unit.test.ts`'s `mockSpawner({ bothMissing:
- * true })`: failing both the `docker` and `podman` fallback attempts for the
- * `run` step is what makes `spawnContainerCli` surface
- * `containerRuntimeNotFoundMessage` instead of retrying indefinitely.
- * Every other Docker call (`info`, `network inspect`, `volume create`)
- * succeeds with exit code 0, so only the unbundle step itself fails.
+ * Models `docker run ... unbundle` never starting at all (ENOENT), distinct
+ * from `mockDockerUnbundle`'s non-zero exit code, which models the container
+ * starting but the `unbundle` binary failing. `runChildProcess` surfaces this
+ * as an `unknown` cause rather than `{ exitCode, stdout, stderr }`. Every
+ * other Docker call succeeds so only the unbundle step fails.
  */
 function mockDockerRunSpawnFailure() {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
@@ -87,14 +92,12 @@ function mockDockerRunSpawnFailure() {
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -126,11 +129,8 @@ function mockDockerRunSpawnFailure() {
 
 const tempRoot = useTempWorkdir("supabase-functions-download-legacy-");
 
-// `withCommandTelemetry` threads `flags`/`command`/etc. through
-// `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors
-// the identical local helper in `command-telemetry.unit.test.ts`.
-// The shared `mockAnalytics()` in tests/helpers/mocks.ts deliberately doesn't
-// merge this context (most callers don't need it).
+// `withCommandTelemetry` threads `flags`/`command` through
+// `CurrentAnalyticsContext`, not `capture()`'s own args, so this merges it manually.
 function mockContextualAnalytics() {
   const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
   const layer = Layer.succeed(
@@ -239,15 +239,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* functionsDownload(baseFlags);
 
       expect(proxy.calls).toEqual([]);
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(
-            join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-            "utf8",
-          ),
+        yield* fs.readFileString(
+          path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
         ),
       ).toBe("console.log('legacy native')");
       expect(out.stderrText).toContain(
@@ -264,9 +263,8 @@ describe("functions download", () => {
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
-      // Non-empty stdout/stderr on the `docker run` step exercises both the
-      // text-mode stdout routing branch and the always-to-stderr container
-      // stderr branch in `downloadWithDockerUnbundle`.
+      // Non-empty stdout/stderr exercises both the text-mode stdout routing
+      // and always-to-stderr branches in `downloadWithDockerUnbundle`.
       const child = mockDockerUnbundle({
         runStdout: ["unbundle: wrote index.ts"],
         runStderr: ["unbundle: warning about deno.json"],
@@ -291,10 +289,8 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // `useDocker: true` mirrors what the CLI parser now resolves to by
-        // default (CLI-1862) — no `--use-docker` flag appears in argv above.
-        // CLI-1963: this now runs the native Docker-unbundle path instead of
-        // delegating to the Go proxy.
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
@@ -310,14 +306,14 @@ describe("functions download", () => {
         expect(out.stderrText).toContain("Downloading function: hello-world\n");
         expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
         expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
-        // Established behavior (CLI-1963 audit): unlike the server-side and
-        // `--legacy-bundle` paths, `downloadWithDockerUnbundle` never prints
-        // a "Downloaded Function ... from project ..." success line —
-        // guarded here against a future accidental regression.
+        // Unlike the server-side and --legacy-bundle paths, the native Docker
+        // path never prints a "Downloaded Function ..." success line.
         expect(out.stderrText).not.toContain("Downloaded Function");
         // No `--debug` — the temp eszip file is removed after the run.
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -354,19 +350,16 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // The CLI parser resolves `useDocker: true` here too (its default),
-        // even though only `--use-api` was passed explicitly. Neither the
-        // mutex check nor the routing decision should treat that default as
-        // if the user had asked for Docker.
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // `useDocker: true` reflects the flag's own default, unaffected by
+        // the explicit `--use-api`.
         yield* functionsDownload({ ...baseFlags, useApi: true, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(
-              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-              "utf8",
-            ),
+          yield* fs.readFileString(
+            path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
           ),
         ).toBe("console.log('legacy native')");
       }).pipe(Effect.provide(layer));
@@ -401,11 +394,8 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // The override is value-based (`if useApi { useDocker = false }`),
-        // not presence-based. An explicit `--use-api=false` must not be
-        // treated like `--use-api` — it should leave the `--use-docker`
-        // default (true) in effect and still run the native Docker path
-        // (CLI-1963).
+        // The override is value-based, not presence-based: an explicit
+        // `--use-api=false` leaves `--use-docker`'s own default (true) in effect.
         yield* functionsDownload({ ...baseFlags, useApi: false, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
@@ -426,8 +416,7 @@ describe("functions download", () => {
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       // Non-empty container stdout exercises the machine-mode branch that
-      // routes it to stderr instead of stdout (CLI-1546: stdout stays
-      // payload-only in json/stream-json modes).
+      // routes it to stderr, keeping stdout payload-only.
       const child = mockDockerUnbundle({ runStdout: ["unbundle: wrote index.ts"] });
       const layer = Layer.mergeAll(
         buildTestRuntime({
@@ -451,10 +440,6 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // CLI-1963: `--use-docker` now runs the native Docker-unbundle path;
-        // this asserts the JSON envelope this command emits itself still
-        // shows up correctly, with no delegated Go child's stdout to worry
-        // about capturing.
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
@@ -522,9 +507,8 @@ describe("functions download", () => {
           (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
         ),
       ).toHaveLength(2);
-      // The edge-runtime image is resolved/pulled once for the whole
-      // invocation, not once per function — see `PulledEdgeRuntimeImage`'s
-      // doc comment in `download.ts`.
+      // The edge-runtime image is resolved/pulled once per invocation, not
+      // once per function; see `PulledEdgeRuntimeImage` in `download.ts`.
       expect(
         child.spawned.filter(
           (spawned) =>
@@ -571,11 +555,11 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
-      // Go: `extractOne` (`download.go:260-266`) — bind order and network
-      // reuse the same primitives `deploy.ts`'s own Docker-bundling path
-      // already uses.
+      // Bind order and network reuse the same primitives as `deploy.ts`'s
+      // own Docker-bundling path.
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
         command: "docker",
         args: ["network", "inspect", `supabase_network_${PROJECT_ID}`],
@@ -594,13 +578,13 @@ describe("functions download", () => {
       });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
-      const hostEszipPath = resolve(
+      const hostEszipPath = path.resolve(
         tempRoot.current,
         "supabase",
         ".temp",
         "output_hello-world.eszip",
       );
-      const functionsDir = resolve(tempRoot.current, "supabase", "functions");
+      const functionsDir = path.resolve(tempRoot.current, "supabase", "functions");
       expect(runCommand?.args).toContain(
         `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
       );
@@ -610,10 +594,10 @@ describe("functions download", () => {
       expect(runCommand?.args).toContain(`${functionsDir}:/home/deno:rw`);
       expect(runCommand?.args).toContain("--network");
       expect(runCommand?.args).toContain(`supabase_network_${PROJECT_ID}`);
-      // The unbundle tail is always the LAST 6 args regardless of whether
+      // The unbundle tail is always the last 6 args regardless of whether
       // `--add-host` (Linux-only) was inserted before it.
       expect(runCommand?.args.slice(-6)).toEqual([
-        `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`,
+        `public.ecr.aws/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
         "unbundle",
         "--eszip",
         "/root/eszips/output_hello-world.eszip",
@@ -623,13 +607,11 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("omits the named Deno cache volume bind on Bitbucket", () => {
-    // Established behavior: the named-volume bind is dropped entirely on
-    // Bitbucket rather than just skipping its explicit creation —
+  it.live("omits named cache volumes when the Bitbucket marker is explicitly empty", () => {
+    // The bind is dropped entirely, not just its explicit creation step:
     // `docker run -v <name>:...` would otherwise still implicitly create the
-    // named volume, which Bitbucket's restricted Docker environment doesn't
-    // allow (review round on CLI-1963's `functions download` port;
-    // `deploy.ts`'s `buildDockerBinds` already applies this same carve-out).
+    // volume, which Bitbucket's restricted Docker environment disallows.
+    // `deploy.ts`'s `buildDockerBinds` applies the same carve-out.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -654,17 +636,15 @@ describe("functions download", () => {
       }),
     );
 
-    const previousBitbucketCloneDir = process.env["BITBUCKET_CLONE_DIR"];
-    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
-
     return Effect.gen(function* () {
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
       expect(runCommand?.args).not.toContain(
         `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
       );
-      const hostEszipPath = resolve(
+      const hostEszipPath = path.resolve(
         tempRoot.current,
         "supabase",
         ".temp",
@@ -673,28 +653,20 @@ describe("functions download", () => {
       expect(runCommand?.args).toContain(
         `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
       );
-    })
-      .pipe(Effect.provide(layer))
-      .pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previousBitbucketCloneDir === undefined) {
-              delete process.env["BITBUCKET_CLONE_DIR"];
-            } else {
-              process.env["BITBUCKET_CLONE_DIR"] = previousBitbucketCloneDir;
-            }
-          }),
-        ),
-      );
+      expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord({ BITBUCKET_CLONE_DIR: "" }, { preserveEmptyStrings: true }),
+      ),
+    );
   });
 
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
-    // `v1GetAFunctionBody`'s generated contract marks its response
-    // `kind: "json"`, so `executeRaw` would otherwise default to
-    // `Accept: application/json` (`buildRequest`'s unconditional `acceptJson`
-    // for json-kind operations) and risk a negotiated JSON response instead
-    // of the raw eszip body an un-overridden request receives (review round
-    // on CLI-1963's `functions download` port).
+    // The generated contract marks this response `kind: "json"`, so
+    // `executeRaw` would otherwise default to `Accept: application/json` and
+    // risk a negotiated response instead of the raw eszip body.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -755,9 +727,9 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-      // registered on `functions download` itself — `lastExplicitLongFlagValue`
-      // scans the whole argv unscoped.
+      // `--network-id` is a persistent root flag, not registered on
+      // `functions download` itself, so `lastExplicitLongFlagValue` scans the
+      // whole argv unscoped.
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
@@ -773,10 +745,6 @@ describe("functions download", () => {
   it.live(
     "falls back to the generated network name when --network-id is passed with an empty value",
     () => {
-      // The network is only overridden when the value is non-empty — an
-      // explicit-but-empty `--network-id=` must fall through to the
-      // generated network name just like an omitted flag (review round on
-      // CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
@@ -816,12 +784,6 @@ describe("functions download", () => {
   );
 
   it.live("honors the final occurrence of a repeated --network-id flag", () => {
-    // pflag/viper string flags are shared-variable, last-`Set()`-wins
-    // (confirmed empirically: `pflag.FlagSet.Parse` on
-    // `--network-id old --network-id custom-network` resolves to
-    // `custom-network`) — `lastExplicitLongFlagValue` must keep scanning past the
-    // first match instead of returning early (review round on CLI-1963's
-    // `functions download` port).
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -862,10 +824,6 @@ describe("functions download", () => {
   it.live(
     "falls back to the generated network name when the final --network-id occurrence is empty",
     () => {
-      // Same last-wins rule as above, applied to the non-empty-value gate: a
-      // non-empty default followed by an explicit-but-empty override must
-      // fall through to the generated network name, not the earlier
-      // non-empty value.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
@@ -906,18 +864,14 @@ describe("functions download", () => {
   it.live(
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
-      // Established behavior: `supabase/config.toml` only ever resolves from
-      // the already-resolved workdir, with no ancestor climb — implemented
-      // here by `resolveEdgeRuntimeImage`'s `search: false` (review round on
-      // CLI-1963's `functions download` port). A nested workdir with no
-      // `supabase/config.toml` of its own must fall back to `--project-ref`
-      // for network/volume naming, not an ancestor project's configured
-      // `project_id`, even though `cliSettings.workdir` sits right inside one.
+      // No ancestor climb: `resolveEdgeRuntimeImage` uses `search: false`, so
+      // a nested workdir without its own config.toml falls back to
+      // `--project-ref` rather than an ancestor's `project_id`.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
       const child = mockChildProcessSpawner({ exitCode: 0 });
-      const nestedWorkdir = join(tempRoot.current, "nested");
+      const nestedWorkdir = `${tempRoot.current}/nested`;
       const layer = Layer.mergeAll(
         buildTestRuntime({
           out,
@@ -939,15 +893,13 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ['project_id = "ancestor-project"', ""].join("\n"),
-          ),
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(nestedWorkdir, { recursive: true });
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", "config.toml"),
+          ['project_id = "ancestor-project"', ""].join("\n"),
         );
 
         yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -964,12 +916,8 @@ describe("functions download", () => {
   );
 
   it.live("prefers config.toml over a stray config.json for the Docker download path", () => {
-    // Established behavior: there is no concept of a JSON project config
-    // file — it always resolves `supabase/config.toml`, implemented here by
-    // `resolveEdgeRuntimeImage`'s `tomlOnly: true` (review round on
-    // CLI-1963's `functions download` port). A workdir with both files must resolve `project_id` from
-    // `config.toml`, not prefer the JSON file as the package loader
-    // otherwise would.
+    // Uses `resolveEdgeRuntimeImage`'s `tomlOnly: true`, so a workdir with
+    // both files resolves `project_id` from config.toml, not config.json.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -995,20 +943,16 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "config.toml"),
+        ['project_id = "toml-project"', ""].join("\n"),
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.toml"),
-          ['project_id = "toml-project"', ""].join("\n"),
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.json"),
-          JSON.stringify({ project_id: "json-project" }),
-        ),
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "config.json"),
+        '{"project_id":"json-project"}',
       );
 
       yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -1020,13 +964,9 @@ describe("functions download", () => {
   });
 
   it.live("skips network creation for a container: network mode", () => {
-    // Established behavior: user-defined network detection explicitly
-    // excludes container-mode networks — `--network-id container:redis`
-    // attaches to another container's network stack, so
-    // `DockerNetworkCreateIfNotExists` never inspects or creates a network
-    // for it, and the mode is passed straight through to
-    // `docker run --network` (review round on CLI-1963's `functions
-    // download` port).
+    // `--network-id container:redis` attaches to another container's network
+    // stack, so no network is inspected or created for it; the mode is
+    // passed straight through to `docker run --network`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -1063,11 +1003,9 @@ describe("functions download", () => {
   });
 
   it.live("does not double-prefix an already v-prefixed edge-runtime-version pin", () => {
-    // Established behavior: the pin file's raw content is appended verbatim
-    // after the image's `:`, so a pin already carrying its own `v` prefix (a
-    // legitimate form — see `edge-runtime-image.unit.test.ts`'s own
-    // `"v9.9.9"` fixture) must not be prepended with a second `v` (review
-    // round on CLI-1963's `functions download` port).
+    // The pin file's raw content is appended verbatim after the image's `:`,
+    // so an already-`v`-prefixed pin (see edge-runtime-image.unit.test.ts)
+    // must not get a second `v`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
     const proxy = mockProxy();
@@ -1093,11 +1031,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase", ".temp"), { recursive: true }),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n"),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase", ".temp"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"),
+        "v9.9.9\n",
       );
 
       yield* functionsDownload({ ...baseFlags, useDocker: true });
@@ -1134,10 +1075,14 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* functionsDownload({ ...baseFlags, useDocker: true });
 
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
       ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1145,10 +1090,6 @@ describe("functions download", () => {
   it.live(
     "removes the temporary eszip file when --debug=false overrides the flag's own presence",
     () => {
-      // This gates on the resolved boolean value, so an explicit
-      // `--debug=false` resolves to `false` (cleanup runs) — a presence-only
-      // check would get this backwards and treat `--debug=false` like
-      // `--debug` (review round on CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
@@ -1175,10 +1116,14 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1187,11 +1132,6 @@ describe("functions download", () => {
   it.live(
     "fails on an invalid project config before falling back when Docker is not running",
     () => {
-      // Established behavior: the config load happens unconditionally at the
-      // very top, before checking whether Docker is running — an invalid
-      // `supabase/config.toml` must fail up front instead of silently
-      // falling through to the server-side path's API/filesystem side
-      // effects (review round on CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi();
       const proxy = mockProxy();
@@ -1218,14 +1158,12 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
-          ),
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tempRoot.current, "supabase", "config.toml"),
+          ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
         );
 
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
@@ -1284,10 +1222,8 @@ describe("functions download", () => {
         const proxy = mockProxy();
         const child = mockDockerUnbundle({
           runExitCode: 1,
-          // Established behavior: the scanner requires a full-line,
-          // case-insensitive match — a line merely containing the phrase as
-          // a substring (e.g. "error: invalid eszip v2 header") does not
-          // fire the suggestion.
+          // Full-line, case-insensitive match required; a substring like
+          // "error: invalid eszip v2 header" would not fire the suggestion.
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
@@ -1311,14 +1247,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1363,14 +1297,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1420,6 +1352,8 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(Error);
@@ -1428,12 +1362,13 @@ describe("functions download", () => {
       );
       expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(false);
-      // Fix (CLI-1963 review): `Effect.ensuring` wraps the whole
-      // Docker-extraction sequence, so the temp eszip written just before it
-      // is still cleaned up even though the failure happened before Docker
-      // ever ran — not only after a successful `runChildProcess` call.
+      // `Effect.ensuring` wraps the whole Docker-extraction sequence, so the
+      // temp eszip is cleaned up even though the failure happened before
+      // Docker ever ran.
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fs.exists(
+          path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        ),
       ).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -1466,13 +1401,13 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
-        // Distinct from `ensureDockerNetwork`/`ensureDockerNamedVolume`
-        // failures (asserted above), which already self-describe and must
-        // NOT gain this prefix — a bare spawn/runtime-not-found failure from
-        // `runChildProcess` itself carries no context of its own about which
-        // command was running, so `withDockerStepFailure` adds one.
+        // Distinct from the self-describing `ensureDockerNetwork`/
+        // `ensureDockerNamedVolume` failures above: a bare spawn/runtime-not-found
+        // failure carries no context of its own, so `withDockerStepFailure` adds one.
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe(
           `failed to run the edge-runtime unbundle container: ${containerRuntimeNotFoundMessage}`,
@@ -1482,7 +1417,9 @@ describe("functions download", () => {
         );
         expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(true);
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fs.exists(
+            path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1499,10 +1436,9 @@ describe("functions download", () => {
             : Effect.succeed(jsonResponse(request, 200, {})),
       });
       const proxy = mockProxy();
-      // Deterministic stand-in for `emptyEnv()`'s real `ChildProcessSpawner`
-      // (via `BunServices`, pulled in by `buildTestRuntime`) — `useDocker:
-      // true` still probes `docker info` even though this project has no
-      // functions to download, so this must not spawn a real `docker` process.
+      // Stand-in for the real `ChildProcessSpawner`: `useDocker: true` still
+      // probes `docker info` even with no functions to download, so this must
+      // not spawn a real `docker` process.
       const child = mockChildProcessSpawner({ exitCode: 0 });
       const layer = Layer.mergeAll(
         buildTestRuntime({
@@ -1525,10 +1461,6 @@ describe("functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // An empty project has nothing to delegate — this must match the
-        // native path's "No functions found." short-circuit instead of
-        // still invoking the Go/Docker child and reporting a misleading
-        // "Downloaded Edge Function source." success with an empty list.
         yield* functionsDownload({
           ...baseFlags,
           functionName: Option.none(),
@@ -1579,10 +1511,6 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      // The pre-flight list failure must be reported before any download
-      // side effect — the delegated proxy must never be invoked (CLI-1862
-      // review: a listing failure after a successful delegated download
-      // must not mask that success).
       const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.none(),
@@ -1596,12 +1524,9 @@ describe("functions download", () => {
   });
 
   it.live("fails loudly instead of silently dropping a malformed function-list entry", () => {
-    // Established behavior: a list entry with no "slug" key decodes to the
-    // zero value "" and then fails `ValidateFunctionSlug` in `downloadAll`,
-    // rather than being dropped from the list. A malicious/compromised API
-    // response returning `[{}]` must surface an error here too, never "No
-    // functions found." nor a silent partial download (review round on
-    // CLI-1963's `functions download` port).
+    // A missing "slug" key decodes to the empty string, then fails
+    // `ValidateFunctionSlug` in `downloadAll` rather than being silently
+    // dropped from the list.
     const out = mockOutput({ format: "json" });
     const api = mockCommandPlatformApi({
       handler: (request) =>
@@ -1646,6 +1571,62 @@ describe("functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "attaches the first function's on-disk directory to the failure when a later function's download fails",
+    () => {
+      // The failure must carry the first function's already-written directory
+      // via `writtenSoFar`, since `pull.aggregate.ts`'s `hasWrittenSoFar`
+      // needs it to avoid claiming `written: []` on a partial success.
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/functions")
+            ? Effect.succeed(
+                jsonResponse(request, 200, [{ slug: "hello-world" }, { slug: "goodbye-world" }]),
+              )
+            : request.url.endsWith("/hello-world/body")
+              ? Effect.succeed(multipartResponse(request))
+              : request.url.endsWith("/goodbye-world/body")
+                ? Effect.succeed(jsonResponse(request, 500, { message: "unavailable" }))
+                : Effect.succeed(jsonResponse(request, 200, {})),
+      });
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "download", "--project-ref", PROJECT_ID]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // `useDocker: false` forces the native server-side path, not the
+        // Docker-unbundle one.
+        const error = yield* functionsDownload({
+          ...baseFlags,
+          functionName: Option.none(),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(FunctionsApiStatusError);
+        expect((error as FunctionsApiStatusError).status).toBe(500);
+        expect((error as unknown as { writtenSoFar?: ReadonlyArray<string> }).writtenSoFar).toEqual(
+          [path.resolve(tempRoot.current, "supabase", "functions", "hello-world")],
+        );
+        expect(
+          yield* fs.readFileString(
+            path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+          ),
+        ).toBe("console.log('legacy native')");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi();
@@ -1670,10 +1651,9 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      // `useDocker: true` mirrors the CLI parser's default (CLI-1862) even
-      // though only `--legacy-bundle` was passed explicitly. The Go proxy
-      // call must not forward both, or the Go binary's own
-      // MarkFlagsMutuallyExclusive rejects the combination.
+      // `useDocker: true` mirrors the flag's own default even though only
+      // `--legacy-bundle` was passed; forwarding both would make the Go
+      // binary's own MarkFlagsMutuallyExclusive reject the combination.
       yield* functionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
 
       expect(proxy.calls).toEqual([
@@ -1713,9 +1693,8 @@ describe("functions download", () => {
     );
 
     return Effect.gen(function* () {
-      // `useDocker: true` is the real default (CLI-1862). Before this fix,
-      // slug validation only ran on the native path, so a malformed slug
-      // would sail past it and straight into the Go proxy argv.
+      // `useDocker: true` reflects the flag's own default; slug validation
+      // must run before the Go proxy sees this argv.
       const exit = yield* functionsDownload({
         ...baseFlags,
         functionName: Option.some("../../etc"),
@@ -1747,7 +1726,7 @@ describe("functions download", () => {
           analytics,
         }),
         proxy.layer,
-        commandRuntimeLayer(["functions", "download"]),
+        commandRuntimeLayer(["functions", "download"]).pipe(Layer.provide(BunCrypto.layer)),
         Stdio.layerTest({
           args: Effect.succeed([
             "functions",
@@ -1833,11 +1812,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n'),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            'project_id = ""\n',
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1855,9 +1835,6 @@ describe("functions download", () => {
     it.live(
       "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
       () => {
-        // Proves the WHOLE resolved config is validated, not just `project_id`
-        // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
-        // branch (`config.go:1034-1062`).
         const out = mockOutput({ format: "text" });
         const api = mockCommandPlatformApi();
         const proxy = mockProxy();
@@ -1882,14 +1859,12 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", "config.toml"),
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
 
           const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1933,9 +1908,6 @@ describe("functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
           yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -1943,19 +1915,9 @@ describe("functions download", () => {
           expect(runCommand?.args.slice(-6)[0]).toBe(
             "public.ecr.aws/supabase/edge-runtime:v1.68.4",
           );
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-                } else {
-                  process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer), (body) =>
+          withEnvVar("SUPABASE_EDGE_RUNTIME_DENO_VERSION", "1", body),
+        );
       },
     );
 
@@ -1986,9 +1948,6 @@ describe("functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
           yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -1998,19 +1957,9 @@ describe("functions download", () => {
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_NETWORK_ID"];
-                } else {
-                  process.env["SUPABASE_NETWORK_ID"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer), (body) =>
+          withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+        );
       },
     );
 
@@ -2041,9 +1990,6 @@ describe("functions download", () => {
         }),
       );
 
-      const previous = process.env["SUPABASE_NETWORK_ID"];
-      process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
       return Effect.gen(function* () {
         yield* functionsDownload({ ...baseFlags, useDocker: true });
 
@@ -2054,19 +2000,9 @@ describe("functions download", () => {
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args).toContain("flag-network");
         expect(runCommand?.args).not.toContain("env-network");
-      })
-        .pipe(Effect.provide(layer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
-        );
+      }).pipe(Effect.provide(layer), (body) =>
+        withEnvVar("SUPABASE_NETWORK_ID", "env-network", body),
+      );
     });
 
     it.live(
@@ -2097,39 +2033,42 @@ describe("functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", ".env"),
-              "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
-            ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(tempRoot.current, "supabase", ".env"),
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
           );
 
           yield* functionsDownload({ ...baseFlags, useDocker: true });
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
-            `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
+            `ghcr.io/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
           );
           expect(
             child.spawned.filter(
               (spawned) => spawned.args[0] === "image" && spawned.args[1] === "inspect",
             ),
           ).toHaveLength(1);
-          // Proves the registry came from the project dotenv file, not the
-          // ambient shell environment.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+          const ambient = yield* Config.option(
+            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+          ).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+            ),
+          );
+          expect(Option.isNone(ambient)).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );
 
     it.live("falls back to the GHCR candidate when the ECR image cannot be inspected", () => {
-      // Simulates a registry-candidate fallback with no real pull/retry: the
-      // ECR `docker image inspect` MISSes cleanly (non-zero exit, "not found"
-      // stderr), so `hasLocalImage` moves straight to the next candidate
-      // instead of ever entering the sleeping pull-retry loop.
+      // Simulates a clean cache miss (non-zero exit, "not found" stderr) so
+      // `hasLocalImage` moves to the next candidate without entering the
+      // sleeping pull-retry loop.
       const spawnerOpts: {
         exitCode?: number;
         stderr?: string[];
@@ -2185,7 +2124,7 @@ describe("functions download", () => {
         ).toHaveLength(2);
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args.slice(-6)[0]).toBe(
-          `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
+          `ghcr.io/${dockerfileServiceImage("edgeruntime", yield* slimImagesEnabled)}`,
         );
       }).pipe(Effect.provide(layer));
     });
@@ -2236,10 +2175,8 @@ describe("functions download", () => {
 
   describe("docker-not-running warning styling (Go parity: download.go:146; only WARNING: is styled)", () => {
     it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
-      // Calls the shared `downloadFunctions` with a marker `styleWarning`
-      // instead of going through `functionsDownload`: the real hook
-      // (`yellow`) is TTY-gated and therefore inert under vitest, so
-      // only an injected marker can deterministically observe styling scope.
+      // Uses a marker `styleWarning` instead of `functionsDownload`'s real
+      // `yellow` hook, which is TTY-gated and inert under vitest.
       const out = mockOutput({ format: "text" });
       const api = mockCommandPlatformApi({
         handler: (request) =>

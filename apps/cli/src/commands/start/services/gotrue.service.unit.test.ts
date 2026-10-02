@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   buildGotrueContainerSpec,
@@ -10,10 +10,6 @@ import {
   type GotrueSigningKey,
   type GotrueWebauthnInput,
 } from "./gotrue.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 // Every field not asserted by a specific subtest below reflects the
 // default config's own values.
@@ -211,8 +207,6 @@ describe("buildGotrueEnv", () => {
     });
   });
 
-  // Exercised through GOTRUE_SMS_TEST_OTP since `formatMapForEnvConfig`
-  // is only ever called from inside `buildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
     test("formatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
       expect(formatMapForEnvConfig({})).toBe("");
@@ -518,9 +512,6 @@ describe("buildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // The email template's subject is optional; the gate is strictly
-    // `subject !== undefined`, not on string length — an explicit blank
-    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
       const env = buildGotrueEnv({
         ...baseEnvInput,
@@ -679,6 +670,7 @@ describe("buildGotrueEnv", () => {
 describe("buildGotrueContainerSpec", () => {
   test("assembles the full container spec, deriving dbHost/dbPassword from projectId/dbUrl", () => {
     const spec = buildGotrueContainerSpec({
+      slim: false,
       image: "supabase/gotrue:v2.180.0",
       projectId: "proj",
       networkId: "supabase_network_proj",
@@ -709,15 +701,14 @@ describe("buildGotrueContainerSpec", () => {
     expect(spec.networkAliases).toEqual(["auth"]);
     expect(spec.labels).toEqual({});
 
-    // dbHost/dbPassword flow from projectId/dbUrl into the env's connection string.
     expect(spec.env["GOTRUE_DB_DATABASE_URL"]).toBe(
       "postgresql://supabase_auth_admin:secret@supabase_db_proj:5432/postgres",
     );
   });
 
   test("uses BusyBox wget flags on a slim auth image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = buildGotrueContainerSpec({
+      slim: true,
       image: "ghcr.io/supabase/cli/auth:v2.196.0",
       projectId: "proj",
       networkId: "supabase_network_proj",

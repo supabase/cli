@@ -5,44 +5,26 @@ import { BRANCH_UUID_PATTERN } from "../../command-internal/ref-patterns.ts";
 import { sanitizeInlineName } from "../../command-internal/http-errors.ts";
 
 /**
- * Shared pure formatters, payload fragments, and input adapters for the
- * `config` command family (`diff`, `pull`, `push`) — no Effect, no services,
- * unit-testable in isolation. Hoisted out of `diff/diff.format.ts` once
- * `config pull` needed the same API-scope classification, target-naming
- * phrase, value/path rendering, and masked/unmanaged/not-returned caveat
- * wording (CLI-2064, Hoist Before You Duplicate).
- *
- * Every non-constant string interpolated into TEXT output goes through
- * `sanitizeInlineName`: path segments (`[remotes.*]` names,
- * `sms.test_otp` record keys) and env-var/branch names are unconstrained
- * user/API-controlled strings, so a hostile value could otherwise emit raw
- * ANSI or forge output lines (e.g. a name ending `\nNo config differences
- * found.`). JSON output needs no sanitizing — `JSON.stringify` escapes
- * control characters.
+ * Shared pure formatters for the `config` family (`diff`, `pull`, `push`). Text-output strings
+ * are sanitized with `sanitizeInlineName` since path segments and env/branch names are
+ * user-controlled and could otherwise inject ANSI or forge output lines.
  */
 
-/**
- * The per-service blocks of the v2 project-config resource — owned by
- * `@supabase/config` (derived from its response mirror), never hand-copied
- * here, so a block the package learns is never reported "not returned"
- * forever.
- */
+// Blocks owned by @supabase/config's response mirror, never hand-copied here, so a new block
+// the package learns about is never permanently reported "not returned".
 const REMOTE_CONFIG_BLOCKS: ReadonlyArray<string> = projectConfigApiBlockKeys;
 
 export interface ConfigApiScope {
   /** Blocks the response's `data.attributes` carried with at least one key. */
   readonly present: ReadonlyArray<string>;
-  /** Blocks absent from the response — or present but EMPTY, which is how a
-   * permission-truncated response most plausibly reports a block it could
-   * not read; claiming an empty block was "compared" would be false. */
+  /** Blocks absent from the response, or present but empty — how a permission-truncated
+   * response reports a block it couldn't read. An empty block was never actually compared. */
   readonly missing: ReadonlyArray<string>;
 }
 
 /**
- * Human-readable labels for `ConfigChange.class`, hyphenated for prose
- * (`remote_only` reads as "this key exists only remotely", but the raw enum
- * token is not itself prose). Owned here so `diff`/`pull`/`push` never
- * disagree on how a class renders.
+ * Human-readable labels for `ConfigChange.class`, hyphenated for prose. Owned here so
+ * `diff`/`pull`/`push` never disagree on how a class renders.
  */
 export const CONFIG_CLASS_LABELS: Record<ConfigChange["class"], string> = {
   update: "update",
@@ -80,13 +62,10 @@ export function configScopeLine(scope: ConfigApiScope): string {
 }
 
 /**
- * The target-naming fragment shared by `config diff`'s comparison line
- * (`Comparing against <phrase> using ...`) and `config pull`'s destination
- * line (`Pulling config from <phrase> -> [remotes.staging]`): `project
- * abcdefghij` for a bare project ref, `'staging' (branch abcdefghij)` for a
- * branch name, or `branch <uuid> (project ref abcdefghij)` for a branch UUID
- * — a UUID is an identifier, not a display name, so it is never quoted as
- * one.
+ * Formats a target for `config diff`'s comparison line and `config pull`'s destination line:
+ * `project <ref>` for a bare project ref, `'<name>' (branch <ref>)` for a branch name, or
+ * `branch <uuid> (project ref <ref>)` for a branch UUID. A UUID is quoted as an identifier,
+ * not a display name.
  */
 export interface ConfigTargetPhraseInput {
   readonly projectRef: string;
@@ -127,9 +106,8 @@ function nullableValueEntry(key: string, value: unknown): Record<string, unknown
 }
 
 /**
- * The base machine-payload entry for one `ConfigChange` — shared by `config
- * diff`'s payload and `config pull`'s planned-change payload (which layers
- * `written`/`skipped_reason` on top).
+ * The base machine-payload entry for one `ConfigChange`, shared by `config diff`'s payload
+ * and `config pull`'s (which layers `written`/`skipped_reason` on top).
  */
 export function configChangePayloadEntry(change: ConfigChange): Record<string, unknown> {
   return {
@@ -144,23 +122,18 @@ export function configChangePayloadEntry(change: ConfigChange): Record<string, u
 
 function renderLocalChangeValue(change: ConfigChange): string {
   const value = configRenderValue(change.local, "(unset)");
-  // A populated local value on an undeclared path is the schema default the
-  // projection materialized — the value a `config push` would write. Say so,
-  // or "[remote-only]" reads as "this key exists only remotely", which is
-  // false for anything with a schema default (and the user will grep their
-  // file for a value that isn't there).
+  // A populated value on an undeclared path is the schema default a `config push` would write.
+  // Say so, or "[remote-only]" reads as "exists only remotely", which is false when a schema
+  // default exists.
   return change.local !== undefined && !change.declared
     ? `${value} (schema default — not declared in config.toml)`
     : value;
 }
 
 /**
- * The per-property change-block renderer shared by `config diff`'s text body
- * and `config push`'s per-resource `Updating … with config:` blocks: one
- * `<path> [<class>]` / `  local:  <value>` / `  remote: <value>` block per
- * change, each followed by a blank line — including after the last change, so
- * a caller may append its own content (a note, a `[secret]` block) directly
- * after this string without checking whether it ends in a newline itself.
+ * Renders one `<path> [<class>]` / `local:` / `remote:` block per change, ending in a blank
+ * line — including after the last — so callers can append directly without checking for a
+ * trailing newline. Shared by `config diff`'s text body and `config push`'s update blocks.
  */
 export function configRenderChangeLines(changes: ReadonlyArray<ConfigChange>): string {
   return changes
@@ -183,13 +156,9 @@ export function configMaskedCaveat(masked: ReadonlyArray<ReadonlyArray<string>>)
   return `${configPlural(masked.length, "credential value", "credential values")} not compared (masked by the API): ${masked.map(configRenderPath).join(", ")}`;
 }
 
-// Cause-neutral wording (review round, CLI-2314): not every `unmanaged` path
-// is hidden because ITS OWN section is disabled — `auth.rate_limit.email_sent`
-// is omitted because a DIFFERENT field, `auth.email.smtp`, is undeclared, and
-// an unselected SMS provider's credentials are omitted because another
-// provider is active, not because anything is "disabled". "Not part of the
-// current comparison" covers every surviving `DISABLED_SENTINEL_PRUNES`/
-// `applyRawPresenceMask` reason without overclaiming a specific one.
+// Wording stays cause-neutral: a path can be hidden because its own section is disabled, a
+// different field is undeclared, or another option was selected instead — "not part of the
+// current comparison" covers all of them without overclaiming a specific reason.
 export function configUnmanagedCaveat(unmanaged: ReadonlyArray<ReadonlyArray<string>>): string {
   const phrase =
     unmanaged.length === 1
@@ -199,10 +168,8 @@ export function configUnmanagedCaveat(unmanaged: ReadonlyArray<ReadonlyArray<str
 }
 
 /**
- * Block names come from `REMOTE_CONFIG_BLOCKS` (the schema-derived list), not
- * from the response body, so — unlike the masked/unmanaged path lists — there
- * is no sanitization concern here; still styled the same way as those two
- * caveats for consistency.
+ * Block names come from the schema-derived `REMOTE_CONFIG_BLOCKS` list, not the response body,
+ * so — unlike the masked/unmanaged caveats — there's no sanitization concern here.
  */
 export function configNotReturnedCaveat(missing: ReadonlyArray<string>): string {
   const phrase =

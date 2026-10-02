@@ -7,10 +7,6 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors (network + unexpected-status pairs)
-// ---------------------------------------------------------------------------
-
 export class SecretsListNetworkError extends Data.TaggedError("SecretsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -79,10 +75,6 @@ export class SecretsUnsetUnexpectedStatusError extends Data.TaggedError(
     return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
   }
 }
-
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, file I/O, user cancellation)
-// ---------------------------------------------------------------------------
 
 export class SecretsEnvFileOpenError extends Data.TaggedError("SecretsEnvFileOpenError")<{
   readonly message: string;

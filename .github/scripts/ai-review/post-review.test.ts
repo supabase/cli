@@ -25,9 +25,7 @@ import {
   truncateReviewBody,
 } from "./post-review.ts";
 
-// A single hunk touching file.ts lines 10-14 on the new side: line 10 is
-// context, line 11 replaces a removed line, 12 is a pure addition, 13-14 are
-// trailing context. Hand-computed RIGHT-side anchors: {10, 11, 12, 13, 14}.
+// One hunk on file.ts; RIGHT-side anchors: {10, 11, 12, 13, 14}.
 const SINGLE_HUNK_DIFF = `diff --git a/file.ts b/file.ts
 index 111..222 100644
 --- a/file.ts
@@ -41,8 +39,7 @@ index 111..222 100644
  context line 14
 `;
 
-// Two hunks in the same file: {1,2,3} from the first hunk, {20,21,22} from
-// the second (the RIGHT counter resets to each hunk's own header).
+// Two hunks in one file; each resets the RIGHT counter to its own header.
 const MULTI_HUNK_DIFF = `diff --git a/multi.ts b/multi.ts
 index 1..2 100644
 --- a/multi.ts
@@ -101,8 +98,7 @@ index 0..6
 +line three
 `;
 
-// A trailing "\ No newline at end of file" marker on both sides must not
-// perturb the RIGHT counter: anchors are still {1,2}.
+// A trailing "\ No newline at end of file" marker must not perturb the RIGHT counter.
 const NO_NEWLINE_DIFF = `diff --git a/nonewline.ts b/nonewline.ts
 index 7..8 100644
 --- a/nonewline.ts
@@ -115,9 +111,7 @@ index 7..8 100644
 \\ No newline at end of file
 `;
 
-// git appends a literal TAB after a `+++` path that needs quoting (here,
-// because it contains a space); the tab must be stripped so anchors key on
-// "has space.ts", not "has space.ts\t".
+// git appends a literal TAB after a quoted `+++` path; it must be stripped.
 const TAB_PATH_DIFF = `diff --git a/has space.ts b/has space.ts
 index 9..a 100644
 --- a/has space.ts
@@ -127,10 +121,7 @@ index 9..a 100644
 +added line
 `;
 
-// A pure rename (100% similarity) carries no `---`/`+++`/`@@` lines at all,
-// followed by a normal file's diff — the parser must not leak state (e.g. a
-// leftover `currentFile`) from the header-less rename section into the next
-// file.
+// A pure rename carries no `---`/`+++`/`@@` lines; state must not leak into the next file's diff.
 const RENAME_ONLY_THEN_NORMAL_DIFF = `diff --git a/old-name.ts b/new-name.ts
 similarity index 100%
 rename from old-name.ts
@@ -144,10 +135,7 @@ index 1..2 100644
 +added
 `;
 
-// An added line whose literal content is "++ b/not-a-real-header.ts" appears
-// in the diff, prefixed by the diff's own "+", as "+++ b/not-a-real-header.ts"
-// — a `+++`-lookalike that must not hijack `currentFile` because it occurs
-// inside a hunk, not between a `diff --git` boundary and the first `@@`.
+// An added line whose content looks like a `+++` header must not hijack `currentFile`.
 const PLUS_LOOKALIKE_DIFF = `diff --git a/lookalike.ts b/lookalike.ts
 index 1..2 100644
 --- a/lookalike.ts
@@ -828,10 +816,6 @@ describe("buildReviewPayload", () => {
   });
 
   test("truncates the very first payload's body when it already exceeds the cap with zero comments to fold", () => {
-    // Not anchorable (line 999 is outside the diff hunk), so this produces a
-    // body-only payload with no inline comments — the 422-retry fold path
-    // never runs, so only truncating `buildReviewPayload`'s own body catches
-    // an oversized initial POST.
     const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
     const review = makeMergedReview({ findings: [finding] });
     const payload = buildReviewPayload(review, anchors, footer);
@@ -1045,10 +1029,7 @@ describe("post flow via injected ReviewIo", () => {
         if (opts.failSupersede) {
           return Promise.reject(new Error("listReviews failed"));
         }
-        // Mirror real GitHub: a review posted earlier in the same run shows
-        // up in later listings as a marker-bearing bot review. The supersede
-        // pass must snapshot BEFORE posting or it would wrap the fresh
-        // review as "superseded" too.
+        // Mirrors real GitHub: a review posted earlier in the same run shows up in later listings.
         const alreadyPosted = postedReviews.map((payload, i) => ({
           id: 900 + i,
           body: payload.body,
@@ -1141,9 +1122,6 @@ describe("post flow via injected ReviewIo", () => {
 
     await postConsolidatedReview(io, 42, review, footer);
 
-    // With no prior AI review on the PR, nothing may be wrapped as superseded
-    // — especially not the review this run just posted (which the fake's
-    // listReviews, like real GitHub, includes in post-POST listings).
     expect(postedReviews).toHaveLength(1);
     expect(updatedReviews).toEqual([]);
     expect(updatedComments).toEqual([]);
@@ -1230,8 +1208,6 @@ describe("post flow via injected ReviewIo", () => {
   });
 
   test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", async () => {
-    // Not anchorable, so there's no inline comment for GitHub to 422 on — the
-    // old behavior threw here instead of posting a truncated body.
     const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });

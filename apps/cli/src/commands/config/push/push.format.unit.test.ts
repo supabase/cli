@@ -172,9 +172,6 @@ describe("pushUpdatingLine", () => {
   });
 
   test("a send secret whose container was dropped as unencodable renders as NOT being sent, not as a pending update", () => {
-    // `secretsEncoded` omits the path — the container carrying it turned out
-    // unencodable — so the pre-prompt block must never imply it is being
-    // sent, even though `status` is still `send`.
     expect(
       pushUpdatingLine({
         resource: "auth",
@@ -608,9 +605,6 @@ describe("pushSummaryMessage", () => {
   });
 
   test('base: "Nothing was pushed" (not "Nothing to push") when every service is up_to_date/disabled but something is unsupported', () => {
-    // The base sentence must never claim the project "already matches the
-    // declared properties" in the same breath as reporting that a declared
-    // property could not be pushed — self-contradictory.
     expect(
       pushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
@@ -672,9 +666,8 @@ describe("pushSummaryMessage", () => {
   });
 
   test("caveat: unmanagedCount drives the sentence even when it diverges from unmanaged.length", () => {
-    // `unmanagedCount` (gate-filtered, matching `pushNotes`' stderr note) can be smaller
-    // than the payload's own unfiltered `unmanaged` list — a gated-off resource's own `unmanaged`
-    // entries are excluded from the count but stay in the full list (D5).
+    // `unmanagedCount` is gate-filtered (matching `pushNotes`'s note): a gated-off resource's
+    // own `unmanaged` entries are excluded from the count but stay in the full list.
     expect(
       pushSummaryMessage({
         ...EMPTY_SUMMARY_INPUT,
@@ -878,10 +871,8 @@ describe("pushPayload", () => {
   });
 
   test("'sent' reads from secretsSent, not from the raw 'send' decision list — a send decision whose container was dropped lands in 'unencodable', never in 'sent'", () => {
-    // The write ran (authWriteRan: true) and `SENT_SECRET`'s status is
-    // still `send`, but the encoder that would have carried it reported
-    // nothing in `secretsSent` — its container must have been dropped as
-    // `unencodable` instead (asserted separately at the encoder layer).
+    // The write ran but `secretsSent` reports nothing for `SENT_SECRET`'s path — its container
+    // must have been dropped as `unencodable` instead.
     const payload = pushPayload({ ...BASE_INPUT, secretsSent: [] });
     expect(payload["secrets"]).toMatchObject({
       sent: [],

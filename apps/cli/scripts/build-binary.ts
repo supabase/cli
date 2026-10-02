@@ -1,13 +1,10 @@
-import { $ } from "bun";
-
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
 /**
- * Compile the CLI shell to a standalone binary, embedding the pre-bundled
- * edge-runtime template via the `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define so
- * the binary serves Functions offline without bundling at runtime
- * (supabase/supabase#45570). Used by the `build:binary` script; the multi-target
- * release build in `build.ts` injects the same define.
+ * Compiles the CLI to a standalone binary, run via `pnpm build:binary`. Embeds the pre-bundled
+ * edge-runtime template through `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` so Functions serve
+ * offline without bundling at runtime (supabase/supabase#45570).
  */
 const entrypoint = "src/main.ts";
 const outfile = "dist/supabase";
@@ -19,9 +16,18 @@ const packageJson = JSON.parse(
 if (packageJson.version === undefined || packageJson.version.length === 0) {
   throw new Error("CLI package version is required for a compiled build");
 }
-const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
-const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
-)}`;
-
-await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} --outfile ${outfile}`;
+const result = await Bun.build({
+  entrypoints: [entrypoint],
+  compile: { outfile },
+  ...compileOptions,
+  define: {
+    SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
+    ...(await stackReleaseDefine()),
+    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+    // Skips msgpackr's native addon probe at the build host's path, which can hang macOS startup.
+    "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
+  },
+});
+for (const log of result.logs) {
+  console.warn(log);
+}

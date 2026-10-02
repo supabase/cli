@@ -1,9 +1,18 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+  Redacted,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -16,9 +25,11 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
+  mockLocalDockerEngineUnavailableLayer,
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -27,11 +38,27 @@ import {
   NetworkIdFlag,
 } from "../../../command-internal/global-flags.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
+import { LocalDockerEngine } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { DbConnection, type DbSession } from "../../../command-internal/db-connection.service.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { dbStart } from "./start.handler.ts";
 import type { DbStartFlags } from "./start.command.ts";
+import { stackLocalDatabaseConn } from "../../../command-internal/stack-local-database.ts";
+import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";
+import { StackApi } from "../../../command-internal/stack-api.ts";
+import { postgresVersion } from "@supabase/stack/internal/artifacts";
+import {
+  StackCatalogSetup,
+  StackCatalogSetupError,
+} from "../../../command-internal/stack-catalog-setup.ts";
+import {
+  StackError,
+  type DatabaseInstance,
+  type ServiceCreation,
+  type ServiceCreationInput,
+  type Stack,
+} from "@supabase/stack/effect";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -52,7 +79,7 @@ type RouteResult = {
   readonly stderr?: ReadonlyArray<string>;
 };
 
-/** Scoped-down port of `start.integration.test.ts`'s own `mockStartContainerCliSpawner` — one container instead of 14. */
+/** A single-container version of `start.integration.test.ts`'s `mockStartContainerCliSpawner`. */
 function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteResult) {
   const spawned: Array<SpawnRecord> = [];
   const encoder = new TextEncoder();
@@ -65,14 +92,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -189,10 +214,9 @@ function freshVolumeRoute(
 }
 
 /**
- * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` succeed
- * unconditionally, simulating an already-up local db — this is the very first
- * Docker call the handler makes, so no other `container inspect` call happens on
- * this path (the already-running short-circuit returns before `StartDatabase`).
+ * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` succeed unconditionally,
+ * simulating an already-up local db — the already-running short-circuit returns before any
+ * other `container inspect` call happens.
  */
 function alreadyRunningRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
@@ -204,10 +228,9 @@ function alreadyRunningRoute(
 }
 
 /**
- * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` fail for a
- * reason other than "no such container" — simulates an unreachable Docker daemon
- * during the running-check, which `AssertSupabaseDbIsRunning` propagates instead of
- * treating as "not running".
+ * Makes `isLocalDbRunning`'s pre-bring-up `container inspect` fail for a reason other than
+ * "no such container" — simulates an unreachable Docker daemon during the running-check, which
+ * is propagated rather than treated as "not running".
  */
 function runningCheckFailsRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
@@ -227,7 +250,7 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `DockerRun` jobs instead). */
+/** PG15+ (this suite's default) never calls `exec`/`query` directly — its schema init is three one-shot `DockerRun` jobs instead. */
 function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: DbSession = {
@@ -250,10 +273,16 @@ function fakeDbSession() {
 
 const tempRoot = useTempWorkdir("supabase-db-start-int-");
 
-function writeConfig(workdir: string, contents: string) {
-  mkdirSync(join(workdir, "supabase"), { recursive: true });
-  writeFileSync(join(workdir, "supabase", "config.toml"), contents);
-}
+const writeProjectFile = Effect.fnUntraced(function* (
+  workdir: string,
+  name: string,
+  contents: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+  yield* fs.writeFileString(path.join(workdir, "supabase", name), contents);
+});
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -275,16 +304,28 @@ interface SetupOpts {
   readonly connectFailures?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
+  /** Record catalog apply targets instead of the default noop. */
+  readonly recordCatalog?: boolean;
+  /** Fail catalog setup after the database has been created. */
+  readonly catalogFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
+  const catalogApplied: Array<{ readonly serviceCount: number }> = [];
   const workdir = opts.workdir ?? tempRoot.current;
-  if (opts.skipConfig !== true) {
-    writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
-    if (opts.projectEnvContents !== undefined) {
-      writeFileSync(join(workdir, "supabase", ".env"), opts.projectEnvContents);
-    }
-  }
+  const projectFiles = Layer.effectDiscard(
+    Effect.gen(function* () {
+      if (opts.skipConfig === true) return;
+      yield* writeProjectFile(
+        workdir,
+        "config.toml",
+        opts.configContents ?? 'project_id = "test"\n',
+      );
+      if (opts.projectEnvContents !== undefined) {
+        yield* writeProjectFile(workdir, ".env", opts.projectEnvContents);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockTelemetryStateTracked();
   const cliSettings = mockCommandSettings({ workdir });
@@ -317,14 +358,23 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
+  const unusedStackApi = Layer.succeed(StackApi, {
+    create: () => Effect.die("unused"),
+    open: () => Effect.die("unused"),
+    discover: () => Effect.die("unused"),
+    find: () => Effect.die("unused"),
+  });
+
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
     cliSettings,
     telemetry.layer,
     child.layer,
+    mockLocalDockerEngineUnavailableLayer,
     alwaysReadyHttpClientLayer,
     dbConnection,
+    unusedStackApi,
     dockerRunLayer.pipe(Layer.provide(child.layer), Layer.provide(mockProcessControl().layer)),
     mockProcessControl().layer,
     mockRuntimeInfo({ platform: opts.platform ?? "linux", cwd: opts.cwd ?? workdir }),
@@ -335,28 +385,50 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(ExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(DebugFlag, opts.debug ?? false),
-  );
+    Layer.succeed(StackCatalogSetup, {
+      apply: (input) =>
+        opts.catalogFails === true
+          ? Effect.fail(new StackCatalogSetupError({ message: "catalog setup failed" }))
+          : Effect.sync(() => {
+              catalogApplied.push({ serviceCount: input.target.databaseServices.length });
+            }),
+    }),
+  ).pipe(Layer.provide(projectFiles));
   return {
     layer,
     out,
     telemetry,
     child,
     dbSession,
+    catalogApplied,
     get connectAttempts() {
       return connectAttempts;
     },
   };
 }
 
-const currentBranchPath = (workdir: string) =>
-  join(workdir, "supabase", ".branches", "_current_branch");
+const currentBranchPath = Effect.fnUntraced(function* (workdir: string) {
+  const path = yield* Path.Path;
+  return path.join(workdir, "supabase", ".branches", "_current_branch");
+});
+
+const readCurrentBranch = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(yield* currentBranchPath(workdir));
+  }).pipe(Effect.provide(BunServices.layer));
+
+const currentBranchExists = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(yield* currentBranchPath(workdir));
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("db start", () => {
   beforeEach(() => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
   });
   afterEach(() => {
-    delete process.env["SUPABASE_NETWORK_ID"];
     vi.unstubAllEnvs();
   });
 
@@ -367,12 +439,30 @@ describe("db start", () => {
       expect(out.stderrText).toContain("Postgres database is already running.");
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
-      // `initCurrentBranch` is inside `startDatabase`, never reached on
-      // the already-running short-circuit — the already-running check
-      // returns before `startDatabase` is ever called.
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
+
+  it.live(
+    "reports an already-running database from the direct Engine-API answer without touching the container CLI",
+    () => {
+      const { layer, out, child } = setup({});
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              Layer.succeed(LocalDockerEngine, {
+                containerExists: () => Effect.succeed(Option.some(true)),
+              }),
+            ),
+          ),
+        );
+        expect(out.stderrText).toContain("Postgres database is already running.");
+        expect(child.spawned).toEqual([]);
+      });
+    },
+  );
 
   it.live(
     "starts the database on a fresh volume: creates the container, runs the SetupLocalDatabase-equivalent pipeline, and writes _current_branch",
@@ -386,7 +476,7 @@ describe("db start", () => {
         expect(out.stderrText).toContain("Initialising schema...");
         // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
         expect(out.stderrText).not.toContain("Finished");
       });
     },
@@ -399,7 +489,7 @@ describe("db start", () => {
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
         expect(s.connectAttempts).toBe(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
     15_000,
@@ -428,11 +518,9 @@ describe("db start", () => {
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Initialising schema...");
-        // PG <= 14's `initSchema` execs globals.sql + the initial-schema SQL directly over the
-        // `DbConnection` session — no PG15+ one-shot `docker run --rm` migrate jobs at all.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -440,14 +528,8 @@ describe("db start", () => {
   it.live(
     "a fresh volume with realtime disabled skips the realtime migrate job AND never attempts JWKS resolution",
     () => {
-      // A configured (but unreachable) third-party JWKS issuer would fail
-      // `resolveLocalJwks` if it were ever called — the PG15 realtime
-      // job resolves JWKS itself, gated on `Realtime.Enabled`, so a fresh
-      // volume with realtime disabled must never even attempt it, regardless
-      // of what it would have resolved to. This is the one place `db
-      // start`'s own JWKS gating is directly observable
-      // (`startDatabase`'s `setup.jwks` is a LAZY `Effect`, evaluated
-      // only when reached).
+      // globalThis.fetch is stubbed to fail so any JWKS resolution attempt would blow up the
+      // test.
       const previousFetch = globalThis.fetch;
       globalThis.fetch = Object.assign(() => Promise.reject(new Error("ECONNREFUSED")), {
         preconnect: previousFetch.preconnect,
@@ -461,7 +543,7 @@ describe("db start", () => {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // Default config: storage and auth stay enabled — only the realtime job is skipped.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -488,10 +570,10 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
-        // The container was already created/started/healthy by the time JWKS resolution runs
-        // (deep inside the fresh-volume setup step) — the rollback still tears it down.
+        // The container is already created/healthy by the time JWKS resolution runs, so the
+        // rollback still tears it down.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
       }).pipe(
         Effect.ensuring(
@@ -512,9 +594,8 @@ describe("db start", () => {
         expect(out.stderrText).toContain("Starting database from backup...\n");
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-        // No schema/globals/vault/roles SQL — the setup pipeline really is skipped. The
-        // only SQL on this path is the Database Webhooks convergence, which reads the
-        // migration history and (webhooks disabled, no migration owning pg_net) drops it.
+        // The only SQL on this path is the Webhooks convergence, which finds no migration
+        // owning pg_net (webhooks disabled) and drops it.
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(
           false,
         );
@@ -522,7 +603,7 @@ describe("db start", () => {
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
           true,
         );
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -558,7 +639,7 @@ describe("db start", () => {
           "/abs/host/backup.sql:/etc/backup.sql:ro",
         );
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -584,9 +665,8 @@ describe("db start", () => {
           );
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        // The rollback always removes everything on ANY start-database
-        // failure, including this guard — `deleteVolumes: false` since the
-        // volume this guard detected must never be pruned.
+        // The volume this guard detected must never be pruned, even though the rollback still
+        // removes everything else on failure.
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(volumePruneWasAttempted(child.spawned)).toBe(false);
       });
@@ -628,37 +708,25 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      // This run's own volume was confirmed fresh (`freshVolumeRoute`), so
-      // the rollback prunes it too. A regression that hardcoded
-      // `rollbackStart`'s `deleteVolumes` to `false` would still pass
-      // every OTHER assertion in this file, since only the "backup volume
-      // already exists" test (a non-fresh-volume scenario) currently asserts
-      // the negative half.
+      // This run's fresh volume means the rollback prunes it too — the "backup volume already
+      // exists" test above covers the non-pruning case.
       expect(volumePruneWasAttempted(child.spawned)).toBe(true);
-      // The health-check timeout aborts before `SetupLocalDatabase`/`initCurrentBranch` ever run.
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* currentBranchExists(tempRoot.current)).toBe(false);
     });
   });
 
   it.live(
     "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned reports fire without --debug",
     () => {
-      // Every Go debug read on this path went through `viper.GetBool("DEBUG")` under
-      // `AutomaticEnv` after `loadNestedEnv` had `os.Setenv`'d the project `supabase/.env` into
-      // the process — so a `SUPABASE_DEBUG` set only there, never in the shell or via `--debug`,
-      // still gated the rollback's `Pruned …:` stderr reports. Delete any shell `SUPABASE_DEBUG`
-      // first: shell *presence* (even `false`) suppresses the project value entirely, per
-      // `viperEnvBoolWithProjectFallback`'s own semantics.
-      const previous = process.env["SUPABASE_DEBUG"];
-      delete process.env["SUPABASE_DEBUG"];
+      // A shell SUPABASE_DEBUG (even "false") would suppress the project .env value, so clear
+      // it first.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
         route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+        projectEnvContents: "SUPABASE_DEBUG=true\n",
       });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_DEBUG=true\n");
-      // `reportPruned` writes straight to the real process stderr (matching Go's unconditional
-      // `os.Stderr`), never the mocked `Output` service — intercept it like
-      // `health-check.unit.test.ts`'s own log-dump assertions do.
+      // This log write goes straight to the real process stderr, never the mocked Output
+      // service, so intercept it directly.
       const writes: Array<string> = [];
       const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
       globalThis.process.stderr.write = ((chunk: string | Uint8Array) => {
@@ -671,11 +739,10 @@ describe("db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
       }).pipe(
+        (body) => withEnvVar("SUPABASE_DEBUG", undefined, body),
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.process.stderr.write = originalWrite;
-            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
-            else process.env["SUPABASE_DEBUG"] = previous;
           }),
         ),
       );
@@ -690,13 +757,11 @@ describe("db start", () => {
         route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
       });
       return Effect.gen(function* () {
-        // The log dump (`waitForHealthyServices`'s own unconditional behavior on timeout,
-        // teed straight to the real process stderr, not the mocked `Output` service) still runs —
-        // exercised by every other health-timeout test via the shared `../../../shared/db-bootstrap/health-check.ts` suite;
-        // this test only asserts the command-level outcome that's specific to `--from-backup`.
+        // The stderr log dump on timeout is covered by the shared health-check.ts suite; this
+        // test only asserts the outcome specific to `--from-backup`.
         yield* dbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readCurrentBranch(tempRoot.current)).toBe("main");
       });
     },
   );
@@ -712,13 +777,12 @@ describe("db start", () => {
   it.live(
     "fails with a typed error on a malformed supabase/.env file, before any container is created",
     () => {
-      const { layer, child } = setup({});
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "not a valid env line at all\n");
+      const { layer, child } = setup({ projectEnvContents: "not a valid env line at all\n" });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -731,7 +795,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        expect(Cause.pretty(exit.cause)).toContain("failed to load config");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
@@ -747,7 +811,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+        expect(Cause.pretty(exit.cause)).toContain("failed to parse config: missing private key");
       }
       expect(out.stderrText).not.toContain("already running");
     });
@@ -773,11 +837,6 @@ describe("db start", () => {
   );
 
   it.live("falls back to SUPABASE_NETWORK_ID when --network-id is omitted", () => {
-    // `network-id` is a persistent flag bound to a `SUPABASE_NETWORK_ID` env
-    // fallback, read fresh at its own call site — well after the config's
-    // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is
-    // effective when the flag itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
-    process.env["SUPABASE_NETWORK_ID"] = "env-network";
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -787,16 +846,12 @@ describe("db start", () => {
       const args = createArgs(child.spawned);
       const networkIndex = args?.indexOf("--network") ?? -1;
       expect(args?.[networkIndex + 1]).toBe("env-network");
-    });
+    }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", "env-network", body));
   });
 
   it.live(
     "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
     () => {
-      // The gate is on a non-empty resolved value, not merely "the flag was
-      // passed" — an empty override (e.g. a shell expanding an unset var to
-      // "") must fall through to the generated `supabase_network_<projectId>`
-      // name, not produce a literal `--network ""` on the `docker create` call.
       const { layer, child } = setup({
         route: freshVolumeRoute(defaultRoute()),
         networkId: "",
@@ -811,7 +866,7 @@ describe("db start", () => {
         const args = createArgs(child.spawned);
         const networkIndex = args?.indexOf("--network") ?? -1;
         expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
-      });
+      }).pipe((body) => withEnvVar("SUPABASE_NETWORK_ID", undefined, body));
     },
   );
 
@@ -825,17 +880,15 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
+          expect(Cause.pretty(exit.cause)).toContain("DbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
     },
   );
 
-  // Config loading decodes every duration field unconditionally, for every
-  // command including `db start` — even though `db start` never starts
-  // GoTrue itself. Mirrors `commands/start/start.handler.ts`'s own identical
-  // eager-validation tests.
+  // Config loading decodes every duration field unconditionally for every command, including
+  // `db start`, even though it never starts GoTrue itself.
   it.live.each([
     ["auth.email.max_frequency", '[auth.email]\nmax_frequency = "not-a-duration"\n'],
     ["auth.sms.max_frequency", '[auth.sms]\nmax_frequency = "not-a-duration"\n'],
@@ -855,7 +908,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -867,21 +920,16 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error on a malformed SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT override, before any container is created",
     () => {
-      // `auth.rate_limit` (plain uints) has no enabled-gated validation —
-      // its only check is the unconditional type-decode inside config
-      // loading's single pass, which fails a non-numeric override regardless
-      // of `auth.enabled` or whether `db start` itself ever reads the field
-      // (review: PRRT_kwDOErm0O86Vk-e0).
-      const { layer, child } = setup({});
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
-      );
+      // auth.rate_limit has no enabled-gated validation — it's decoded unconditionally
+      // regardless of auth.enabled or whether db start reads the field.
+      const { layer, child } = setup({
+        projectEnvContents: "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT=bogus\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.rate_limit");
         }
@@ -890,11 +938,8 @@ describe("db start", () => {
     },
   );
 
-  // Closes the review-thread gap: config loading decodes the ENTIRE config
-  // struct unconditionally in a single pass, including every field below,
-  // regardless of whether `db start` itself ever reads it — mirrors
-  // `commands/start/start.handler.ts`'s own identical eager-validation tests
-  // for these same fields (review: PRRT_kwDOErm0O86VlOHQ).
+  // Config loading decodes the entire config struct unconditionally in one pass, including
+  // every field below, regardless of whether `db start` itself reads it.
   it.live.each([
     ["edge_runtime.inspector_port", "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", "not-a-port"],
     ["edge_runtime.policy", "SUPABASE_EDGE_RUNTIME_POLICY", "not-a-policy"],
@@ -912,13 +957,12 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override, before any container is created",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({});
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({ projectEnvContents: `${envVar}=${envValue}\n` });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -927,26 +971,21 @@ describe("db start", () => {
     },
   );
 
-  // Regression test for the exact gap the review thread found: `envOverrideRealtimeIpVersion`/
-  // `envOverrideRealtimeMaxHeaderLength` used to be invoked ONLY inside
-  // `resolveDbBootstrapConfig`, which never runs once `isLocalDbRunning`
-  // short-circuits — so a malformed override was silently ignored whenever
-  // Postgres was already running, unlike the established behavior of
-  // decoding both fields unconditionally before the already-running check
-  // (review: PRRT_kwDOErm0O86VmHkl).
   it.live.each([
     ["realtime.ip_version", "SUPABASE_REALTIME_IP_VERSION", "IPv5"],
     ["realtime.max_header_length", "SUPABASE_REALTIME_MAX_HEADER_LENGTH", "not-a-uint"],
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -955,27 +994,21 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, whole `db.settings.*` group: `resolveDbSettingsEnvOverrides`
-  // was only ever invoked building `startDatabase`'s
-  // `postgresSpec.db.settings`, which never runs once
-  // `isLocalDbRunning` short-circuits — so a malformed override was
-  // silently ignored whenever Postgres was already running, unlike the
-  // established behavior of decoding the entire `db.settings` struct
-  // unconditionally before the already-running check (review:
-  // PRRT_kwDOErm0O86Vn3Hw).
   it.live.each([
     ["db.settings.max_connections", "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS", "bogus"],
     ["db.settings.track_commit_timestamp", "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP", "bogus"],
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -984,26 +1017,18 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, different field: `storage.enabled` (a plain bool)
-  // was only ever resolved inside `resolveDbBootstrapConfig` (gating
-  // the fresh-volume storage migrate job), which never runs once
-  // `isLocalDbRunning` short-circuits — so a malformed override was
-  // silently ignored whenever Postgres was already running, unlike the
-  // established behavior of decoding it unconditionally before the
-  // already-running check (review: PRRT_kwDOErm0O86VooCL).
   it.live(
     "fails with a typed config error on a malformed SUPABASE_STORAGE_ENABLED override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_STORAGE_ENABLED=not-a-bool\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.enabled");
         }
@@ -1012,15 +1037,6 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, different fields: `edge_runtime.enabled`,
-  // `db.network_restrictions.enabled`, `studio.enabled`, and
-  // `local_smtp.enabled` were only ever resolved inside
-  // `resolveLocalConfigValues` (the not-running branch's own
-  // config-values resolver, called below), which never runs once
-  // `isLocalDbRunning` short-circuits — so a malformed override was
-  // silently ignored whenever Postgres was already running, unlike the
-  // established behavior of decoding all four unconditionally before the
-  // already-running check (review: PRRT_kwDOErm0O86Vo7zx).
   it.live.each([
     ["edge_runtime.enabled", "SUPABASE_EDGE_RUNTIME_ENABLED", "not-a-bool"],
     ["db.network_restrictions.enabled", "SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED", "not-a-bool"],
@@ -1029,13 +1045,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1044,28 +1062,18 @@ describe("db start", () => {
     },
   );
 
-  // Regression test for the review thread this fix closes: `studio.api_url`
-  // was resolved (`studioApiUrlForValidation`) but never parsed with
-  // `goUrlParse` in this eager battery — only
-  // `resolveLocalConfigValues` (the not-running branch, called well
-  // after the already-running short-circuit below) ever validated it.
-  // Validation parses `studio.api_url` immediately after the `studio.port`
-  // check, still inside the studio-enabled gate — so a malformed
-  // `SUPABASE_STUDIO_API_URL` would otherwise be silently accepted whenever
-  // Postgres is already running (review: PRRT_kwDOErm0O86WEBfl).
   it.live(
     "fails with a typed config error on a malformed SUPABASE_STUDIO_API_URL override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STUDIO_API_URL=http://[::1\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_STUDIO_API_URL=http://[::1\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Invalid config for studio.api_url");
         }
@@ -1074,14 +1082,6 @@ describe("db start", () => {
     },
   );
 
-  // Regression test for the sibling review thread: `local_smtp.port` was resolved
-  // (`localSmtpPortForValidation`) but the `local_smtp.enabled`-gated zero check never ran in this
-  // eager battery — only `resolveLocalConfigValues`'s `mailpitEnabled`/`mailpitPort` pair
-  // (the not-running branch, called well after the already-running short-circuit below) ever
-  // checked it. Validation rejects `local_smtp.port === 0` ONLY when
-  // `local_smtp.enabled` — so an enabled `[local_smtp]` section with a zero
-  // port would otherwise be silently accepted whenever Postgres is already
-  // running (review: PRRT_kwDOErm0O86WEBfq).
   it.live(
     "fails with a typed config error when local_smtp is enabled with a zero port even when Postgres is already running",
     () => {
@@ -1093,7 +1093,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("Missing required field in config: local_smtp.port");
         }
@@ -1102,26 +1102,18 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, different field: `auth.jwt_expiry` (a plain uint)
-  // was only ever resolved as part of `values.authJwtExpiry`
-  // (`resolveLocalConfigValues`), which this handler calls ONLY in the
-  // not-running branch — so a malformed override was silently ignored
-  // whenever Postgres was already running, unlike the established behavior
-  // of decoding it unconditionally before the already-running check
-  // (review: PRRT_kwDOErm0O86VmpeG).
   it.live(
     "fails with a typed config error on a malformed SUPABASE_AUTH_JWT_EXPIRY override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
-      );
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_AUTH_JWT_EXPIRY=not-a-uint\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.jwt_expiry");
         }
@@ -1130,23 +1122,18 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, different field: `api.port` (a plain uint16) was
-  // only ever resolved as part of `values.apiPort`
-  // (`resolveLocalConfigValues`), which this handler calls ONLY in the
-  // not-running branch — so a malformed override was silently ignored
-  // whenever Postgres was already running, unlike the established behavior
-  // of decoding it unconditionally before the already-running check
-  // (review: PRRT_kwDOErm0O86Vnmss).
   it.live(
     "fails with a typed config error on a malformed SUPABASE_API_PORT override even when Postgres is already running",
     () => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_API_PORT=not-a-port\n");
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: "SUPABASE_API_PORT=not-a-port\n",
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("api.port");
         }
@@ -1155,14 +1142,6 @@ describe("db start", () => {
     },
   );
 
-  // Same gap, same shape, remaining root-level `auth.*` scalars: none of
-  // these is referenced by any auth-enabled gate, so — like `auth.jwt_expiry`
-  // above — each was only ever resolved as part of
-  // `resolveLocalConfigValues`, which this handler calls ONLY in the
-  // not-running branch, and a malformed override was silently ignored
-  // whenever Postgres was already running, unlike the established behavior
-  // of decoding all of them unconditionally before the already-running
-  // check (review: PRRT_kwDOErm0O86VnEV6).
   it.live.each([
     ["auth.enable_signup", "SUPABASE_AUTH_ENABLE_SIGNUP", "not-a-bool"],
     ["auth.enable_anonymous_sign_ins", "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS", "not-a-bool"],
@@ -1182,13 +1161,15 @@ describe("db start", () => {
   ] as const)(
     "fails with a typed config error on a malformed %s override even when Postgres is already running",
     ([dottedFieldPath, envVar, envValue]) => {
-      const { layer, child } = setup({ running: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".env"), `${envVar}=${envValue}\n`);
+      const { layer, child } = setup({
+        running: true,
+        projectEnvContents: `${envVar}=${envValue}\n`,
+      });
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1200,13 +1181,9 @@ describe("db start", () => {
   it.live(
     "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
     () => {
-      // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at
-      // all — `auth.passkey.enabled` is decoded unconditionally via
-      // `resolveGotruePasskeyWebauthn`'s raw-document read, so the
-      // malformed value must live directly in config.toml here since
-      // `@supabase/config` never sees (or rejects) this unmodeled field —
-      // there's no schema-level bool coercion to catch it first
-      // (review: PRRT_kwDOErm0O86VlOHQ).
+      // auth.passkey has no @supabase/config schema, so the malformed value must live in
+      // config.toml directly — an env override would never reach the raw-document read that
+      // decodes it.
       const { layer, child } = setup({
         configContents:
           'project_id = "test"\n[auth]\nenabled = false\n[auth.passkey]\nenabled = "bad"\n',
@@ -1215,7 +1192,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.passkey");
         }
@@ -1227,12 +1204,9 @@ describe("db start", () => {
   it.live(
     "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
     () => {
-      // `auth.external` is a genuine dynamic map keyed by provider name — an
-      // unmodeled/custom provider name like `custom` is a legitimate config
-      // shape `@supabase/config`'s schema silently drops at decode time, so
-      // `resolveAuthExternalProviders`'s raw-document read is the only
-      // place this malformed value is ever seen — same override-only-throw
-      // reasoning as the passkey test above (review: PRRT_kwDOErm0O86VlOHQ).
+      // auth.external is a dynamic provider map; an unmodeled key like "custom" is silently
+      // dropped by @supabase/config's schema, so the malformed value must live in config.toml
+      // directly.
       const { layer, child } = setup({
         configContents:
           'project_id = "test"\n[auth]\nenabled = false\n[auth.external.custom]\nenabled = "bad"\n',
@@ -1241,7 +1215,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.external");
         }
@@ -1253,29 +1227,18 @@ describe("db start", () => {
   it.live(
     "fails on a malformed SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED override, matching Go's Config.Load",
     () => {
-      // `auth.hook.<type>.*` is bound like every other nested field, decoded
-      // in the same unconditional config-load pass as `auth.external` above.
-      // `resolveAuthHooks` only applies the env override when the
-      // `[auth.hook.<type>]` section is present in the raw document
-      // (`@supabase/config`'s schema always decodes a `{ enabled: false }`
-      // default regardless of file presence, which would otherwise erase the
-      // presence signal the env override needs) — so the section must exist
-      // in config.toml for the override below to be reached at all. `db
-      // start` never built a GoTrue container, so nothing else in this
-      // handler called `resolveAuthHooks` before now (review:
-      // PRRT_kwDOErm0O86WBGSW).
+      // The [auth.hook.send_email] section must be present for the env override to reach the
+      // decode — an absent section decodes a schema default that erases the presence signal
+      // the override needs.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[auth.hook.send_email]\nenabled = false\n',
+        projectEnvContents: "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.hook");
         }
@@ -1287,27 +1250,18 @@ describe("db start", () => {
   it.live(
     "fails on a malformed SUPABASE_AUTH_EMAIL_SMTP_PORT override even when auth is disabled, matching Go's Config.Load",
     () => {
-      // `auth.email.smtp.*` is bound like every other nested field once
-      // `[auth.email.smtp]` is present in config.toml, decoded in the same
-      // unconditional config-load pass as `auth.hook` above — confirmed
-      // empirically that this decode failure fires even with `auth.enabled = false`,
-      // well before the auth-enabled-gated email validation and before the
-      // already-running check. `db start` never built a GoTrue container, so
-      // nothing else in this handler called `resolveAuthEmailSmtp`
-      // before now (review: PRRT_kwDOErm0O86WC8J3).
+      // [auth.email.smtp] must be present in config.toml for the env override to reach the
+      // decode.
       const { layer, child } = setup({
         configContents:
           'project_id = "test"\n[auth]\nenabled = false\n[auth.email.smtp]\nhost = "smtp.example.com"\n',
+        projectEnvContents: "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("auth.email.smtp");
         }
@@ -1319,19 +1273,11 @@ describe("db start", () => {
   it.live(
     "ignores SUPABASE_AUTH_EMAIL_SMTP_PORT when [auth.email.smtp] is absent from config.toml",
     () => {
-      // Only keys already bound from the merged config are intercepted — an
-      // absent `[auth.email.smtp]` section never picks up an env override
-      // alone (confirmed empirically), so `resolveAuthEmailSmtp`'s own
-      // presence gate must return `undefined` and the eager check below must
-      // be a no-op rather than failing on a section the config never mentions.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[auth]\nenabled = false\n',
         route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_AUTH_EMAIL_SMTP_PORT=bogus\n",
-      );
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1342,27 +1288,17 @@ describe("db start", () => {
   it.live(
     "fails on a malformed SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED override, matching Go's Config.Load",
     () => {
-      // `storage.image_transformation` is a nil-unless-declared pointer
-      // field, bound like every other nested pointer field once
-      // `[storage.image_transformation]` is present in config.toml — the
-      // same shape as `auth.hook`/`auth.email.smtp` above (confirmed
-      // empirically: `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus`
-      // fails config loading when the section is present, even though `db
-      // start` never builds ImgProxy or the Storage container). `db start`
-      // never resolves this field elsewhere, so nothing else in this
-      // handler called the eager check before now (review: PRRT_kwDOErm0O86WDkO9).
+      // [storage.image_transformation] must be present in config.toml for the env override to
+      // reach the decode.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[storage.image_transformation]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("storage.image_transformation.enabled");
         }
@@ -1374,16 +1310,10 @@ describe("db start", () => {
   it.live(
     "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
     () => {
-      // Only keys already bound from the merged config are intercepted — an
-      // absent `[storage.image_transformation]` section never picks up an
-      // env override alone (confirmed empirically), so the eager check must
-      // gate on section presence and be a no-op rather than failing on a
-      // section the config never mentions.
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
-      );
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED=bogus\n",
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1394,25 +1324,17 @@ describe("db start", () => {
   it.live(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override, matching Go's Config.Load",
     () => {
-      // `db.ssl_enforcement` is a nil-unless-declared pointer field, bound
-      // like every other nested pointer field once `[db.ssl_enforcement]` is
-      // present in config.toml — the same presence-gated shape as
-      // `storage.image_transformation` above, not the plain-bool shape of
-      // `db.network_restrictions.enabled` (never a pointer). `db start`
-      // never resolves this field elsewhere, so nothing else in this
-      // handler called the eager check before now (review: PRRT_kwDOErm0O86WE42a).
+      // [db.ssl_enforcement] must be present in config.toml for the env override to reach the
+      // decode (a presence-gated pointer field, unlike the plain-bool db.network_restrictions.enabled).
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1424,23 +1346,16 @@ describe("db start", () => {
   it.live(
     "fails on a malformed SUPABASE_DB_SSL_ENFORCEMENT_ENABLED override even when Postgres is already running",
     () => {
-      // Same gap, already-running variant: Codex's exact repro for this finding was an
-      // already-running project declaring `[db.ssl_enforcement]` — the eager check above already
-      // covers the non-running path, this proves the running short-circuit doesn't mask it either
-      // (review: PRRT_kwDOErm0O86WE42a).
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db.ssl_enforcement]\nenabled = true\n',
         running: true,
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
       });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
       return Effect.gen(function* () {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1452,17 +1367,10 @@ describe("db start", () => {
   it.live(
     "ignores SUPABASE_DB_SSL_ENFORCEMENT_ENABLED when [db.ssl_enforcement] is absent from config.toml",
     () => {
-      // Only keys already bound from the merged config are intercepted — an
-      // absent `[db.ssl_enforcement]` section never picks up an env override
-      // alone (confirmed empirically for the identical
-      // `storage.image_transformation` shape above), so the eager check must
-      // gate on section presence and be a no-op rather than failing on a
-      // section the config never mentions.
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".env"),
-        "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
-      );
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        projectEnvContents: "SUPABASE_DB_SSL_ENFORCEMENT_ENABLED=bogus\n",
+      });
       return Effect.gen(function* () {
         yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(createArgs(child.spawned)).not.toBeUndefined();
@@ -1473,17 +1381,8 @@ describe("db start", () => {
   it.live(
     "fails with a typed config error when [experimental.webhooks] is present without enabled = true, even when Postgres is already running",
     () => {
-      // Experimental validation rejects ANY present `[experimental.webhooks]`
-      // section whose `enabled` isn't explicitly `true` — this runs
-      // unconditionally inside config loading, before the already-running
-      // check. `db start`'s own `checkDbToml` call (D's shared
-      // db/migration config pipeline, `db-config.toml-read.ts`)
-      // previously never populated
-      // `ExperimentalInput.webhooksPresent`/`webhooksEnabled` at all,
-      // so `validateResolvedConfig`'s existing webhooks check never
-      // ran for `db start` (or any other D caller) — silently accepted
-      // regardless of whether Postgres was already running (review:
-      // PRRT_kwDOErm0O86WE42i).
+      // Experimental validation rejects any present [experimental.webhooks] section whose
+      // enabled isn't explicitly true, unconditionally before the already-running check.
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[experimental.webhooks]\nenabled = false\n',
         running: true,
@@ -1492,7 +1391,7 @@ describe("db start", () => {
         const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = Cause.pretty(exit.cause);
           expect(message).toContain("DbConfigLoadError");
           expect(message).toContain(
             "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
@@ -1504,9 +1403,6 @@ describe("db start", () => {
   );
 
   it.live("starts normally when [experimental.webhooks] is absent from config.toml", () => {
-    // An absent `[experimental.webhooks]` section is never rejected (the
-    // bool zero-value default is fine) — the new webhooks presence check
-    // must be a no-op rather than failing on a section the config never mentions.
     const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
     return Effect.gen(function* () {
       yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -1517,11 +1413,8 @@ describe("db start", () => {
   it.live(
     "never mentions api.auto_expose_new_tables on stderr, whatever the flag is set to",
     () => {
-      // Auto-exposing new `public` entities is the default and an explicit `false` is a
-      // supported opt-out, so neither value is worth a line of start output. Each case's
-      // config.toml is written just before that case's run — `setup()` writes eagerly into
-      // the shared temp workdir, so writing all three up front would let the last write
-      // clobber the earlier ones before their runs ever execute.
+      // Each case's config.toml is written just before its own run — writing all three up
+      // front would let the last write clobber the earlier ones in the shared temp workdir.
       const configContentsCases = [
         'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
         'project_id = "test"\n[api]\nauto_expose_new_tables = false\n',
@@ -1530,12 +1423,13 @@ describe("db start", () => {
       return Effect.gen(function* () {
         for (const configContents of configContentsCases) {
           const { layer, out } = setup({ configContents, route: freshVolumeRoute(defaultRoute()) });
-          const onDiskConfig = readFileSync(
-            join(tempRoot.current, "supabase", "config.toml"),
-            "utf8",
-          );
-          expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          const onDiskConfig = yield* Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            return yield* fs.readFileString(path.join(tempRoot.current, "supabase", "config.toml"));
+          }).pipe(Effect.provide(BunServices.layer));
+          expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
           expect(out.stderrText).not.toContain("auto_expose_new_tables");
         }
       });
@@ -1545,18 +1439,9 @@ describe("db start", () => {
   it.live(
     "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
     () => {
-      // `loadLocalProjectContext` wraps `@supabase/config`'s `loadCliConfig`, which
-      // unconditionally `Console.error`s a deprecation WARN for a legacy `[inbucket]` section
-      // (`packages/config/src/io.ts`'s `normalizeDeprecatedSMTPSections`, pinned to the real
-      // console — not this file's `Output` service, so it must be observed with a raw
-      // `console.error` spy, same idiom as `stop`/`status`'s own identical deprecated-provider
-      // tests). This handler used to load that context TWICE on the not-running path: once
-      // eagerly here (ahead of the already-running short-circuit), and again inside
-      // `buildLocalDbContainerInputs`'s own, now-removed, internal
-      // reload — doubling this WARN for one invocation, unlike the
-      // established single config-load call. Threading the eagerly-loaded
-      // context through as `buildLocalDbContainerInputs`'s
-      // `preloadedContext` fixes this.
+      // The deprecation WARN is Console.error-pinned to the real console, not this file's
+      // Output service, so it must be observed with a raw console.error spy, like
+      // stop/status's identical tests.
       const { layer } = setup({
         configContents: 'project_id = "test"\n[inbucket]\n',
         route: freshVolumeRoute(defaultRoute()),
@@ -1578,11 +1463,6 @@ describe("db start", () => {
   );
 
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
-    // Config loading (and therefore this eager duration validation) runs
-    // before the already-running check — a malformed `auth.*` duration
-    // field must fail the command even when Postgres is already up, not be
-    // masked by the already-running short-circuit. Mirrors the sibling
-    // "undecryptable secret" already-running test above.
     const { layer, out } = setup({
       configContents: 'project_id = "test"\n[auth.email]\nmax_frequency = "not-a-duration"\n',
       running: true,
@@ -1591,7 +1471,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const message = JSON.stringify(exit.cause);
+        const message = Cause.pretty(exit.cause);
         expect(message).toContain("DbConfigLoadError");
         expect(message).toContain("auth.email.max_frequency");
       }
@@ -1616,9 +1496,6 @@ describe("db start", () => {
   it.live(
     "does not warn about SMS when auth is disabled, matching Go's Enabled-gated (s *sms) validate()",
     () => {
-      // The sms validation that sources this warning only runs when auth is
-      // enabled. A disabled-auth project with `enable_signup = true` and no
-      // provider configured must NOT print the warning (review: PRRT_kwDOErm0O86Vk-e2).
       const { layer, out } = setup({
         configContents:
           'project_id = "test"\n[auth]\nenabled = false\n[auth.sms]\nenable_signup = true\n',
@@ -1652,7 +1529,7 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to inspect service");
+        expect(Cause.pretty(exit.cause)).toContain("failed to inspect service");
       }
     });
   });
@@ -1668,8 +1545,6 @@ describe("db start", () => {
       const exit = yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(rollbackWasAttempted(child.spawned)).toBe(true);
-      // Same reasoning as the health-timeout rollback test above — this run's own volume was
-      // confirmed fresh, so the rollback prunes it too.
       expect(volumePruneWasAttempted(child.spawned)).toBe(true);
     });
   });
@@ -1690,12 +1565,367 @@ describe("db start", () => {
       expect(createArgs(child.spawned)).not.toBeUndefined();
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["status"]).toBe("started");
-      // "Starting database..." (or "...from backup..." on a pre-existing
-      // volume, as here — see `defaultRoute`) is written to stderr
-      // unconditionally — no output-format concept gates it, so the
-      // `--output-format json` run must still see it on stderr (review:
-      // PRRT_kwDOErm0O86VmHkn).
+      // Progress text like "Starting database..." goes to stderr unconditionally, even in
+      // json output mode — only structured payloads on stdout are format-gated.
       expect(out.stderrText).toContain("Starting database from backup...\n");
+    });
+  });
+});
+
+describe("db start stack backend", () => {
+  const stackId = "b".repeat(64);
+  const databaseCreation: Extract<ServiceCreation, { service: "database" }> = {
+    service: "database",
+    config: {
+      // Derived from the real catalog's major-17 pin, not hardcoded: `dbStart`'s stack-backend
+      // path resolves the desired version through the same catalog, so a bump would otherwise
+      // make the "resumes the existing database" test below see a spurious version mismatch.
+      version: postgresVersion("17"),
+      databasePassword: Redacted.make("secret"),
+      jwtSecret: Redacted.make("secret"),
+      jwtExpiry: 3600,
+    },
+    endpoints: {},
+  };
+
+  const databaseInstance = (
+    state: {
+      running: boolean;
+      destroyed: boolean;
+      credentialsCalled?: boolean;
+    },
+    onDestroy: () => void = () => {},
+    version = databaseCreation.config.version,
+  ): DatabaseInstance => ({
+    id: "database-primary",
+    service: "database",
+    start: Effect.sync(() => {
+      state.running = true;
+    }),
+    ready: Effect.void,
+    stop: Effect.sync(() => {
+      state.running = false;
+    }),
+    restart: () => Effect.void,
+    destroy: Effect.sync(() => {
+      state.destroyed = true;
+      onDestroy();
+    }),
+    prepare: Effect.void,
+    status: Effect.sync(() => ({
+      id: "database-primary",
+      endpoints: state.running
+        ? [{ name: "sql", protocol: "tcp" as const, host: "127.0.0.1", port: 54329 }]
+        : [],
+      config: {
+        ...databaseCreation,
+        config: { ...databaseCreation.config, version },
+      },
+      lifecycle: state.running ? ("running" as const) : ("stopped" as const),
+      health: state.running ? ("healthy" as const) : undefined,
+      error: undefined,
+      cleanupError: undefined,
+      exit: undefined,
+      currentOperation: undefined,
+      launchId: undefined,
+      intentRevision: 0,
+      wakeEnabled: state.running,
+      registered: true,
+    })),
+    followStatus: Stream.empty,
+    logs: Stream.empty,
+    credentials: () =>
+      Effect.sync(() => {
+        state.credentialsCalled = true;
+        return { databaseUrl: "postgresql://postgres:secret@127.0.0.1:54329/postgres" };
+      }),
+    saveSnapshot: () => Effect.die("unused"),
+    restoreSnapshot: () => Effect.die("unused"),
+    resetData: Effect.die("unused"),
+  });
+
+  const stackFixture = (
+    existing: boolean,
+    running = false,
+    standalone = false,
+    version = databaseCreation.config.version,
+  ) => {
+    const state: { running: boolean; destroyed: boolean; credentialsCalled?: boolean } = {
+      running,
+      destroyed: false,
+    };
+    let members: ReadonlyArray<DatabaseInstance> = [];
+    let registered: ReadonlyArray<DatabaseInstance> = [];
+    const database = databaseInstance(
+      state,
+      () => {
+        members = [];
+        registered = [];
+      },
+      version,
+    );
+    members = existing && !standalone ? [database] : [];
+    registered = existing ? [database] : [];
+    const stack: Stack = {
+      id: stackId,
+      services: {
+        create: () => Effect.die("unused: composition factory creates database"),
+        get: (id: string) =>
+          id === database.id
+            ? Effect.succeed(database)
+            : Effect.fail(new StackError({ operation: "get", message: `unknown ${id}` })),
+        list: Effect.sync(() => registered),
+      },
+      credentials: {
+        get: Effect.succeed({
+          jwtSecret: "secret",
+          postgresRootKey: "root-key",
+          databasePassword: "secret",
+          publishableKey: "sb_publishable_test",
+          secretKey: "sb_secret_test",
+          anonKey: "anon-token",
+          serviceRoleKey: "service-token",
+          jwks: '{"keys":[]}',
+          gotrueJwtKeys: "[]",
+          remoteJwks: "[]",
+          anonKeyIsOverride: false,
+          serviceRoleKeyIsOverride: false,
+        }),
+      },
+      composition: {
+        plan: (creations: ReadonlyArray<ServiceCreationInput>) =>
+          Effect.sync(() =>
+            creations.flatMap((creation) =>
+              creation.service === "database" && registered.includes(database)
+                ? [
+                    postgresVersion(creation.config.version) === postgresVersion(version)
+                      ? {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "unchanged" as const,
+                        }
+                      : {
+                          id: database.id,
+                          service: "database" as const,
+                          member: members.includes(database),
+                          change: "incompatible" as const,
+                          paths: ["config.version"],
+                        },
+                  ]
+                : [],
+            ),
+          ),
+        describe: Effect.sync(() => ({
+          members: members.map(({ id }) => ({ id, activation: "eager" as const })),
+          dependencies: [],
+        })),
+        supabase: (creations: ReadonlyArray<ServiceCreationInput>) =>
+          Effect.sync(() => {
+            members = creations.map(() => database);
+            registered = [database];
+            return members;
+          }),
+        configure: () => Effect.void,
+        start: Effect.succeed([]),
+        stop: Effect.succeed([]),
+        restart: Effect.succeed([]),
+      },
+      stop: Effect.void,
+      destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      commands: { run: () => Effect.die("unused") },
+    };
+    return { stack, state };
+  };
+
+  const stackLayer = (root: string, fixture: ReturnType<typeof stackFixture>, existing: boolean) =>
+    Layer.succeed(StackApi, {
+      create: () => Effect.succeed(fixture.stack),
+      open: () => Effect.succeed(fixture.stack),
+      discover: () => Effect.die("unused"),
+      find: () =>
+        Effect.succeed(
+          existing
+            ? Option.some({
+                definition: {
+                  id: stackId,
+                  identity: { projectRoot: root, branchContext: "main", stackName: "default" },
+                  runtime: "native" as const,
+                  instances: [],
+                  lifetime: "detached" as const,
+                  composition: { members: [], dependencies: [] },
+                  ports: [],
+                },
+                host: undefined,
+              })
+            : Option.none(),
+        ),
+    });
+
+  it.live("creates and starts only the primary database", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+      );
+      expect(fixture.state.running).toBe(true);
+      expect(catalogApplied).toEqual([{ serviceCount: 3 }]);
+    });
+  });
+
+  it.live("destroys a newly created database when catalog setup fails", () => {
+    const { layer } = setup({ catalogFails: true });
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.destroyed).toBe(true);
+      expect((yield* fixture.stack.composition.describe).members).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "resumes the existing database when its pinned version matches the configured major",
+    () => {
+      const { layer, out, catalogApplied } = setup({ recordCatalog: true });
+      const fixture = stackFixture(true);
+      return Effect.gen(function* () {
+        yield* dbStart(DEFAULT_FLAGS).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              layer,
+              stackBackendLayer("stack"),
+              stackLayer(tempRoot.current, fixture, true),
+            ),
+          ),
+        );
+        expect(fixture.state.running).toBe(true);
+        expect(catalogApplied).toEqual([]);
+        expect(out.stderrText).not.toContain("already running");
+      });
+    },
+  );
+
+  it.live("rejects a different database major when resuming the saved stack", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, false, "15.13.0.161");
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.running).toBe(false);
+      expect(catalogApplied).toEqual([]);
+    });
+  });
+
+  it.live("rejects a standalone database outside the saved composition", () => {
+    const { layer, catalogApplied } = setup({ recordCatalog: true });
+    const fixture = stackFixture(true, false, true);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(DEFAULT_FLAGS).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("standalone database");
+        expect(Cause.pretty(exit.cause)).toContain("Destroy");
+      }
+      expect(fixture.state.running).toBe(false);
+      expect(fixture.state.destroyed).toBe(false);
+      expect(catalogApplied).toEqual([]);
+      expect(yield* fixture.stack.composition.describe).toMatchObject({ members: [] });
+      expect((yield* fixture.stack.services.list).map(({ id }) => id)).toEqual([
+        "database-primary",
+      ]);
+    });
+  });
+
+  it.live("does not launch a stopped stack while resolving local credentials", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(true, false);
+    return Effect.gen(function* () {
+      const exit = yield* stackLocalDatabaseConn.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, true),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+    });
+  });
+
+  it.live("uses the running primary's observed connection without launching its owner", () => {
+    const { layer, out } = setup();
+    const fixture = stackFixture(true, true);
+    const provided = Layer.mergeAll(
+      layer,
+      stackBackendLayer("stack"),
+      stackLayer(tempRoot.current, fixture, true),
+    );
+    return Effect.gen(function* () {
+      const conn = yield* stackLocalDatabaseConn.pipe(Effect.provide(provided));
+      expect(conn.host).toBe("127.0.0.1");
+      expect(conn.port).toBe(54329);
+      expect(conn.password).toBe("secret");
+      expect(fixture.state.credentialsCalled).toBeUndefined();
+      yield* dbStart(DEFAULT_FLAGS).pipe(Effect.provide(provided));
+      expect(out.stderrText).toContain("already running");
+      expect(fixture.state.destroyed).toBe(false);
+    });
+  });
+
+  it.live("refuses --from-backup", () => {
+    const { layer } = setup();
+    const fixture = stackFixture(false);
+    return Effect.gen(function* () {
+      const exit = yield* dbStart(flags("backup.sql")).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layer,
+            stackBackendLayer("stack"),
+            stackLayer(tempRoot.current, fixture, false),
+          ),
+        ),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fixture.state.running).toBe(false);
     });
   });
 });

@@ -13,6 +13,10 @@ export type ProfileName = "supabase" | "supabase-staging" | "supabase-local" | "
 interface CommandSettingsShape {
   readonly profile: string;
   readonly apiUrl: string;
+  /** Raw SUPABASE_PROFILE value; Some("") differs from an absent variable. */
+  readonly profileEnvValue: Option.Option<string>;
+  /** Resolved global state directory used for profiles and credentials. */
+  readonly supabaseHome: string;
   /**
    * Project subdomain host for the active profile. Used to build the
    * expected CNAME target (`<ref>.<projectHost>`) in `domains create`.
@@ -20,42 +24,28 @@ interface CommandSettingsShape {
    */
   readonly projectHost: string;
   /**
-   * eTLD+1 the connection pooler hostname must belong to. Sourced from the
-   * resolved profile — the built-in table for named profiles, or the
-   * `pooler_host:` key of a YAML profile file — so custom/staging pooler
-   * domains are honored. An empty string means "no pooler-domain assertion"
-   * (the case for the built-in `supabase-local` profile). Used by the linked
-   * db-config resolver's MITM domain check.
+   * eTLD+1 the connection pooler hostname must belong to, used by the linked db-config
+   * resolver's MITM domain check. An empty string disables that assertion (the
+   * `supabase-local` case).
    */
   readonly poolerHost: string;
-  /**
-   * Dashboard base URL for the active profile. Sourced from the resolved
-   * profile — the built-in table for named profiles, or the
-   * `dashboard_url:` key of a YAML profile file — so staging/custom
-   * dashboards are honored. Used by the connect-failure suggestion
-   * (network-restrictions hint).
-   */
+  /** Dashboard base URL for the active profile, used by the connect-failure network-restrictions hint. */
   readonly dashboardUrl: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
+  /** `SUPABASE_DB_PASSWORD` captured at settings resolution; empty captures as none. */
+  readonly dbPassword: Option.Option<Redacted.Redacted<string>>;
+  /** Ambient `GITHUB_TOKEN`; raises anonymous GitHub API rate limits. Empty captures as none. */
+  readonly githubToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;
   /**
-   * Whether {@link workdir} came from an explicit `--workdir`/`SUPABASE_WORKDIR`
-   * (used exactly as given) rather than the default ancestor walk-up. True iff
-   * the resolution did NOT climb.
-   *
-   * Config loads that accept `supabase/config.json` must pass
-   * `search: shouldSearchAncestors(cliSettings)` to
-   * `loadCliConfig`/`findCliProjectPaths`/`findCliProjectRoot` — see
-   * `shouldSearchAncestors` (`command-internal/workdir-search.ts`)
-   * for the full rule and why callers that also pass `tomlOnly: true` instead
-   * pass `search: false` unconditionally. A load that also tolerates a `null`
-   * result carries a paired obligation for that rule's 4th point: hard-fail
-   * when `explicitWorkdir` is true unless it's one of the documented
-   * exceptions — see `missingProjectConfigMessage`/
-   * `requireExplicitWorkdirProject` (`command-internal/workdir-project.ts`).
+   * Whether {@link workdir} came from an explicit `--workdir`/`SUPABASE_WORKDIR` rather than
+   * the default ancestor walk-up. Config loads use it to decide whether to search ancestor
+   * directories; see `shouldSearchAncestors` in `command-internal/workdir-search.ts`.
    */
   readonly explicitWorkdir: boolean;
+  /** Raw `SUPABASE_WORKDIR` value; `Some("")` differs from an absent variable and is used verbatim. */
+  readonly workdirEnvValue: Option.Option<string>;
   readonly userAgent: string;
 }
 

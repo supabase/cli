@@ -1,8 +1,5 @@
-import { Effect } from "effect";
-import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
-import { slimImageForCurrentPin } from "../../../shared/services/slim-images.ts";
-import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
-import { InvalidGenTypesDatabaseUrlError, InvalidGenTypesDurationError } from "./types.errors.ts";
+import { Config, Effect, Option, Schema } from "effect";
+import { InvalidGenTypesDurationError } from "./types.errors.ts";
 import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
 import caStaging2021 from "./templates/staging-ca-2021.ts";
@@ -10,8 +7,6 @@ import caStaging2021 from "./templates/staging-ca-2021.ts";
 // Local Docker resource ids are hoisted to `command-internal` so the declarative seam
 // can derive the same `supabase_db_<id>` name when checking the local stack.
 export { localDbContainerId, localNetworkId } from "../../../command-internal/docker-ids.ts";
-
-const DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
 
 const DURATION_UNITS_TO_MILLIS = {
   ns: 1 / 1_000_000,
@@ -29,28 +24,23 @@ const DURATION_PART_PATTERN = new RegExp(
   "g",
 );
 
-export interface GenTypesDbTarget {
-  readonly url: string;
-  readonly host: string;
-  readonly port: number;
-  readonly networkMode: "host" | (string & {});
-}
+const DurationJson = Schema.fromJsonString(Schema.String);
+
+const quoteDuration = (raw: string) => Schema.encodeEffect(DurationJson)(raw).pipe(Effect.orDie);
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
 
-export function parseQueryTimeoutSeconds(
+export function parseQueryTimeoutMillis(
   raw: string,
 ): Effect.Effect<number, InvalidGenTypesDurationError> {
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${yield* quoteDuration(raw)}`,
+      });
     }
 
     let totalMillis = 0;
@@ -67,11 +57,9 @@ export function parseQueryTimeoutSeconds(
         continue;
       }
       if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new InvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+        return yield* new InvalidGenTypesDurationError({
+          message: `invalid duration ${yield* quoteDuration(raw)}`,
+        });
       }
       const amount = Number.parseFloat(rawNumber);
       const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
@@ -80,69 +68,19 @@ export function parseQueryTimeoutSeconds(
     }
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new InvalidGenTypesDurationError({
+        message: `invalid duration ${yield* quoteDuration(raw)}`,
+      });
     }
 
-    return Math.round(totalMillis / 1_000);
+    return totalMillis;
   });
 }
 
-export function localDbPassword() {
-  return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
-}
-
-export function parseDatabaseUrl(
-  url: string,
-): Effect.Effect<GenTypesDbTarget, InvalidGenTypesDatabaseUrlError> {
-  return Effect.try({
-    try: () => {
-      const parsed = new URL(url);
-      if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
-        throw new Error(`unsupported scheme ${parsed.protocol}`);
-      }
-      if (parsed.pathname.length === 0 || parsed.pathname === "/") {
-        parsed.pathname = "/postgres";
-      }
-      return {
-        url: parsed.toString(),
-        host: parsed.hostname,
-        port: parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 5432,
-        networkMode: "host" as const,
-      } satisfies GenTypesDbTarget;
-    },
-    catch: (cause) =>
-      new InvalidGenTypesDatabaseUrlError({
-        message: `failed to parse connection string: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
-}
-
-export function buildPostgresUrl(input: {
-  readonly host: string;
-  readonly port: number;
-  readonly user: string;
-  readonly password: string;
-  readonly database: string;
-}) {
-  const host =
-    input.host.includes(":") && !input.host.startsWith("[") ? `[${input.host}]` : input.host;
-  return (
-    `postgresql://${encodeURIComponent(input.user)}:${encodeURIComponent(input.password)}` +
-    `@${host}:${input.port}/${encodeURIComponent(input.database)}` +
-    `?connect_timeout=${DEFAULT_CONNECT_TIMEOUT_SECONDS}`
-  );
-}
-
-export function resolvePgmetaImage(versionOverride?: string) {
-  const raw = dockerfileServiceImageRaw("pgmeta");
-  const trimmed = versionOverride?.trim() ?? "";
-  const pin = trimmed.length > 0 ? `v${trimmed.replace(/^v/i, "")}` : undefined;
-  return getRegistryImageUrl(slimImageForCurrentPin("pgmeta", raw, pin));
-}
+export const localDbPassword = Effect.fnUntraced(function* () {
+  const value = yield* Config.option(Config.string("SUPABASE_DB_PASSWORD"));
+  return Option.getOrElse(value, () => "postgres");
+});
 
 export function rootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;

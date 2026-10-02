@@ -33,7 +33,8 @@
     },
     "capabilities": {
       "list_v2": true,
-      "iceberg_catalog": true
+      "iceberg_catalog": true,
+      "object_versioning": true
     },
     "external": {
       "upstreamTarget": "canary"

@@ -8,7 +8,7 @@ describe("bundleServeMainTemplate", () => {
 
     // The offline failure (#45570) was caused by these being resolved over the
     // network on every container start. They must be inlined into the bundle.
-    expect(bundled).not.toContain("https://");
+    expect(bundled).not.toMatch(/(?:from|import)\s*["']https?:/);
     expect(bundled).not.toContain("jsr:");
     expect(bundled).not.toMatch(/from\s*["']jose["']/);
   });

@@ -41,9 +41,7 @@ function interpolateLeafValue(
 
   const resolved = env[envName];
   // Preserve the literal `env(VAR)` verbatim when VAR is unset OR present but
-  // empty (e.g. a dotenv `KEY=` line). Matches Go's `LoadEnvHook`
-  // (`apps/cli-go/pkg/config/decode_hooks.go:19-24`: `len(env) > 0`), which
-  // only substitutes a non-empty value — same gate as `substituteEnvLeaf` in
+  // empty (e.g. a dotenv `KEY=` line), the same gate as `substituteEnvLeaf` in
   // `./env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
   // `edge_runtime.secrets.FOO = "env(EMPTY)"`) resolves to `""` here, gets
   // redacted by `redactValue` as a real value instead of skipped as an
@@ -105,18 +103,9 @@ function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat:
 }
 
 /**
- * Shared by the plain sync resolvers below and `../project.ts`'s
- * Effect-typed `resolveCliConfigValue`/`resolveCliConfigSubtree` (which wrap
- * this in `Effect.sync` and additionally accept the internal-only
- * `goViperCompat` option).
- *
- * Declared as an overload pair rather than a single generic signature: the
- * body's `unknown`-typed implementation signature is what lets
- * `interpolateValue`/`redactValue` (both genuinely `unknown -> unknown`,
- * since the recursion branches on runtime shape, not on `T`) flow straight
- * through to the return without an `as` cast — callers only ever see the
- * generic overload above, which resolves `T` from the argument and returns
- * `ResolvedCliConfigValue<T>` directly.
+ * Shared by the plain sync resolvers below and the Effect-typed variants in `../project.ts`.
+ * Declared as an overload pair so the `unknown`-typed implementation flows through to
+ * `interpolateValue`/`redactValue` without an `as` cast.
  */
 export function resolveCliConfigValueAtPath<T>(
   value: T,
@@ -135,22 +124,9 @@ export function resolveCliConfigValueAtPath(
 }
 
 /**
- * Plain synchronous counterpart of `../project.ts`'s Effect-typed
- * `resolveCliConfigValue`, exported from `.` under the same name — `./effect`
- * re-exports the Effect-typed variant explicitly, which wins over this one's
- * star re-export through `./index.ts` (see `../effect.ts`'s doc comment).
- *
- * `cliProjectEnv` only needs `.values` (`Pick<CliProjectEnvironment, "values">`) —
- * a caller that already has a project's env values but not the full
- * `CliProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
- * `{ values }` directly instead of threading through the whole loaded object.
- *
- * Has no options parameter: this package's one resolver knob (`goViperCompat`)
- * is internal-only — see `InternalResolveCliConfigOptions` in `../project.ts`.
- * That type is package-internal (not itself re-exported from
- * `@supabase/config/internal`); only the `resolveCliConfigValue`/
- * `resolveCliConfigSubtree` functions widened to accept it are exported from
- * there. Adding a public knob later is a non-breaking, additive change.
+ * Plain synchronous counterpart to the Effect-typed `resolveCliConfigValue` in `../project.ts`;
+ * has no options parameter, since this package's only resolver knob (`goViperCompat`) is
+ * internal-only.
  */
 export function resolveCliConfigValue<T>(
   value: T,
@@ -160,7 +136,7 @@ export function resolveCliConfigValue<T>(
   return resolveCliConfigValueAtPath(value, cliProjectEnv, toPathSegments(configPath), false);
 }
 
-/** See {@link resolveCliConfigValue}'s doc comment for why `cliProjectEnv` only needs `.values`. */
+/** See {@link resolveCliConfigValue}. */
 export function resolveCliConfigSubtree<T>(
   value: T,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,

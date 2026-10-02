@@ -16,13 +16,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { compileOptions, stackReleaseDefine } from "../../apps/cli/scripts/compile-options.ts";
 
 const PORT = 4873;
 const REGISTRY = `http://localhost:${PORT}`;
 const root = path.resolve(import.meta.dir, "../..");
 const tokenPath = path.join(root, "tmp", "verdaccio-token");
 
-// All seven platform packages that appear in optionalDependencies.
+// Every platform package that appears in optionalDependencies.
 const PLATFORM_PACKAGES = [
   "cli-darwin-arm64",
   "cli-darwin-x64",
@@ -98,13 +99,6 @@ function getPlatformInfo(): PlatformInfo {
   return info;
 }
 
-function libcForBunTarget(target: string): "glibc" | "musl" | "" {
-  if (!target.startsWith("bun-linux-")) {
-    return "";
-  }
-  return target.includes("-musl") ? "musl" : "glibc";
-}
-
 async function checkRegistry(): Promise<void> {
   try {
     const res = await fetch(`${REGISTRY}/-/ping`, {
@@ -172,7 +166,6 @@ async function main() {
     );
   }
 
-  // All build output goes into a system temp directory — never into the git repo.
   const tmpDir = await mkdtemp(path.join(tmpdir(), "supabase-local-release-"));
 
   try {
@@ -182,26 +175,33 @@ async function main() {
 
     console.log(`\nBuilding ${umbrellaName}@${version} (${platform.platformPkg})...\n`);
 
-    // ── Build platform package ────────────────────────────────────────────
-
     const tmpPlatformDir = path.join(tmpDir, platform.platformPkg);
     const tmpPlatformBinDir = path.join(tmpPlatformDir, "bin");
     await mkdir(tmpPlatformBinDir, { recursive: true });
 
     const entrypoint = path.join(root, "apps", "cli", "src", "main.ts");
     const bunBinary = path.join(tmpPlatformBinDir, `supabase${platform.ext}`);
-    const libc = libcForBunTarget(platform.bunTarget);
 
     console.log("[1/3] Compiling CLI binary...");
-    await $`bun build ${entrypoint} --compile --target=${platform.bunTarget} --define=SUPABASE_LIBC=${JSON.stringify(libc)} --outfile=${bunBinary}`;
+    const buildResult = await Bun.build({
+      entrypoints: [entrypoint],
+      compile: { target: platform.bunTarget, outfile: bunBinary },
+      ...compileOptions,
+      define: await stackReleaseDefine(),
+    });
+    for (const log of buildResult.logs) {
+      console.warn(log);
+    }
+    if (!buildResult.success) {
+      throw new Error("failed to compile the CLI binary");
+    }
 
     {
       const goBinary = path.join(tmpPlatformBinDir, `supabase-go${platform.ext}`);
       console.log(`[2/3] Compiling Go CLI binary (${platform.goos}/${platform.goarch})...`);
-      // Run go build from within the Go source directory so Go can find
-      // the go.mod there. Passing an absolute path as a positional arg
-      // causes Go to resolve the module from CWD instead, which fails
-      // because the repo root has no go.mod.
+      // go build must run from the Go source directory: passing an absolute path as a positional
+      // arg makes Go resolve the module from CWD instead, which fails because the repo root has
+      // no go.mod.
       await $`go build -trimpath -ldflags="-s -w" -o ${goBinary} .`.cwd(goSource).env({
         ...process.env,
         GOOS: platform.goos,
@@ -209,8 +209,6 @@ async function main() {
         CGO_ENABLED: "0",
       });
     }
-
-    // ── Build umbrella package shim ───────────────────────────────────────
 
     const tmpCliDir = path.join(tmpDir, "cli");
     const tmpCliDistDir = path.join(tmpCliDir, "dist");
@@ -221,9 +219,6 @@ async function main() {
     console.log("[3/3] Building Node.js shim...");
     await $`bun build ${shimSrc} --outfile=${shimOut} --target=node`;
 
-    // ── Write package.json files ──────────────────────────────────────────
-
-    // Platform package: copy as-is, bump version.
     const platformPkgJson = await Bun.file(
       path.join(root, "packages", platform.platformPkg, "package.json"),
     ).json();
@@ -233,10 +228,8 @@ async function main() {
       `${JSON.stringify(platformPkgJson, null, "\t")}\n`,
     );
 
-    // Umbrella package: build a minimal package.json.
-    // The shim only uses Node built-ins — all @supabase/* and catalog: deps
-    // are bundled in the platform binary and must not appear in the published
-    // package.json (catalog: and workspace:* are invalid outside pnpm workspaces).
+    // The shim only uses Node built-ins; @supabase/* and catalog: deps are bundled in the platform
+    // binary and must not appear here (catalog: and workspace:* are invalid outside pnpm workspaces).
     const resolvedOptionalDeps: Record<string, string> = {};
     for (const pkg of PLATFORM_PACKAGES) {
       resolvedOptionalDeps[`@supabase/${pkg}`] = version;
@@ -256,20 +249,16 @@ async function main() {
       `${JSON.stringify(publishPkgJson, null, "\t")}\n`,
     );
 
-    // ── Write .npmrc with registry and auth token ─────────────────────────
-
     const npmrc = [`registry=${REGISTRY}`, `//localhost:${PORT}/:_authToken=${token}`, ""].join(
       "\n",
     );
     await Bun.write(path.join(tmpPlatformDir, ".npmrc"), npmrc);
     await Bun.write(path.join(tmpCliDir, ".npmrc"), npmrc);
 
-    // ── Publish ───────────────────────────────────────────────────────────
-
     console.log(`\nPublishing @supabase/${platform.platformPkg}@${version} to local registry...`);
-    // Use bun publish for the platform binary package: pnpm normalises file
-    // modes in tarballs and strips the execute bit from files not in the
-    // package's `bin` field. bun publish preserves modes, matching production.
+    // bun publish (not pnpm) for the platform binary package: pnpm normalizes tarball file modes
+    // and strips the execute bit from files outside the package's `bin` field; bun publish
+    // preserves modes, matching production.
     await $`bun publish --access public --tag local --registry ${REGISTRY} --no-git-checks`.cwd(
       tmpPlatformDir,
     );
@@ -290,7 +279,6 @@ Or install globally:
   supabase --version
 `);
   } finally {
-    // Always remove the temp directory — even on failure.
     await rm(tmpDir, { recursive: true, force: true });
   }
 }

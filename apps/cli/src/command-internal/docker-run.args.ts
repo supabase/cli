@@ -20,29 +20,19 @@ export function buildDockerArgs(opts: DockerRunOpts): ReadonlyArray<string> {
     "run",
     "--rm",
     ...networkArgs,
-    // `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
     ...extraHosts.flatMap((h) => ["--add-host", h]),
     ...binds.flatMap((b) => ["-v", b]),
-    // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear
-    // in the host process argv (`ps aux` / `/proc/<pid>/cmdline`). Docker reads
-    // each value from the spawning process's environment instead — the layer
-    // merges `env` into the docker child's environment before spawning. Go avoids
-    // this exposure entirely by passing `container.Config.Env` over the Docker
-    // socket API; this is the CLI-shell equivalent (CWE-214).
+    // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear in the host
+    // process argv (`ps aux`/`/proc/<pid>/cmdline`, CWE-214); Docker reads each value from the
+    // spawning process's own environment, which the layer merges `env` into before spawning.
     ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
-    // `DockerStart` unconditionally sets `com.supabase.cli.project` and
-    // `com.docker.compose.project` on `config.Labels` for EVERY container it
-    // starts, one-shot jobs included — `supabase stop` and this shell's own rollback both discover
-    // orphaned containers by that project-label filter
-    // (`docker-remove-all.ts`), so a one-shot job left running after a
-    // client interruption/daemon disconnect must carry the same labels to be
-    // found. Empty unless the caller opts in (review: Codex, PR #6022).
+    // A one-shot job left running after a client interruption or daemon disconnect must still
+    // carry the project labels `stop`/rollback use to discover orphaned containers by label
+    // filter (see `docker-remove-all.ts`); empty unless the caller opts in.
     ...Object.entries(labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]),
-    // `--entrypoint` must precede the image (it is a `docker run` flag); the
-    // remaining `cmd` tokens become the entrypoint's args, mirroring Go's
-    // `Entrypoint: [value, ...cmd]`.
+    // `--entrypoint` must precede the image; the remaining `cmd` tokens become its arguments.
     ...(Option.isSome(entrypoint) ? ["--entrypoint", entrypoint.value] : []),
     image,
     ...cmd,
@@ -50,12 +40,9 @@ export function buildDockerArgs(opts: DockerRunOpts): ReadonlyArray<string> {
 }
 
 /**
- * Mirror `DockerStart` Bitbucket Pipelines handling:
- * when `BITBUCKET_CLONE_DIR` is set,
- * that runner disallows named volumes and `--security-opt`, so Go drops named-volume
- * binds and clears `SecurityOpt` before starting any container. Applied globally to
- * every docker run (matching Go's placement) — e.g. the pg-delta Deno-cache
- * named volume is dropped while the `<cwd>:/workspace` bind mount is kept.
+ * Bitbucket Pipelines' Docker-in-Docker runner disallows named volumes and `--security-opt`, so
+ * drop named-volume binds and clear `securityOpt` when `BITBUCKET_CLONE_DIR` is set — e.g. the
+ * pg-delta Deno-cache named volume is dropped while a `<cwd>:/workspace` bind mount is kept.
  */
 export function applyBitbucketDockerFilter(
   opts: DockerRunOpts,

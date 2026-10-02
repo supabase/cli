@@ -17,18 +17,15 @@ import { telemetryStateLayer } from "../telemetry/telemetry-state.layer.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../shared/runtime/command-runtime.service.ts";
+import { StackApi, stackApiLayer } from "./stack-api.ts";
 
 /**
  * Runtime layer for the commands that talk to the Storage gateway directly:
- * `seed buckets` and `storage ls/cp/mv/rm`. The Management API client is **lazy**
- * so the LOCAL path (no `--linked`) never resolves a token / requires a login:
- * `commandPlatformApiFactoryLayer` defers token resolution to the first
- * `factory.make` call, which only fires on the `--linked` branch (the remote
- * service-role-key fetch).
+ * `seed buckets` and `storage ls/cp/mv/rm`. The Management API client is lazy,
+ * so the local path (no `--linked`) never resolves a token or requires login.
  *
- * `HttpClient` is exposed at the top level because the Storage gateway requires
- * an `HttpClient` service directly rather than going through the typed
- * Management API client.
+ * `HttpClient` is exposed at the top level because the Storage gateway needs
+ * it directly, not through the typed Management API client.
  */
 export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -37,10 +34,8 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     Layer.provide(cliSettings),
     Layer.provide(debugLoggerLayer),
   );
-  // Lazy factory: build does NOT resolve a token. Token resolution is deferred
-  // until `factory.make` is first called — i.e. when the `--linked` branch
-  // actually executes. The LOCAL path completes without touching the Management
-  // API.
+  // Token resolution is deferred until `factory.make` is first called, on the
+  // `--linked` branch.
   const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
@@ -62,6 +57,8 @@ export function storageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
     telemetryStateLayer,
     identityStitchLayer,
     commandRuntimeLayer([...subcommand]),
+    // Backs `storage`/`seed buckets`'s stack-backend Storage endpoint resolution.
+    stackApiLayer,
   );
 
   const _serviceCoverageCheck: Layer.Layer<StorageGatewayServices, unknown, unknown> = built;
@@ -78,4 +75,5 @@ type StorageGatewayServices =
   | TelemetryState
   | IdentityStitch
   | CommandRuntime
-  | HttpClient.HttpClient;
+  | HttpClient.HttpClient
+  | StackApi;

@@ -10,6 +10,7 @@
 | `<workdir>/supabase/.temp/pooler-url`  | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml) |
 | `~/.supabase/access-token`             | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
 | `<workdir>/supabase/.temp/project-ref` | text   | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                      |
+| `<supabaseHome>/stacks/*/state.json`   | JSON   | managed `--local`: discover the project stack and open its saved definition                                                               |
 
 ## Files Written
 
@@ -28,11 +29,13 @@
 
 ## Docker
 
-One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`getRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
+Compose `--local` / `--linked` / `--db-url` run one-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`getRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
 
-- `-v <hostpath>:<dockerpath>:ro` for each test path. A path that is a **file** is mounted via its **containing directory** (not the lone file) so that psql `\ir`/`\i` includes — which resolve relative to the test file's own directory — find their sibling files inside the container (CLI-1139). Directory paths are mounted as-is. Mounts are deduped by container target, so multiple files in the same directory produce a single `-v`. The full file path is still passed to `pg_prove`, so only the requested file runs.
-- `--security-opt label:disable`
-- `--network supabase_network_<project_id>` (local) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked) with the resolved host/port. `<project_id>` is sanitized (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
+Managed stack `--local` prove runs the catalog `pg_prove` tool through the owning stack runtime with runtime-facing host and port, preserving the CLI resolver’s database user, password, and database. External `--db-url`/`--linked` prove uses the catalog Postgres client: native prepends `artifact/bin`; container or no-native-artifact platforms run a one-shot of the digest-pinned catalog Postgres image. That pin is not rewritten through `SUPABASE_INTERNAL_IMAGE_REGISTRY`. Missing `pg_prove` fails closed. There is no PATH fallback.
+
+- `-v <hostpath>:<dockerpath>:ro` for each test path on Compose and on catalog container prove. A path that is a **file** is mounted via its **containing directory** (not the lone file) so that psql `\ir`/`\i` includes — which resolve relative to the test file's own directory — find their sibling files inside the container (CLI-1139). Directory paths are mounted as-is. Mounts are deduped by container target, so multiple files in the same directory produce a single `-v`. The full file path is still passed to `pg_prove`, so only the requested file runs. Native prove reads host paths directly (no bind).
+- `--security-opt label:disable` on Compose and catalog container prove (omitted in Bitbucket Pipelines)
+- `--network supabase_network_<project_id>` (Compose `--local`) with env `PGHOST=db PGPORT=5432`. External `--db-url`/`--linked` runs use host networking with the resolved host and port. Managed stack proves use the owner-managed tool with runtime credentials and its runtime-specific attachment; they do not use the Compose network or `PGHOST=db`. `<project_id>` is sanitized (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
 - `-e PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`
 - cmd `pg_prove --ext .pg --ext .sql -r <paths> [--verbose]` (`--verbose` when `--debug`)
 
@@ -57,14 +60,14 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 
 ## Exit Codes
 
-| Code | Condition                                                                                            |
-| ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | all pgTAP tests pass                                                                                 |
-| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`                        |
-| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here   |
-| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
-| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                             |
+| Code | Condition                                                                                                                                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | all pgTAP tests pass                                                                                                                                            |
+| `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`, or `error running pg_prove: exit N` on a managed stack or native external client |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here                                                              |
+| `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                                                                           |
+| `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors                                                            |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                        |
 
 ## Telemetry Events Fired
 
@@ -76,7 +79,7 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 command's flag config and handler verbatim, but records `command: "db test"`
 instead, since each command's own telemetry wrapper records its own invocation
 path even though the underlying handler is the same function. Driven by
-`commandPath` in `../../../shared/test-db.layers.ts`'s
+`commandPath` in `../../../command-internal/test-db.layers.ts`'s
 `testDbRuntimeLayer` factory — each `.command.ts` passes its own actual
 invocation path.
 
@@ -102,6 +105,7 @@ command (exit 1).
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
+- Stack `test db` runs catalog `pg_prove` through the owning stack runtime with runtime credentials for native and container runtimes. External targets use the catalog Postgres client. Compose stays on `supabase/pg_prove:3.36`. There is no PATH fallback or host major-version check.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
   shared verbatim by `db test` via `testDbConfig`) overrides ONLY the
   linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >
@@ -145,6 +149,6 @@ command (exit 1).
   `supabase link`) rather than from config.toml — the `[db.pooler]` config.toml field
   is intentionally ignored. The pooler's `?options=reference=<ref>` startup param is
   carried through to the connection for the legacy pooler-URL format.
-- pg_prove image is fixed at `supabase/pg_prove:3.36`; the old Go CLI's `[images] pgprove`
+- Compose pg_prove image is fixed at `supabase/pg_prove:3.36`; the old Go CLI's `[images] pgprove`
   config override is not modeled by the TS config schema (documented divergence).
 - The old Go CLI's hidden `--network-id` override is not declared on the TS command (documented divergence).

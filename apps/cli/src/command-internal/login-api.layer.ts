@@ -8,10 +8,8 @@ import { LoginVerificationError } from "../commands/login/login.errors.ts";
 
 const POLL_TIMEOUT = "10 seconds";
 
-// HttpClientError reasons that mean the response arrived but its body could not
-// be decoded (including a 2xx whose body isn't valid JSON). These are API
-// response problems, not transport ones, so they classify by `decode` rather
-// than as a network failure. Mirrors `next/auth/api.layer.ts`.
+// HttpClientError reasons meaning the response arrived but its body couldn't be decoded
+// (including a 2xx with invalid JSON) — classified as `decode`, not a transport `network` failure.
 const BODY_DECODE_REASONS = new Set<string>(["DecodeError", "EmptyBodyError"]);
 
 function readString(obj: unknown, key: string): string {
@@ -53,11 +51,8 @@ export const loginApiLayer = Layer.effect(
           };
           return session;
         }).pipe(
-          // Map transport / JSON-decode failures to the retry-driving error.
-          // The explicit non-200 `LoginVerificationError` above passes
-          // through untouched (it is not an `HttpClientError`). A body-decode
-          // reason means the response arrived but its body was unparseable — an
-          // API response problem (`decode`), not a transport (`network`) one.
+          // The explicit non-200 `LoginVerificationError` above passes through untouched here,
+          // since it isn't an `HttpClientError`.
           Effect.catchTag("HttpClientError", (cause) =>
             Effect.fail(
               BODY_DECODE_REASONS.has(cause.reason._tag)

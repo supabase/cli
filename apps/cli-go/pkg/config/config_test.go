@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -286,28 +287,137 @@ enabled = false
 		assert.False(t, config.Experimental.PgDelta.Enabled)
 	})
 
-	// [workers] is owned by the TS CLI, but the published JSON schema advertises it,
+	// [compute] is owned by the TS CLI, but the published JSON schema advertises it,
 	// so a user can hand-write it today. Every Go-delegated path goes through
 	// config.Load, and UnmarshalExact rejects keys baseConfig does not model — so the
 	// section has to at least parse here, in both base and remote position.
-	t.Run("accepts the TS-owned workers section", func(t *testing.T) {
+	t.Run("accepts the TS-owned compute section", func(t *testing.T) {
 		config := NewConfig()
 		fsys := fs.MapFS{
 			"supabase/config.toml": &fs.MapFile{Data: []byte(`
 project_id = "test"
 
-[workers.api]
+[compute.api]
 runtime = "node"
 
 [remotes.prod]
 project_id = "bvikqvbczudanvggcord"
 
-[remotes.prod.workers.api]
+[remotes.prod.compute.api]
 instances = 3
 `)},
 		}
 
 		assert.NoError(t, config.Load("", fsys))
+	})
+
+	for _, tt := range []struct {
+		name       string
+		configData string
+		projectID  string
+		want       bool
+	}{
+		{
+			name:       "base true",
+			configData: "[experimental]\nstack = true\n",
+			want:       true,
+		},
+		{
+			name:       "base false",
+			configData: "[experimental]\nstack = false\n",
+			want:       false,
+		},
+		{
+			name:       "remote true",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\nstack = true\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       true,
+		},
+		{
+			name:       "remote false",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\nstack = false\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       false,
+		},
+	} {
+		t.Run("accepts experimental stack "+tt.name, func(t *testing.T) {
+			t.Setenv("SUPABASE_EXPERIMENTAL_STACK", "")
+			config := NewConfig()
+			config.ProjectId = tt.projectID
+			fsys := fs.MapFS{
+				"supabase/config.toml": &fs.MapFile{Data: []byte(tt.configData)},
+			}
+
+			require.NoError(t, config.Load("", fsys))
+			assert.Equal(t, tt.want, config.Experimental.Stack)
+		})
+	}
+
+	for _, tt := range []struct {
+		name       string
+		configData string
+		projectID  string
+		want       bool
+	}{
+		{
+			name:       "base true",
+			configData: "[experimental]\ncompute = true\n",
+			want:       true,
+		},
+		{
+			name:       "base false",
+			configData: "[experimental]\ncompute = false\n",
+			want:       false,
+		},
+		{
+			name:       "remote true",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\ncompute = true\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       true,
+		},
+		{
+			name:       "remote false",
+			configData: "[remotes.prod]\nproject_id = \"abcdefghijklmnopqrst\"\n[remotes.prod.experimental]\ncompute = false\n",
+			projectID:  "abcdefghijklmnopqrst",
+			want:       false,
+		},
+	} {
+		t.Run("accepts experimental compute "+tt.name, func(t *testing.T) {
+			t.Setenv("SUPABASE_EXPERIMENTAL_COMPUTE", "")
+			config := NewConfig()
+			config.ProjectId = tt.projectID
+			fsys := fs.MapFS{
+				"supabase/config.toml": &fs.MapFile{Data: []byte(tt.configData)},
+			}
+
+			require.NoError(t, config.Load("", fsys))
+			assert.Equal(t, tt.want, config.Experimental.Compute)
+		})
+	}
+
+	t.Run("does not emit experimental stack or compute", func(t *testing.T) {
+		config := NewConfig()
+		config.Experimental.Stack = true
+		config.Experimental.Compute = true
+
+		encodedToml, err := ToTomlBytes(config.Experimental)
+		require.NoError(t, err)
+		var encoded map[string]any
+		_, err = toml.Decode(string(encodedToml), &encoded)
+		require.NoError(t, err)
+		assert.NotContains(t, encoded, "stack")
+		assert.NotContains(t, encoded, "compute")
+
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		var rendered map[string]any
+		_, err = toml.Decode(buf.String(), &rendered)
+		require.NoError(t, err)
+		experimental, ok := rendered["experimental"].(map[string]any)
+		if assert.True(t, ok) {
+			assert.NotContains(t, experimental, "stack")
+			assert.NotContains(t, experimental, "compute")
+		}
 	})
 }
 
@@ -317,8 +427,12 @@ func TestRemoteOverride(t *testing.T) {
 		config.ProjectId = "bvikqvbczudanvggcord"
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
@@ -335,8 +449,12 @@ func TestRemoteOverride(t *testing.T) {
 		config.ProjectId = "vpefcjyosynxeiebfscx"
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://preview.com")
@@ -353,8 +471,12 @@ func TestRemoteOverride(t *testing.T) {
 		config := NewConfig()
 		// Setup in-memory fs
 		fsys := fs.MapFS{
-			"supabase/config.toml":           &fs.MapFile{Data: testInitConfigEmbed},
-			"supabase/templates/invite.html": &fs.MapFile{},
+			"supabase/config.toml":                                  &fs.MapFile{Data: testInitConfigEmbed},
+			"supabase/templates/invite.html":                        &fs.MapFile{},
+			"supabase/templates/password_changed_notification.html": &fs.MapFile{},
+			"certs/my-cert.pem":                                     &fs.MapFile{},
+			"certs/my-key.pem":                                      &fs.MapFile{},
+			"supabase/signing_keys.json":                            &fs.MapFile{Data: []byte("[]")},
 		}
 		// Run test
 		t.Setenv("TWILIO_AUTH_TOKEN", "token")
@@ -1035,5 +1157,109 @@ port = 12345
 		require.NoError(t, config.Load("", fsys))
 		assert.Equal(t, "http://env-override.example/", config.Auth.SiteUrl)
 		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
+}
+
+func TestDeprecatedOrioleDBVersionConfig(t *testing.T) {
+	captureStderr := func(t *testing.T, run func()) string {
+		t.Helper()
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		defer r.Close()
+		defer w.Close()
+		orig := os.Stderr
+		os.Stderr = w
+		defer func() { os.Stderr = orig }()
+		run()
+		require.NoError(t, w.Close())
+		var out bytes.Buffer
+		_, err = io.Copy(&out, r)
+		require.NoError(t, err)
+		return out.String()
+	}
+
+	t.Run("promotes deprecated [experimental] orioledb_version to [db]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "15.1.0.150"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.0.150", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("does not warn when [experimental] orioledb_version is empty", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = ""
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "", config.Db.OrioleDBVersion)
+		assert.NotContains(t, stderr, "orioledb_version is deprecated")
+	})
+
+	t.Run("promotes deprecated [experimental] orioledb_version when [db] is explicitly empty", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "x"
+
+[db]
+orioledb_version = ""
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "x", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("prefers explicit [db] orioledb_version over deprecated [experimental]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = "15.1.0.150"
+
+[db]
+orioledb_version = "15.1.1.13"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.1.13", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	})
+
+	t.Run("normalizes deprecated [remotes.*.experimental] orioledb_version", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "abcdefghijklmnopqrst"
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.experimental]
+orioledb_version = "15.1.0.150"
+`)},
+		}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, config.Load("", fsys))
+		})
+		assert.Equal(t, "15.1.0.150", config.Db.OrioleDBVersion)
+		assert.Contains(t, stderr, "WARN: remotes.staging.experimental.orioledb_version is deprecated. Please use remotes.staging.db.orioledb_version instead.")
 	})
 }

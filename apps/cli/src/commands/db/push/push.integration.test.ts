@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -14,6 +12,7 @@ import {
   mockTelemetryStateTracked,
   useTempWorkdir,
   sequentialExecBatch,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { DnsResolverFlag, YesFlag } from "../../../command-internal/global-flags.ts";
@@ -156,6 +155,7 @@ function setup(
     files?: Readonly<Record<string, string>>;
     format?: OutputFormat;
     confirm?: ReadonlyArray<boolean>;
+    piped?: string;
     args?: ReadonlyArray<string>;
     yes?: boolean;
     isLocal?: boolean;
@@ -168,24 +168,27 @@ function setup(
     failExec?: string;
     failExecWith?: { message: string; code?: string; detail?: string; position?: number };
     noProjectId?: boolean;
-    // Simulates the real `DbConfigResolver`'s own "Initialising login
-    // role..." stderr line (`db-config.layer.ts`'s `initLoginRole`),
-    // fired as part of `resolve()`'s own connection-resolution work — i.e.
-    // strictly before `dbPushCore` (and its "DRY RUN: …" line) ever runs.
-    // `mockResolver` is otherwise silent, so tests pin the established output
-    // ordering against this stand-in line.
+    // Simulates the real `DbConfigResolver`'s "Initialising login role..." stderr line,
+    // fired as part of `resolve()`'s own connection work, strictly before `dbPushCore`
+    // runs; `mockResolver` is otherwise silent, so tests pin output ordering against it.
     simulateInitialisingLoginRole?: boolean;
   },
 ) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const workdirLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (opts.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), opts.toml);
+      }
+      for (const [rel, content] of Object.entries(opts.files ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFileString(abs, content);
+      }
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -196,9 +199,8 @@ function setup(
     resolve: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? VALID_REF)),
-    // Go's `loadProjectRef` gives `--project-ref` top precedence, short-circuiting
-    // BEFORE the "not linked" failure — mirror that here so a test can prove the
-    // flag resolves a ref even when the workdir would otherwise fail to link.
+    // An explicit `--project-ref` flag takes top precedence, short-circuiting before
+    // the "not linked" failure.
     loadProjectRef: (flagValue: Option.Option<string>) =>
       Option.isSome(flagValue) && flagValue.value.length > 0
         ? Effect.succeed(flagValue.value)
@@ -222,6 +224,7 @@ function setup(
         : undefined,
   });
   const layer = Layer.mergeAll(
+    workdirLayer,
     out.layer,
     conn.layer,
     resolver.layer,
@@ -230,11 +233,10 @@ function setup(
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
     BunServices.layer,
-    // Prompts (migration/seed confirmation) are answered through mockOutput's
-    // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
-    // only referenced by promptYesNo's non-TTY branch (unreached here).
-    mockTty({ stdinIsTty: true }),
-    mockStdin(true),
+    // Prompts are answered through mockOutput's `promptConfirmResponses` (the
+    // TTY/clack path) unless `piped` feeds promptYesNo's non-TTY branch.
+    mockTty({ stdinIsTty: opts.piped === undefined }),
+    mockStdin(opts.piped === undefined, opts.piped),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(YesFlag, opts.yes ?? false),
     Layer.succeed(DnsResolverFlag, "native"),
@@ -251,6 +253,11 @@ function setup(
     resolver,
   };
 }
+
+const failSuggestion = (
+  exit: Exit.Exit<unknown, { readonly message: string; readonly suggestion?: string }>,
+): string | undefined =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
 
 const MIGRATION_DIR = "supabase/migrations";
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -314,10 +321,8 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      // "supabase db push" is wrapped in Aqua (cyan) on stdout (established output contract).
       expect(out.stdoutText).toContain("Finished");
       expect(out.stdoutText).toContain("supabase db push");
-      // The migration body + history insert ran inside a transaction.
       expect(conn.execs).toContain("BEGIN");
       expect(conn.execs).toContain("COMMIT");
       expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(
@@ -355,6 +360,117 @@ describe("db push", () => {
     });
   });
 
+  for (const [code, statement, hint] of [
+    ["25P01", "LOCK TABLE t IN ACCESS EXCLUSIVE MODE", "BEGIN; ... COMMIT;"],
+    ["25001", "DROP SUBSCRIPTION app_events", "-- pg-delta: transaction=false"],
+  ]) {
+    it.live(`explains how to fix migration transaction error ${code}`, () => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: {
+          ...migrationFile("20240101000000", `SELECT 1;\n${statement};`),
+          ...migrationFile("20240102000000", "SELECT 2;"),
+        },
+        failExec: statement,
+        failExecWith: { message: `ERROR: transaction error (SQLSTATE ${code})`, code },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error.message).toContain(`SQLSTATE ${code}`);
+        expect(error.message).toContain(`At statement: 1\n${statement}`);
+        expect(error.message).toContain(hint);
+        expect(conn.execs).not.toContain("SELECT 2");
+        expect(
+          conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+        ).toBe(false);
+      });
+    });
+  }
+
+  for (const format of ["text", "json", "stream-json"] as const) {
+    it.live(`warns once about automatic migration splitting in ${format} mode`, () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        format,
+        files: migrationFile(
+          "20240101000000",
+          "CREATE INDEX CONCURRENTLY first_idx ON t(id);\nCREATE INDEX CONCURRENTLY second_idx ON t(id);",
+        ),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const warnings =
+          format === "stream-json"
+            ? out.messages
+                .filter((message) => message.type === "warn")
+                .map((message) => message.message)
+            : out.rawChunks
+                .filter((chunk) => chunk.stream === "stderr" && chunk.text.startsWith("Warning:"))
+                .map((chunk) => chunk.text);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("20240101000000_test.sql");
+        expect(warnings[0]).toContain("partially applied");
+        expect(warnings[0]).toContain("Migration history is recorded only after full success");
+        expect(warnings[0]).toContain("-- pg-delta: transaction=false");
+        expect(out.stdoutText).not.toContain("Warning:");
+        expect(conn.execs).toContain("CREATE INDEX CONCURRENTLY first_idx ON t(id)");
+        expect(conn.execs).toContain("CREATE INDEX CONCURRENTLY second_idx ON t(id)");
+        expect(
+          conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+        ).toBe(true);
+      });
+    });
+  }
+
+  for (const [name, body, warns] of [
+    ["comment-separated SET LOCAL", "SET/* scope */LOCAL/* timeout */lock_timeout = '1s';", true],
+    [
+      "directive-marked SET LOCAL",
+      "-- pg-delta: transaction=false\nSET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    ["CR-terminated comment", "-- settings\rSET LOCAL lock_timeout = '1s';", true],
+    [
+      "bare SET LOCAL",
+      "-- settings\nSET LOCAL statement_timeout = '1s';\nSET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "authored transaction",
+      "BEGIN;\nSET LOCAL statement_timeout = '1s';\nLOCK TABLE t;\nCOMMIT;",
+      false,
+    ],
+    [
+      "explicit no-transaction directive",
+      "-- pg-delta: transaction=false\nCREATE INDEX CONCURRENTLY t_idx ON t(id);",
+      false,
+    ],
+    [
+      "routine body",
+      "DO $$ BEGIN PERFORM set_config('statement_timeout', '1s', true); END $$;\nSELECT 'SET LOCAL statement_timeout';",
+      false,
+    ],
+    ["nested comment", "/* outer /* inner */ SET LOCAL lock_timeout = '1s' */ SELECT 1;", false],
+  ] as const) {
+    it.live(`only warns about missing transaction blocks for ${name}`, () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000", body),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const warnings = out.rawChunks.filter(
+          (chunk) => chunk.stream === "stderr" && chunk.text.startsWith("Warning:"),
+        );
+        expect(warnings).toHaveLength(warns ? 1 : 0);
+        if (warns) expect(warnings[0]?.text).toContain("BEGIN; ... COMMIT;");
+      });
+    });
+  }
+
   it.live("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -365,11 +481,42 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        expect(Cause.pretty(exit.cause)).toContain("context canceled");
       }
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
+
+  it.live.each(["u", "yess", "nope", "   ", "n", "no"])(
+    "applies nothing when the piped answer is %j",
+    (answer) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped: `${answer}\n`,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    },
+  );
+
+  it.live.each(["y\n", "yes\n", "\n", ""])(
+    "applies migrations when the piped answer is %j",
+    (piped) => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000"),
+        piped,
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs).toContain("BEGIN");
+      });
+    },
+  );
 
   it.live("prints the plan without applying in dry-run mode", () => {
     const { layer, out, conn } = setup(tmp.current, {
@@ -403,13 +550,9 @@ describe("db push", () => {
   it.live(
     "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
     () => {
-      // The connection-resolution phase (which prints "Initialising login
-      // role..." when minting a temp role) runs BEFORE the push itself runs —
-      // and "DRY RUN: …" is the literal first line the push prints, so it
-      // prints AFTER that resolution output, never before.
-      // `simulateInitialisingLoginRole` stands in for the real resolver's
-      // stderr line (the fake resolver is otherwise silent) so this asserts on
-      // actual accumulated stderr text ordering, not internal call timing.
+      // `simulateInitialisingLoginRole` stands in for the real resolver's stderr line
+      // (the fake resolver is otherwise silent), so this asserts on actual stderr
+      // ordering, not internal call timing.
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         simulateInitialisingLoginRole: true,
@@ -438,11 +581,11 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "Remote migration versions not found in local migrations directory.",
         );
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
-        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
+        expect(failSuggestion(exit)).toContain("migration repair --local --status reverted");
+        expect(failSuggestion(exit)).toContain("supabase db pull --local");
       }
       expect(out).toBeDefined();
     });
@@ -461,8 +604,10 @@ describe("db push", () => {
         dbUrl: Option.some(dbUrl),
         local: false,
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(JSON.stringify(exit)).toContain("migration repair --status reverted");
-      expect(JSON.stringify(exit)).not.toContain("migration repair --local");
+      expect(failSuggestion(exit)).toContain("migration repair --status reverted");
+      expect(failSuggestion(exit)).not.toContain("migration repair --local");
+      if (Exit.isFailure(exit))
+        expect(Cause.pretty(exit.cause)).not.toContain("migration repair --local");
     });
   });
 
@@ -477,7 +622,7 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("--include-all");
+        expect(failSuggestion(exit)).toContain("--include-all");
       }
     });
   });
@@ -525,9 +670,8 @@ describe("db push", () => {
   });
 
   it.live("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
-    // A matched directory is walked and its regular `.sql` files seeded
-    // recursively; non-.sql files are skipped. Without dir expansion the
-    // directory path reached `readFileString(<dir>)` and failed.
+    // Directories are walked recursively; without expansion the path would reach
+    // `readFileString(<dir>)` and fail.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["seeds"]\n',
       files: {
@@ -561,23 +705,23 @@ describe("db push", () => {
   });
 
   it.live("hashes a non-UTF-8 seed file by its raw bytes (Go's io.Copy parity)", () => {
-    // The seed file hashes the raw byte stream; a UTF-8 string decode would
-    // replace the invalid bytes and change the hash. Write invalid UTF-8 and
-    // pre-seed the remote with the RAW-byte sha256 — the push must treat it as
-    // already-applied (byte hash matches), not re-run it. A string-decoded hash
-    // here would differ and mark the seed dirty.
+    // Writing invalid UTF-8 and pre-seeding the remote with the raw-byte sha256 proves
+    // the push hashes bytes, not a UTF-8 decode (which would replace invalid bytes and
+    // mark the seed dirty).
     const raw = Buffer.from([0x2d, 0x2d, 0x20, 0xff, 0xfe, 0x00, 0x01, 0x0a]);
     const rawHash = createHash("sha256").update(raw).digest("hex");
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       remoteSeeds: { "supabase/seed.sql": rawHash },
     });
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), raw);
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFile(path.join(tmp.current, "supabase", "seed.sql"), raw);
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("skips seeding when disabled in config", () => {
@@ -606,9 +750,7 @@ describe("db push", () => {
   });
 
   it.live("--include-roles without a roles.sql pushes migrations and skips globals", () => {
-    // `supabase/roles.sql` is only globbed when it exists; an absent file is
-    // silently skipped (no error, no "Seeding globals" line) and the rest
-    // pushes.
+    // An absent roles.sql is silently skipped (no error, no "Seeding globals" line).
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -663,7 +805,7 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -679,7 +821,7 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -694,7 +836,6 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating seed hash to supabase/seed.sql...");
-      // Dirty seed only upserts the hash; the body statement is not executed.
       expect(conn.execs).not.toContain("insert into t values (1);");
     });
   });
@@ -799,17 +940,16 @@ describe("db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse config:");
+      if (Exit.isFailure(exit))
+        expect(Cause.pretty(exit.cause)).toContain("failed to parse config:");
       expect(out.stderrText).not.toContain("Connecting to local database...");
       expect(conn.queries).toEqual([]);
     });
   });
 
   it.live("decrypts an encrypted vault secret keyed by the project .env (not process.env)", () => {
-    // Regression: the old point-of-use vault decryption keyed only on `process.env`, so a
-    // `DOTENV_PRIVATE_KEY` present only in the project `.env` failed to decrypt. The
-    // config load merges the project `.env` into the key set (`checkDbToml`), so
-    // it resolves.
+    // `DOTENV_PRIVATE_KEY` present only in the project .env must still decrypt — the
+    // config load merges the project .env into the key set (`checkDbToml`).
     const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
     const ENCRYPTED =
       "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -860,9 +1000,8 @@ describe("db push", () => {
   });
 
   it.live("renders Go's caret, Detail line, and 42704 extension hint on a failed migration", () => {
-    // Established failure-rendering format: the `^` caret under the
-    // server-reported error position, the `Detail` line, and the
-    // undefined-object extension hint.
+    // Established failure-rendering format: caret under the error position, Detail
+    // line, and undefined-object extension hint.
     const stat = "CREATE TABLE test (path ltree NOT NULL)";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -910,7 +1049,6 @@ describe("db push", () => {
         includeRoles: true,
         includeSeed: true,
       }).pipe(Effect.provide(layer));
-      // The roles path is wrapped in Bold (ANSI).
       expect(out.stderrText).toContain("Would create custom roles");
       expect(out.stderrText).toContain("roles.sql");
       expect(out.stderrText).toContain("Would push these migrations:");
@@ -953,7 +1091,7 @@ describe("db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
-      // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
+      // No `confirm` responses; the prompt must be auto-confirmed.
     });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
@@ -967,21 +1105,16 @@ describe("db push", () => {
       const exit = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Config loads through the shared reader (`checkDbToml`), so a
-        // malformed config aborts with the established `failed to load config`
-        // message (the reader path), same as the other db commands
-        // (diff/dump/pull/migration).
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        // Config loads through the shared reader (`checkDbToml`), same as the other db
+        // commands.
+        expect(Cause.pretty(exit.cause)).toContain("failed to load config");
       }
     });
   });
 
   it.live("loads a Go-style env() boolean in config (no CliConfigParseError)", () => {
-    // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
-    // env-expansion + boolean parsing must resolve it, so the config loads and the
-    // migration proceeds. Previously native push aborted before that parse ran.
-    const previous = process.env["SEED_ENABLED"];
-    process.env["SEED_ENABLED"] = "true";
+    // env-expansion + boolean parsing must resolve `env(VAR)` so the config loads and
+    // the migration proceeds.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       files: migrationFile("20240101000000"),
@@ -990,24 +1123,13 @@ describe("db push", () => {
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SEED_ENABLED"];
-          else process.env["SEED_ENABLED"] = previous;
-        }),
-      ),
-    );
+    }).pipe((body) => withEnvVar("SEED_ENABLED", "true", body));
   });
 
   it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
     // A matched [remotes.<ref>] block overrides the shell env, so
     // `[remotes.preview.db.migrations] enabled = false` wins over
-    // `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations.
-    // (Before the config-reader convergence, push resolved this gate
-    // env-first and wrongly applied.)
-    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
+    // `SUPABASE_DB_MIGRATIONS_ENABLED=true`.
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
@@ -1020,14 +1142,7 @@ describe("db push", () => {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).not.toContain("Applying migration 20240101000000");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
-        }),
-      ),
-    );
+    }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
   });
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {
@@ -1064,8 +1179,7 @@ describe("db push", () => {
   });
 
   it.live("pushes to the project given via --project-ref without a linked workdir", () => {
-    // No `.temp/project-ref` and the resolver's own ref-file fallback is
-    // simulated as failing (`linkedFails`) — only the flag can resolve a ref.
+    // `linkedFails: true` simulates an unlinked workdir; only the flag can resolve a ref.
     const { layer, out, linkedCache, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1092,9 +1206,8 @@ describe("db push", () => {
   });
 
   it.live("--project-ref drives which [remotes.<ref>] block merges into config", () => {
-    // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
-    // resolver's own `VALID_REF` fallback — the override only announces if
-    // the flag (not the fallback) actually resolved the ref config merges against.
+    // `[remotes.staging]`'s `project_id` matches the flag ref, not the resolver's own
+    // `VALID_REF` fallback, so the override only announces if the flag resolved it.
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.staging]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
       args: ["db", "push", "--linked"],
@@ -1117,8 +1230,7 @@ describe("db push", () => {
       files: migrationFile("20240101000000"),
       args: ["db", "push", "--linked"],
       isLocal: false,
-      // The workdir is linked to VALID_REF (e.g. via .temp/project-ref) —
-      // the flag must win over it.
+      // A distinct fixed ref proves the flag, not the workdir's own ref, wins.
       projectRef: VALID_REF,
       confirm: [true],
     });
@@ -1148,7 +1260,7 @@ describe("db push", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Cause.pretty(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }

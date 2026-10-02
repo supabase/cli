@@ -1,11 +1,7 @@
 /**
  * Runtime dependencies inlined into the edge-runtime bootstrap template
- * (`serve.main.ts`). These replace the remote `deno.land/std` imports the template
- * used to resolve over the network on every container start, which broke
- * `functions serve` offline (supabase/supabase#45570).
- *
- * Kept as a normal, type-checked module so the path logic can be unit-tested; the
- * template imports it relatively and the build inlines it via the bundler.
+ * (`serve.main.ts`), replacing `deno.land/std` imports that used to resolve
+ * over the network on every container start (supabase/supabase#45570).
  */
 
 /** HTTP status codes used by the runtime template (subset of `deno.land/std/http/status.ts`). */

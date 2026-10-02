@@ -4,31 +4,22 @@ import {
 } from "../../command-internal/service-catalog.ts";
 
 /**
- * Per-service orchestration metadata `start.handler.ts` (a later task) reads
- * ON TOP OF `SERVICE_CATALOG`'s identity fields (`containerSuffix`,
- * `excludeKey`, `startOrder`). Deliberately descriptive, not executable: the
- * real config-boolean gating and image resolution live in the handler and
- * each service's own module.
+ * Per-service orchestration metadata that `start.handler.ts` reads alongside `SERVICE_CATALOG`'s
+ * identity fields (`containerSuffix`, `excludeKey`, `startOrder`). Descriptive only — the actual
+ * config-boolean gating and image resolution live in the handler and each service's own module.
  */
 export interface StartServiceMeta {
-  /**
-   * Which `config.toml`-resolved image field feeds this service's container.
-   * A string identifier only — actual resolution happens in the service's
-   * own module.
-   */
+  /** Which `config.toml`-resolved image field feeds this service's container. */
   readonly imageConfigField: string;
   /**
-   * The condition under which `start` brings up this service, expressed as a
-   * `config.toml` dotted-path boolean expression, or one of the sentinels
-   * `"always"` (Postgres, unconditional) / `"none"` (gated only by
+   * The condition under which `start` brings up this service: a `config.toml` dotted-path
+   * boolean expression, or a sentinel — `"always"` (Postgres) or `"none"` (gated only by
    * `!excluded`, e.g. Kong).
    */
   readonly enabledGate: string;
   /**
-   * Other catalog `service` keys this service's startup additionally depends
-   * on (e.g. Vector waits on Logflare being healthy; Studio waits on
-   * pg-meta). Not a full dependency graph — just a note for the handler to
-   * sequence against.
+   * Other catalog `service` keys this service's startup depends on (e.g. Vector waits on
+   * Logflare; Studio waits on pg-meta). Not a full dependency graph, just a sequencing hint.
    */
   readonly dependsOn?: ReadonlyArray<string>;
 }
@@ -83,10 +74,8 @@ export function startServiceMeta(service: string): StartServiceMeta | undefined 
 }
 
 /**
- * `SERVICE_CATALOG`, augmented with this file's orchestration metadata.
- * Preserves the catalog's `startOrder` ordering — `start.handler.ts` can
- * iterate this array directly to bring services up in the real
- * container-start sequence.
+ * `SERVICE_CATALOG` augmented with this file's orchestration metadata, preserving the catalog's
+ * `startOrder` so `start.handler.ts` can iterate it directly to bring services up in order.
  */
 export const START_SERVICES: ReadonlyArray<StartServiceEntry> = SERVICE_CATALOG.map((entry) => {
   const meta = START_SERVICE_META_BY_SERVICE.get(entry.service);

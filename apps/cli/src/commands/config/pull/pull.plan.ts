@@ -23,29 +23,16 @@ import {
 import type { ConfigPullDestination } from "./pull.scope.ts";
 
 /**
- * `config pull`'s write plan: classifies every `ConfigChange` `config diff`'s
- * classifier already computed (CLI-2230/ADR-0022's convergence normalizer)
- * into a planned write (replace or insert) or a skip with a reason, and
- * derives the warnings a written value should carry. Pure and synchronous
- * (CLI-2064) — no Effect, no services, no filesystem: this module only
- * decides WHAT would change and WHERE (`documentPath`); applying it is
- * `applyConfigEdits`'s job (`@supabase/config/internal`), and running it is
- * `pull.handler.ts`'s. `diffProjectConfig` is a pure, synchronous import
- * (no Effect, no services) — {@link expandConfigPullChangeSet} below
- * calls it directly rather than taking it as an injected callback.
+ * `config pull`'s write plan: classifies each `ConfigChange` `config diff` already computed into
+ * a planned write (replace or insert) or a skip with a reason, and derives per-write warnings.
+ * Pure and synchronous — no Effect, no services, no filesystem; applying the plan is
+ * `applyConfigEdits`'s job, running it is `pull.handler.ts`'s.
  *
- * Also owns the plan-level half of CLI-2064's fixpoint/validation fix (a live
- * dogfooding bug: pulling a value that GATES other declared-but-unpushable
- * siblings — e.g. flipping a disabled SMS provider's `enabled` on — used to
- * write only the toggle, leaving its now-required siblings at their stale
- * local values and bricking the next config load). {@link
- * expandConfigPullChangeSet} re-classifies after projecting each
- * round's writes so a newly-un-gated sibling is absorbed into the SAME plan
- * (`pull.handler.ts`'s job to run it); {@link
- * dropConfigPullUnvalidatableFamilies} is the write-side counterpart to
- * `pull.handler.ts`'s post-plan schema-validation gate — when that gate finds
- * the projected document still doesn't decode, it drops every write under the
- * offending family here rather than write a file the CLI itself cannot load.
+ * Also absorbs cascading writes: pulling a value can gate other declared-but-unpushable siblings
+ * (e.g. enabling a disabled SMS provider un-gates its credentials). {@link
+ * expandConfigPullChangeSet} re-classifies after each round's writes so a newly un-gated sibling
+ * joins the same plan; {@link dropConfigPullUnvalidatableFamilies} drops every write under a
+ * family that still fails schema validation once applied, rather than write an unloadable file.
  */
 
 export type ConfigPullSkipReason =
@@ -77,51 +64,24 @@ type ConfigPullWarningKind =
   | "would_invalidate";
 
 /**
- * One field {@link dropConfigPullUnvalidatableFamilies} found still
- * missing/invalid in `pull.handler.ts`'s schema-validation gate — carried on
- * a `would_invalidate` warning so its note can name what actually blocked the
- * family, not just the family itself.
+ * One field found still missing/invalid by the schema-validation gate, carried on a
+ * `would_invalidate` warning so its note can name what actually blocked the family.
  */
 export interface ConfigPullMissingField {
   readonly path: ReadonlyArray<string>;
-  /**
-   * Set when this field's LOCAL (pre-pull) spelling is an unresolved
-   * `env(VAR)` reference — the exact variable name to surface in the note
-   * ("set VAR and rerun").
-   */
+  /** Set when this field's local (pre-pull) spelling is an unresolved `env(VAR)` reference —
+   *  the variable name to surface in the note ("set VAR and rerun"). */
   readonly envVariable?: string;
 }
 
 export interface ConfigPullWarning {
   readonly kind: ConfigPullWarningKind;
   /**
-   * Absent for `uncommitted_changes` — a repository-level warning, not a
-   * per-path one, constructed by `pull.handler.ts`'s own git dirty check
-   * (`§1.4`). Also absent from anything THIS module produces (the three
-   * path-bearing kinds below); `unpushable` is likewise constructed by
-   * `pull.handler.ts`, from its post-plan convergence check (plan §1.9,
-   * ADR 0021 decision 4) — a planned write that the convergence check finds
-   * reclassifies as `unmanaged` once applied, because the value just written
-   * made itself invisible to the projection again. CLI-2314 retired the one
-   * `DISABLED_SENTINEL_PRUNES`-family prune that could still reclassify a
-   * value after writing it (`auth.oauth_server`'s old unconditional
-   * removal) — see ADR 0021's CLI-2314 addendum — but a live trigger
-   * remains via a different mechanism: `applyDisabledSentinels`'s
-   * cross-section rule deletes `auth.rate_limit.email_sent` whenever
-   * `auth.email.smtp.enabled` decodes explicitly `false`, on BOTH arms — the
-   * API arm only spares it for a genuinely SPARSE response that omits
-   * `smtp_host` entirely (an ordinary `smtp_host: ""` response still prunes
-   * it there too). So a sparse remote reporting a real
-   * `rate_limit_email_sent` while omitting `smtp_host`, pulled into a
-   * document that never declares `[auth.email.smtp]`, re-masks the
-   * just-written path on the residual check (`pull.integration.test.ts`
-   * pins the exact construction). Retained as a structural safety net for
-   * any other asymmetric/cross-path prune too, not dead code.
-   * Always carries `path`. `would_invalidate` also carries
-   * `path` — the nearest enclosing family/provider table
-   * {@link dropConfigPullUnvalidatableFamilies} dropped every write
-   * under (e.g. `["auth","sms","twilio"]`), constructed by `pull.handler.ts`
-   * from its post-plan schema-validation gate.
+   * Absent only for `uncommitted_changes` (a repository-level warning, constructed by
+   * `pull.handler.ts`'s git dirty check). Every other kind always carries `path`, including
+   * `unpushable` (built by `pull.handler.ts`'s post-plan convergence check) — still reachable via
+   * `applyDisabledSentinels`'s cross-section pruning of `auth.rate_limit.email_sent`, so it is a
+   * structural safety net, not dead code.
    */
   readonly path?: ReadonlyArray<string>;
   /** `would_invalidate` only — see {@link ConfigPullMissingField}. */
@@ -132,11 +92,7 @@ export interface ConfigPullPlan {
   readonly writes: ReadonlyArray<ConfigPullPlannedWrite>;
   readonly skipped: ReadonlyArray<ConfigPullSkip>;
   readonly warnings: ReadonlyArray<ConfigPullWarning>;
-  /**
-   * `["remotes", label]` when `destination` creates a brand new block,
-   * `undefined` otherwise — surfaced so a caller composing a message doesn't
-   * need to re-derive it from `destination` itself.
-   */
+  /** `["remotes", label]` when `destination` creates a brand-new block, `undefined` otherwise. */
   readonly createdTable: ReadonlyArray<string> | undefined;
 }
 
@@ -144,12 +100,9 @@ export interface PlanConfigPullInput {
   readonly changeSet: ConfigChangeSet;
   readonly destination: ConfigPullDestination;
   /**
-   * The BASE config document — loaded with NO `[remotes.*]` overlay applied,
-   * regardless of `destination` — used only to detect `duplicates_root`/
-   * `array_drift` (comparing a REMOTE-block write against what the config
-   * ROOT independently declares, which `changeSet`'s own operand cannot: it
-   * was diffed against whichever document `destination` itself resolved
-   * from, overlay included).
+   * The base config document, loaded with no `[remotes.*]` overlay regardless of `destination` —
+   * used only to detect `duplicates_root`/`array_drift` by comparing a remote-block write
+   * against what the config root independently declares.
    */
   readonly rootDocument: Readonly<Record<string, unknown>>;
   /** Carried for parity with `resolveConfigPullDestination`'s own input
@@ -175,19 +128,11 @@ function isConfigEditValue(value: unknown): value is ConfigEditValue {
 }
 
 /**
- * True when `value` — or any element/leaf inside it — is itself spelled as an
- * unresolved `env(VAR)` reference. Guards the REMOTE value's own spelling,
- * distinct from `change.envVariables` (which flags the LOCAL declaration):
- * the loader interpolates `env(VAR)` against THIS machine's environment on
- * every subsequent load (`goViperCompat`'s lenient, unanchored-variable-name
- * `ENV_CAPTURE_REGEX`), so writing a remote-controlled `env(...)` string
- * verbatim would let the platform smuggle a request to read whatever this
- * machine's environment happens to hold at that variable name — `config
- * diff` would then render the resolved local secret, and `config push` would
- * send it back to the platform (accepted security finding). Recurses into
- * arrays and nested objects for defense in depth, even though a diff leaf is
- * scalar/array today, never nested. The regex is anchored (`^env\(...\)$`),
- * so a substring mention (`"see env(FOO) docs"`) does not match.
+ * True when `value` — or any element/leaf inside it — is itself spelled as an unresolved
+ * `env(VAR)` reference. Distinct from `change.envVariables` (which flags the local declaration):
+ * writing a remote-controlled `env(...)` string verbatim would let the platform read whatever
+ * this machine's environment holds at that variable name on the next load. The regex is anchored
+ * (`^env\(...\)$`), so a substring mention doesn't match.
  */
 function containsRemoteEnvReference(value: ConfigEditValue): boolean {
   if (typeof value === "string") {
@@ -228,24 +173,16 @@ function documentPathFor(
 }
 
 /**
- * Classifies every comparable `ConfigChange` into a planned write or a skip,
- * then derives per-write warnings. Skip precedence (checked in this order):
- * a `local_only` change never has a remote value to write; an `env_reference`
- * change (the local declared value resolved from `env()`) is NEVER replaced,
- * regardless of class, so the user's env-var indirection is never silently
- * erased; the `unwritable` case arises for a remote value `applyConfigEdits`
- * cannot represent (`undefined`/`null`, or a shape outside `ConfigEditValue`)
- * — expected to be rare given the registry's mapped value domains, but never
- * assumed impossible; finally, a `remote_env_reference` change — the REMOTE
- * value itself (only ever checked once it's already representable) is
- * spelled as an unresolved `env(VAR)` reference — is never written either,
- * since the loader would interpolate it against the LOCAL environment on the
- * next load, turning a remote-controlled string into a local
- * secret-exfiltration channel ({@link containsRemoteEnvReference}).
+ * Classifies every comparable `ConfigChange` into a planned write or a skip, then derives
+ * per-write warnings. Skip precedence: `local_only` never has a remote value to write;
+ * `env_reference` (a local value resolved from `env()`) is never replaced, regardless of class,
+ * so the user's env-var indirection is never silently erased; `unwritable` covers a remote value
+ * `applyConfigEdits` cannot represent; `remote_env_reference` (the remote value itself is an
+ * unresolved `env(VAR)` reference) is never written either, since the loader would interpolate it
+ * against the local environment on the next load ({@link containsRemoteEnvReference}).
  *
- * `masked`/`unmanaged` paths never reach `changeSet.changes` by construction
- * (`diffProjectConfig` excludes both before classification), so they never
- * need a skip reason here — asserted by construction, not re-checked.
+ * `masked`/`unmanaged` paths never reach `changeSet.changes` (`diffProjectConfig` excludes both
+ * before classification), so they never need a skip reason here.
  */
 export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
   const writes: Array<ConfigPullPlannedWrite> = [];
@@ -278,10 +215,8 @@ export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
   const warnings: Array<ConfigPullWarning> = [];
   for (const write of writes) {
     if (input.destination.kind === "root" && isDualScopePath(write.change.path)) {
-      // Writing a dual-scope path to the config ROOT silently reconfigures
-      // `supabase start` too — both a replace (declared locally, differing
-      // from remote) and an insert (undeclared locally) carry this risk: the
-      // local default IS a legitimate local-dev value in its own right.
+      // Writing a dual-scope path to the config root also reconfigures `supabase start`; the
+      // local default is a legitimate local-dev value in its own right.
       warnings.push({ kind: "dual_scope", path: write.change.path });
       continue;
     }
@@ -297,9 +232,8 @@ export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
       Array.isArray(write.value) &&
       configIsDeclaredAtPath(input.rootDocument, write.change.path)
     ) {
-      // Arrays REPLACE wholesale on override, never merge — giving
-      // `[remotes.*]` its own copy of a path the config root ALSO declares
-      // means the two copies can silently diverge from this point on.
+      // Arrays replace wholesale on override, never merge, so giving [remotes.*] its own copy
+      // of a path the config root also declares lets the two silently diverge.
       warnings.push({ kind: "array_drift", path: write.change.path });
     }
   }
@@ -313,12 +247,9 @@ export function planConfigPull(input: PlanConfigPullInput): ConfigPullPlan {
 }
 
 /**
- * Intentionally does NOT also check {@link containsRemoteEnvReference}: this
- * predicate only gates what gets PROJECTED onto the fixpoint's own internal
- * `config`/`document` simulation below, never what actually reaches disk —
- * `planConfigPull`, called once by the caller over the fixpoint's
- * merged `changeSet`, is the sole gate for that, and every change observed
- * here (including a `remote_env_reference` one) still reaches it via `seen`.
+ * Doesn't check {@link containsRemoteEnvReference}: this only gates what the fixpoint's internal
+ * simulation below projects, never what reaches disk — `planConfigPull` is the sole gate for
+ * that, and every change observed here still reaches it via `seen`.
  */
 function isWritableChange(change: ConfigChange): boolean {
   return (
@@ -328,18 +259,14 @@ function isWritableChange(change: ConfigChange): boolean {
   );
 }
 
-/** Segment-wise path order, mirroring `@supabase/config`'s own `comparePaths`
- * (`config-diff.ts`) — kept local rather than exported from there, since this
- * is the only other place in the CLI that needs to re-sort a merged
- * `ConfigChange` list. */
+/** Segment-wise path order, mirroring `@supabase/config`'s own `comparePaths`. */
 function comparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>): number {
   const length = Math.min(a.length, b.length);
   for (let index = 0; index < length; index++) {
     const left = a[index];
     const right = b[index];
-    // Both are always defined here (`index < length`, `length` the shorter
-    // array's own bound) — the `undefined` checks satisfy indexed-access
-    // typing without an `as string` cast, never actually reachable.
+    // Always defined here (index < length, the shorter array's bound); this check only
+    // satisfies indexed-access typing without an `as` cast.
     if (left === undefined || right === undefined) {
       continue;
     }
@@ -357,21 +284,17 @@ function countsFor(changes: ReadonlyArray<ConfigChange>): ConfigChangeSet["count
   return { update, remote_only, local_only, total: update + remote_only + local_only };
 }
 
-/** Cap on how many rounds {@link expandConfigPullChangeSet} projects a
- * round's writes and re-diffs — die-free: hitting the cap just stops
- * absorbing further rounds rather than looping forever or throwing;
- * `pull.handler.ts`'s schema-validation gate is the actual safety net against
- * writing something invalid. 4 rounds comfortably covers every real
- * dependency chain this registry has (a toggle gating at most a handful of
- * sibling credential fields, none of which themselves gate further fields). */
+/** Cap on how many rounds {@link expandConfigPullChangeSet} projects writes and re-diffs.
+ *  Hitting the cap just stops absorbing further rounds rather than looping or throwing;
+ *  `pull.handler.ts`'s schema-validation gate is the actual safety net. 4 rounds comfortably
+ *  covers every dependency chain this registry has. */
 export const CONFIG_PULL_FIXPOINT_ROUND_CAP = 4;
 
 export interface ExpandConfigPullChangeSetInput {
   readonly initialChangeSet: ConfigChangeSet;
-  /** The BASE `{config, document}` pair `diffProjectConfig` diffed to produce
-   * `initialChangeSet` (`loaded.config`/`loaded.document ?? {}` — NOT
-   * destination-prefixed; every round projects a write at its OWN
-   * `change.path`, the same namespace `diffProjectConfig` classifies in). */
+  /** The base `{config, document}` pair `diffProjectConfig` diffed to produce
+   *  `initialChangeSet`; not destination-prefixed, since every round projects a write at its
+   *  own `change.path`. */
   readonly baseConfig: EffectiveConfig;
   readonly baseDocument: Readonly<Record<string, unknown>>;
   readonly valueOrigins: ReadonlyArray<CliConfigValueOrigin> | undefined;
@@ -379,35 +302,23 @@ export interface ExpandConfigPullChangeSetInput {
 }
 
 export interface ConfigPullFixpointResult {
-  /** Every change ever observed across every round, in path order — a change
-   * that later converges (its own written value now matches remote) still
-   * appears here with the local/remote values it carried at DISCOVERY, since
-   * `pull.handler.ts`'s render/payload must still report it as written. */
+  /** Every change observed across every round, in path order. A change that later converges
+   *  still appears here with the values it carried at discovery, since the render/payload must
+   *  report it as written. */
   readonly changeSet: ConfigChangeSet;
-  /**
-   * The residual `diffProjectConfig` reported after the LAST round that
-   * projected a write — i.e. the state once every currently-known write has
-   * been applied. `pull.handler.ts`'s planner-defect/`unpushable` check
-   * consumes this exactly as it consumed a single round's residual before
-   * this fixpoint existed.
-   */
+  /** The residual `diffProjectConfig` reported after the last round that projected a write —
+   *  the state once every currently known write is applied. `pull.handler.ts`'s
+   *  planner-defect/`unpushable` check consumes this. */
   readonly residual: ConfigChangeSet;
 }
 
 /**
- * Plan §1.9's convergence check, generalized from one round to a fixpoint
- * (CLI-2064's live-bug fix): after planning, projecting the CURRENT plan's
- * writes onto the local `{config, document}` pair and re-diffing against the
- * SAME `remote` can surface brand new `update`/`remote_only` changes at paths
- * that were `unmanaged` (ADR 0021's disabled-provider gates) before those
- * writes landed — e.g. flipping a disabled SMS provider's `enabled` to `true`
- * un-gates its credential siblings. Repeats until a round projects nothing new
- * to write (or {@link CONFIG_PULL_FIXPOINT_ROUND_CAP} is hit), so a
- * newly un-gated sibling gets exactly the SAME skip rules as any other change
- * (`planConfigPull`, called once by the caller over this function's
- * merged `changeSet` — never per round: warnings/skips must be derived from
- * the union, not accumulated round-by-round, so a change appears exactly
- * once).
+ * Projects the current plan's writes onto the local `{config, document}` pair and re-diffs
+ * against the same remote — this can surface new `update`/`remote_only` changes at paths that
+ * were `unmanaged` before those writes landed (e.g. enabling a disabled SMS provider un-gates its
+ * credential siblings). Repeats until a round projects nothing new (or
+ * {@link CONFIG_PULL_FIXPOINT_ROUND_CAP} is hit). `planConfigPull` is called once, over the
+ * merged `changeSet`, so a change appears exactly once rather than accumulating per round.
  */
 export function expandConfigPullChangeSet(
   input: ExpandConfigPullChangeSetInput,
@@ -460,17 +371,11 @@ export function expandConfigPullChangeSet(
 }
 
 /**
- * The nearest enclosing "family/provider table" of a failing config path —
- * `pull.handler.ts`'s schema-validation gate's own idea of the unit to drop
- * together (plan of record: "drop every planned write under the nearest
- * enclosing provider/family table"). Walks upward from `path`'s immediate
- * parent looking for the deepest ancestor whose value (read off `document`,
- * the same shape the failing decode saw) is a record declaring an `enabled`
- * key — every gated family this registry has (SMS providers, SMTP, external
- * providers, hooks, oauth_server, …) is exactly such a container. Falls back
- * to `path`'s immediate parent when no ancestor matches (or `path` itself
- * when it has no parent), so a family this heuristic doesn't recognize still
- * drops at least the failing field's own container rather than nothing.
+ * The nearest enclosing "family/provider table" of a failing config path — the unit
+ * `pull.handler.ts`'s schema-validation gate drops together. Walks upward from `path`'s parent
+ * for the deepest ancestor that is a record declaring an `enabled` key (every gated family this
+ * registry has is exactly such a container), falling back to the immediate parent (or `path`
+ * itself) when nothing matches.
  */
 export function configPullFamilyRootForPath(
   path: ReadonlyArray<string>,
@@ -487,10 +392,9 @@ export function configPullFamilyRootForPath(
 }
 
 /**
- * When the ORIGINAL (pre-pull) value at `path` is spelled as an unresolved
- * `env(VAR)` literal, returns `VAR` — feeds the `would_invalidate` note's
- * "set VAR and rerun" remediation. `document` must be in the same (raw,
- * pre-write) namespace as `path`.
+ * When the original (pre-pull) value at `path` is spelled as an unresolved `env(VAR)` literal,
+ * returns `VAR` — feeds the `would_invalidate` note's "set VAR and rerun" remediation.
+ * `document` must be in the same (raw, pre-write) namespace as `path`.
  */
 export function configPullEnvVariableAtPath(
   path: ReadonlyArray<string>,
@@ -508,32 +412,21 @@ export interface ConfigPullWouldInvalidateFamily {
   readonly missingFields: ReadonlyArray<ConfigPullMissingField>;
 }
 
-/** Whether `path` falls at or under `root` — the "belongs to this family"
- * test shared by the write-drop and warning-drop passes below. Both sides of
- * the comparison live in the SAME `ConfigChange.path` namespace (never
- * `remotes.<label>`-prefixed, regardless of destination — see
- * `pull.handler.ts`'s own family-root computation), so no destination-aware
- * prefixing is needed here either. */
+/** Whether `path` falls at or under `root` — shared by the write-drop and warning-drop passes
+ *  below. Both sides live in the same `ConfigChange.path` namespace (never
+ *  `remotes.<label>`-prefixed), so no destination-aware prefixing is needed here. */
 function isUnderFamilyRoot(root: ReadonlyArray<string>, path: ReadonlyArray<string>): boolean {
   return root.length <= path.length && root.every((segment, index) => segment === path[index]);
 }
 
 /**
- * `pull.handler.ts`'s schema-validation gate's write-side counterpart: given
- * the families it found still missing/invalid after projecting `plan`'s
- * writes, moves every write whose path falls under one of those families'
- * roots from `writes` to `skipped` (reason `would_invalidate`), drops every
- * OTHER path-scoped warning (`dual_scope`/`duplicates_root`/`array_drift`
- * from this module, `unpushable` from `pull.handler.ts`'s own convergence
- * check) that falls under the same root — a warning surviving for a write
- * that was just moved back to `skipped` would describe something that was
- * never actually written (`unpushable`'s own wording literally says "was
- * written here") — and only THEN appends one `would_invalidate` warning per
- * family that actually had a write to drop (a family the caller flagged but
- * which planned no write for — nothing left to reduce — contributes no
- * warning; the caller treats that as "could not make progress" and stops
- * retrying instead of looping on a no-op drop). Pure: the caller owns
- * re-validating the reduced plan.
+ * The write-side counterpart to `pull.handler.ts`'s schema-validation gate: given the families
+ * still missing/invalid after projecting `plan`'s writes, moves every write under one of those
+ * roots from `writes` to `skipped` (`would_invalidate`), drops every other path-scoped warning
+ * under the same root (a warning describing a write that was just skipped would be wrong), and
+ * appends one `would_invalidate` warning per family that actually had a write to drop — a family
+ * with nothing to reduce contributes no warning, signaling the caller to stop retrying. Pure: the
+ * caller owns re-validating the reduced plan.
  */
 export function dropConfigPullUnvalidatableFamilies(
   plan: ConfigPullPlan,

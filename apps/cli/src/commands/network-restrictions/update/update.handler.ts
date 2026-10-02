@@ -48,9 +48,8 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
   const telemetryState = yield* TelemetryState;
 
   yield* Effect.gen(function* () {
-    // Go validates every input before any I/O (`update.go:20-33`). Run the same
-    // pass first so a malformed CIDR short-circuits without resolving the ref
-    // or writing the linked-project cache.
+    // Validate every input before any I/O, so a malformed CIDR short-circuits without
+    // resolving the ref or writing the linked-project cache.
     const validation = validateAndPartitionCidrs(flags.dbAllowCidr, flags.bypassCidrChecks);
     if (!validation.ok) {
       if (validation.kind === "invalid") {
@@ -75,6 +74,12 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
         | typeof V1UpdateNetworkRestrictionsOutput.Type
         | typeof V1PatchNetworkRestrictionsOutput.Type;
 
+      yield* Effect.annotateCurrentSpan({
+        "network_restrictions.strategy": flags.append ? "append" : "replace",
+        "network_restrictions.cidr_v4_count": v4.length,
+        "network_restrictions.cidr_v6_count": v6.length,
+      });
+
       if (flags.append) {
         const response = yield* api.v1
           .patchNetworkRestrictions({
@@ -85,10 +90,9 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
-        // PATCH uses `&localSlice` in Go, which always renders as `&[]` / `&[...]`
-        // even when no items match a given type. Partition returns concrete arrays
-        // to match that always-non-nil semantic.
+        yield* updating?.clear ?? Effect.void;
+        // The PATCH response always renders as `&[]`/`&[...]`, never `<nil>`; partition
+        // returns concrete arrays to match, even when a type has no items.
         const partitioned = partitionPatchedCidrs(response.config.dbAllowedCidrs);
         v4Out = partitioned.v4;
         v6Out = partitioned.v6;
@@ -105,9 +109,8 @@ export const networkRestrictionsUpdate = Effect.fn("network-restrictions.update"
             Effect.tapError(() => updating?.fail() ?? Effect.void),
             Effect.catch(mapUpdateError),
           );
-        yield* updating?.clear() ?? Effect.void;
-        // POST `/apply` prints the response field directly; if the API omits
-        // either array it renders as `<nil>` (matches `*[]string(nil)`).
+        yield* updating?.clear ?? Effect.void;
+        // POST /apply prints the response field directly; an omitted array renders as `<nil>`.
         v4Out = response.config.dbAllowedCidrs;
         v6Out = response.config.dbAllowedCidrsV6;
         applied = response.status === "applied";

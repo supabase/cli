@@ -1,12 +1,6 @@
 /**
- * Builds the Realtime container spec.
- *
- * Enabled gate: `config.realtime.enabled` — independent of
- * `config.api.enabled` (PostgREST's own gate); the two are never conflated.
- * Gating (this field, plus `!isContainerExcluded`) is the caller's
- * responsibility — see `start.services.ts`'s `realtime` catalog entry
- * (`enabledGate: "realtime.enabled"`) — this module only builds the
- * container spec once called.
+ * Builds the `docker create` spec for the Realtime container. Gated on `config.realtime.enabled`
+ * by the caller, independent of PostgREST's `config.api.enabled`.
  */
 
 import type { CliConfig } from "@supabase/config";
@@ -22,11 +16,13 @@ import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { startInternalDbPassword } from "../../../command-internal/db-bootstrap/internal-db-connection.ts";
 
 export interface RealtimeContainerSpecInput {
-  /** The sanitized project id — see `serviceContainerName`'s callers. */
+  /** The resolved `SUPABASE_USE_SLIM_IMAGES` flag. */
+  readonly slim: boolean;
+  /** The sanitized project id. */
   readonly projectId: string;
-  /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
+  /** `container.HostConfig.NetworkMode`'s target; resolved once per `start` run, not per-container. */
   readonly networkId: string;
-  /** `utils.Config.Realtime.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
+  /** `config.realtime.image`, already resolved/pulled by the caller. */
   readonly image: string;
   readonly ipVersion: CliConfig["realtime"]["ip_version"];
   readonly maxHeaderLength: CliConfig["realtime"]["max_header_length"];
@@ -57,7 +53,7 @@ export function buildRealtimeContainerSpec(input: RealtimeContainerSpecInput): S
     env,
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
-    healthcheck: usesSlimImageRuntime(input.image)
+    healthcheck: usesSlimImageRuntime(input.image, input.slim)
       ? slimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
           header: `Host:${REALTIME_TENANT_ID}`,
         })
@@ -81,7 +77,6 @@ export function buildRealtimeContainerSpec(input: RealtimeContainerSpecInput): S
         },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // Network aliases: `realtime` plus the tenant id.
     networkAliases: ["realtime", REALTIME_TENANT_ID],
     labels: {},
   };

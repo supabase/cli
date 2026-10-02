@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -76,9 +76,9 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoInvalidUuidError");
-        expect(dump).toContain('identity provider ID \\"not-a-uuid\\" is not a UUID');
+        expect(dump).toContain('identity provider ID "not-a-uuid" is not a UUID');
       }
     }).pipe(Effect.provide(layer));
   });
@@ -109,7 +109,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowNotFoundError");
         expect(dump).toContain("An identity provider with ID");
         expect(dump).toContain("could not be found");
@@ -129,7 +129,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowUnexpectedStatusError");
         expect(dump).toContain("Unexpected error fetching identity provider");
       }
@@ -148,7 +148,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SsoShowNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("SsoShowNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -165,7 +165,7 @@ describe("sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoShowEnvNotSupportedError");
         expect(dump).toContain("--output env flag is not supported");
       }
@@ -182,8 +182,6 @@ describe("sso show integration", () => {
       });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
-      // The JSON encoder escapes `<` / `>` / `&` by default, so metadata_xml
-      // must carry \u003c-style escapes byte-for-byte.
       expect(out.stdoutText).toContain('"metadata_xml": "\\u003c?xml version=\\"2.0\\"?\\u003e"');
       expect(out.stdoutText).not.toContain('"metadata_xml": "<?xml');
     }).pipe(Effect.provide(layer));
@@ -197,8 +195,6 @@ describe("sso show integration", () => {
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Established output contract: lowercased field names, explicit nulls
-      // for absent values, 4-column nesting, quoted string timestamps.
       expect(out.stdoutText).toBe(`createdat: "2023-03-28T13:50:14.464Z"
 domains:
     - createdat: null
@@ -224,8 +220,6 @@ updatedat: "2023-03-28T13:50:14.464Z"
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Established output contract: PascalCase field names, absent values
-      // omitted, sub-tables after primitives.
       expect(out.stdoutText).toBe(`CreatedAt = "2023-03-28T13:50:14.464Z"
 Id = "${VALID_PROVIDER_ID}"
 UpdatedAt = "2023-03-28T13:50:14.464Z"

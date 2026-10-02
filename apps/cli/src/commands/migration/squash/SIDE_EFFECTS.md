@@ -7,6 +7,16 @@ full schema into the target file, and deleting the merged files — then either
 suggests `migration repair` (local target) or prompts to baseline the remote
 migration-history table to match.
 
+When `[experimental].stack` is on, each shadow is a fresh database in an invocation-owned,
+unique temporary stack namespace. The command applies the catalog and project migrations as needed,
+then destroys its namespace when the Effect scope closes. If its container engine is unreachable
+then, the namespace is still removed and stderr lists the commands that remove its engine
+resources. Stack shadows use the stack baseline
+cache described below. Native artifacts
+are shared through `$SUPABASE_HOME/cache/stack`; shadow state and data use the normal stack registry, so `stack list` and `stack destroy` can
+find a shadow left by an abrupt CLI exit. Each shadow owns a unique temporary project root
+and uses an automatically assigned port; `db.shadow_port` applies only to the legacy backend. Schema dumps use the namespace's catalog `pg_dump` tool and runtime database address.
+
 ## Files Read
 
 | Path                                                                                               | Format                                                                                | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -16,6 +26,7 @@ migration-history table to match.
 | `<workdir>/supabase/migrations/`                                                                   | directory                                                                             | always                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `<workdir>/supabase/migrations/<version>_*.sql`                                                    | SQL                                                                                   | each migration up to the target, applied to the shadow; the target file's own final content is read by `--version`/baseline lookups                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `<workdir>/supabase/roles.sql`                                                                     | SQL                                                                                   | shadow `SetupDatabase` (custom-roles seed); missing file tolerated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| managed snapshot key `<key>`                                                                       | backend                                                                               | warm stack-shadow baseline; managed retention may evict entries and snapshots survive stack destruction                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `<workdir>/supabase/.env`, `.env.local`, `SUPABASE_ENV`-selected dotenv                            | dotenv                                                                                | always (`--yes`/registry/network-id overrides)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `<workdir>/supabase/.temp/{project-ref,postgres-version,pooler-url}`                               | plain text                                                                            | `--linked` / linked path — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `~/.supabase/access-token`                                                                         | plain text                                                                            | `--linked` without `--password`/`SUPABASE_ACCESS_TOKEN`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -29,7 +40,16 @@ migration-history table to match.
 | `<workdir>/supabase/migrations/<earlier>.sql` (×N) | —        | **deleted** — every earlier merged migration; a per-file failure is non-fatal (printed, not raised)                  |
 | scoped temp dir                                    | SQL      | shadow's `initSchema`/`ApplyApiPrivileges` SQL (PG≤14) — removed when the scope closes                               |
 | `<workdir>/supabase/.temp/linked-project.json`     | JSON     | `--linked` (post-run cache, even when the command itself fails)                                                      |
+| managed snapshot key `<key>`                       | backend  | stack-mode cold shadow baseline; managed retention may evict entries and snapshots survive stack destruction         |
 | `~/.supabase/telemetry.json`                       | JSON     | every invocation (post-run)                                                                                          |
+
+### Stack shadow baseline cache
+
+Stack mode uses the managed snapshot backend by default and keys each
+baseline from the resolved stack artifacts, runtime/platform, enabled catalog services, settings,
+credentials, overlay inputs, and `roles.sql`. Set `SUPABASE_SHADOW_CACHE` to a falsy value to opt
+out. Warm restore failures recreate the shadow database; failed publication warns and leaves the
+live shadow available.
 
 ## Docker
 
@@ -67,7 +87,7 @@ migration-history table to match.
 `SUPABASE_YES`, `DB_PASSWORD`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_SERVICES_HOSTNAME`,
 `DOCKER_HOST`/`DOCKER_CONTEXT`/`DOCKER_CONFIG`, `SUPABASE_NETWORK_ID`,
 `SUPABASE_INTERNAL_IMAGE_REGISTRY`, `SUPABASE_USE_SLIM_IMAGES` (current-pin shadow Postgres and PG15+ realtime/storage/auth migrate-job images → slim `ghcr.io/supabase/cli`; historical pins, PG14, OrioleDB, flag-off `15.8.1.085` stay on docker.io), `SUPABASE_PROJECT_ID`, `SUPABASE_DEBUG`,
-`SUPABASE_EXPERIMENTAL`.
+`SUPABASE_EXPERIMENTAL`, `SUPABASE_SHADOW_CACHE` (stack shadow baseline cache; on by default, falsy disables restore and publication).
 
 ## Exit Codes
 
@@ -138,7 +158,8 @@ code or the rest of the payload.
   baseline to target the surviving **older** version, not the original squash target.
 - A failed full-schema dump leaves the target migration truncated (not recoverable — the
   file was already truncated before the dump began).
-- A declined "Update remote migration history table?" prompt is a **success** path (exit 0,
+- A declined "Update remote migration history table?" prompt (`n`, or any unrecognised
+  answer) is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
 - **Atomicity note:** the old Go CLI sent the baseline `DELETE`/`INSERT` via a batched pipeline

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -70,9 +70,9 @@ describe("branches disable integration", () => {
       const exit = yield* Effect.exit(branchesDisable(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("BranchesDisableUnexpectedStatusError");
-        expect(json).toContain("unexpected disable branching status 500");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("BranchesDisableUnexpectedStatusError");
+        expect(causeText).toContain("unexpected disable branching status 500");
       }
     }).pipe(Effect.provide(layer));
   });

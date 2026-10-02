@@ -1,6 +1,8 @@
 import { Effect, FileSystem } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
+import { quoteSsoString } from "./sso.format.ts";
+
 export type SsoFileErrorReason =
   | "not_found"
   | "permission"
@@ -15,11 +17,10 @@ function fileErrorReason(cause: PlatformError): SsoFileErrorReason {
 }
 
 /**
- * The `--name-id-format` value set, shared by `sso add` and `sso update`
- * (both commands bind the same Go `ssoNameIDFormat` enum var,
- * `cmd/sso.go:158,176`). Order matters twice: it drives the CLI help text
- * and it is joined verbatim into pflag's `invalid argument … must be one of
- * [ … ]` error (`pflagEnumValue`), which must byte-match Go.
+ * The `--name-id-format` value set, shared by `sso add` and `sso update`.
+ * Order matters: it drives the CLI help text and is joined verbatim into
+ * pflag's `invalid argument … must be one of [ … ]` error (`pflagEnumValue`),
+ * which must byte-match pflag's format.
  */
 export const SSO_NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
@@ -46,10 +47,9 @@ export function validateMetadataXmlBytes<E>(
     catch: () => undefined,
   }).pipe(
     Effect.mapError(() =>
-      // Verbatim Go message from `saml/files.go:55-57`.
       nonUtf8Error({
         source,
-        message: `SAML Metadata XML at ${JSON.stringify(source)} is not UTF-8 encoded`,
+        message: `SAML Metadata XML at ${quoteSsoString(source)} is not UTF-8 encoded`,
       }),
     ),
     Effect.asVoid,
@@ -58,9 +58,8 @@ export function validateMetadataXmlBytes<E>(
 
 /**
  * Reads a SAML 2.0 metadata XML file and validates UTF-8 encoding.
- * Subcommands inject their own open-error / non-UTF-8 error classes so
- * each handler returns errors in its own tagged-error family
- * (matches Go, which raises `failed to open metadata file:` / etc.).
+ * Subcommands inject their own open-error / non-UTF-8 error classes so each
+ * handler returns errors in its own tagged-error family.
  */
 export const readMetadataFile =
   <Eopen, Eutf>(factory: {
@@ -73,10 +72,8 @@ export const readMetadataFile =
   (path: string): Effect.Effect<string, Eopen | Eutf, FileSystem.FileSystem> =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      // Go uses afero `fsys.Open(path)` + `io.ReadAll(file)`; collapsed to a
-      // single error branch here (any open / read failure surfaces as
-      // `failed to open metadata file:` to match the externally observable
-      // string for the common case — missing file).
+      // Any open or read failure surfaces as `failed to open metadata file:`,
+      // matching the established message for the common case (a missing file).
       const bytes = yield* fs.readFile(path).pipe(
         Effect.mapError((cause) =>
           factory.openError({
@@ -113,7 +110,8 @@ export const readAttributeMappingFile =
         ),
       );
       const parsed = yield* Effect.try({
-        try: () => JSON.parse(content) as unknown,
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native parser errors are CLI output; schema decoding discards their messages.
+        try: (): unknown => JSON.parse(content),
         catch: (cause) =>
           factory.openError({
             message: `failed to parse attribute mapping: ${String(cause)}`,

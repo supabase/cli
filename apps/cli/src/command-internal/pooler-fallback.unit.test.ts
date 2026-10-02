@@ -37,7 +37,7 @@ function captureOutput() {
           fail: () => Effect.void,
           info: () => Effect.void,
           cancel: () => Effect.void,
-          clear: () => Effect.void,
+          clear: Effect.void,
         }),
       promptText: () => Effect.die("unexpected promptText"),
       promptPassword: () => Effect.die("unexpected promptPassword"),
@@ -51,6 +51,7 @@ function captureOutput() {
           message: () => Effect.void,
           stop: () => Effect.void,
         }),
+      result: () => Effect.void,
       success: () => Effect.void,
       fail: () => Effect.void,
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>

@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Layer, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { runDockerEffect } from "./cli.ts";
+
 import { ensureImage, RESOLVE_BUDGET_MS, resolveDeadline, resolveImage } from "./docker-image.ts";
 
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
@@ -106,8 +108,8 @@ describe("resolveImage", () => {
   });
 
   it.live("fails when the docker CLI is present but exits non-zero", () => {
-    // Regression guard: `spawner.exitCode` SUCCEEDS with the code, so a probe
-    // that only maps spawn errors would wave a broken docker through.
+    // `spawner.exitCode` succeeds with the code, so a probe that only maps spawn errors would
+    // wave a broken docker through.
     const mock = mockSpawner((args) =>
       args[0] === "--version" ? { exitCode: 1 } : { exitCode: 0 },
     );
@@ -140,8 +142,6 @@ describe("resolveImage", () => {
       Effect.map((error) => {
         expect(error.message).toContain(`failed to resolve ${IMAGE}`);
         expect(error.message).toContain("Cannot connect to the Docker daemon");
-        // The registry-pin hint must NOT appear here: no registry pin can fix
-        // an unreachable daemon, and suggesting one misdirects CI triage.
         expect(error.message).not.toContain("SUPABASE_INTERNAL_IMAGE_REGISTRY");
         expect(mock.spawned.some((args) => args[0] === "pull")).toBe(false);
       }),
@@ -149,8 +149,6 @@ describe("resolveImage", () => {
   });
 
   it.live("moves to the next registry when a pull attempt outlives its share", () => {
-    // The point of handing the deadline INTO the resolver: one wedged
-    // candidate must not consume the budget the fallbacks behind it need.
     const pulled: Array<string> = [];
     const mock = mockSpawner((args) => {
       if (args[0] === "--version") return { exitCode: 0 };
@@ -243,5 +241,81 @@ describe("ensureImage", () => {
     firstSpawnCounts.push(mock.spawned.length);
     await b;
     expect(firstSpawnCounts[0]).toBeLessThanOrEqual(mock.spawned.length);
+  });
+});
+
+describe("runDockerEffect", () => {
+  it.live("bounds both output tails, drains every chunk, and can be evaluated again", () =>
+    Effect.gen(function* () {
+      let drained = 0;
+      const encoder = new TextEncoder();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const stdoutDone = yield* Deferred.make<void>();
+          const stderrDone = yield* Deferred.make<void>();
+          const output = (label: string, last: string, done: Deferred.Deferred<void>) =>
+            Stream.fromIterable([
+              "old-".repeat(20_000),
+              "discarded-".repeat(10_000),
+              label.repeat(65_536),
+              last,
+            ]).pipe(
+              Stream.map((chunk) => encoder.encode(chunk)),
+              Stream.tap(() =>
+                Effect.sync(() => {
+                  drained++;
+                }),
+              ),
+              Stream.flatMap((chunk) => Stream.make(chunk.subarray(0, 1), chunk.subarray(1))),
+              Stream.concat(
+                Stream.fromEffect(Deferred.succeed(done, undefined)).pipe(Stream.drain),
+              ),
+            );
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: output("O", "O", stdoutDone),
+            stderr: output("😀", "E", stderrDone),
+            all: Stream.empty,
+            exitCode: Effect.all([Deferred.await(stdoutDone), Deferred.await(stderrDone)], {
+              concurrency: "unbounded",
+            }).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const run = runDockerEffect(["logs", "test"], { timeout: 5_000 }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      for (let i = 0; i < 2; i++) {
+        const { stdout, stderr } = yield* run;
+        const marker = "[output truncated; showing at most 65536 UTF-16 code units]\n";
+        expect(stdout).toBe(marker + "O".repeat(65_536));
+        expect(stderr).toBe(marker + "😀".repeat(32_767) + "E");
+      }
+      expect(drained).toBe(16);
+    }),
+  );
+
+  it.live("retains bounded diagnostics on nonzero exit", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stdout: "out", stderr: "E".repeat(100_000) }));
+    return runDockerEffect(["logs", "test"]).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+      Effect.catchTag("DockerCommandError", (error) =>
+        Effect.sync(() => {
+          expect(error.stdout).toBe("out");
+          expect(error.stderr).toBe(
+            "[output truncated; showing at most 65536 UTF-16 code units]\n" + "E".repeat(65_536),
+          );
+          expect(error.message).toBe(`docker logs test exited 1: ${error.stderr}`);
+          return "failed as expected";
+        }),
+      ),
+      Effect.map((result) => expect(result).toBe("failed as expected")),
+    );
   });
 });

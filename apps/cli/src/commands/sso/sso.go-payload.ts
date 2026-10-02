@@ -61,11 +61,7 @@ export const GO_SSO_PROVIDER_RESPONSE: GoType = goStruct([
   ["updated_at", goPtr(goString)],
 ]);
 
-/**
- * `sso list` encodes `map[string]any{"providers": resp.JSON200.Items}`
- * (`list.go:35-37`) — a single lowercase key wrapping the provider structs,
- * which renders identically to a one-field tagged wrapper struct.
- */
+/** `sso list` wraps the provider structs in a single lowercase `providers` key. */
 export const GO_SSO_PROVIDERS_WRAPPER: GoType = goTomlListWrapper(
   "providers",
   GO_SSO_PROVIDER_RESPONSE,

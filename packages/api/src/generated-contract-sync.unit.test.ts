@@ -169,12 +169,10 @@ describe("generated client drift against the committed openapi.json snapshot", (
     expect(versionsFromSnapshot).toContain("v2");
   });
 
-  // A byte-for-byte `JSON.stringify(parsed, null, 2) + "\n"` reproduction of
-  // the committed file does not hold: oxfmt collapses short arrays (e.g.
-  // `"tags": ["Environments"]`) onto a single line after generation, so a
-  // naive re-stringify diverges purely on formatting, not content. This
-  // instead checks that the committed bytes parse deterministically and keep
-  // the single trailing newline `scripts/generate.ts` writes.
+  // A byte-for-byte `JSON.stringify(parsed, null, 2) + "\n"` reproduction of the
+  // committed file doesn't hold, since oxfmt collapses short arrays onto one line
+  // after generation. This instead checks that the bytes parse deterministically
+  // and keep a single trailing newline.
   test("parses the committed snapshot deterministically and keeps a single trailing newline", () => {
     const reparsed = JSON.parse(readFileSync(openApiJsonPath, "utf8")) as OpenApiDocumentShape;
     expect(reparsed).toEqual(openApiDocument);

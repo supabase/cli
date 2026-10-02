@@ -1,10 +1,21 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { V1UpdateAuthServiceConfigOutput } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Stdio,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 import {
   mockAnalytics,
@@ -24,10 +35,12 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { v2ProjectConfigResponse } from "../../../../tests/helpers/config-fixtures.ts";
 import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { YesFlag } from "../../../command-internal/global-flags.ts";
+import { cliConfigProviderLayer } from "../../../shared/config/cli-config-provider.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { secretDigestHex } from "./push.secret.ts";
 import { configPush } from "./push.handler.ts";
@@ -37,16 +50,51 @@ const tempRoot = useTempWorkdir("supabase-config-push-int-");
 
 const REF = VALID_REF;
 
-function writeConfig(toml: string): void {
-  const dir = join(tempRoot.current, "supabase");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "config.toml"), toml);
-}
+const workdirPath = Effect.fnUntraced(function* (...segments: ReadonlyArray<string>) {
+  const path = yield* Path.Path;
+  return path.join(tempRoot.current, ...segments);
+});
+
+const writeWorkdirFile = Effect.fnUntraced(function* (
+  segments: ReadonlyArray<string>,
+  contents: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = yield* workdirPath(...segments);
+  yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+  yield* fs.writeFileString(file, contents);
+});
+
+const makeWorkdirDirectory = Effect.fnUntraced(function* (...segments: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const directory = yield* workdirPath(...segments);
+  yield* fs.makeDirectory(directory, { recursive: true });
+  return directory;
+});
+
+type WorkdirSeed = Effect.Effect<
+  unknown,
+  PlatformError.PlatformError | Schema.SchemaError,
+  FileSystem.FileSystem | Path.Path
+>;
+
+/** Writes `supabase/config.toml` and any `seed` files when the scenario's layer is built. */
+const workdirFilesLayer = (toml: string, seed: WorkdirSeed = Effect.void) =>
+  Layer.effectDiscard(
+    Effect.andThen(writeWorkdirFile(["supabase", "config.toml"], toml), seed),
+  ).pipe(Layer.provide(BunServices.layer));
+
+const jsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+const v1TransportFailure = (description: string) =>
+  Effect.fail(transportFailure(HttpClientRequest.get(DEFAULT_API_URL), description));
 
 /** The shared v2 project-config fixture (schema-default baseline) — see `config-fixtures.ts`. */
 const v2Response = v2ProjectConfigResponse;
 
-/** Digest a plaintext exactly the way `resolveAuthSecrets` compares against — for building a remote response whose digest matches (or deliberately mismatches) a local secret value. */
+/** Digests a plaintext the same way `resolveAuthSecrets` compares against, for building a remote
+ *  response whose digest matches or mismatches a local secret value. */
 function digestOf(plaintext: string): string {
   const digest = secretDigestHex(REF, plaintext, []);
   if (digest === undefined) {
@@ -55,34 +103,14 @@ function digestOf(plaintext: string): string {
   return digest;
 }
 
-// Shared test vector — same one `vault-decrypt.unit.test.ts` and
-// `push.secret.unit.test.ts` use. Decrypts to the plaintext "value".
+// Shared test vector (also used by `vault-decrypt.unit.test.ts`/`push.secret.unit.test.ts`);
+// decrypts to the plaintext "value".
 const DOTENVX_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const DOTENVX_ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 
-/** Save/restore `DOTENV_PRIVATE_KEY` around a test — mirrors the SUPABASE_YES pattern below. */
-function withDotenvPrivateKey<A, E, R>(
-  value: string | undefined,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  const prev = process.env["DOTENV_PRIVATE_KEY"];
-  if (value === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-  else process.env["DOTENV_PRIVATE_KEY"] = value;
-  return effect.pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (prev === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-        else process.env["DOTENV_PRIVATE_KEY"] = prev;
-      }),
-    ),
-  );
-}
-
-// Schema-valid response for the postgrest PATCH when it's routed through the
-// real typed client (`setup()` below) — same shape `V1UpdatePostgrestServiceConfigOutput`
-// requires for its own GET counterpart; the response body itself is never
-// asserted on, only its schema-validity.
+// Schema-valid response for the postgrest PATCH when routed through the real typed client
+// (`setup()` below); the body itself is never asserted on, only its schema-validity.
 const POSTGREST_WRITE_RESPONSE = {
   db_schema: "",
   db_extra_search_path: "",
@@ -118,10 +146,9 @@ function authWriteResponseFixture(): Record<string, unknown> {
   return fixture;
 }
 
-// CLI-2168/CLI-2289 branch-target fixtures — every ref below is exactly 20
-// lowercase letters (`BRANCH_PROJECT_REF_PATTERN`), distinct from
-// `REF` and from each other, so the same test file can model a branch, its
-// parent, and an unrelated project simultaneously.
+// Branch-target fixtures — every ref below is exactly 20 lowercase letters
+// (`BRANCH_PROJECT_REF_PATTERN`), distinct from `REF` and from each other, so this file can model
+// a branch, its parent, and an unrelated project simultaneously.
 const BRANCH_REF = "cccccccccccccccccccc";
 const PARENT_REF = "pppppppppppppppppppp";
 const OTHER_PARENT_REF = "qqqqqqqqqqqqqqqqqqqq";
@@ -130,13 +157,10 @@ const UUID_TARGET_REF = "rrrrrrrrrrrrrrrrrrrr";
 const BRANCH_UUID = "11111111-1111-4111-8111-111111111111";
 
 /**
- * Schema-valid `V1GetProjectOutput` fixture (CLI-2168's live target-detection
- * probe). Every existing (plain-project) scenario relies on this being the
- * DEFAULT `project` route response with an EMPTY `name` — `normalizeApiName`
- * folds that to `undefined`, so the target-echo line degrades to the
- * pre-CLI-2168 bare `Pushing config to project: <ref>\n` text those
- * scenarios already pin. Dedicated CLI-2168 tests below override `name`
- * to prove the named-project path separately.
+ * Schema-valid `V1GetProjectOutput` fixture for the live target-detection probe. The default
+ * `project` route response has an empty `name`, which `normalizeApiName` folds to `undefined`, so
+ * the target-echo line degrades to the bare `Pushing config to project: <ref>\n` text most
+ * scenarios pin. Tests below override `name` to exercise the named-project path.
  */
 const PUSH_TEST_PROJECT = {
   id: REF,
@@ -170,7 +194,7 @@ const BRANCH_LIST_ITEM = {
   with_data: false,
 };
 
-/** `V1GetABranch` body for a branch-name `--project-ref` lookup (CLI-2289). */
+/** `V1GetABranch` body for a branch-name `--project-ref` lookup. */
 const BRANCH_BY_NAME = {
   id: BRANCH_UUID,
   name: "staging",
@@ -184,7 +208,7 @@ const BRANCH_BY_NAME = {
   with_data: false,
 };
 
-/** `V1GetABranchConfig` body for a UUID `--project-ref` lookup (CLI-2289). */
+/** `V1GetABranchConfig` body for a UUID `--project-ref` lookup. */
 const BRANCH_CONFIG = {
   ref: UUID_TARGET_REF,
   postgres_version: "15",
@@ -195,25 +219,18 @@ const BRANCH_CONFIG = {
   db_port: 5432,
 };
 
-function writeLinkedProjectRefFile(ref: string): void {
-  const dir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "project-ref"), ref);
-}
+const writeLinkedProjectRefFile = (ref: string) =>
+  writeWorkdirFile(["supabase", ".temp", "project-ref"], ref);
 
-function writeLinkedProjectCacheFile(json: Record<string, unknown>): void {
-  const dir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "linked-project.json"), JSON.stringify(json));
-}
+const writeLinkedProjectCacheFile = Effect.fnUntraced(function* (json: Record<string, unknown>) {
+  yield* writeWorkdirFile(["supabase", ".temp", "linked-project.json"], yield* jsonText(json));
+});
 
 /**
- * Real-client setup, routed by URL — for scenarios whose only writes are
- * `api` (PATCH /postgrest) and `db.settings` (PUT /config/database/postgres),
- * the two update endpoints whose response schema is simple enough to satisfy
- * without a hand-decoded ~200-field record. The v2 project-config read
- * (`GET /v2/projects/{ref}/config`) always goes through this same mock, via
- * `executeRaw` hitting the real URL.
+ * Real-client setup, routed by URL — for scenarios writing only `api` (PATCH /postgrest) and
+ * `db.settings` (PUT /config/database/postgres), whose response schemas are simple enough to
+ * satisfy without hand-decoding a ~200-field record. The v2 project-config read always goes
+ * through this same mock.
  */
 function setup(opts: {
   readonly toml: string;
@@ -224,13 +241,14 @@ function setup(opts: {
   /** `V1UpdateStorageConfigOutput` is `Schema.Void` — the response body is never decoded, so any status/body pair proves the point. */
   readonly storagePatch?: { status: number; body: unknown } | "fail";
   /** Defaults to a schema-valid `authWriteResponseFixture()` — override the body/status to
-   *  exercise a failure, while still validating the auth PATCH's REQUEST body through the real
+   *  exercise a failure, while still validating the auth PATCH's request body through the real
    *  typed client (`V1UpdateAuthServiceConfigInput`). */
   readonly authPatch?: { status: number; body: unknown } | "fail";
   readonly format?: "text" | "json" | "stream-json";
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptFail?: boolean;
+  readonly interactive?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
@@ -243,30 +261,29 @@ function setup(opts: {
   readonly explicitWorkdir?: boolean;
   /** Analytics mock for tests asserting on captured telemetry events. */
   readonly analytics?: ReturnType<typeof mockAnalytics>;
-  // CLI-2168/CLI-2289 — live target-detection probe and branch-name/UUID
-  // resolution. Defaults keep every existing (plain-project) scenario
-  // working without opting in: the project probe succeeds with an unnamed
-  // project, and the branch-lookup endpoints degrade to "not found"/empty
-  // rather than hanging or decode-erroring. `"fail"` simulates a transport
-  // failure (distinct from an explicit status code) for the hard-failure
-  // scenarios.
+  // Live target-detection probe and branch-name/UUID resolution. Defaults keep every
+  // plain-project scenario working without opting in: the project probe succeeds with an
+  // unnamed project, and branch-lookup endpoints degrade to "not found"/empty rather than
+  // hanging or decode-erroring. `"fail"` simulates a transport failure, distinct from a status.
   readonly project?: { status: number; body: unknown } | "fail";
   readonly branchList?: { status: number; body: unknown };
   readonly branchByName?: { status: number; body: unknown } | "fail";
   readonly branchById?: { status: number; body: unknown };
   /**
-   * `cliSettings.projectId` override — defaults to `Option.some(REF)`.
-   * CLI-2168/CLI-2289 scenarios pass `Option.none()` so ref resolution falls
-   * through to the `.temp/project-ref` file, or `Option.some(<ref>)` to model
-   * an env override distinct from any linked-state files.
+   * `cliSettings.projectId` override — defaults to `Option.some(REF)`. Pass `Option.none()` so
+   * ref resolution falls through to the `.temp/project-ref` file, or `Option.some(<ref>)` to
+   * model an env override distinct from any linked-state files.
    */
   readonly projectId?: Option.Option<string>;
+  /** Extra workdir files (linked-project state) written alongside `config.toml`. */
+  readonly seed?: WorkdirSeed;
 }) {
-  writeConfig(opts.toml);
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm,
     promptConfirmFail: opts.promptFail,
+    interactive:
+      opts.interactive ?? ((opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true)),
   });
   const api = mockCommandPlatformApi({
     handler: (request) => {
@@ -322,9 +339,8 @@ function setup(opts: {
         return Effect.succeed(jsonResponse(request, p.status, p.body));
       }
       const pathname = new URL(url).pathname;
-      // CLI-2168's live target-detection probe: a bare project ref defaults
-      // to a schema-valid, unnamed project, so every existing (plain-project)
-      // scenario keeps working without opting in.
+      // Live target-detection probe: a bare project ref defaults to a schema-valid, unnamed
+      // project, so plain-project scenarios keep working without opting in.
       if (/^\/v1\/projects\/[a-z0-9-]+$/.test(pathname)) {
         if (opts.project === "fail") {
           return Effect.fail(transportFailure(request));
@@ -332,8 +348,8 @@ function setup(opts: {
         const p = opts.project ?? { status: 200, body: PUSH_TEST_PROJECT };
         return Effect.succeed(jsonResponse(request, p.status, p.body));
       }
-      // CLI-2289's branch resolution + the best-effort branch-name lookup —
-      // defaults degrade to "not found"/empty rather than hanging.
+      // Branch resolution + the best-effort branch-name lookup — defaults degrade to
+      // "not found"/empty rather than hanging.
       if (/^\/v1\/projects\/[a-z0-9-]+\/branches$/.test(pathname)) {
         const b = opts.branchList ?? { status: 200, body: [] };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
@@ -349,10 +365,8 @@ function setup(opts: {
         const b = opts.branchById ?? { status: 404, body: {} };
         return Effect.succeed(jsonResponse(request, b.status, b.body));
       }
-      // Anything else (network-restrictions/ssl/webhooks) — succeed with an
-      // empty body; scenarios that write to one of those use `setupService()`
-      // below instead (their typed responses have too many required fields
-      // to hand-author).
+      // Anything else (network-restrictions/ssl/webhooks) — succeed with an empty body;
+      // scenarios writing to one of those use `setupService()` instead.
       return Effect.succeed(jsonResponse(request, 200, {}));
     },
   });
@@ -370,7 +384,13 @@ function setup(opts: {
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
-      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+      tty: mockTty({
+        stdinIsTty: opts.stdinIsTty ?? true,
+        stdoutIsTty:
+          (opts.format ?? "text") === "text" &&
+          (opts.stdinIsTty ?? true) &&
+          (opts.interactive ?? true),
+      }),
       ...(opts.analytics === undefined ? {} : { analytics: opts.analytics }),
     }),
     mockStdin(
@@ -378,17 +398,16 @@ function setup(opts: {
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    workdirFilesLayer(opts.toml, opts.seed),
+    cliConfigProviderLayer,
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
 
 describe("config push integration", () => {
   it.live("pushes local config (text) and surfaces a PATCH failure", () => {
-    // Regression test for the encoder's sparse body: `encodeApiBody`
-    // omits every unchanged key entirely (no `undefined`-valued keys), so
-    // this now goes through the REAL typed client — a body carrying only
-    // `max_rows` must still clear `V1UpdatePostgrestServiceConfigInput`'s
-    // schema before the mocked 500 status is even reached.
+    // Uses the real typed client: the sparse body (`encodeApiBody` omits unchanged keys) must
+    // clear `V1UpdatePostgrestServiceConfigInput`'s schema before the mocked 500 is reached.
     const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       yes: true,
@@ -397,7 +416,9 @@ describe("config push integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushApiUpdateStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateStatusError");
+      }
       expect(out.stderrText).toContain(`Pushing config to project: ${REF}`);
       expect(out.stderrText).toContain("Updating API service with config:");
     }).pipe(Effect.provide(layer));
@@ -412,7 +433,9 @@ describe("config push integration", () => {
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushApiUpdateNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushApiUpdateNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -428,9 +451,6 @@ describe("config push integration", () => {
   });
 
   it.live("names supabase/config.json (not config.toml) on a malformed config.json", () => {
-    const dir = join(tempRoot.current, "supabase");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "config.json"), "{not valid json");
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => Effect.succeed(jsonResponse(request, 200, { available_addons: [] })),
@@ -446,13 +466,13 @@ describe("config push integration", () => {
       Layer.succeed(YesFlag, true),
     );
     return Effect.gen(function* () {
+      yield* writeWorkdirFile(["supabase", "config.json"], "{not valid json");
       const message = yield* configPush({ projectRef: Option.none() }).pipe(
         Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
-        Effect.provide(layer),
       );
       expect(message).toContain("failed to parse supabase/config.json:");
       expect(api.requests).toHaveLength(0);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
@@ -529,8 +549,7 @@ max_rows = 1000
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      // D13: the scope line prints on every run, not just when a block is
-      // missing (family consistency with `config diff`/`config pull`).
+      // The scope line prints on every run, not just when a block is missing.
       expect(out.stderrText).toContain(
         "Comparison scope: api, auth, database, pooler, realtime, storage",
       );
@@ -549,10 +568,6 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
       expect(out.stderrText).toContain("Updating API service with config:");
-      // push.types.ts: a `skipped` service's `changes` still carries what the
-      // declined write would have communicated — visible here as the
-      // per-property block the confirmation prompt printed before the
-      // decline (`api.max_rows`, the only routed change this run).
       expect(out.stderrText).toContain("api.max_rows [update]");
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
@@ -560,11 +575,8 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
-  // The next several tests exercise prompt/env-resolution behavior, not api
-  // body sparseness, but perform a real api write through the REAL typed
-  // client (`setup()`) — the encoder's sparse body must clear
-  // `V1UpdatePostgrestServiceConfigInput`'s schema on every one of these
-  // paths, not just the happy-path test above.
+  // These tests exercise prompt/env-resolution behavior but still write through the real typed
+  // client, so the encoder's sparse body must clear the schema on every path here too.
 
   it.live("auto-confirms with --yes (echoes the prompt)", () => {
     const { layer, out } = setup({
@@ -577,7 +589,40 @@ max_rows = 1000
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("defaults to yes on empty non-TTY stdin, echoing the prompt", () => {
+  it.live("interactive text decline skips without an unattended recovery hint", () => {
+    const { layer, out, api } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+      confirm: [false],
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+      expect(out.promptConfirmCalls).toHaveLength(1);
+      expect(out.stderrText).not.toContain("Skipped api:");
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const format of ["text", "json", "stream-json"] as const) {
+    it.live(`${format} --yes keeps the affirmative echo on piped stdin`, () => {
+      const { layer, out, api } = setup({
+        toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+        format,
+        yes: true,
+        stdinIsTty: false,
+        pipedAnswers: ["n"],
+      });
+      return Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+        expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] y\n");
+        expect(out.stderrText).not.toContain("Skipped api:");
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
+  it.live("skips changes on empty non-TTY stdin, echoing the prompt", () => {
     const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
@@ -585,9 +630,12 @@ max_rows = 1000
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
+        false,
       );
-      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] \n");
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] \n");
+      expect(out.stderrText).toContain(
+        "Skipped api: no affirmative confirmation received. Pass --yes",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -602,131 +650,149 @@ max_rows = 1000
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
       );
-      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] n");
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [y/N] n");
+      expect(out.stderrText).toContain(
+        "Skipped api: no affirmative confirmation received. Pass --yes",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const format of ["json", "stream-json"] as const) {
+    for (const answer of ["n", "y", "", "maybe"] as const) {
+      it.live(`${format} honors piped ${JSON.stringify(answer)} with a safe fallback`, () => {
+        const { layer, api, out } = setup({
+          toml: 'project_id = "test"\n[auth]\nminimum_password_length = 12\n',
+          format,
+          stdinIsTty: false,
+          pipedAnswers: [answer],
+        });
+        return Effect.gen(function* () {
+          yield* configPush({ projectRef: Option.none() });
+          expect(
+            api.requests.some((r) => r.method === "PATCH" && r.url.includes("/config/auth")),
+          ).toBe(answer === "y");
+          expect(out.messages.find((m) => m.type === "success")?.data).toMatchObject({
+            services: expect.arrayContaining([
+              {
+                service: "auth",
+                status: answer === "y" ? "updated" : "skipped",
+                changes: [["auth", "minimum_password_length"]],
+              },
+            ]),
+          });
+          expect(out.stderrText).toContain(
+            `Do you want to push auth config to remote? [y/N] ${answer}\n`,
+          );
+        }).pipe(Effect.provide(layer));
+      });
+    }
+  }
+
+  it.live("non-interactive text output with TTY stdin skips when the prompt is unavailable", () => {
+    const { layer, api, out } = setup({
+      toml: 'project_id = "test"\n[api]\nmax_rows = 2000\n',
+      stdinIsTty: true,
+      interactive: false,
+    });
+    return Effect.gen(function* () {
+      yield* configPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH")).toBe(false);
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(out.stderrText).toContain(
+        "Skipped api: confirmation unavailable with redirected output. Pass --yes",
+      );
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
     const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
     });
-    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    return withEnvVar(
+      "SUPABASE_YES",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_YES=true\n");
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.live("honors SUPABASE_YES set directly in the shell environment", () => {
-    // Complements the .env-file case above: a shell-exported SUPABASE_YES
-    // (never written to supabase/.env) auto-confirms too.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "true";
     const { layer, api } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       stdinIsTty: false,
       pipedAnswers: ["n"],
     });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    return withEnvVar(
+      "SUPABASE_YES",
+      "true",
+      Effect.gen(function* () {
+        yield* configPush({ projectRef: Option.none() });
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
-  it.live("loads config-push env from the project root when --workdir names a subdirectory", () => {
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
-    const sub = join(tempRoot.current, "nested", "dir");
-    mkdirSync(sub, { recursive: true });
-    const { layer, api } = setup({
-      toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
-      stdinIsTty: false,
-      pipedAnswers: ["n"],
-      workdir: sub,
-    });
-    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
-      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
-  });
+  it.live("loads config-push env from the project root when --workdir names a subdirectory", () =>
+    withEnvVar(
+      "SUPABASE_YES",
+      undefined,
+      Effect.gen(function* () {
+        const sub = yield* makeWorkdirDirectory("nested", "dir");
+        const { layer, api } = setup({
+          toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+          stdinIsTty: false,
+          pipedAnswers: ["n"],
+          workdir: sub,
+        });
+        yield* writeWorkdirFile(["supabase", ".env"], "SUPABASE_YES=true\n");
+        yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));
+        expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "does not climb to an ancestor project's config when --workdir names a subdirectory with no config of its own",
-    () => {
-      // CLI-2285 regression: an explicit --workdir is authoritative and must
-      // never let `loadCliConfig`/`findCliProjectRoot` climb past it — a
-      // `config push --workdir ./sub` from a project whose subdirectory has
-      // no supabase/ of its own must not silently push over an unrelated
-      // PARENT project's config. The ancestor (tempRoot) genuinely has a
-      // valid config.toml and the subdirectory genuinely has none.
-      const sub = join(tempRoot.current, "nested", "dir");
-      mkdirSync(sub, { recursive: true });
-      const { layer, api, telemetry } = setup({
-        toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
-        yes: true,
-        workdir: sub,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const sub = yield* makeWorkdirDirectory("nested", "dir");
+        const { layer, api, telemetry } = setup({
+          toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
+          yes: true,
+          workdir: sub,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushLoadConfigError");
-        expect(rendered).toContain("file not found");
-        // An EXPLICIT workdir never gets the ancestor-search-exhausted
-        // `supabase init` hint — it names the resolved directory instead, and
-        // points at the flag/env var that must change.
-        expect(rendered).not.toContain("supabase init");
-        expect(rendered).toContain("--workdir/SUPABASE_WORKDIR");
-        expect(rendered).toContain(sub);
-        // A write command failing to load its OWN config must never reach
-        // any of the config-update endpoints it would otherwise PATCH/PUT.
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushLoadConfigError");
+          expect(causeText).toContain("file not found");
+          expect(causeText).not.toContain("supabase init");
+          expect(causeText).toContain("--workdir/SUPABASE_WORKDIR");
+          expect(causeText).toContain(sub);
+        }
         expect(api.requests.some((r) => r.method === "PATCH" || r.method === "PUT")).toBe(false);
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("a defaulted workdir with no project still points at supabase init", () => {
-    // Complements the regression above: the message text for a DEFAULTED
-    // workdir must keep pointing at `supabase init` — only an EXPLICIT
-    // `--workdir`/`SUPABASE_WORKDIR` gets the resolved-path wording.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       handler: (request) => Effect.succeed(jsonResponse(request, 200, { available_addons: [] })),
@@ -744,74 +810,73 @@ max_rows = 1000
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushLoadConfigError");
-      expect(rendered).toContain("supabase init");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushLoadConfigError");
+        expect(causeText).toContain("supabase init");
+      }
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
   it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before target resolution",
-    () => {
-      // Distinct from the "exists but holds no project" regression above:
-      // this path was never created, so `validateWorkdirIsDirectory`
-      // must fail first, before target resolution or the config load.
-      const missing = join(tempRoot.current, "does-not-exist");
-      const { layer, api } = setup({
-        toml: `project_id = "test"\n`,
-        yes: true,
-        workdir: missing,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        const missing = yield* workdirPath("does-not-exist");
+        const { layer, api } = setup({
+          toml: `project_id = "test"\n`,
+          yes: true,
+          workdir: missing,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+        }
         expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live(
     "an explicit --workdir naming a regular file fails with the workdir error, not a confusing env-file error",
-    () => {
-      // Sibling of the "does not exist" regression above: this path DOES
-      // exist, but as a plain file rather than a directory. Before this fix,
-      // the prologue reads (project-root probe, `supabase/.env` load,
-      // dotenvx private-key collection) ran BEFORE `validateWorkdirIsDirectory`,
-      // in the outer function body — outside the `Effect.ensuring(telemetryState.flush)`
-      // wrapper below. `loadProjectEnv` does not tolerate ENOTDIR, so a
-      // `--workdir` naming a file surfaced a confusing "failed to read
-      // environment file: ..." error instead of `ConfigPushWorkdirError`,
-      // and telemetry never flushed for it. Both must be fixed now.
-      const notADirectory = join(tempRoot.current, "not-a-directory");
-      writeFileSync(notADirectory, "");
-      const { layer, api, telemetry } = setup({
-        toml: `project_id = "test"\n`,
-        yes: true,
-        workdir: notADirectory,
-        explicitWorkdir: true,
-      });
-      return Effect.gen(function* () {
-        const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
+    () =>
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(["not-a-directory"], "");
+        const notADirectory = yield* workdirPath("not-a-directory");
+        const { layer, api, telemetry } = setup({
+          toml: `project_id = "test"\n`,
+          yes: true,
+          workdir: notADirectory,
+          explicitWorkdir: true,
+        });
+        const exit = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.exit,
+          Effect.provide(layer),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
-        const rendered = JSON.stringify(exit);
-        expect(rendered).toContain("ConfigPushWorkdirError");
-        expect(rendered).toContain("failed to change workdir: chdir");
-        expect(rendered).toContain("not a directory");
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("ConfigPushWorkdirError");
+          expect(causeText).toContain("failed to change workdir: chdir");
+          expect(causeText).toContain("not a directory");
+        }
         expect(api.requests).toHaveLength(0);
         expect(telemetry.flushed).toBe(true);
-      }).pipe(Effect.provide(layer));
-    },
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("emits a structured summary in json mode with every payload field", () => {
     const { layer, out } = setup({
       toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
       format: "json",
+      yes: true,
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
@@ -888,12 +953,12 @@ max_rows = 1000
   });
 
   it.live("sends only the changed api key, leaving an undeclared leaf hands-off", () => {
-    // Regression test for the encoder's sparse body: only `schemas`/`db_schema`
-    // genuinely changes here, and that lone key must still clear
-    // `V1UpdatePostgrestServiceConfigInput`'s schema through the real client.
+    // Uses the real typed client: only `schemas`/`db_schema` changes here, and that lone key
+    // must still clear `V1UpdatePostgrestServiceConfigInput`'s schema.
     const { layer, api, out } = setup({
       toml: `project_id = "test"\n[api]\nschemas = ["public", "graphql_public", "custom_schema"]\n`,
       format: "json",
+      yes: true,
       v2: {
         status: 200,
         body: v2Response({
@@ -919,8 +984,6 @@ max_rows = 1000
         status: "updated",
         changes: [["api", "schemas"]],
       });
-      // The undeclared, differing `max_rows` is hands-off — reported as
-      // remote-only, never routed to a resource.
       expect(data["remote_only"]).toBe(1);
     }).pipe(Effect.provide(layer));
   });
@@ -964,11 +1027,9 @@ statement_timeout = "8s"
   it.live(
     "pushes site_url, sessions.timebox, mfa.phone.max_frequency, and password_requirements through the REAL typed client",
     () => {
-      // Regression test for the auth encoder's mapped value types: the REAL
-      // typed client validates the request against
-      // `V1UpdateAuthServiceConfigInput` before sending, so this pins
-      // `sessions_timebox`/`mfa_phone_max_frequency` as numbers (not the
-      // declared duration strings) alongside the plain string-mapped fields.
+      // The real typed client validates against `V1UpdateAuthServiceConfigInput`, pinning
+      // `sessions_timebox`/`mfa_phone_max_frequency` as numbers, not the declared duration
+      // strings.
       const toml = `project_id = "test"
 [auth]
 site_url = "https://example.com"
@@ -997,11 +1058,8 @@ max_frequency = "10s"
   );
 
   it.live("pushes sms.otp_expiry as sms_otp_exp through the REAL typed client", () => {
-    // Regression test for the CLI-2316 auth-encoder leaf added alongside the
-    // new `auth.sms.otp_length`/`otp_expiry` schema fields: the v2 remote
-    // reports the platform default (`sms_otp_exp: 60`, from
-    // `v2ProjectConfigResponse`), so only the declared local override
-    // should ship.
+    // The v2 remote reports the platform default (`sms_otp_exp: 60`, from
+    // `v2ProjectConfigResponse`), so only the declared local override should ship.
     const toml = `project_id = "test"
 [auth.sms]
 otp_expiry = 120
@@ -1075,7 +1133,9 @@ otp_expiry = 120
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushConfigReadNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+      }
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1099,7 +1159,9 @@ otp_expiry = 120
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ProjectConfigParseError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ProjectConfigParseError");
+        }
         expect(
           api.requests.some(
             (r) => r.method === "PATCH" || r.method === "PUT" || r.method === "POST",
@@ -1112,11 +1174,8 @@ otp_expiry = 120
   it.live(
     "aborts with ConfigPushConfigEmptyError when the response carries no block at all (D2)",
     () => {
-      // Replaces the old "reports every block missing and pushes nothing"
-      // expectation: an entirely empty `attributes` means `scope.present` is
-      // empty, and per D2 the command must never silently treat that as
-      // "everything is a fresh write" — it aborts before touching any
-      // resource instead.
+      // An entirely empty `attributes` means `scope.present` is empty; the command must never
+      // treat that as "everything is a fresh write" and aborts before touching any resource.
       const { layer, out, api } = setup({
         toml: `project_id = "test"\n`,
         yes: true,
@@ -1125,7 +1184,9 @@ otp_expiry = 120
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushConfigEmptyError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
+        }
         expect(out.stderrText).toContain(
           "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
         );
@@ -1141,13 +1202,10 @@ otp_expiry = 120
   it.live(
     "a disabled storage.analytics's declared quota sibling surfaces as unmanaged, not pushed",
     () => {
-      // `storage.analytics.enabled` is an ordinary comparable path (CLI-2314)
-      // and matches the remote here (both `false`), so it produces no
-      // change. `max_namespaces` is the sibling `DISABLED_SENTINEL_PRUNES`
-      // still drops from the local projection while the container is
-      // disabled — declared locally and disagreeing with the remote's
-      // report, it must surface as unmanaged rather than vanish silently or
-      // get force-pushed.
+      // `storage.analytics.enabled` matches the remote (both `false`), so it produces no change.
+      // `max_namespaces` is still dropped from the local projection by `DISABLED_SENTINEL_PRUNES`
+      // while the container is disabled, so it must surface as unmanaged, not vanish or get
+      // force-pushed.
       const { layer, out, api } = setup({
         toml: `project_id = "test"\n[storage.analytics]\nenabled = false\nmax_namespaces = 5\n`,
         format: "json",
@@ -1194,14 +1252,6 @@ otp_expiry = 120
   it.live(
     "a declared auth.oauth_server.enabled is pushed through the auth endpoint, no longer as unmanaged or unsupported",
     () => {
-      // Before CLI-2314, `fromConfigDocument` dropped the WHOLE
-      // `auth.oauth_server` subtree unconditionally, so a declared `enabled`
-      // never reached `changeSet.changes` and was reported `unmanaged`. A
-      // later step made `enabled` an ordinary comparable path, but
-      // `PUSH_UNSUPPORTED_PREFIXES` still routed it to the "no
-      // Management API field" note (`unsupported`). This is the final step:
-      // the v1 auth endpoint genuinely accepts `oauth_server_enabled`, so the
-      // leaf now pushes like any other auth field.
       const { layer, out, api } = setup({
         toml: `project_id = "test"\n[auth.oauth_server]\nenabled = true\n`,
         format: "json",
@@ -1255,18 +1305,10 @@ otp_expiry = 120
   });
 });
 
-// ---------------------------------------------------------------------------
-// Gated services (auth / db.network_restrictions / db.ssl_enforcement /
-// experimental) and secret handling. These mostly use the direct-service
-// mock (no response-schema validation) because auth's typed write response
-// has ~200 required fields (`V1UpdateAuthServiceConfigOutput`) that no test
-// should have to hand-author; a raw HttpClient still serves the cost-matrix
-// /billing/addons call, and `raw.v2GetProjectConfig` serves the effective
-// config read. Storage's success-path write (`V1UpdateStorageConfigOutput`
-// is `Schema.Void`) goes through the REAL client via `setup()` above instead,
-// alongside its `api`/`db.settings` siblings — only its own failure-mapping
-// test stays on the service mock, matching the other Update-error tests.
-// ---------------------------------------------------------------------------
+// Gated services (auth / db.network_restrictions / db.ssl_enforcement / experimental) and secret
+// handling mostly use the direct-service mock, since auth's typed write response requires ~200
+// fields (`V1UpdateAuthServiceConfigOutput`) no test should have to hand-author. Storage's write
+// goes through the real client instead, since its output schema is `Schema.Void`.
 
 function addonsHttpLayer(
   body: unknown = { available_addons: [] },
@@ -1307,14 +1349,16 @@ function setupService(opts: {
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
 }) {
-  writeConfig(opts.toml);
-  const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
+  const out = mockOutput({
+    format: opts.format ?? "text",
+    promptConfirmResponses: opts.confirm,
+    interactive: (opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true),
+  });
   const apiMock = mockCommandPlatformApiService({
     v1: {
-      // CLI-2168's live target-detection probe — defaults to a schema-valid,
-      // unnamed project so every gated-service scenario keeps working
-      // without opting in (mirrors `setup()`'s own default above);
-      // overridable via `opts.v1.getProject`.
+      // Live target-detection probe — defaults to a schema-valid, unnamed project so every
+      // gated-service scenario keeps working without opting in; overridable via
+      // `opts.v1.getProject`.
       getProject: () => Effect.succeed(PUSH_TEST_PROJECT),
       ...opts.v1,
     },
@@ -1337,13 +1381,18 @@ function setupService(opts: {
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       // Gated-service prompts model an interactive user answering via `confirm`.
-      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+      tty: mockTty({
+        stdinIsTty: opts.stdinIsTty ?? true,
+        stdoutIsTty: (opts.format ?? "text") === "text" && (opts.stdinIsTty ?? true),
+      }),
     }),
     mockStdin(
       opts.stdinIsTty ?? true,
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
     Layer.succeed(YesFlag, opts.yes ?? false),
+    workdirFilesLayer(opts.toml),
+    cliConfigProviderLayer,
   );
   return { layer, out, apiMock };
 }
@@ -1354,11 +1403,6 @@ function methodsOf(apiMock: ReturnType<typeof setupService>["apiMock"]): Array<s
 
 describe("config push gated services", () => {
   it.live("pushes auth email HTML loaded from content_path", () => {
-    const templateDir = join(tempRoot.current, "templates");
-    mkdirSync(templateDir, { recursive: true });
-    writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
-    writeFileSync(join(templateDir, "password_changed.html"), "<p>Password changed</p>");
-
     const toml = `project_id = "test"
 [auth]
 site_url = "http://localhost:3000"
@@ -1376,6 +1420,8 @@ content_path = "./templates/password_changed.html"
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
+      yield* writeWorkdirFile(["templates", "invite.html"], "<h1>Invite</h1>");
+      yield* writeWorkdirFile(["templates", "password_changed.html"], "<p>Password changed</p>");
       yield* configPush({ projectRef: Option.none() });
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
@@ -1409,34 +1455,31 @@ content_path = "./templates/missing.html"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("resolves auth template paths from the discovered project root", () => {
-    const nestedCwd = join(tempRoot.current, "packages", "app");
-    const templateDir = join(tempRoot.current, "templates");
-    mkdirSync(nestedCwd, { recursive: true });
-    mkdirSync(templateDir, { recursive: true });
-    writeFileSync(join(templateDir, "invite.html"), "<h1>Nested invite</h1>");
+  it.live("resolves auth template paths from the discovered project root", () =>
+    Effect.gen(function* () {
+      const nestedCwd = yield* makeWorkdirDirectory("packages", "app");
+      yield* writeWorkdirFile(["templates", "invite.html"], "<h1>Nested invite</h1>");
 
-    const toml = `project_id = "test"
+      const toml = `project_id = "test"
 [auth]
 site_url = "http://localhost:3000"
 [auth.email.template.invite]
 subject = "Nested invite"
 content_path = "./templates/invite.html"
 `;
-    const { layer, apiMock } = setupService({
-      toml,
-      yes: true,
-      runtimeCwd: nestedCwd,
-      v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
-    });
-    return Effect.gen(function* () {
-      yield* configPush({ projectRef: Option.none() });
+      const { layer, apiMock } = setupService({
+        toml,
+        yes: true,
+        runtimeCwd: nestedCwd,
+        v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
+      });
+      yield* configPush({ projectRef: Option.none() }).pipe(Effect.provide(layer));
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = update?.input as Record<string, unknown>;
       expect(input["mailer_templates_invite_content"]).toBe("<h1>Nested invite</h1>");
-    }).pipe(Effect.provide(layer));
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.live(
     "sends the raw captcha secret (not the hash) when pushing auth (security regression)",
@@ -1459,8 +1502,6 @@ secret = "my-plaintext-secret"
         const input = update?.input as Record<string, unknown>;
         expect(input["security_captcha_secret"]).toBe("my-plaintext-secret");
         expect(String(input["security_captcha_secret"])).not.toContain("hash:");
-        // D6: no remote digest at all renders "(set)" / "(not set)", never the plaintext.
-        // D7: every block — including the last one before the prompt — ends on a blank line.
         expect(out.stderrText).toMatch(
           /\n\nauth\.captcha\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(not set\)\n\n/,
         );
@@ -1485,7 +1526,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
         yes: true,
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         DOTENVX_PRIVATE_KEY,
         Effect.gen(function* () {
           yield* configPush({ projectRef: Option.none() });
@@ -1508,15 +1550,14 @@ provider = "hcaptcha"
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
             Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
           );
           expect(message).toBe("failed to parse config: missing private key");
-          // The guard runs during config load, before any network call — not
-          // even the cost-matrix (list-addons) request that normally runs first.
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer)),
       );
@@ -1526,16 +1567,15 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
   it.live(
     "aborts on an undecryptable secret config push never itself reads or pushes (CLI-1881)",
     () => {
-      // `studio.openai_api_key` is a `config.Secret` field that is still
-      // decrypted during config load — but no encoder in `push.encoders.ts`
-      // (api, db, auth, storage) ever reads `studio.*`, so this proves the
-      // pre-check is genuinely document-wide, not merely reachable via `auth.*`.
+      // No encoder in `push.encoders.ts` reads `studio.*`, so this proves the pre-check is
+      // document-wide.
       const toml = `project_id = "test"
 [studio]
 openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1548,13 +1588,39 @@ openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
     },
   );
 
+  it.live("aborts on an undecryptable secret an env() reference reads from the root .env", () => {
+    const toml = `project_id = "test"
+[auth.captcha]
+enabled = true
+provider = "hcaptcha"
+secret = "env(CAPTCHA_SECRET_FROM_ROOT_ENV)"
+`;
+    const { layer, api } = setup({ toml, yes: true });
+    return withEnvVar(
+      "DOTENV_PRIVATE_KEY",
+      undefined,
+      Effect.gen(function* () {
+        yield* writeWorkdirFile(
+          [".env"],
+          `CAPTCHA_SECRET_FROM_ROOT_ENV="${DOTENVX_ENCRYPTED_VALUE}"\n`,
+        );
+        const message = yield* configPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("ConfigPushLoadConfigError", (error) => Effect.succeed(error.message)),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   it.live("aborts on an undecryptable [db.vault] secret (CLI-1881)", () => {
     const toml = `project_id = "test"
 [db.vault]
 my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
     const { layer, api } = setup({ toml, yes: true });
-    return withDotenvPrivateKey(
+    return withEnvVar(
+      "DOTENV_PRIVATE_KEY",
       undefined,
       Effect.gen(function* () {
         const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1574,7 +1640,8 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
+      return withEnvVar(
+        "DOTENV_PRIVATE_KEY",
         undefined,
         Effect.gen(function* () {
           const message = yield* configPush({ projectRef: Option.none() }).pipe(
@@ -1588,10 +1655,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
   );
 
   it.live("pushes storage when enabled and changed, with the features container absent", () => {
-    // Regression test for the encoder's sparse body: the storage encoder
-    // omits `features` entirely here, so the sparse body must clear
-    // `V1UpdateStorageConfigInput`'s schema through the REAL client — that
-    // sparseness is the whole point of the assertion below.
+    // Uses the real client: the storage encoder omits `features` entirely here, so the sparse
+    // body must clear `V1UpdateStorageConfigInput`'s schema.
     const { layer, api } = setup({
       toml: `project_id = "test"\n[storage]\nfile_size_limit = "100MiB"\n`,
       yes: true,
@@ -1688,7 +1753,9 @@ allowed_cidrs_v6 = ["::1/128"]
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushEnableWebhookStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookStatusError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1705,9 +1772,8 @@ allowed_cidrs_v6 = ["::1/128"]
   it.live(
     "auth disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
     () => {
-      // `auth.enabled = false` only means "don't run local GoTrue" — it no
-      // longer gates the whole resource. With nothing else declared and the
-      // remote at schema defaults, there is genuinely no diff to push.
+      // `auth.enabled = false` means "don't run local GoTrue"; it doesn't gate the resource. With
+      // nothing else declared and the remote at defaults, there's genuinely no diff to push.
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"\n[auth]\nenabled = false\n`,
         format: "json",
@@ -1730,8 +1796,7 @@ allowed_cidrs_v6 = ["::1/128"]
   it.live(
     "storage disabled locally with the remote at defaults reports up to date, not disabled (CLI-2314)",
     () => {
-      // Same as the auth case above: `storage.enabled = false` is a local
-      // Docker toggle, not a hosted management opt-out.
+      // `storage.enabled = false` is a local Docker toggle, not a hosted management opt-out.
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"\n[storage]\nenabled = false\n`,
         format: "json",
@@ -1754,9 +1819,8 @@ allowed_cidrs_v6 = ["::1/128"]
   it.live(
     "auth disabled locally still pushes an explicitly declared hosted auth change (CLI-2314)",
     () => {
-      // Local GoTrue is off, but the user explicitly declared a real hosted
-      // SMTP setting that differs from the remote's — `config push` must
-      // still act on it; the resource is no longer gated on `auth.enabled`.
+      // Local GoTrue is off, but the declared hosted SMTP setting still differs from the
+      // remote's, so `config push` must act on it.
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"
 [auth]
@@ -1804,10 +1868,8 @@ sender_name = "My Project"
   it.live(
     "auth disabled locally does not push an undeclared field that merely drifted from default (CLI-2314)",
     () => {
-      // Local never mentions captcha at all; the remote reports a real
-      // provider configured. Undeclared drift surfaces as remote-only
-      // (informational), never pushed — `auth.enabled = false` plays no role
-      // in that classification either way.
+      // Local never mentions captcha at all; the remote reports a provider configured, so this
+      // drift surfaces as remote-only, unaffected by `auth.enabled`.
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"\n[auth]\nenabled = false\n`,
         format: "json",
@@ -1844,16 +1906,10 @@ sender_name = "My Project"
   it.live(
     "a v2 response without the data envelope aborts (D2) even though the diff itself would tolerate it",
     () => {
-      // `fromApiProjectConfig`'s own envelope-unwrapping (ADR 0019) tolerates
-      // a bare-attributes response with no `data` wrapper — but
-      // `push.handler.ts`'s own separate `data`/`attributes` extraction
-      // (used only for the scope line and the auth-secret comparison) does
-      // not replicate that fallback, so `scope.present` comes back empty for
-      // this shape even though the diff itself would have used the real
-      // values (same duplicated-extraction pattern as `diff.handler.ts`).
-      // Per D2, an empty `scope.present` is now a hard abort rather than a
-      // silent "push everything" — so this shape can never reach a write,
-      // even though the API always sends the `data` envelope in practice.
+      // `push.handler.ts`'s own `data`/`attributes` extraction (used for the scope line and
+      // auth-secret comparison) doesn't replicate `fromApiProjectConfig`'s envelope-unwrapping
+      // fallback, so `scope.present` comes back empty for a bare-attributes response — which is a
+      // hard abort, not a silent "push everything".
       const bareAttributes = v2Response().data.attributes;
       const { layer, out, apiMock } = setupService({
         toml: `project_id = "test"\n[api]\nmax_rows = 2000\n`,
@@ -1864,7 +1920,9 @@ sender_name = "My Project"
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushConfigEmptyError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigEmptyError");
+        }
         expect(out.stderrText).toContain(
           "Comparison scope: (none) (not returned: api, auth, database, pooler, realtime, storage)",
         );
@@ -1872,8 +1930,6 @@ sender_name = "My Project"
       }).pipe(Effect.provide(layer));
     },
   );
-
-  // -- secrets --------------------------------------------------------------
 
   it.live("a matching secret digest produces no auth write at all", () => {
     const toml = `project_id = "test"
@@ -1945,7 +2001,6 @@ secret = "new-secret"
       expect(input["external_github_secret"]).toBe("new-secret");
       expect(input["security_captcha_enabled"]).toBe(true);
       expect(input["security_captcha_provider"]).toBe("hcaptcha");
-      // D6: a differing remote digest renders "(set — differs)", not a bare "(set)".
       expect(out.stderrText).toMatch(
         /\n\nauth\.external\.github\.secret \[secret\]\n {2}local: {2}\(set\)\n {2}remote: \(set — differs\)\n\n/,
       );
@@ -1962,6 +2017,7 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
     const { layer, apiMock, out } = setupService({
       toml,
       format: "json",
+      yes: true,
       v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
     });
     return Effect.gen(function* () {
@@ -1970,10 +2026,6 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       expect(update).toBeDefined();
       const input = update?.input as Record<string, unknown>;
       expect(input["security_captcha_secret"]).toBeUndefined();
-      // D4/D6: disclosed inside the resource block, before the prompt, with
-      // the "unresolved env reference" wording — and (D7) the block still
-      // ends on a blank line even though it's the last thing this resource
-      // prints (the format-json push never echoes the prompt itself).
       expect(out.stderrText).toContain(
         "auth.captcha.secret [secret]\n  local:  (not set — empty or unresolved env reference; will not be pushed)\n  remote: (not set)\n\n",
       );
@@ -1982,7 +2034,6 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       );
       const success = out.messages.find((m) => m.type === "success");
       const data = success?.data as Record<string, unknown>;
-      // D9: `not_set` (renamed from `not_sent`), and gated secrets have their own bucket.
       expect(data["secrets"]).toMatchObject({
         sent: [],
         not_set: [["auth", "captcha", "secret"]],
@@ -1990,8 +2041,6 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
       });
     }).pipe(Effect.provide(layer));
   });
-
-  // -- MFA cost-aware addon prompts ------------------------------------------
 
   it.live("declining the phone MFA addon drops only the MFA keys", () => {
     const toml = `project_id = "test"
@@ -2044,9 +2093,6 @@ enroll_enabled = true
   it.live(
     "an enroll-only flip (verify_enabled absent) still prompts, and declining drops the change",
     () => {
-      // CLI-2313 (PR #6454 review): before this fix, the gate only looked at
-      // `verify_enabled` — an `enroll_enabled`-only flip skipped the prompt
-      // entirely and pushed the paid addon unconfirmed.
       const toml = `project_id = "test"\n[auth.mfa.phone]\nenroll_enabled = true\n`;
       const { layer, apiMock, out } = setupService({
         toml,
@@ -2140,9 +2186,8 @@ enroll_enabled = true
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      // A real-TTY confirm goes through `output.promptConfirm` (clack), which
-      // the mock resolves silently — it never echoes the label to stderr the
-      // way the `--yes`/non-TTY paths do, so assert on the recorded call.
+      // A real-TTY confirm goes through `output.promptConfirm` (clack), which the mock resolves
+      // silently without echoing to stderr, so assert on the recorded call instead.
       expect(out.promptConfirmCalls.map((call) => call.message)).toContain(
         "Enabling Phone MFA will cost you $75.00/ month. Keep it enabled?",
       );
@@ -2163,14 +2208,12 @@ enroll_enabled = true
     }).pipe(Effect.provide(layer));
   });
 
-  // -- write failures (exercise the remaining Update error mappers) ---------
-
   it.live("a db.settings PUT failure fails the push", () => {
     const toml = `project_id = "test"\n[db.settings]\neffective_cache_size = "768MB"\n`;
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updatePostgresConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updatePostgresConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2183,7 +2226,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateNetworkRestrictions: () => Effect.fail(new Error("boom")) },
+      v1: { updateNetworkRestrictions: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2196,7 +2239,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateSslEnforcementConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateSslEnforcementConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2209,7 +2252,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateAuthServiceConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateAuthServiceConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2222,7 +2265,7 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { updateStorageConfig: () => Effect.fail(new Error("boom")) },
+      v1: { updateStorageConfig: () => v1TransportFailure("boom") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
@@ -2235,12 +2278,14 @@ enroll_enabled = true
     const { layer } = setupService({
       toml,
       yes: true,
-      v1: { enableDatabaseWebhook: () => Effect.fail(new Error("ECONNRESET")) },
+      v1: { enableDatabaseWebhook: () => v1TransportFailure("ECONNRESET") },
     });
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushEnableWebhookNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushEnableWebhookNetworkError");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -2271,11 +2316,6 @@ allowed_cidrs_v6 = ["::/0"]
     }).pipe(Effect.provide(layer));
   });
 });
-
-// ---------------------------------------------------------------------------
-// Fix-pass scenarios (review adjudication rounds — architecture/security/DX).
-// Each test cites the decision letter(s) it exercises.
-// ---------------------------------------------------------------------------
 
 describe("config push fix-pass scenarios", () => {
   it.live(
@@ -2417,6 +2457,7 @@ max_buckets = 99
       const { layer, apiMock, out } = setupService({
         toml,
         format: "json",
+        yes: true,
         v2: {
           status: 200,
           body: v2Response({
@@ -2492,8 +2533,6 @@ secret = "super-secret"
           status: "unavailable",
           changes: [],
         });
-        // Every declared credential is reported withheld (`skipped`), never `sent` —
-        // the write never ran, so a "send"-worthy digest never reaches the wire.
         expect(data["secrets"]).toMatchObject({
           sent: [],
           skipped: [["auth", "captcha", "secret"]],
@@ -2503,11 +2542,8 @@ secret = "super-secret"
   );
 
   it.live("the not-set credential note is suppressed when auth itself is unavailable", () => {
-    // Same missing-auth-block shape as the D2/S5 test above, but with a
-    // declared credential that would otherwise be reported `not_set`
-    // (empty/unresolved `env(...)`) rather than `send` — the note is
-    // specific to a credential whose OWN value was empty/unresolved, which
-    // doesn't apply when the whole resource was never compared.
+    // Same missing-auth-block shape as the D2/S5 test above, but with a credential that would
+    // otherwise be reported `not_set` rather than `send`.
     const toml = `project_id = "test"
 [auth]
 site_url = "https://example.com"
@@ -2547,11 +2583,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
   it.live(
     "not_pushable status renders correctly for a genuinely reachable unencodable case (an invalid byte size)",
     () => {
-      // `storage.file_size_limit` is schema-typed as a plain string, so an
-      // invalid byte-size expression survives config LOADING and only
-      // fails inside the encoder's own `ramInBytes` call — unlike the two
-      // D10 candidates above, this one is reachable end to end, and proves
-      // the `not_pushable` status/line/note render correctly.
+      // `storage.file_size_limit` is schema-typed as a plain string, so an invalid byte-size
+      // expression survives config loading and only fails inside the encoder's own `ramInBytes`
+      // call, making this case reachable end to end.
       const toml = `project_id = "test"\n[storage]\nfile_size_limit = "not-a-size"\n`;
       const { layer, apiMock, out } = setupService({ toml, format: "json" });
       return Effect.gen(function* () {
@@ -2584,11 +2618,9 @@ secret = "env(MISSING_CAPTCHA_SECRET)"
   it.live(
     "D12: declining the phone MFA addon sends explicit false disables when the remote already had it on",
     () => {
-      // Text mode (not json): the addon-decline prompt only ever consumes a
-      // real confirm answer in text mode — `keep()` short-circuits to the
-      // default (accept) for any machine format, so a decline can never be
-      // observed there. `declined_addons`' payload SHAPE is covered by the
-      // "emits a structured summary" test instead.
+      // Text mode: the addon-decline prompt only consumes a real confirm answer in text mode —
+      // `keep()` short-circuits to accept for any machine format. `declined_addons`'s payload
+      // shape is covered by the "emits a structured summary" test instead.
       const toml = `project_id = "test"
 [auth.mfa.phone]
 verify_enabled = true
@@ -2619,15 +2651,8 @@ verify_enabled = true
   );
 
   it.live("S1/D9: declining the auth prompt leaves the secret unsent (text mode)", () => {
-    // Text mode: `keep()` only ever consumes a real decline in text mode
-    // (json/stream-json short-circuit every prompt to the default accept —
-    // see the D12 comment above), so this asserts the write-side effect
-    // (no PATCH, no secret leaked) rather than the json payload; the
-    // `secrets.skipped` SHAPE for an unsent "send"-decided secret is proven
-    // by the "D2/S5" and "an empty/unresolved env()" tests above, whose
-    // `authWriteRan === false` comes from a different cause (`unavailable`,
-    // `not_set`) but exercises the identical payload branch
-    // (`push.format.ts`'s `authWriteRan ? sendDecisions... : []`).
+    // Text mode: `keep()` only consumes a real decline in text mode, so this asserts the
+    // write-side effect rather than the json payload.
     const toml = `project_id = "test"
 [auth.captcha]
 enabled = true
@@ -2643,7 +2668,7 @@ secret = "new-secret"
       yield* configPush({ projectRef: Option.none() });
       expect(methodsOf(apiMock)).not.toContain("updateAuthServiceConfig");
       expect(out.stderrText).toContain("auth.captcha.secret [secret]");
-      expect(out.stderrText).toContain("Do you want to push auth config to remote? [Y/n] n");
+      expect(out.stderrText).toContain("Do you want to push auth config to remote? [y/N] n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -2661,9 +2686,8 @@ secret = "irrelevant"
     });
     return Effect.gen(function* () {
       yield* configPush({ projectRef: Option.none() });
-      // Declaring `enabled = false` (a value the remote never reported) is
-      // itself a routed `local_only` change, so the write still runs — the
-      // gated secret must never ride along inside it.
+      // Declaring `enabled = false` is itself a routed `local_only` change, so the write still
+      // runs even though the gated secret must never ride along inside it.
       const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
       expect(update).toBeDefined();
       const input = update?.input as Record<string, unknown>;
@@ -2702,9 +2726,6 @@ secret = "irrelevant"
   it.live(
     "A5/D8: a content-only auth push prints a [content] block and PATCHes only the template content key",
     () => {
-      const templateDir = join(tempRoot.current, "templates-content-only");
-      mkdirSync(templateDir, { recursive: true });
-      writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
       const toml = `project_id = "test"
 [auth.email.template.invite]
 content_path = "./templates-content-only/invite.html"
@@ -2716,6 +2737,7 @@ content_path = "./templates-content-only/invite.html"
         v1: { updateAuthServiceConfig: () => Effect.succeed({}) },
       });
       return Effect.gen(function* () {
+        yield* writeWorkdirFile(["templates-content-only", "invite.html"], "<h1>Invite</h1>");
         yield* configPush({ projectRef: Option.none() });
         expect(out.stderrText).toContain(
           "Updating Auth service with config:\nauth.email.template.invite.content [content]\n  local:  (file content from content_path)\n  remote: (differs)\n\n",
@@ -2729,7 +2751,6 @@ content_path = "./templates-content-only/invite.html"
         const success = out.messages.find((m) => m.type === "success");
         const data = success?.data as Record<string, unknown>;
         const services = data["services"] as ReadonlyArray<Record<string, unknown>>;
-        // D8: `changes` carries the content extra even though no registry-mapped leaf changed.
         expect(services.find((s) => s["service"] === "auth")).toEqual({
           service: "auth",
           status: "updated",
@@ -2775,12 +2796,9 @@ secret = "new-secret"
   it.live(
     "a container whose companion is unresolvable never lets its secret ride the write silently: the secret lands in unencodable, never sent",
     () => {
-      // `auth.hook.send_email.uri` is undeclared and the fixture's remote
-      // never reports `hook_send_email_uri` either, so the hook container's
-      // required-together group is incomplete — but `auth.site_url` is a
-      // genuine, independently-encodable change, so the auth write still
-      // runs. Before the fix, the hook's `secrets` decision (`status: "send"`)
-      // rode along into `secrets.sent` even though the hook body was dropped.
+      // `auth.hook.send_email.uri` is undeclared and the remote fixture never reports
+      // `hook_send_email_uri` either, so the hook's required-together group is incomplete — but
+      // `auth.site_url` is independently encodable, so the auth write still runs.
       const toml = `project_id = "test"
 [auth]
 site_url = "http://localhost:3000"
@@ -2823,8 +2841,10 @@ secrets = "v1,whsec_abc"
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushConfigReadNetworkError");
-      expect(JSON.stringify(exit)).toContain("response body is not a JSON object");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("response body is not a JSON object");
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -2839,9 +2859,12 @@ secrets = "v1,whsec_abc"
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        const serialized = JSON.stringify(exit);
-        expect(serialized).toContain("ConfigPushConfigReadNetworkError");
-        expect(serialized).toContain('"decode":true');
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushConfigReadNetworkError");
+          expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+            decode: true,
+          });
+        }
       }).pipe(Effect.provide(layer));
     },
   );
@@ -2860,10 +2883,9 @@ secrets = "v1,whsec_abc"
   });
 
   it.live("a webhook-only push counts as 1 property pushed, not 0 (finding 5)", () => {
-    // Every managed resource matches the fixture's schema-default remote
-    // (`BASE_DISABLED` declares nothing else), so `experimental.webhooks`
-    // is the only service that ends up `updated` — before the fix its
-    // `changes` was always `[]`, so the summary undercounted it as 0.
+    // Every managed resource matches the fixture's schema-default remote (`BASE_DISABLED`
+    // declares nothing else), so `experimental.webhooks` is the only service that ends up
+    // `updated`.
     const { layer, out } = setupService({
       toml: `${BASE_DISABLED}[experimental.webhooks]\nenabled = true\n`,
       format: "json",
@@ -2885,21 +2907,15 @@ secrets = "v1,whsec_abc"
   });
 });
 
-// A config declaring a real `api` diff (matches the fixture's remote
-// `max_rows: 1000`) — used by the branch/project target-detection (CLI-2168)
-// and branch-name/UUID resolution (CLI-2289) scenarios below to prove a push
-// actually proceeded, the same way the very first test in this file does.
+// A config declaring a real `api` diff (matches the fixture's remote `max_rows: 1000`), used by
+// the branch/project target-detection scenarios below to prove a push actually proceeded.
 const BRANCH_PUSH_TOML = `project_id = "test"\n[api]\nmax_rows = 2000\n`;
 
 /**
- * The realistic "already ran `supabase link <branch>`" state (CLI-2168):
- * `.temp/project-ref` holds the BRANCH's own ref, `.temp/linked-project.json`
- * caches the PARENT (name "My App"), the live probe 404s (the ref is a
- * branch, not a project), and the parent's branch list confirms it — so the
- * target resolves to `{ kind: "branch", ref: BRANCH_REF, parentRef:
- * PARENT_REF, parentName: "My App", branch: "feat-x" }`. `projectId:
- * Option.none()` so ref resolution reads the `.temp/project-ref` file
- * instead of the (env-equivalent) default.
+ * The realistic "already ran `supabase link <branch>`" state: `.temp/project-ref` holds the
+ * branch's own ref, `.temp/linked-project.json` caches the parent (name "My App"), the live probe
+ * 404s, and the parent's branch list confirms it — so the target resolves to `{ kind: "branch",
+ * ref: BRANCH_REF, parentRef: PARENT_REF, parentName: "My App", branch: "feat-x" }`.
  */
 function setupLinkedBranchPush(
   opts: {
@@ -2910,9 +2926,11 @@ function setupLinkedBranchPush(
     readonly pipedAnswers?: ReadonlyArray<string>;
   } = {},
 ) {
-  writeLinkedProjectRefFile(BRANCH_REF);
-  writeLinkedProjectCacheFile({ ref: PARENT_REF, name: "My App" });
   return setup({
+    seed: Effect.all([
+      writeLinkedProjectRefFile(BRANCH_REF),
+      writeLinkedProjectCacheFile({ ref: PARENT_REF, name: "My App" }),
+    ]),
     toml: BRANCH_PUSH_TOML,
     projectId: Option.none(),
     format: opts.format,
@@ -2946,12 +2964,9 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.live(
     "an empty project name from the live probe degrades to the bare-ref target-echo line",
     () => {
-      // `normalizeApiName` (push.branch-target.ts, shared by both the
-      // project-probe and branch-list call sites) folds an empty `name`
-      // into `undefined` before it ever reaches the target object — the
-      // same degradation every OTHER scenario in this file relies on via
-      // `PUSH_TEST_PROJECT`'s default empty name; this test pins it
-      // explicitly.
+      // `normalizeApiName` folds an empty `name` into `undefined` before it reaches the target
+      // object — the same degradation every other scenario in this file relies on via
+      // `PUSH_TEST_PROJECT`'s default empty name; this test pins it explicitly.
       const { layer, out } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: true,
@@ -2986,9 +3001,11 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.live(
     "a branch push with no branch-list match still trusts a just-linked parent (no cached name)",
     () => {
-      writeLinkedProjectRefFile(BRANCH_REF);
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: Effect.all([
+          writeLinkedProjectRefFile(BRANCH_REF),
+          writeLinkedProjectCacheFile({ ref: PARENT_REF }),
+        ]),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.none(),
@@ -3034,14 +3051,12 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
       expect(api.requests.some((r) => r.url.includes("/postgrest"))).toBe(false);
-      // CLI Invariant #1: a declined branch gate still flushes
-      // telemetry and writes the linked-project cache, same as any other
-      // failure.
+      // A declined branch gate still flushes telemetry and writes the linked-project cache.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -3053,7 +3068,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3068,7 +3083,7 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("ConfigPushCancelledError");
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
       }
       expect(api.requests.some((r) => r.url.includes("/v2/projects/"))).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -3095,15 +3110,13 @@ describe("config push branch/project target detection (CLI-2168)", () => {
         const exit = yield* configPush({ projectRef: Option.none() }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const rendered = JSON.stringify(exit.cause);
-          expect(rendered).toContain("ConfigPushCancelledError");
-          // A machine-mode/non-TTY decline never renders the interactive
-          // prompt's own "(skip this check with --yes)" hint at all
-          // (`promptYesNo` returns the default silently) — the
-          // cancelled error's own `suggestion` field is the ONLY place a
-          // script/agent sees the --yes escape hatch.
-          expect(rendered).toContain("--yes");
-          expect(rendered).toContain("SUPABASE_YES");
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushCancelledError");
+          // A machine-mode/non-TTY decline never renders the interactive prompt's own hint
+          // (`promptYesNo` returns the default silently) — the cancelled error's own
+          // `suggestion` field is the only place a script/agent sees the --yes escape hatch.
+          const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
+          expect(error).toMatchObject({ suggestion: expect.stringContaining("--yes") });
+          expect(error).toMatchObject({ suggestion: expect.stringContaining("SUPABASE_YES") });
         }
         expect(out.messages.some((m) => m.type === "success")).toBe(false);
         expect(api.requests.some((r) => ["PATCH", "PUT", "POST"].includes(r.method))).toBe(false);
@@ -3128,8 +3141,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   it.live(
     "an unrelated cached parent does not get credited without a confirming branch-list match",
     () => {
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: PARENT_REF }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.some(PROBE_REF),
@@ -3148,8 +3161,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   );
 
   it.live("a self-referential cached parent is dropped without any branch-list lookup", () => {
-    writeLinkedProjectCacheFile({ ref: PROBE_REF });
     const { layer, out, api } = setup({
+      seed: writeLinkedProjectCacheFile({ ref: PROBE_REF }),
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.some(PROBE_REF),
@@ -3165,8 +3178,8 @@ describe("config push branch/project target detection (CLI-2168)", () => {
   });
 
   it.live("a non-ref-shaped cached parent is dropped without any branch-list lookup", () => {
-    writeLinkedProjectCacheFile({ ref: "not-a-real-ref" });
     const { layer, out, api } = setup({
+      seed: writeLinkedProjectCacheFile({ ref: "not-a-real-ref" }),
       toml: BRANCH_PUSH_TOML,
       yes: true,
       projectId: Option.some(PROBE_REF),
@@ -3221,9 +3234,11 @@ describe("config push branch/project target detection (CLI-2168)", () => {
       // propagate it. A cache candidate (with a branch-list response that
       // does NOT confirm this ref) is required so recovery actually reaches
       // the `.temp/project-ref` read at all.
-      mkdirSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), { recursive: true });
-      writeLinkedProjectCacheFile({ ref: PARENT_REF });
       const { layer, out, api } = setup({
+        seed: Effect.all([
+          makeWorkdirDirectory("supabase", ".temp", "project-ref"),
+          writeLinkedProjectCacheFile({ ref: PARENT_REF }),
+        ]),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         projectId: Option.some(PROBE_REF),
@@ -3282,19 +3297,12 @@ describe("config push branch/project target detection (CLI-2168)", () => {
     },
   );
 
-  // The "transport failure"/"500" tests above cover the `"unknown"` outcome
-  // for a genuine probe error; only the TIMEOUT-specific sub-case (a live
-  // probe that hangs rather than erroring) remains untested — both reach the
-  // identical `{ kind: "unknown" }` outcome, so this is a coverage gap in HOW
-  // "unknown" is reached, not in the behavior itself. A `TestClock`-driven
-  // proof of `BRANCH_LOOKUP_TIMEOUT`'s degradation was deliberately
-  // not added here: `configPush` does substantial real, unmocked
-  // filesystem I/O (project-root discovery, config.toml read, `.env` load)
-  // before it ever reaches the probe's `Effect.timeoutOrElse`, and that I/O
-  // settles on a real event-loop macrotask turn a virtual `TestClock` cannot
-  // provide — forcing it through would need either a real wall-clock wait
-  // (banned by this repo's flake-resistance policy) or an in-memory
-  // `FileSystem` fake diverging from every other scenario in this file.
+  // The tests above cover "unknown" for a genuine probe error; the timeout-specific sub-case
+  // remains untested. A `TestClock`-driven proof wasn't added: `configPush` does real, unmocked
+  // filesystem I/O before it reaches the probe's `Effect.timeoutOrElse`, and that I/O settles on
+  // a real macrotask a virtual `TestClock` can't drive — forcing it through would need a real
+  // wall-clock wait (banned by this repo's flake-resistance policy) or a diverging in-memory
+  // `FileSystem` fake.
 });
 
 describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () => {
@@ -3323,12 +3331,10 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <branch-name> skips the branch confirmation prompt, with no --yes and no queued answer",
     () => {
-      // `knownBranch` is `{kind: "name", branchName, parentRef}` for a NAME
-      // target, so `push.handler.ts`'s `knownBranch === undefined` gate is
-      // never entered — no prompt at all. The real proof is `out.stderrText`
-      // never containing the branch-prompt label — `promptYesNo`
-      // always writes its label to stderr before reading any answer, on
-      // both a TTY and non-TTY, so its total absence is conclusive.
+      // `knownBranch` is `{kind: "name", branchName, parentRef}`, so `push.handler.ts`'s
+      // `knownBranch === undefined` gate is never entered. `promptYesNo` always writes its label
+      // to stderr before reading an answer, so its total absence in `out.stderrText` is
+      // conclusive proof no prompt ran.
       const { layer, out } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: false,
@@ -3347,8 +3353,8 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <branch-name> enriches the parent name from a matching linked-project cache",
     () => {
-      writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" });
       const { layer, out } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: REF, name: "Test Project" }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         branchByName: { status: 200, body: BRANCH_BY_NAME },
@@ -3364,8 +3370,8 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <branch-name> ignores a linked-project cache belonging to a different parent",
     () => {
-      writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" });
       const { layer, out } = setup({
+        seed: writeLinkedProjectCacheFile({ ref: OTHER_PARENT_REF, name: "Someone Else" }),
         toml: BRANCH_PUSH_TOML,
         yes: true,
         branchByName: { status: 200, body: BRANCH_BY_NAME },
@@ -3423,13 +3429,10 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
   it.live(
     "--project-ref <uuid> never shows the branch confirmation prompt, on an unattended run with no --yes",
     () => {
-      // `knownBranch` is `{kind: "uuid"}` (defined, not `undefined`) for a
-      // UUID target — the same "explicit target this invocation" shape a
-      // branch NAME target gets, so `push.handler.ts`'s `target.kind ===
-      // "branch" && knownBranch === undefined` gate is never entered: no
-      // prompt at all, even on a fully unattended run (no `--yes`, non-TTY,
-      // empty stdin). Per-service prompts (`keep()`) still default to
-      // `true` on empty non-TTY stdin, so the mutation still proceeds.
+      // `knownBranch` is `{kind: "uuid"}`, the same "explicit target this invocation" shape a
+      // branch name target gets, so `push.handler.ts`'s `knownBranch === undefined` gate is never
+      // entered. Per-service prompts (`keep()`) default to `false` on empty non-TTY stdin,
+      // so the mutation is skipped.
       const { layer, out, api } = setup({
         toml: BRANCH_PUSH_TOML,
         yes: false,
@@ -3445,7 +3448,7 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
         expect(out.stderrText).toContain(`Pushing config to branch: ${UUID_TARGET_REF}`);
         expect(out.stderrText).not.toContain("Do you want to push config to branch");
         expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
-          true,
+          false,
         );
       }).pipe(Effect.provide(layer));
     },
@@ -3460,14 +3463,15 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotFoundError");
-      expect(rendered).toContain('Branch \\"ghost\\" not found');
-      expect(rendered).toContain("supabase branches list");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotFoundError");
+        expect(causeText).toContain('Branch "ghost" not found');
+        expect(causeText).toContain("supabase branches list");
+      }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-      // CLI Invariant #1: telemetry flushes even though ref
-      // resolution itself failed — but no ref was ever resolved, so the
-      // linked-project cache stays untouched.
+      // Telemetry flushes even though ref resolution failed; the linked-project cache stays
+      // untouched since no ref was ever resolved.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3485,7 +3489,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
       return Effect.gen(function* () {
         const exit = yield* configPush({ projectRef: Option.some("ghost") }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("ConfigPushBranchNotFoundError");
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchNotFoundError");
+        }
         expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -3500,13 +3506,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotLinkedError");
-      expect(rendered).toContain('\\"somebranch\\"');
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotLinkedError");
+        expect(causeText).toContain('"somebranch"');
+      }
       expect(api.requests).toHaveLength(0);
-      // CLI Invariant #1: fails purely from local file/env state,
-      // before any ref is resolved — telemetry still flushes, but the
-      // linked-project cache write is a no-op.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3521,11 +3526,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("somebranch") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushParentRefInvalidError");
-      expect(rendered).toContain('\\"somebranch\\"');
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushParentRefInvalidError");
+        expect(causeText).toContain('"somebranch"');
+      }
       expect(api.requests).toHaveLength(0);
-      // CLI Invariant #1: no ref ever resolved here either.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3540,13 +3546,14 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const rendered = JSON.stringify(exit);
-      expect(rendered).toContain("ConfigPushBranchNotReadyError");
-      expect(rendered).toContain("has no project ref yet");
+      if (Exit.isFailure(exit)) {
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("ConfigPushBranchNotReadyError");
+        expect(causeText).toContain("has no project ref yet");
+      }
       expect(api.requests.some((r) => r.url.includes("/billing/addons"))).toBe(false);
-      // This fails inside `resolveConfigTarget` itself (the
-      // placeholder ref is rejected before it's ever assigned to the
-      // handler's `resolvedRef`), so the cache write is still a no-op.
+      // Fails inside `resolveConfigTarget` before a ref is ever assigned, so the cache write is
+      // still a no-op.
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3561,7 +3568,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushBranchResolveNetworkError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveNetworkError");
+      }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3576,7 +3585,9 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
     return Effect.gen(function* () {
       const exit = yield* configPush({ projectRef: Option.some("staging") }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("ConfigPushBranchResolveStatusError");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.pretty(exit.cause)).toContain("ConfigPushBranchResolveStatusError");
+      }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -3584,13 +3595,12 @@ describe("config push --project-ref branch name/UUID resolution (CLI-2289)", () 
 });
 
 describe("config push telemetry wiring", () => {
-  // Drives the exact `Command.withHandler` wiring (configPushHandler)
-  // rather than the bare handler: the safeFlags guard lives in the wiring,
-  // and nothing validates `--project-ref` before instrumentation fires.
+  // Drives the `Command.withHandler` wiring (`configPushHandler`), not the bare handler: the
+  // safeFlags guard lives in the wiring, and nothing validates `--project-ref` before it fires.
   const wiringLayer = (analytics: ReturnType<typeof mockAnalytics>, projectRef: string) =>
     Layer.mergeAll(
       setup({ toml: `project_id = "test"\n`, yes: true, analytics }).layer,
-      commandRuntimeLayer(["config", "push"]),
+      commandRuntimeLayer(["config", "push"]).pipe(Layer.provide(BunServices.layer)),
       Stdio.layerTest({
         args: Effect.succeed(["config", "push", "--project-ref", projectRef]),
       }),

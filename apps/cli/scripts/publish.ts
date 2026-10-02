@@ -45,16 +45,12 @@ const tagFlag = ["--tag", tag];
 const provenanceFlag = ["--provenance"];
 const noGitChecksFlag = ["--no-git-checks"];
 
-// Reads the active npm registry once. We honour `npm config get registry`
-// rather than hard-coding registry.npmjs.org so the existence probe and the
-// publish target stay aligned — important for the local Verdaccio harness
-// (`pnpm local-registry`), which rewrites the global npm/pnpm registry config.
+// Uses `npm config get registry` instead of hard-coding registry.npmjs.org, so the probe and
+// publish target agree — needed for the local Verdaccio harness (`pnpm local-registry`).
 const registryUrl = (await $`npm config get registry`.quiet().text()).trim().replace(/\/$/, "");
 
-// Probes the registry for `<name>@<version>`:
-//   200 → already published, 404 → not, anything else throws.
-// Used both as a pre-flight skip check and as a post-failure reconciliation
-// when the actual publish errors with E403 (registry CDN cache may lag).
+// Used as both a pre-flight skip check and post-failure reconciliation, since a publish can
+// fail with E403 when the registry CDN cache lags behind an already-succeeded publish.
 async function isAlreadyPublished(name: string, version: string): Promise<boolean> {
   const encodedName = name.replace("/", "%2F");
   const res = await fetch(`${registryUrl}/${encodedName}/${version}`, { method: "GET" });
@@ -65,9 +61,8 @@ async function isAlreadyPublished(name: string, version: string): Promise<boolea
 
 type PublishResult = "published" | "skipped";
 
-// Publishes one workspace package idempotently. If the version is already
-// on the registry — either before we start or after a publish-time conflict
-// — we skip and return "skipped". Any other failure propagates.
+// Skips a version already on the registry — checked before publishing and again after a
+// publish-time conflict — and lets any other failure propagate.
 async function publishPackage(opts: {
   name: string;
   version: string;
@@ -106,10 +101,8 @@ console.log(
     : `Publishing to npm with tag "${tag}"...\n`,
 );
 
-// Defensive: every platform package must already be at the umbrella version.
-// `sync-versions.ts` runs in the workflow before publish (`release-shared.yml`),
-// so a mismatch here means the script was invoked out of order — fail loud
-// rather than publishing an inconsistent set of packages.
+// Every platform package must already be at the umbrella version; `sync-versions.ts` runs
+// before this in the release workflow, so a mismatch means the script ran out of order.
 for (const pkg of PLATFORM_PACKAGES) {
   const pkgJson = await Bun.file(path.join(root, "packages", pkg, "package.json")).json();
   if (pkgJson.version !== umbrellaVersion) {
@@ -120,7 +113,6 @@ for (const pkg of PLATFORM_PACKAGES) {
   }
 }
 
-// Publish all platform packages in parallel
 console.log("Publishing platform packages...");
 const platformResults = await Promise.all(
   PLATFORM_PACKAGES.map((pkg) =>
@@ -133,14 +125,11 @@ const platformResults = await Promise.all(
   ),
 );
 
-// Build the umbrella package bin shim, then publish
 console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
 
-// npm renders the README from the package directory on the package page.
-// The workspace-internal apps/cli/README.md documents the source layout for
-// contributors, which is not what we want users to see on npmjs.com. Copy
-// the repo root README — the user-facing one — over it just before publish.
+// npm renders the README from the package directory; apps/cli/README.md documents the source
+// layout for contributors, not what npm users should see, so copy the root README over it.
 console.log("\nStaging root README for umbrella package...");
 await copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
 
@@ -157,12 +146,9 @@ const skippedCount = results.filter((r) => r === "skipped").length;
 
 console.log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
 
-// All-skipped is ambiguous: it can mean "recovering from a downstream-only
-// failure (GH release / brew / scoop) — bytes already on npm, just continue"
-// OR "semantic-release re-computed a version whose bytes are already live, so
-// today's commits silently did not ship". Since we cannot tell those apart
-// here, log a loud warning so the human reviewing the workflow run can decide
-// whether to re-cut as a fresh version via `workflow_dispatch`.
+// All-skipped is ambiguous: it may mean a downstream-only retry (bytes already on npm) or that
+// today's commits silently didn't ship a new version. Warn loudly so a human can decide whether
+// to re-cut via workflow_dispatch.
 if (publishedCount === 0) {
   console.warn(
     `\n[warn] No packages were published — every package was already on the registry at ${umbrellaVersion}.\n` +

@@ -1,9 +1,6 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Data, Effect, Exit, FileSystem, PlatformError } from "effect";
+import { Cause, Data, Effect, Exit, FileSystem, Option, Path, PlatformError } from "effect";
 
 import { useTempWorkdir } from "../../../tests/helpers/command-mocks.ts";
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
@@ -45,25 +42,32 @@ function permissionDenied(method: "readFile" | "readFileString") {
 const tempRoot = useTempWorkdir("sso-saml-unit-");
 
 describe("readMetadataFile", () => {
-  it.live("returns the file content on UTF-8 XML", () => {
-    const path = join(tempRoot.current, "good.xml");
-    writeFileSync(path, '<?xml version="1.0"?><md/>');
-    return Effect.gen(function* () {
-      const out = yield* readMetadata(path);
-      expect(out).toBe('<?xml version="1.0"?><md/>');
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("returns the file content on UTF-8 XML", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "good.xml");
+      yield* fs.writeFileString(path, '<?xml version="1.0"?><md/>');
+      return yield* Effect.gen(function* () {
+        const out = yield* readMetadata(path);
+        expect(out).toBe('<?xml version="1.0"?><md/>');
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with TestOpenError on missing file", () => {
-    const path = join(tempRoot.current, "missing.xml");
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(readMetadata(path));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("TestOpenError");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("fails with TestOpenError on missing file", () =>
+    Effect.gen(function* () {
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "missing.xml");
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(readMetadata(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.pretty(exit.cause)).toContain("TestOpenError");
+        }
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.effect("preserves a metadata file permission failure", () => {
     const read = readMetadataFile({
@@ -88,66 +92,87 @@ describe("readMetadataFile", () => {
     );
   });
 
-  it.live("fails with TestNonUtf8Error on invalid UTF-8 bytes", () => {
-    const path = join(tempRoot.current, "bad.xml");
-    writeFileSync(path, Buffer.from([0xff, 0xfe, 0xfd]));
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(readMetadata(path));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("TestNonUtf8Error");
-        expect(dump).toContain("is not UTF-8 encoded");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("fails with TestNonUtf8Error on invalid UTF-8 bytes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "bad.xml");
+      yield* fs.writeFile(path, Buffer.from([0xff, 0xfe, 0xfd]));
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(readMetadata(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("TestNonUtf8Error");
+          expect(dump).toContain("is not UTF-8 encoded");
+        }
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("readAttributeMappingFile", () => {
-  it.live("parses JSON and preserves user-defined keys (e.g. `default: 3`)", () => {
-    const path = join(tempRoot.current, "mapping.json");
-    writeFileSync(path, JSON.stringify({ keys: { a: { name: "xyz", default: 3 } } }));
-    return Effect.gen(function* () {
-      const parsed = yield* readAttrMapping(path);
-      const root = parsed as { keys: { a: { default: number } } };
-      expect(root.keys.a.default).toBe(3);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("parses JSON and preserves user-defined keys (e.g. `default: 3`)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "mapping.json");
+      yield* fs.writeFileString(path, '{ "keys": { "a": { "name": "xyz", "default": 3 } } }');
+      return yield* Effect.gen(function* () {
+        const parsed = yield* readAttrMapping(path);
+        expect(parsed).toMatchObject({ keys: { a: { default: 3 } } });
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with TestOpenError on malformed JSON", () => {
-    const path = join(tempRoot.current, "bad.json");
-    writeFileSync(path, "{not json}");
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(readAttrMapping(path));
-      expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("fails with TestOpenError on malformed JSON", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "bad.json");
+      yield* fs.writeFileString(path, "{not json}");
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(readAttrMapping(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.live("fails with TestOpenError on missing file", () => {
-    const path = join(tempRoot.current, "nonexistent.json");
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(readAttrMapping(path));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
-        expect(dump).toContain("TestOpenError");
-        expect(dump).toContain("failed to open attribute mapping");
-      }
-    }).pipe(Effect.provide(BunServices.layer));
-  });
+  it.live("fails with TestOpenError on missing file", () =>
+    Effect.gen(function* () {
+      const pathService = yield* Path.Path;
+      const path = pathService.join(tempRoot.current, "nonexistent.json");
+      return yield* Effect.gen(function* () {
+        const exit = yield* Effect.exit(readAttrMapping(path));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = Cause.pretty(exit.cause);
+          expect(dump).toContain("TestOpenError");
+          expect(dump).toContain("failed to open attribute mapping");
+        }
+      }).pipe(Effect.provide(BunServices.layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.effect("preserves an attribute mapping permission failure", () => {
-    const read = readAttributeMappingFile({
+    const read = readAttributeMappingFile<SsoUpdateAttributeMappingFileError>({
       openError: (args) => new SsoUpdateAttributeMappingFileError(args),
     });
     return Effect.gen(function* () {
-      const error = yield* read("/private/mapping.json").pipe(Effect.flip);
-      expect(classifyCliErrorActionability(error)).toMatchObject({
-        error_kind: "user_actionable",
-        error_category: "permission",
-        suggestion_type: "none",
-        error_fingerprint: "tag:SsoUpdateAttributeMappingFileError:filesystem",
-      });
+      const exit = yield* Effect.exit(read("/private/mapping.json"));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(classifyCliErrorActionability(error.value)).toMatchObject({
+            error_kind: "user_actionable",
+            error_category: "permission",
+            suggestion_type: "none",
+            error_fingerprint: "tag:SsoUpdateAttributeMappingFileError:filesystem",
+          });
+        }
+      }
     }).pipe(
       Effect.provide(
         FileSystem.layerNoop({

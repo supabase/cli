@@ -1,197 +1,345 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Path, Ref, Schedule, Schema, Stream } from "effect";
+import { NodeStream } from "@effect/platform-node";
+import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
 import { createHash } from "node:crypto";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- file-backed streaming avoids archive-sized buffers
-import { createReadStream, createWriteStream } from "node:fs";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { errorChainMessage } from "../internal/error-message.ts";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
-import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
-import { StackPreparationError } from "../public/Errors.ts";
+import { PreparationError } from "./Errors.ts";
+import { verifySha256 } from "./Integrity.ts";
 
-type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+/** One host serving the archive and manifest of a slim-services release asset. */
+interface SlimServicesMirror {
+  readonly downloadUrl: string;
+  readonly manifestUrl: string;
+}
+
+export interface SlimServicesArtifact {
+  readonly provider: "supabase/slim-services";
+  readonly service: string;
+  /** Release version, `<upstream>-r<revision>`. */
+  readonly version: string;
+  readonly releaseTag: string;
+  readonly target: "darwin-arm64" | "linux-amd64" | "linux-arm64";
+  readonly archive: "tar.zst";
+  readonly assetName: string;
+  /** Pinned archive digest. Mirrors only serve bytes; they never supply a digest. */
+  readonly sha256: string;
+  /** Pinned manifest digest, verified before the manifest is parsed. */
+  readonly manifestSha256: string;
+  /** Hosts carrying the same release assets, tried in order until one serves the pinned bytes. */
+  readonly mirrors: readonly [SlimServicesMirror, ...ReadonlyArray<SlimServicesMirror>];
+  readonly requiredRuntimePaths: ReadonlyArray<string>;
+  readonly executablePath: string;
+}
 
 export interface ZstdDecompressor {
   readonly decompress: (
     compressedPath: string,
     outputPath: string,
-  ) => Effect.Effect<void, StackPreparationError>;
+  ) => Effect.Effect<void, PreparationError, FileSystem.FileSystem>;
 }
 
 export interface TarBoundary {
   readonly list: (
     archivePath: string,
-  ) => Effect.Effect<string, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+  ) => Effect.Effect<string, PreparationError, ChildProcessSpawner.ChildProcessSpawner>;
   readonly links: (
     archivePath: string,
-  ) => Effect.Effect<string, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+  ) => Effect.Effect<string, PreparationError, ChildProcessSpawner.ChildProcessSpawner>;
   readonly extract: (
     archivePath: string,
     destination: string,
-  ) => Effect.Effect<number, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+  ) => Effect.Effect<number, PreparationError, ChildProcessSpawner.ChildProcessSpawner>;
 }
 
 /** The system tar boundary is argv-based so archive paths never enter a shell string. */
-export const systemTarBoundary: TarBoundary = {
-  list: (archivePath) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      return yield* spawner
-        .string(ChildProcess.make("tar", ["-tf", archivePath]))
-        .pipe(
-          Effect.mapError(
-            (cause) => new StackPreparationError({ message: "tar listing failed", cause }),
-          ),
-        );
-    }),
-  links: (archivePath) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      return yield* spawner
-        .string(ChildProcess.make("tar", ["-tvf", archivePath]))
-        .pipe(
-          Effect.mapError(
-            (cause) => new StackPreparationError({ message: "tar link listing failed", cause }),
-          ),
-        );
-    }),
-  extract: (archivePath, destination) =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      return yield* spawner
-        .exitCode(ChildProcess.make("tar", ["-xf", archivePath, "-C", destination]))
-        .pipe(
-          Effect.mapError(
-            (cause) => new StackPreparationError({ message: "tar extraction failed", cause }),
-          ),
-        );
-    }),
-};
-// The slim-services transport is a foreign HTTP boundary; production wiring
-// may provide an Effect HttpClient-backed fetcher through RuntimeFactory.
-// oxlint-disable-next-line effecttsgo/global-fetch
-const fetcher: Fetcher = (input, init) => globalThis.fetch(input, init);
-
-const fetchBytes = (
-  url: string,
-  request: Fetcher = fetcher,
-): Effect.Effect<Uint8Array, StackPreparationError> =>
-  Effect.tryPromise({
-    try: (signal) =>
-      request(url, { signal })
-        .then((response) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          return response.arrayBuffer();
-        })
-        .then((bytes) => new Uint8Array(bytes)),
-    catch: (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
-  });
-
-/** Owned streaming zstd boundary. Cancellation aborts and awaits the exact pipeline. */
-const nodeZstdDecompressor: ZstdDecompressor = {
-  decompress: (compressedPath, outputPath) =>
-    Effect.callback<void, StackPreparationError>((resume) => {
-      const controller = new AbortController();
-      const operation = pipeline(
-        createReadStream(compressedPath),
-        createZstdDecompress(),
-        createWriteStream(outputPath, { mode: 0o600 }),
-        { signal: controller.signal },
+const systemTarBoundary: TarBoundary = {
+  list: Effect.fn("SlimServicesSource.tarList")(function* (archivePath) {
+    const args = ["-tf", archivePath];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner
+      .string(ChildProcess.make("tar", args))
+      .pipe(
+        Effect.mapError((cause) => new PreparationError({ message: "tar listing failed", cause })),
       );
-      void operation.then(
-        () => resume(Effect.void),
-        (cause) =>
-          resume(
-            Effect.fail(
-              new StackPreparationError({
-                message: "Unable to decompress slim-services archive",
-                cause,
-              }),
-            ),
-          ),
-      );
-      return Effect.gen(function* () {
-        controller.abort();
-        yield* Effect.promise(() =>
-          operation.then(
-            () => undefined,
-            () => undefined,
-          ),
-        );
-      });
-    }),
-};
-
-const downloadToFile = (
-  url: string,
-  destination: string,
-  request: Fetcher,
-  expectedSha256: string,
-): Effect.Effect<void, StackPreparationError> =>
-  Effect.callback<void, StackPreparationError>((resume) => {
-    const controller = new AbortController();
-    // oxlint-disable-next-line effecttsgo/async-function -- foreign pipeline must settle before cancellation cleanup
-    const operation = (async () => {
-      const response = await request(url, { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (response.body === null) throw new Error("Response body is empty");
-      const source = Readable.fromWeb(response.body);
-      const hash = createHash("sha256");
-      const digest = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          hash.update(chunk);
-          callback(null, chunk);
-        },
-      });
-      await pipeline(source, digest, createWriteStream(destination, { mode: 0o600 }), {
-        signal: controller.signal,
-      });
-      const actual = hash.digest("hex");
-      if (actual !== expectedSha256.toLowerCase())
-        throw new Error(`expected ${expectedSha256}, got ${actual}`);
-    })();
-    const failure = (cause: unknown) =>
-      resume(
-        Effect.fail(new StackPreparationError({ message: `Unable to download ${url}`, cause })),
-      );
-    void operation.then(() => resume(Effect.void), failure);
-    return Effect.gen(function* () {
-      controller.abort();
-      yield* Effect.promise(() =>
-        operation.then(
-          () => undefined,
-          () => undefined,
+  }),
+  links: Effect.fn("SlimServicesSource.tarLinks")(function* (archivePath) {
+    const args = ["-tvf", archivePath];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner
+      .string(ChildProcess.make("tar", args))
+      .pipe(
+        Effect.mapError(
+          (cause) => new PreparationError({ message: "tar link listing failed", cause }),
         ),
       );
+  }),
+  extract: Effect.fn("SlimServicesSource.tarExtract")(function* (archivePath, destination) {
+    const args = ["-xf", archivePath, "-C", destination];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const code = yield* spawner
+      .exitCode(ChildProcess.make("tar", args))
+      .pipe(
+        Effect.mapError(
+          (cause) => new PreparationError({ message: "tar extraction failed", cause }),
+        ),
+      );
+    yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+    return code;
+  }),
+};
+const responseFor = (url: string) =>
+  Effect.flatMap(HttpClient.HttpClient, (client) =>
+    HttpClient.followRedirects(client).get(url),
+  ).pipe(
+    Effect.flatMap((response) =>
+      Effect.gen(function* () {
+        if (response.status < 200 || response.status >= 300)
+          return yield* new PreparationError({
+            message: `HTTP ${response.status}`,
+            status: response.status,
+          });
+        return response;
+      }),
+    ),
+  );
+
+/**
+ * Release hosts answer rate limits, gateway errors, and dropped transfers that a later attempt
+ * resolves. A transfer cut mid-body surfaces as `DecodeError`, so it retries alongside connect
+ * failures, while deterministic request faults fail on the first attempt.
+ */
+const transferFault = (error: unknown): boolean =>
+  error instanceof PreparationError
+    ? error.status !== undefined &&
+      (error.status === 408 || error.status === 429 || error.status >= 500)
+    : HttpClientError.isHttpClientError(error) &&
+      (error.reason._tag === "TransportError" || error.reason._tag === "DecodeError");
+
+/** 4 retries (5 attempts) per request: 500ms exponential, jittered. */
+const TRANSFER_MAX_RETRIES = 4;
+
+const transferBackoff = Schedule.exponential("500 millis").pipe(Schedule.jittered);
+
+const withTransferRetry =
+  (url: string, backoff: Schedule.Schedule<unknown>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.tapError((cause) =>
+        transferFault(cause)
+          ? Effect.logWarning(`Retrying slim-services transfer of ${url}`, cause)
+          : Effect.void,
+      ),
+      Effect.retry({ schedule: backoff, times: TRANSFER_MAX_RETRIES, while: transferFault }),
+    );
+
+const fetchBytes = Effect.fn("SlimServicesSource.fetchBytes")(function* (
+  url: string,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  return yield* responseFor(url).pipe(
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((bytes) => new Uint8Array(bytes)),
+    withTransferRetry(url, backoff),
+    Effect.mapError(
+      (cause) => new PreparationError({ message: `Unable to download ${url}`, cause }),
+    ),
+  );
+});
+
+const nodeZstdDecompressor: ZstdDecompressor = {
+  decompress: Effect.fn("SlimServicesSource.decompress")(function* (
+    compressedPath: string,
+    outputPath: string,
+  ) {
+    return yield* Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.stream(compressedPath).pipe(
+        NodeStream.pipeThroughDuplex({
+          evaluate: () => createZstdDecompress(),
+          onError: (cause) =>
+            new PreparationError({
+              message: "Unable to decompress slim-services archive",
+              cause,
+            }),
+        }),
+        Stream.run(fs.sink(outputPath, { mode: 0o600 })),
+      );
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PreparationError({
+            message: "Unable to decompress slim-services archive",
+            cause,
+          }),
+      ),
+    );
+  }),
+};
+
+const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* (
+  url: string,
+  destination: string,
+  expectedSha256: string,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytesWritten = yield* Ref.make(0);
+  // Each attempt reopens the sink in truncating mode, so a retry replaces any partial transfer.
+  const transfer = Effect.gen(function* () {
+    const response = yield* responseFor(url);
+    const hash = yield* Effect.try({
+      try: () => createHash("sha256"),
+      catch: (cause) =>
+        new PreparationError({ message: "Unable to initialize archive digest", cause }),
+    });
+    yield* Ref.set(bytesWritten, 0);
+    yield* response.stream.pipe(
+      Stream.tap((chunk) =>
+        Effect.try({
+          try: () => {
+            hash.update(chunk);
+          },
+          catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
+        }).pipe(Effect.andThen(Ref.update(bytesWritten, (total) => total + chunk.byteLength))),
+      ),
+      Stream.run(fs.sink(destination, { mode: 0o600 })),
+    );
+    return yield* Effect.try({
+      try: () => hash.digest("hex"),
+      catch: (cause) => new PreparationError({ message: "Unable to finish archive digest", cause }),
     });
   });
+  const actual = yield* transfer.pipe(withTransferRetry(url, backoff));
+  const bytes = yield* Ref.get(bytesWritten);
+  yield* Effect.annotateCurrentSpan({ "artifact.bytes": bytes });
+  if (actual !== expectedSha256.toLowerCase())
+    return yield* new PreparationError({
+      message: `expected ${expectedSha256}, got ${actual}`,
+    });
+});
 
-const checksumFor = (contents: string, archiveName: string): string | undefined =>
-  contents
-    .split(/\r?\n/u)
-    .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
-    .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1];
-
-export const slimServicesChecksum = (
-  artifact: NativeWorkloadArtifact,
-  request: Fetcher = fetcher,
-): Effect.Effect<string, StackPreparationError> =>
-  fetchBytes(artifact.checksumUrl, request).pipe(
-    Effect.map((bytes) => new TextDecoder().decode(bytes)),
-    Effect.flatMap((contents) => {
-      const checksum = checksumFor(contents, `${artifact.assetName}.tar.zst`);
-      return checksum === undefined || !/^[a-f0-9]{64}$/iu.test(checksum)
-        ? Effect.fail(
-            new StackPreparationError({
-              message: "Slim-services checksum is missing",
-              service: artifact.service,
-              version: artifact.version,
-            }),
-          )
-        : Effect.succeed(checksum.toLowerCase());
-    }),
+/**
+ * Runs `attempt` against each candidate until one succeeds. When every candidate fails, the
+ * returned error names each attempted source with its failure detail (the sole source's own
+ * error when there was nothing to aggregate). A fallback failure, including a checksum mismatch,
+ * is logged as a warning, and a fallback that succeeds names the host it used.
+ */
+const firstSuccess = <T, A, R>(
+  label: string,
+  artifact: Pick<SlimServicesArtifact, "service" | "version">,
+  candidates: readonly [T, ...ReadonlyArray<T>],
+  describe: (candidate: T) => string,
+  attempt: (candidate: T) => Effect.Effect<A, PreparationError, R>,
+): Effect.Effect<A, PreparationError, R> => {
+  const [primary, ...fallbacks] = candidates;
+  const fallback = (
+    failures: ReadonlyArray<readonly [T, PreparationError]>,
+    remaining: ReadonlyArray<T>,
+  ): Effect.Effect<A, PreparationError, R> => {
+    const [candidate, ...rest] = remaining;
+    if (candidate === undefined) {
+      const [first] = failures;
+      if (failures.length === 1 && first !== undefined) return Effect.fail(first[1]);
+      const detail = failures
+        .map(([failed, error]) => `${describe(failed)} (${errorChainMessage(error)})`)
+        .join("; ");
+      // The message already carries every failure, so a cause would repeat it in chain renderers.
+      return Effect.fail(
+        new PreparationError({
+          message: `${label}: ${detail}`,
+          service: artifact.service,
+          version: artifact.version,
+        }),
+      );
+    }
+    return attempt(candidate).pipe(
+      Effect.tap(() => Effect.logInfo(`Slim-services used ${describe(candidate)}`)),
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          `Slim-services fallback ${describe(candidate)} failed: ${errorChainMessage(cause)}`,
+        ),
+      ),
+      Effect.catch((cause) => fallback([...failures, [candidate, cause] as const], rest)),
+    );
+  };
+  return attempt(primary).pipe(
+    Effect.catch((primaryError) => fallback([[primary, primaryError]], fallbacks)),
   );
+};
+
+const manifestSchema = Schema.Struct({
+  service: Schema.String,
+  version: Schema.String,
+  target: Schema.Literals(["darwin-arm64", "linux-amd64", "linux-arm64"]),
+  entrypoint: Schema.optionalKey(Schema.Array(Schema.String)),
+  cmd: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const verifiedManifest = Effect.fn("SlimServicesSource.verifiedManifest")(function* (
+  artifact: SlimServicesArtifact,
+  mirror: SlimServicesMirror,
+  backoff: Schedule.Schedule<unknown>,
+) {
+  const manifestBytes = yield* fetchBytes(mirror.manifestUrl, backoff);
+  yield* verifySha256(manifestBytes, artifact.manifestSha256).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PreparationError({
+          message: "Slim-services manifest does not match its pin",
+          service: artifact.service,
+          version: artifact.version,
+          target: artifact.target,
+          cause,
+        }),
+    ),
+  );
+  const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(manifestSchema))(
+    new TextDecoder().decode(manifestBytes),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PreparationError({
+          message: "Slim-services manifest is invalid",
+          cause,
+        }),
+    ),
+  );
+  if (
+    manifest.service !== artifact.service ||
+    manifest.version !== artifact.version ||
+    manifest.target !== artifact.target
+  )
+    return yield* new PreparationError({
+      message: "Slim-services manifest does not match the catalog artifact",
+      service: artifact.service,
+      version: artifact.version,
+      target: artifact.target,
+    });
+  if (
+    (manifest.entrypoint !== undefined && manifest.entrypoint.some(unsafeManifestCommand)) ||
+    (manifest.cmd !== undefined && manifest.cmd.some(unsafeManifestCommand))
+  )
+    return yield* new PreparationError({
+      message: "Slim-services manifest command is invalid",
+      service: artifact.service,
+      version: artifact.version,
+    });
+});
 
 const unsafeArchivePath = (value: string): boolean => {
   const normalized = value.trim();
@@ -238,7 +386,7 @@ const validateExtractedTree = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   destination: string,
-): Effect.Effect<void, StackPreparationError> =>
+): Effect.Effect<void, PreparationError> =>
   Effect.gen(function* () {
     const root = yield* fs.realPath(destination);
     const entries = yield* fs.readDirectory(destination, { recursive: true });
@@ -246,16 +394,16 @@ const validateExtractedTree = (
       const candidate = path.join(destination, entry);
       const resolved = yield* fs.realPath(candidate);
       if (pathEscapesRoot(path, root, resolved))
-        return yield* new StackPreparationError({
+        return yield* new PreparationError({
           message: "Slim-services archive entry escapes its staging directory",
           path: entry,
         });
     }
   }).pipe(
     Effect.mapError((error) =>
-      error instanceof StackPreparationError
+      error instanceof PreparationError
         ? error
-        : new StackPreparationError({
+        : new PreparationError({
             message: "Unable to validate extracted slim-services archive",
             cause: error,
           }),
@@ -263,28 +411,28 @@ const validateExtractedTree = (
   );
 
 export const makeSlimServicesSource = (
-  resolve: (request: ArtifactRequest) => NativeWorkloadArtifact | undefined,
-  fetchRequest: Fetcher = fetcher,
-  tarBoundary: TarBoundary = systemTarBoundary,
-  decompressor: ZstdDecompressor = nodeZstdDecompressor,
+  resolve: (request: ArtifactRequest) => SlimServicesArtifact | undefined,
+  overrides: {
+    readonly tarBoundary?: TarBoundary;
+    readonly decompressor?: ZstdDecompressor;
+    readonly backoff?: Schedule.Schedule<unknown>;
+  } = {},
 ): ArtifactSource => {
-  const resolveArtifact = (
+  const tarBoundary = overrides.tarBoundary ?? systemTarBoundary;
+  const decompressor = overrides.decompressor ?? nodeZstdDecompressor;
+  const backoff = overrides.backoff ?? transferBackoff;
+  const resolveArtifact = Effect.fn("SlimServicesSource.resolveArtifact")(function* (
     request: ArtifactRequest,
-  ): Effect.Effect<NativeWorkloadArtifact, StackPreparationError> => {
+  ) {
     const artifact = resolve(request);
     if (artifact === undefined)
-      return Effect.fail(
-        new StackPreparationError({ message: `No slim-services source for ${request.key}` }),
-      );
-    return Effect.succeed(artifact);
-  };
+      return yield* new PreparationError({ message: `No slim-services source for ${request.key}` });
+    return artifact;
+  });
   return {
-    checksum: (request) =>
-      resolveArtifact(request).pipe(
-        Effect.flatMap((artifact) => slimServicesChecksum(artifact, fetchRequest)),
-      ),
-    materialize: (request, destination, expectedSha256, onProgress) =>
-      Effect.gen(function* () {
+    checksum: (request) => resolveArtifact(request).pipe(Effect.map(({ sha256 }) => sha256)),
+    materialize: Effect.fn("SlimServicesSource.materialize")(
+      function* (request, destination, expectedSha256, onProgress) {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const compressedPath = path.join(destination, ".slim-services.tar.zst");
@@ -295,72 +443,37 @@ export const makeSlimServicesSource = (
         ]);
         return yield* Effect.gen(function* () {
           const artifact = yield* resolveArtifact(request);
-          const manifestBytes = yield* fetchBytes(artifact.manifestUrl, fetchRequest);
-          const manifestText = new TextDecoder().decode(manifestBytes);
-          const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
-            manifestText,
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackPreparationError({
-                  message: "Slim-services manifest is invalid",
-                  cause,
-                }),
-            ),
-          );
-          if (
-            typeof manifest !== "object" ||
-            manifest === null ||
-            !("service" in manifest) ||
-            !("version" in manifest) ||
-            !("target" in manifest) ||
-            manifest.service !== artifact.service ||
-            manifest.version !== artifact.version ||
-            manifest.target !== artifact.target
-          )
-            return yield* new StackPreparationError({
-              message: "Slim-services manifest does not match the catalog artifact",
-              service: artifact.service,
-              version: artifact.version,
-              target: artifact.target,
-            });
-          const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
-          const command = "cmd" in manifest ? manifest.cmd : undefined;
-          if (
-            (entrypoint !== undefined &&
-              (!Array.isArray(entrypoint) ||
-                !entrypoint.every((value) => typeof value === "string") ||
-                entrypoint.some(unsafeManifestCommand))) ||
-            (command !== undefined &&
-              (!Array.isArray(command) ||
-                !command.every((value) => typeof value === "string") ||
-                command.some(unsafeManifestCommand)))
-          )
-            return yield* new StackPreparationError({
-              message: "Slim-services manifest command is invalid",
-              service: artifact.service,
-              version: artifact.version,
-            });
-          yield* Effect.sync(() => onProgress?.("downloading")).pipe(
-            Effect.andThen(
-              downloadToFile(artifact.downloadUrl, compressedPath, fetchRequest, expectedSha256),
-            ),
-            Effect.mapError(
-              (cause) =>
-                new StackPreparationError({
-                  message: "Unable to download slim-services archive",
-                  service: artifact.service,
-                  version: artifact.version,
-                  cause,
-                }),
-            ),
+          yield* firstSuccess(
+            "Unable to download the slim-services archive",
+            artifact,
+            artifact.mirrors,
+            (mirror) => mirror.downloadUrl,
+            (mirror) =>
+              verifiedManifest(artifact, mirror, backoff).pipe(
+                Effect.andThen(
+                  Effect.sync(() => onProgress?.("downloading")).pipe(
+                    Effect.andThen(
+                      downloadToFile(mirror.downloadUrl, compressedPath, expectedSha256, backoff),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new PreparationError({
+                          message: "Unable to download slim-services archive",
+                          service: artifact.service,
+                          version: artifact.version,
+                          cause,
+                        }),
+                    ),
+                  ),
+                ),
+              ),
           );
           yield* Effect.sync(() => onProgress?.("preparing"));
           yield* decompressor.decompress(compressedPath, archivePath);
           const members = yield* tarBoundary.list(archivePath).pipe(
             Effect.mapError(
               (cause) =>
-                new StackPreparationError({
+                new PreparationError({
                   message: "Unable to list slim-services archive",
                   cause,
                 }),
@@ -371,14 +484,14 @@ export const makeSlimServicesSource = (
             .map((member) => member.trim())
             .find(unsafeArchivePath);
           if (unsafeMember !== undefined)
-            return yield* new StackPreparationError({
+            return yield* new PreparationError({
               message: "Slim-services archive contains an unsafe path",
               path: unsafeMember,
             });
           const links = yield* tarBoundary.links(archivePath).pipe(
             Effect.mapError(
               (cause) =>
-                new StackPreparationError({
+                new PreparationError({
                   message: "Unable to inspect slim-services archive links",
                   cause,
                 }),
@@ -397,25 +510,26 @@ export const makeSlimServicesSource = (
             })
             .find((target): target is string => target !== undefined);
           if (unsafeLink !== undefined)
-            return yield* new StackPreparationError({
+            return yield* new PreparationError({
               message: "Slim-services archive contains an unsafe link target",
               path: unsafeLink,
             });
           const exitCode = yield* tarBoundary.extract(archivePath, destination).pipe(
             Effect.mapError(
               (cause) =>
-                new StackPreparationError({
+                new PreparationError({
                   message: "Unable to extract slim-services archive",
                   cause,
                 }),
             ),
           );
           if (exitCode !== 0)
-            return yield* new StackPreparationError({
+            return yield* new PreparationError({
               message: `Slim-services archive extraction exited with code ${exitCode}`,
             });
           yield* validateExtractedTree(fs, path, destination);
         }).pipe(Effect.ensuring(cleanup));
-      }),
+      },
+    ),
   };
 };

@@ -1,14 +1,16 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
+import { type DatabaseInstance, type Stack } from "@supabase/stack/effect";
+import { postgres } from "@supabase/stack/commands";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { TelemetryState } from "../telemetry/telemetry-state.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { readDbToml } from "./db-config.toml-read.ts";
-import { DbConnection } from "./db-connection.service.ts";
+import { DbConnection, type PgConnInput } from "./db-connection.service.ts";
+import { LocalDbRunningError } from "./db-bootstrap/local-db-running.ts";
 import { DockerRun } from "./docker-run.service.ts";
-import { getRegistryImageUrl } from "./docker-registry.ts";
 import { resolveDbTargetFlags } from "./db-target-flags.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";
 import { Output } from "../shared/output/output.service.ts";
@@ -21,41 +23,93 @@ import {
   TestDbRunError,
 } from "./test-db.errors.ts";
 import { buildPgProveArgs } from "./test-db.pg-prove-args.ts";
+import { currentStackBackend } from "./stack-backend.ts";
+import {
+  rewriteDumpHostForToolContainer,
+  toolContainerUsesHostNetwork,
+} from "./postgres-client.run.ts";
+import { isBitbucketPipeline } from "./bitbucket-pipeline.ts";
+import { BundledPostgresClient, resolveBundledPostgresRuntime } from "./bundled-postgres-client.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import { stackOpenReadyProject } from "./stack-local-database.ts";
 
-// Go: `apps/cli-go/internal/db/test/test.go:24-25` (deleted in CLI-1970; last
-// present at commit 7b469f5b3).
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
-// Go bakes this default into the Dockerfile (`pkg/config/templates/Dockerfile:20`).
-// The TS config schema does not model an `[images]` override, so it is fixed here.
-// Go resolves it through `GetRegistryImageUrl` (`DockerStart`), honoring
-// `SUPABASE_INTERNAL_IMAGE_REGISTRY` / the default ECR mirror, so do the same
-// before passing it to `docker run`. Re-verify `NO_TESTS_VERDICT` still matches
-// when bumping this tag.
+// Compose pin: the config schema has no `[images]` override. Stack prove uses
+// catalog `pg_prove` instead. Re-verify `NO_TESTS_VERDICT` when bumping this tag.
 const PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
 /**
- * `TAP::Harness` closes every run with exactly one `Result: <verdict>` line.
- * `pg_prove` still exits 0 for the empty-run verdict, so "found nothing to run" is
- * otherwise indistinguishable from "everything passed" — a typo'd path, an empty
- * directory, or a bind the daemon resolved against a different filesystem than the
- * CLI's (a sibling-container Docker socket) all report a green build that ran zero
- * tests (CLI-2194).
- *
- * Only the harness's FINAL verdict decides: under `--debug` (`--verbose`) the
- * harness replays each test's raw TAP, and a passing test may legally print its own
- * `Result: …` line, which must not be mistaken for the run's outcome. Matching the
- * harness's human summary is a heuristic pinned to the image tag above.
- *
- * The verdict alone is not enough: a suite that deliberately skips itself
- * (`1..0 # SKIP …`) also ends `NOTESTS`, but reports `Files=1`. Only a run that
- * aggregated ZERO files found nothing to run, so both signals must agree.
+ * `pg_prove` exits 0 even when it finds nothing to run, so a typo'd path or a
+ * misresolved bind can silently report success on zero tests. Detecting
+ * "nothing ran" needs both the harness's final `Result: NOTESTS` line (not an
+ * earlier per-test line under `--debug`) and a `Files=0` summary — a
+ * self-skipping suite also prints `NOTESTS` but reports `Files=1`.
  */
 const VERDICT_PREFIX = "Result: ";
 const NO_TESTS_VERDICT = "Result: NOTESTS";
 const FILES_SUMMARY = /^Files=(\d+),/;
 
-/** Port of Go's `sanitizeProjectId` (`pkg/config/config.go:1037`). */
+type ManagedStack = {
+  readonly stack: Stack;
+  readonly database: DatabaseInstance;
+  readonly connection: PgConnInput;
+  readonly major: 15 | 17;
+};
+
+const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
+  const opened = yield* stackOpenReadyProject;
+  if (Option.isNone(opened))
+    return yield* new LocalDbRunningError({
+      message:
+        "The local stack database is unavailable or not running; start it with `supabase start`.",
+    });
+  const { stack, database } = opened.value;
+  const status = yield* database.status.pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalDbRunningError({
+          message: `unable to inspect the local database: ${cause.message}`,
+        }),
+    ),
+  );
+  if (status.lifecycle !== "running")
+    return yield* new LocalDbRunningError({ message: "The local stack database is not running." });
+  if (status.config.service !== "database")
+    return yield* new LocalDbRunningError({
+      message: "The local stack primary service is not a database.",
+    });
+  const major =
+    status.config.config.version === "15"
+      ? 15
+      : status.config.config.version === "17"
+        ? 17
+        : undefined;
+  if (major === undefined)
+    return yield* new LocalDbRunningError({
+      message: `The local database major version ${status.config.config.version} is not supported by pg_prove.`,
+    });
+  const credentials = yield* database.credentials({ from: "runtime" }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LocalDbRunningError({
+          message: `unable to read local database credentials: ${cause.message}`,
+        }),
+    ),
+  );
+  const databaseUrl = credentials.databaseUrl;
+  if (databaseUrl === undefined)
+    return yield* new LocalDbRunningError({
+      message: "The local database did not provide runtime credentials.",
+    });
+  const connection = parseConnectionString(databaseUrl);
+  if (connection === undefined)
+    return yield* new LocalDbRunningError({
+      message: "The local database returned malformed runtime credentials.",
+    });
+  return { stack, database, connection, major } satisfies ManagedStack;
+});
+
 function sanitizeProjectId(src: string): string {
   return src
     .replace(/[^a-zA-Z0-9_.-]+/g, "_")
@@ -79,10 +133,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
   const cliArgs = yield* CliArgs;
 
   yield* Effect.gen(function* () {
-    // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
-    // (`apps/cli-go/cmd/db.go:740`). Selection is keyed off flag PRESENCE (cobra's
-    // `Changed`), not boolean value — `--linked=false` and `--no-linked` both count
-    // as explicitly setting the `linked` flag (`db_url.go:46-63`).
+    // Selection is keyed off flag presence, not its boolean value: `--linked=false`
+    // and `--no-linked` both count as explicitly setting `linked`.
     const target = resolveDbTargetFlags(cliArgs.args);
     const { setFlags } = target;
     if (setFlags.length > 1) {
@@ -95,9 +147,8 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
 
     const connType = target.connType ?? "local";
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on a non-linked target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // `--project-ref` never implies `--linked`; see push.handler.ts's
+    // identical guard (db push) for the rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
       return yield* Effect.fail(
         new TestDbMutuallyExclusiveFlagsError({
@@ -121,34 +172,57 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       debug,
     });
 
-    // For a local database the pg_prove container joins the supabase docker
-    // network and reaches postgres via the internal `db:5432` alias; otherwise
-    // it uses host networking (Go: test.go:79-87).
+    const backend = yield* currentStackBackend;
+    const managedStack =
+      backend.kind === "stack" && connType === "local" ? yield* managedStackFor() : undefined;
+    const proveRuntime =
+      backend.kind === "stack" && managedStack === undefined
+        ? yield* resolveBundledPostgresRuntime(undefined, runtimeInfo.platform, runtimeInfo.arch)
+        : undefined;
+    const useNativeProve = proveRuntime?.kind === "native";
+    const stackPublishedProve = backend.kind === "stack" && !useNativeProve;
+
+    const networkId = Option.getOrUndefined(networkIdFlag);
+    const dumpUsesHostNetwork = toolContainerUsesHostNetwork(networkId);
+    const proveConnection = managedStack?.connection ?? conn;
     const runEnv = {
-      PGHOST: isLocal ? "db" : conn.host,
-      PGPORT: isLocal ? "5432" : String(conn.port),
-      PGUSER: conn.user,
-      PGPASSWORD: conn.password,
-      PGDATABASE: conn.database,
+      PGHOST:
+        managedStack !== undefined
+          ? proveConnection.host
+          : useNativeProve
+            ? connType === "local"
+              ? "127.0.0.1"
+              : conn.host
+            : stackPublishedProve
+              ? rewriteDumpHostForToolContainer(conn.host, {
+                  platform: runtimeInfo.platform,
+                  usesHostNetwork: dumpUsesHostNetwork,
+                })
+              : isLocal
+                ? "db"
+                : conn.host,
+      PGPORT:
+        managedStack !== undefined
+          ? String(proveConnection.port)
+          : isLocal && backend.kind !== "stack"
+            ? "5432"
+            : String(conn.port),
+      PGUSER: managedStack === undefined ? proveConnection.user : conn.user,
+      PGPASSWORD: managedStack === undefined ? proveConnection.password : conn.password,
+      PGDATABASE: managedStack === undefined ? proveConnection.database : conn.database,
     };
 
-    // Network selection mirrors Go's DockerRunOnceWithConfig: a non-empty
-    // `--network-id` overrides everything (even host mode); otherwise local uses
-    // the generated `supabase_network_<project_id>` network and remote uses host
-    // networking (`apps/cli-go/internal/utils/docker.go:379-384`, `test.go:79-87`).
-    const networkId = Option.getOrUndefined(networkIdFlag);
+    // A non-empty `--network-id` overrides everything (even host mode);
+    // otherwise local Compose uses `supabase_network_<project_id>` and remote / stack uses host networking.
     const network =
       networkId !== undefined && networkId.length > 0
         ? { _tag: "named" as const, name: networkId }
-        : isLocal
+        : isLocal && backend.kind !== "stack"
           ? yield* Effect.gen(function* () {
               const toml = yield* readDbToml(fs, path, cliSettings.workdir);
-              // Go sanitizes `c.ProjectId` unconditionally (`config.go:471`) —
-              // whether it came from `config.toml` or the cwd-basename fallback —
-              // before deriving the network name `supabase_network_<id>`
-              // (`config.go:57-58`, `GetId`). A configured `project_id` like
-              // "my project" must join the same sanitized network the local stack
-              // created, not the literal raw value.
+              // The project id is sanitized unconditionally before deriving the
+              // network name, so a configured `project_id` like "my project" joins
+              // the same sanitized network the local stack created.
               const projectId = sanitizeProjectId(
                 Option.getOrElse(toml.projectId, () => nodePath.basename(cliSettings.workdir)),
               );
@@ -165,21 +239,16 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
     const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
         // stdout is reserved for the pg_prove TAP stream (forwarded byte-exact
-        // below), so connection diagnostics must go to stderr —
-        // exactly as Go does (`ConnectByConfigStream` writes "Connecting to …
-        // database…" to `os.Stderr`, `connect.go:205-228`). A `Output.task`
-        // spinner would corrupt the TAP stream: clack writes spinner ANSI to
-        // stdout in text mode, and the stream-json layer emits task JSON log
-        // events to stdout. Go has no "Running pgTAP tests…" line at all.
+        // below), so connection diagnostics go to stderr. An `Output.task`
+        // spinner would also corrupt the stream: it writes ANSI to stdout in
+        // text mode, and JSON log events to stdout in stream-json mode.
         yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
-        // was already installed (Go keys this off an OnNotice 42710 callback,
-        // which @effect/sql-pg does not expose — equivalent observable result).
-        // Checked by extension name only, regardless of schema: Go's duplicate-object
-        // notice fires for any pre-existing pgTAP, so a pgTAP the user installed in
-        // e.g. `public` must also be detected and left untouched.
+        // was already installed. Checked by extension name only, regardless of
+        // schema, so a pgTAP the user installed elsewhere (e.g. `public`) is
+        // also detected and left untouched.
         const alreadyExists = yield* session.extensionExists("pgtap");
         yield* session.exec(ENABLE_PGTAP).pipe(
           Effect.mapError(
@@ -201,23 +270,82 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
           );
         }
 
-        // Bitbucket Pipelines rejects `--security-opt`, so Go clears
-        // `hostConfig.SecurityOpt` when `BITBUCKET_CLONE_DIR` is set
-        // (`apps/cli-go/internal/utils/docker.go:401-405`). Match that exactly:
-        // omit the option in Bitbucket CI, where it would abort container creation.
-        const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
-        // Go adds `host.docker.internal:host-gateway` to every container's
-        // ExtraHosts on Linux (`apps/cli-go/internal/utils/docker_linux.go`); macOS/
-        // Windows Docker Desktop provide the mapping natively (empty there).
+        // Bitbucket Pipelines rejects `--security-opt`, so it's omitted when
+        // `BITBUCKET_CLONE_DIR` is set, where it would abort container creation.
+        const inBitbucket = yield* isBitbucketPipeline();
+        // `host.docker.internal:host-gateway` is added on Linux; macOS/Windows
+        // Docker Desktop provide the mapping natively.
         const extraHosts =
           runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-        // Stream (rather than inherit) stdout so the verdict can be read on the way
-        // past; every chunk is forwarded byte-exact and unframed, leaving the TAP
-        // stream identical to what the container wrote. stderr is teed live, as
-        // inheriting it did.
+        const onStdout = (chunk: Uint8Array) =>
+          Effect.suspend(() => {
+            // Split on newlines, carrying the incomplete trailing line into the
+            // next chunk so a verdict straddling a chunk boundary is still seen.
+            const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
+            pendingLine = lines.pop() ?? "";
+            for (const line of lines) {
+              if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
+              else if (FILES_SUMMARY.test(line)) lastSummary = line;
+            }
+            return output.rawBytes(chunk, "stdout");
+          });
+        if (managedStack !== undefined) {
+          const hostPath = args.hostPaths[0];
+          const hostWorkingDir =
+            hostPath === undefined
+              ? undefined
+              : nodePath.extname(hostPath) !== ""
+                ? nodePath.dirname(hostPath)
+                : hostPath;
+          return yield* managedStack.stack.commands
+            .run(postgres.pgProve({ major: managedStack.major }), {
+              args: args.cmd.slice(1),
+              env: runEnv,
+              pgProve: {
+                mounts: args.mounts,
+                ...(hostWorkingDir === undefined ? {} : { cwd: hostWorkingDir }),
+                ...(Option.isSome(args.workingDir) ? { workingDir: args.workingDir.value } : {}),
+              },
+              stdout: onStdout,
+              stderr: (bytes) => output.rawBytes(bytes, "stderr"),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new TestDbRunError({ message: `pg_prove run failed: ${cause.message}` }),
+              ),
+            );
+        }
+        if (backend.kind === "stack") {
+          const bundled = yield* BundledPostgresClient;
+          const toml = yield* readDbToml(fs, path, cliSettings.workdir);
+          const version = String(toml.majorVersion);
+          const hostPath = args.hostPaths[0];
+          const hostWorkingDir =
+            hostPath === undefined
+              ? undefined
+              : nodePath.extname(hostPath) !== ""
+                ? nodePath.dirname(hostPath)
+                : hostPath;
+          const nativeArgs = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r", ...args.hostPaths];
+          if (debug) nativeArgs.push("--verbose");
+          return yield* bundled.run({
+            version,
+            runtime: proveRuntime,
+            argv: useNativeProve ? nativeArgs : args.cmd,
+            env: runEnv,
+            cwd: useNativeProve ? hostWorkingDir : Option.getOrUndefined(args.workingDir),
+            network: network._tag === "named" ? { name: network.name } : "host",
+            extraHosts: useNativeProve ? [] : extraHosts,
+            securityOpt: useNativeProve || inBitbucket ? [] : ["label:disable"],
+            ...(useNativeProve ? {} : { mounts: args.mounts }),
+            onStdout,
+            teeStderr: true,
+            captureStderr: false,
+          });
+        }
         return yield* docker.runStream(
           {
-            image: getRegistryImageUrl(PG_PROVE_IMAGE),
+            image: PG_PROVE_IMAGE,
             cmd: args.cmd,
             env: runEnv,
             binds: args.binds,
@@ -227,20 +355,7 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
             network,
           },
           {
-            onStdout: (chunk) =>
-              Effect.suspend(() => {
-                // Split on newlines, carrying the incomplete trailing line into the
-                // next chunk so a verdict straddling a chunk boundary is still seen.
-                const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
-                pendingLine = lines.pop() ?? "";
-                for (const line of lines) {
-                  if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
-                  else if (FILES_SUMMARY.test(line)) lastSummary = line;
-                }
-                return output.rawBytes(chunk, "stdout");
-              }),
-            // Teed straight to the terminal as inheriting it did; nothing here reads
-            // the buffered copy, and a pgTAP suite's psql notices are unbounded.
+            onStdout,
             teeStderr: true,
             captureStderr: false,
           },
@@ -248,16 +363,17 @@ export const testDb = Effect.fn("test.db")(function* (flags: TestDbFlags) {
       }),
     );
 
-    // No machine-format envelope: Go has no `--output-format` for `test db`; its
-    // entire output is the streaming pg_prove TAP, which is emitted to stdout in
-    // every mode (the docker subprocess inherits stdout). Appending a JSON object
-    // here would corrupt that stream for `--output-format json` consumers.
+    // No machine-format envelope: the entire output is the streaming pg_prove
+    // TAP on stdout in every mode. Appending a JSON object here would corrupt
+    // that stream for `--output-format json` consumers.
 
-    // Non-zero pg_prove exit → fail (exit 1), matching Go's cobra error return.
-    // The TAP failure detail has already streamed to stdout.
+    // Non-zero pg_prove exit fails the command; the TAP failure detail has
+    // already streamed to stdout.
     if (exitCode !== 0) {
       return yield* Effect.fail(
-        new TestDbRunError({ message: `error running container: exit ${exitCode}` }),
+        new TestDbRunError({
+          message: `error running ${managedStack !== undefined || useNativeProve ? "pg_prove" : "container"}: exit ${exitCode}`,
+        }),
       );
     }
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../shared/output/text-formatter.ts";
+import { ExperimentalRequiredError } from "../../command-internal/experimental-gate.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { mockOutput, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import {
@@ -15,11 +16,8 @@ import {
 import { sslEnforcementCommand } from "./ssl-enforcement.command.ts";
 
 // See postgres-config.experimental-gate.integration.test.ts for the full
-// rationale: this proves `--experimental` is wired into the actual
-// `.command.ts` handler pipeline AND runs before
-// `managementApiRuntimeLayer`'s eager access-token resolution
-// (the `IsExperimental` check precedes `IsManagementAPI` in
-// `apps/cli-go/cmd/root.go:91-109`).
+// rationale: proves `--experimental` is wired into the real command pipeline
+// and runs before `managementApiRuntimeLayer`'s eager access-token resolution.
 
 const tempRoot = useTempWorkdir("supabase-ssl-enforcement-experimental-int-");
 
@@ -40,12 +38,9 @@ function setup() {
     out,
     api,
     cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
-    // The "gate open" case builds the real `managementApiRuntimeLayer`
-    // inline inside the command; its cliSettings/credentials layers read real
-    // files under homeDir and ambient env — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Isolate both, keeping
-    // only the keyring kill-switch set.
+    // The "gate open" case builds the real `managementApiRuntimeLayer` inline,
+    // so isolate homeDir/env — a real ambient token or keyring entry would
+    // make these assertions non-deterministic.
     runtimeInfo: isolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
   });
   const layer = Layer.mergeAll(
@@ -53,10 +48,17 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };
+}
+
+// The gate error is always a top-level typed failure, so ask the type directly.
+function expectGateDidNotFire(cause: Cause.Cause<unknown>): void {
+  const failures = cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error);
+  // Vacuity guard: the check only means something for a typed failure.
+  expect(failures).not.toHaveLength(0);
+  expect(failures.some((error) => error instanceof ExperimentalRequiredError)).toBe(false);
 }
 
 describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () => {
@@ -72,7 +74,7 @@ describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () =
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("ExperimentalRequiredError");
+          expect(Cause.pretty(exit.cause)).toContain("ExperimentalRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -86,9 +88,8 @@ describe("ssl-enforcement experimental gate (Go PersistentPreRunE parity)", () =
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
-          expect(causeText).not.toContain("ExperimentalRequiredError");
-          expect(causeText).toContain("AccessTokenRequiredError");
+          expectGateDidNotFire(exit.cause);
+          expect(Cause.pretty(exit.cause)).toContain("AccessTokenRequiredError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));

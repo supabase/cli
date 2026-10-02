@@ -13,15 +13,11 @@ import {
 } from "../../../telemetry/command-telemetry.ts";
 import { networkRestrictionsUpdate } from "./update.handler.ts";
 
-// Go declares `--db-allow-cidr` with pflag's `StringSliceVar` (`cmd/restrictions.go:40`),
-// which CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two
-// CIDRs) and appends across repeats. Malformed CSV fails at parse time with
-// pflag's exact diagnostic (see `stringSliceFlag`). Accepted
-// approximation: given an invalid `-o` AND malformed CSV together, Go fails on
-// whichever bad flag comes first in argv (pflag parses left-to-right); here
-// the CSV error always wins, because the global `-o` is validated in-handler
-// (`validateOutputFormat`) — same divergence class as the `-o` vs
-// `--experimental` ordering note in the handler below.
+/**
+ * CSV-splits each occurrence (`--db-allow-cidr=1.2.3.0/24,5.6.7.0/24` → two CIDRs) and
+ * appends across repeats, failing at parse time with pflag's diagnostic on malformed CSV.
+ * If `-o` is also invalid, this error wins since `-o` is validated later, in the handler.
+ */
 export const networkRestrictionsUpdateDbAllowCidrFlag = stringSliceFlag(
   "db-allow-cidr",
   "CIDR to allow DB connections from.",
@@ -50,18 +46,13 @@ export const networkRestrictionsUpdateCommand = Command.make("update", config).p
   Command.withShortDescription("Update network restrictions"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Cobra parses flags — rejecting an out-of-enum `-o` (`internal/utils/enum.go:21-27`)
-      // — before `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
-      // invalid `-o` value must win over a missing `--experimental` flag.
+      // Validate the -o value before the --experimental gate, so an invalid value is
+      // reported even without --experimental set.
       yield* validateOutputFormat(RESOURCE_OUTPUT_FORMATS);
-      // Go gates `restrictionsCmd` (network-restrictions) behind `--experimental` in
-      // PersistentPreRunE (root.go:91-96) BEFORE the `IsManagementAPI` login check
-      // (root.go:105-109) — and before RunE, so the gate also precedes this command's
-      // local CIDR validation. `managementApiRuntimeLayer` eagerly resolves an
-      // access token as part of building its `CommandPlatformApi` layer, so it must
-      // be provided AFTER the gate (inline here) rather than via `Command.provide`
-      // on the whole command — `Command.provide` would build the layer, and fail on
-      // a missing token, before this generator's first `yield*` ever runs.
+      // The gate also runs before this command's own CIDR validation. managementApiRuntimeLayer
+      // eagerly resolves an access token, so it's provided here (after the gate) rather than
+      // via Command.provide, which would fail on a missing token before this generator's
+      // first yield* runs.
       yield* requireExperimental;
       return yield* networkRestrictionsUpdate(flags).pipe(
         withCommandTelemetry({ flags }),

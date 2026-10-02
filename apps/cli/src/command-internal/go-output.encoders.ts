@@ -5,19 +5,11 @@ import { encodeGoJsonCompact, encodeGoJsonIndented } from "./go-json.ts";
 import { goStringCompare } from "./go-struct-output.encoders.ts";
 
 /**
- * Reproduces `json.Encoder` output (`utils.EncodeOutput` with `-o json`):
- * - Top-level and nested struct fields serialize in alphabetical key order.
- * - Go string escaping, including the default HTML escapes (`<` / `>` / `&`
- * become `\u003c` / `\u003e` / `\u0026` — Go never calls
- * `SetEscapeHTML(false)` on this path), `\u0008`/`\u000c` for
- * backspace/form feed, and escaped U+2028/U+2029.
- * - Trailing newline (matches `json.Encoder.Encode`).
+ * Reproduces `json.Encoder` output for `-o json`: alphabetical key order, Go string escaping, and
+ * a trailing newline.
  *
- * The optional `nullForEmptyArrays` option mirrors `null` serialization for nil
- * slices: when the schema decodes both `null` and `[]` to `[]` upstream, the caller can
- * list array keys that should re-substitute `null` for empty arrays so the JSON bytes
- * match Go's output. Used by `backups list` to preserve its PITR-only `"backups": null`
- * shape. Most commands don't need this option.
+ * `nullForEmptyArrays` re-substitutes `null` for an empty array at the listed keys, for a schema
+ * that decodes both `null` and `[]` to `[]` upstream (e.g. `backups list`'s `"backups": null`).
  */
 export function encodeGoJson<T>(
   value: T,
@@ -47,30 +39,18 @@ export function encodeGoJson<T>(
 function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value === null || typeof value !== "object") return value;
-  // A plain object silently reorders integer-like string keys ("2", "10") into ascending
-  // NUMERIC order on any subsequent enumeration (`Object.keys`/`Object.entries` in
-  // `go-json.ts`'s `walk`), regardless of what order they're inserted in here — Go's
-  // `encoding/json` has no such special case: a real Go map's string keys sort purely
-  // lexicographically ("10" before "2"). Building a `Map` instead of a plain object carries
-  // this sort through to `walk` intact, since `Map` iteration order is true insertion order
-  // for every key shape (CLI-1961 Codex review finding: `{"10":"a","2":"b"}` must stay "10"
-  // before "2" all the way through to the final encoded output).
+  // A plain object reorders integer-like string keys ("2", "10") into ascending numeric order on
+  // enumeration; building a `Map` instead carries a lexicographic sort through to `go-json.ts`'s
+  // `walk` intact, since `Map` iteration order is true insertion order.
   const sorted = new Map<string, unknown>();
-  // `.sort()` with no comparator uses JS default string comparison, which orders by
-  // UTF-16 code unit — NOT the same as Go's byte/code-point order once an astral
-  // character (U+10000+, a surrogate PAIR in UTF-16) meets a high-BMP one (U+E000-
-  // U+FFFF, a single code unit numerically ABOVE the astral character's leading
-  // surrogate). `goStringCompare` (hoisted from `go-struct-output.encoders.ts`,
-  // which already needed it for TOML/struct-map key sorting) reproduces Go's real
-  // `encoding/json` map-key order instead (CLI-1961 Codex review finding: verified
-  // against the real binary that `json.Marshal` of a map keyed by U+E000 and U+10000
-  // emits the U+E000 key first — the reverse of plain JS `.sort()` on those two keys —
-  // which matters here because `gen bearer-jwt`'s `--payload` custom claims flow
-  // through this same `sortKeysDeep` via `encodeGoStructJsonBody` before signing).
+  // JS's default string sort orders by UTF-16 code unit, which diverges from Go's byte/codepoint
+  // order once an astral character (a UTF-16 surrogate pair) meets a high-BMP one.
+  // `goStringCompare` reproduces Go's real map-key order instead — this matters here since `gen
+  // bearer-jwt`'s custom claims flow through this same sort before signing.
   for (const key of Object.keys(value as Record<string, unknown>).sort(goStringCompare)) {
     const child = (value as Record<string, unknown>)[key];
-    // JSON.stringify used to drop undefined properties; the Go-faithful walker
-    // renders them as null, so drop them here to keep the old key surface.
+    // Drop `undefined` properties here, matching `JSON.stringify`'s behavior (the Go-faithful
+    // walker below would otherwise render them as `null`).
     if (child === undefined) continue;
     sorted.set(key, sortKeysDeep(child));
   }
@@ -78,41 +58,30 @@ function sortKeysDeep(value: unknown): unknown {
 }
 
 /**
- * Serialize an outbound API request body the way `json.Marshal` would
- * for a struct: keys sorted alphabetically (the `@supabase/api`-generated
- * structs declare fields alphabetically, and `json.Marshal` serializes in
- * field-declaration order), Go string escaping (HTML characters included,
- * matching `json.Marshal`'s default `escapeHTML: true`), no indentation, no
- * trailing newline.
+ * Serializes an outbound API request body with sorted keys, Go string escaping, no indentation,
+ * and no trailing newline, matching `json.Marshal`'s struct output.
  *
- * Use this on the raw-HTTP code path in `sso add` / `sso update` (and future
- * handlers that bypass the typed client). The cli-e2e replay server compares
- * recorded request bodies via string equality against bodies the Go CLI
- * produced, so both key order and escaping must match `json.Marshal`.
- *
- * `encodeGoJson` is the parallel for human-facing `--output json` output
- * (indented + trailing `\n`).
+ * Used on the raw-HTTP code path (`sso add`/`sso update`) whose request bodies the cli-e2e replay
+ * server compares by string equality against recorded bodies, so key order and escaping must
+ * match exactly. {@link encodeGoJson} is the parallel for human-facing `--output json`.
  */
 export function encodeGoStructJsonBody(value: unknown): string {
   return encodeGoJsonCompact(sortKeysDeep(value));
 }
 
 /**
- * Go-compatible YAML for **map** payloads (`branches get` envs, `sso info`,
- * `status`, `postgres-config`, …). Struct payloads must NOT use this — Go's
- * yaml.v3 derives keys from the Go field names, not the JSON tags; use
- * `encodeGoYaml` from `go-struct-output.encoders.ts` with the
- * payload's Go struct spec instead (CLI-1975).
+ * YAML for map payloads (`branches get` envs, `sso info`, `status`, `postgres-config`). Struct
+ * payloads must use `encodeGoYaml` in `go-struct-output.encoders.ts` instead, since Go's yaml.v3
+ * derives keys from Go field names, not JSON tags.
  */
 export function encodeYaml(value: unknown): string {
   return stringifyYaml(value);
 }
 
 /**
- * Go-compatible TOML for **map** payloads. Struct payloads must NOT use this —
- * BurntSushi emits PascalCase Go field names with 2-space table indentation;
- * use `encodeGoToml` from `go-struct-output.encoders.ts` with the
- * payload's Go struct spec instead (CLI-1975).
+ * TOML for map payloads. Struct payloads must use `encodeGoToml` in
+ * `go-struct-output.encoders.ts` instead, since BurntSushi emits PascalCase Go field names with
+ * 2-space table indentation.
  */
 export function encodeToml(value: unknown): string {
   // smol-toml refuses top-level non-object values; wrap if needed.
@@ -123,18 +92,12 @@ export function encodeToml(value: unknown): string {
 }
 
 /**
- * Reproduces the established `godotenv.Marshal` byte shape for the
- * `--output env` mode.
+ * Reproduces the established `godotenv.Marshal` byte shape for `--output env`.
  *
- * - Nested maps flatten using dotted paths; the loop
- * then `strings.ToUpper(strings.ReplaceAll(k, ".", "_"))` produces SCREAMING_SNAKE_CASE keys.
- * - Flattening does **not** descend into slices. An array value lands as a single
- * leaf whose `GetString` rendering is the empty string — so e.g.
- * `{backups: [{...}, {...}]}` becomes one `BACKUPS=""` entry, not indexed leaves.
- * - Integer-parseable values are emitted unquoted (`KEY=123`), matching
- * `godotenv.Marshal`'s `strconv.Atoi` branch. Everything else is double-quoted
- * with `"` / `\\` escaped, matching the `fmt.Sprintf("%q", ...)` branch.
- * - Lines are sorted lexicographically by key, then joined with `\n`.
+ * Nested maps flatten to dotted paths, then uppercase with `.` replaced by `_`. Flattening does
+ * not descend into slices: an array value becomes a single empty-string leaf. Integer-parseable
+ * values are emitted unquoted; everything else is double-quoted with `"`/`\\` escaped. Lines sort
+ * lexicographically by key.
  */
 export function encodeEnv(value: unknown): string {
   const flat = flatten(value);
@@ -156,15 +119,12 @@ function flatten(
     return out;
   }
   if (Array.isArray(value)) {
-    // Go's viper does not descend into slices — the entire array collapses to a
-    // single empty-string leaf at the array's parent key.
+    // Arrays don't flatten further — the whole array collapses to a single empty-string leaf.
     if (prefix.length > 0) out[toEnvKey(prefix)] = "";
     return out;
   }
   if (typeof value === "object") {
-    // Go's viper.AllKeys() omits empty nested maps entirely (unlike empty
-    // slices, which leave a single empty-string leaf). Match that — recurse
-    // into populated maps; emit nothing for `{}`.
+    // Empty nested maps emit nothing; only populated maps recurse.
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       flatten(child, prefix.length === 0 ? key : `${prefix}.${key}`, out);
     }
@@ -186,23 +146,20 @@ function stringifyScalar(value: unknown): string {
   return String(value);
 }
 
-// strconv.Atoi accepts an optional +/- sign followed by base-10 digits. Match
-// that surface so integer values flow through Go's unquoted `%d` branch.
+// An optional +/- sign followed by base-10 digits, so integer values flow through the unquoted
+// branch below.
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 
 function formatEnvValue(value: string): string {
   if (INTEGER_PATTERN.test(value)) {
     const parsed = Number(value);
-    // Mirror godotenv's `%d` formatting (round-trip through int — drops a leading
-    // `+` and any leading zeros, matching Go's strconv.Atoi + fmt.Sprintf("%d").
+    // Round-trip through Number to drop a leading `+` or leading zeros.
     if (Number.isSafeInteger(parsed)) {
       return String(parsed);
     }
   }
-  // Match `fmt.Sprintf("%q", ...)` escaping: backslash, double-quote, and the
-  // common C-style control characters \n / \r / \t. Without the control-character
-  // escapes a multi-line string value could become multiple KEY=VALUE assignments
-  // when a downstream shell `eval`s or `source`s the output.
+  // Escaping control characters (`\n`/`\r`/`\t`) prevents a multi-line value from becoming
+  // multiple KEY=VALUE assignments when a downstream shell evals or sources the output.
   const escaped = value
     .replaceAll("\\", "\\\\")
     .replaceAll('"', '\\"')

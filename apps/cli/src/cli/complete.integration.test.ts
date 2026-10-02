@@ -6,13 +6,9 @@ import { EventCommandExecuted, PropExitCode } from "../shared/telemetry/event-ca
 import { captureCompleteTelemetryEffect, tryComplete, type CompleteDeps } from "./complete.ts";
 import { rootCommand } from "./root.ts";
 
-// `mockAnalytics()` (`tests/helpers/mocks.ts`, the double `bash.integration.test.ts`
-// uses for the same `cli_command_executed` assertion on the static completion
-// leaves) records only the direct `capture(event, properties)` arguments — it
-// never reads `CurrentAnalyticsContext`, so it can't see the `command` value
-// `withAnalyticsContext` attaches. This local double mirrors the REAL
-// `analyticsLayer`'s own capture implementation just enough to merge
-// that context in, so this file can assert on `command` too.
+// Mirrors the real `analyticsLayer`'s capture implementation just enough to merge
+// `CurrentAnalyticsContext` into captured events, since the shared `mockAnalytics()` double
+// doesn't read that context.
 function mockAnalyticsWithContext() {
   const captured: Array<{
     event: string;
@@ -56,6 +52,7 @@ function makeDeps(argv: ReadonlyArray<string>, captureTelemetry: CompleteDeps["c
     stdoutWrite: (message) => {
       stdoutWrites.push(message);
     },
+    stderrWrite: () => {},
     exit: (code) => {
       exits.push(code);
     },

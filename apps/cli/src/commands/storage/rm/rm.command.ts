@@ -45,8 +45,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
   ]),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Gate before the mutex check below — order matters; see
-      // requireExperimental's doc comment for why.
+      // Gate before the mutex check below; see requireExperimental's doc comment for why.
       yield* requireExperimental;
       const cliArgs = yield* CliArgs;
       yield* assertStorageTargetsExclusive(cliArgs.args);
@@ -63,9 +62,7 @@ export const storageRmCommand = Command.make("rm", config).pipe(
         local: flags.local,
         projectRef: flags.projectRef,
       }).pipe(
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // project-ref isn't on the safe-flags allowlist, so it stays redacted in telemetry.
         withCommandTelemetry({ flags: telemetryFlags }),
       );
     }).pipe(withJsonErrorHandling),

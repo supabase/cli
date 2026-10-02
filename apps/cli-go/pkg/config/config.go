@@ -239,12 +239,12 @@ type (
 		Functions    FunctionConfig `toml:"functions" json:"functions"`
 		Analytics    analytics      `toml:"analytics" json:"analytics"`
 		Experimental experimental   `toml:"experimental" json:"experimental"`
-		// Workers is parsed but never read here. The [workers] section is owned by
+		// Compute is parsed but never read here. The [compute] section is owned by
 		// the TS CLI; this field exists only so a config the TS schema accepts does
 		// not trip UnmarshalExact in the delegated Go child (`flags.LoadConfig`).
 		// The json tag is the one that matters: the decoder runs with
 		// dc.TagName = "json". Omitted from toml so Go never emits the section.
-		Workers map[string]any `toml:"-" json:"workers"`
+		Compute map[string]any `toml:"-" json:"compute"`
 	}
 
 	config struct {
@@ -342,6 +342,8 @@ type (
 		S3Region        string         `toml:"s3_region" json:"s3_region"`
 		S3AccessKey     string         `toml:"s3_access_key" json:"s3_access_key"`
 		S3SecretKey     string         `toml:"s3_secret_key" json:"s3_secret_key"`
+		Stack           bool           `toml:"-" json:"stack"`
+		Compute         bool           `toml:"-" json:"compute"`
 		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
 		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
 		Inspect         inspect        `toml:"inspect" json:"inspect"`
@@ -596,6 +598,7 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		return err
 	}
 	v = normalizeDeprecatedSMTPConfig(v, fileConfig)
+	v = normalizeDeprecatedOrioleDBConfig(v, fileConfig)
 	// Find [remotes.*] block to override base config
 	idToName := map[string]string{}
 	for name, remote := range v.GetStringMap("remotes") {
@@ -642,10 +645,14 @@ func normalizeDeprecatedSMTPConfig(v, fileConfig *viper.Viper) *viper.Viper {
 	if !changed {
 		return v
 	}
-	// Rebuild the viper from the rewritten settings so the now-removed
-	// `inbucket` key does not trip UnmarshalExact. Preserve the env-binding
-	// options from the original instance, otherwise SUPABASE_-prefixed env
-	// overrides bound via ExperimentalBindStruct would be silently dropped.
+	return rebuildViperFromSettings(settings, v)
+}
+
+// rebuildViperFromSettings rebuilds a viper instance from rewritten settings so a
+// now-removed deprecated key does not trip UnmarshalExact. It preserves the
+// env-binding options from the original instance, otherwise SUPABASE_-prefixed
+// env overrides bound via ExperimentalBindStruct would be silently dropped.
+func rebuildViperFromSettings(settings map[string]any, original *viper.Viper) *viper.Viper {
 	u := viper.NewWithOptions(
 		viper.ExperimentalBindStruct(),
 		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
@@ -653,9 +660,63 @@ func normalizeDeprecatedSMTPConfig(v, fileConfig *viper.Viper) *viper.Viper {
 	u.SetEnvPrefix("SUPABASE")
 	u.AutomaticEnv()
 	if err := u.MergeConfigMap(settings); err != nil {
-		return v
+		return original
 	}
 	return u
+}
+
+func normalizeDeprecatedOrioleDBConfig(v, fileConfig *viper.Viper) *viper.Viper {
+	settings := v.AllSettings()
+	changed := promoteDeprecatedOrioleDBVersion(settings, fileConfig, "", "experimental.orioledb_version", "db.orioledb_version")
+	if remotes, ok := settings["remotes"].(map[string]any); ok {
+		for name, raw := range remotes {
+			remote, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			legacyKey := fmt.Sprintf("remotes.%s.experimental.orioledb_version", name)
+			dbKey := fmt.Sprintf("remotes.%s.db.orioledb_version", name)
+			if promoteDeprecatedOrioleDBVersion(remote, fileConfig, name, legacyKey, dbKey) {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return v
+	}
+	return rebuildViperFromSettings(settings, v)
+}
+
+// promoteDeprecatedOrioleDBVersion promotes a non-empty legacy `experimental.orioledb_version`
+// onto `db.orioledb_version` in settings when the latter is absent or empty in the user's
+// file (the template always writes `db.orioledb_version = ""`, so an unset value is
+// indistinguishable from an explicit empty string), and warns on stderr whenever the legacy
+// value is non-empty. remoteName is empty for the top-level config, or a `[remotes.*]` name
+// for the warning message.
+func promoteDeprecatedOrioleDBVersion(settings map[string]any, fileConfig *viper.Viper, remoteName, legacyKey, dbKey string) bool {
+	legacyVal := fileConfig.GetString(legacyKey)
+	if legacyVal == "" {
+		return false
+	}
+	if fileConfig.GetString(dbKey) == "" {
+		db, ok := settings["db"].(map[string]any)
+		if !ok {
+			db = map[string]any{}
+			settings["db"] = db
+		}
+		db["orioledb_version"] = legacyVal
+	}
+	if remoteName == "" {
+		fmt.Fprintln(os.Stderr, "WARN: experimental.orioledb_version is deprecated. Please use db.orioledb_version instead.")
+	} else {
+		fmt.Fprintf(
+			os.Stderr,
+			"WARN: remotes.%s.experimental.orioledb_version is deprecated. Please use remotes.%s.db.orioledb_version instead.\n",
+			remoteName,
+			remoteName,
+		)
+	}
+	return true
 }
 
 // renameDeprecatedSMTP removes the deprecated `inbucket` key from settings. When
@@ -822,11 +883,11 @@ func (c *config) Load(path string, fsys fs.FS, overrides ...ConfigEditor) error 
 	// Update image versions
 	switch c.Db.MajorVersion {
 	case 13:
-		c.Db.Image = pg15
+		c.Db.Image = Images.Pg15
 	case 14:
-		c.Db.Image = pg14
+		c.Db.Image = Images.Pg14
 	case 15:
-		c.Db.Image = pg15
+		c.Db.Image = Images.Pg15
 	}
 	if c.Db.MajorVersion > 14 {
 		if version, err := fs.ReadFile(fsys, builder.PostgresVersionPath); err == nil {
@@ -1032,11 +1093,11 @@ func (c *config) Validate(fsys fs.FS) error {
 		return errors.New("Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.")
 	case 13, 14:
 	case 15, 17:
-		if len(c.Experimental.OrioleDBVersion) > 0 {
-			if VersionCompare(c.Experimental.OrioleDBVersion, "15.1.1.13") > 0 {
-				c.Db.Image = fmt.Sprintf("supabase/postgres:%s-orioledb", c.Experimental.OrioleDBVersion)
+		if len(c.Db.OrioleDBVersion) > 0 {
+			if VersionCompare(c.Db.OrioleDBVersion, "15.1.1.13") > 0 {
+				c.Db.Image = fmt.Sprintf("supabase/postgres:%s-orioledb", c.Db.OrioleDBVersion)
 			} else {
-				c.Db.Image = "supabase/postgres:orioledb-" + c.Experimental.OrioleDBVersion
+				c.Db.Image = "supabase/postgres:orioledb-" + c.Db.OrioleDBVersion
 			}
 			if err := assertEnvLoaded(c.Experimental.S3Host); err != nil {
 				return err

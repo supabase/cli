@@ -17,9 +17,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
       const spawner = yield* ChildProcessSpawner;
 
       const spawnError = () =>
-        // Never embed the spawn error verbatim: it can leak the full argv and
-        // environment of the failed exec (CWE-214/209). Emit a fixed,
-        // credential-free message that still points at the likely cause.
+        // The raw spawn error can leak the failed exec's full argv and environment, so emit a
+        // fixed, credential-free message instead.
         new DockerRunError({
           message: `failed to run docker. ${SUGGEST_DOCKER_INSTALL}`,
           reason: "spawn",
@@ -37,14 +36,23 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
         return bytes;
       };
 
-      const resolveImage = makeDockerImageResolver(spawner);
-
-      const withResolvedImage = (
-        opts: DockerRunOpts,
-      ): Effect.Effect<DockerRunOpts, DockerRunError> =>
-        opts.skipImageResolve === true
-          ? Effect.succeed(opts)
-          : resolveImage(opts.image).pipe(Effect.map((image) => ({ ...opts, image })));
+      const withResolvedOptions = Effect.fnUntraced(function* (opts: DockerRunOpts) {
+        const image =
+          opts.skipImageResolve === true
+            ? opts.image
+            : yield* makeDockerImageResolver(spawner, opts.projectEnvValues)(opts.image);
+        const inBitbucket = yield* isBitbucketPipeline(opts.projectEnvValues).pipe(
+          Effect.mapError(
+            (error) =>
+              new DockerRunError({
+                message: `failed to resolve Docker environment: ${error.message}`,
+                reason: "config",
+                daemonDown: false,
+              }),
+          ),
+        );
+        return applyBitbucketDockerFilter({ ...opts, image }, inBitbucket);
+      });
 
       return DockerRun.of({
         runCapture: (opts, captureOpts) =>
@@ -52,14 +60,10 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
             Effect.gen(function* () {
               const teeStderr = captureOpts?.teeStderr ?? false;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
-              // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
-              // captured and redirected to `--file`/post-processing. `dockerExec`
-              // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
-              // errBuf)`.
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
+              // Pipe stdout/stderr (rather than inherit) so the output can be captured and
+              // redirected to `--file`/post-processing.
               const handle = yield* spawnContainerCli(spawner, args, {
                 stdin: "inherit",
                 stdout: "pipe",
@@ -83,11 +87,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
                   Stream.runForEach(handle.stderr, (chunk) =>
                     Effect.sync(() => {
                       stderrChunks.push(chunk);
-                      // Tee container stderr to the parent terminal in real time only
-                      // when the caller opts in — `db dump` mirrors Go's
-                      // `io.MultiWriter(os.Stderr, errBuf)`, while the edge-runtime /
-                      // pg-delta path keeps stderr buffered (Go passes a bare
-                      // `bytes.Buffer`) and surfaces it only on failure.
+                      // Tee container stderr to the parent terminal in real time only when the
+                      // caller opts in; otherwise it's buffered and surfaced only on failure.
                       if (teeStderr) globalThis.process.stderr.write(chunk);
                     }),
                   ),
@@ -109,10 +110,8 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
               const teeStderr = streamOpts.teeStderr ?? false;
               const captureStderr = streamOpts.captureStderr ?? true;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
               const handle = yield* spawnContainerCli(spawner, args, {
                 stdin: "inherit",
                 stdout: "pipe",
@@ -123,10 +122,9 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
               }).pipe(Effect.mapError(spawnError));
 
               const stderrChunks: Array<Uint8Array> = [];
-              // Stream stdout to the caller's sink in arrival order while draining
-              // stderr concurrently — reading one pipe to completion before the other
-              // would deadlock once the unread pipe's OS buffer fills. Go does the same
-              // via `stdcopy.StdCopy(stdout, stderr, logs)`.
+              // Stream stdout to the caller's sink in arrival order while draining stderr
+              // concurrently — reading one pipe to completion before the other would deadlock
+              // once the unread pipe's OS buffer fills.
               yield* Effect.all(
                 [
                   // Map the stdout pipe's own read errors to a docker error while letting
@@ -155,19 +153,13 @@ export const dockerRunLayer: Layer.Layer<DockerRun, never, ProcessControl | Chil
           Effect.scoped(
             Effect.gen(function* () {
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-              const resolvedOpts = yield* withResolvedImage(opts);
-              const args = buildDockerArgs(
-                applyBitbucketDockerFilter(resolvedOpts, isBitbucketPipeline()),
-              );
-              // Pass run env (incl. PGPASSWORD) through the docker child's own
-              // environment, not the argv. `buildDockerArgs` emits the
-              // key-only `-e KEY` form, so docker inherits each value from here
-              // and the secret never lands in `ps`/`/proc/<pid>/cmdline`.
-              // `extendEnv: true` keeps the rest of process.env (PATH, DOCKER_HOST,
-              // …) so the docker invocation behaves like the parent shell's.
-              // Never embed the spawn error verbatim: it can leak the full argv and
-              // environment of the failed exec (CWE-214/209). Emit a fixed,
-              // credential-free message that still points at the likely cause.
+              const resolvedOpts = yield* withResolvedOptions(opts);
+              const args = buildDockerArgs(resolvedOpts);
+              // Pass run env (incl. PGPASSWORD) through the docker child's own environment, not
+              // the argv — `buildDockerArgs` emits the key-only `-e KEY` form, so docker inherits
+              // each value from here. `extendEnv: true` keeps the rest of process.env (PATH,
+              // DOCKER_HOST, …) so the invocation behaves like the parent shell's. The spawn error
+              // below omits the raw argv/environment for the same reason as `spawnError` above.
               const exitCode = yield* containerCliExitCode(spawner, args, {
                 stdin: "inherit",
                 stdout: "inherit",

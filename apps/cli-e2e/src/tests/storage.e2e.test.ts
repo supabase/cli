@@ -39,10 +39,6 @@ async function clearOverrides(apiUrl: string): Promise<void> {
   await fetch(`${apiUrl}/_ctrl/overrides`, { method: "DELETE" });
 }
 
-// ---------------------------------------------------------------------------
-// storage ls
-// ---------------------------------------------------------------------------
-
 describe("storage ls", () => {
   testBehaviour("lists objects in bucket", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
@@ -105,10 +101,6 @@ describe("storage ls", () => {
     await clearOverrides(apiUrl);
   });
 });
-
-// ---------------------------------------------------------------------------
-// storage cp
-// ---------------------------------------------------------------------------
 
 describe("storage cp", () => {
   testBehaviour("uploads local file to storage", async ({ workspace, run, apiUrl }) => {
@@ -254,10 +246,6 @@ describe("storage cp", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// storage mv
-// ---------------------------------------------------------------------------
-
 describe("storage mv", () => {
   testBehaviour("moves file within bucket", async ({ workspace, run, apiUrl }) => {
     setupStorageWorkspace(workspace.path, apiUrl);
@@ -343,10 +331,6 @@ describe("storage mv", () => {
     await clearOverrides(apiUrl);
   });
 });
-
-// ---------------------------------------------------------------------------
-// storage rm
-// ---------------------------------------------------------------------------
 
 describe("storage rm", () => {
   testBehaviour("removes a file from storage", async ({ workspace, run, apiUrl }) => {

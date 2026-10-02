@@ -34,15 +34,10 @@ const config = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Exported so integration tests can drive the exact wiring `Command.withHandler`
-// uses below, instead of re-asserting the generic instrumentation mechanism.
 export const linkHandler = (flags: LinkFlags) =>
   link(flags).pipe(
-    // Only `--project-ref` is `markFlagTelemetrySafe` in Go (cmd/link.go:52).
-    // The boolean `--skip-pooler` is logged verbatim regardless; `--password`
-    // stays redacted. CLI-2167: `--project-ref` now also accepts a branch
-    // name, so it's only safe to log verbatim when it's actually ref-shaped
-    // — otherwise a user-created branch name would leak to PostHog verbatim.
+    // `--project-ref` is only safe to log verbatim when it's ref-shaped — it can also be a
+    // branch name, which is user data. `--skip-pooler` is always safe; `--password` stays redacted.
     withCommandTelemetry({
       flags,
       safeFlags:

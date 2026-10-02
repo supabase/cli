@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "no
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { URL } from "node:url";
 import {
-  FunctionResponse,
+  FunctionResponse_Output,
   operationDefinitions,
   SupabaseApiInputError,
   type ApiClient,
@@ -16,6 +16,7 @@ import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { bold } from "../../command-internal/colors.ts";
@@ -33,6 +34,7 @@ import {
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
+import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
@@ -100,14 +102,12 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
   /**
-   * Optional shell-specific styling hooks. Both default to identity (plain
-   * text); the CLI injects Go's aqua/bold here so this shared module stays
-   * free of CLI-specific rendering.
+   * Optional shell-specific styling hooks. All default to identity (plain text); keeping them
+   * injected keeps this shared module free of CLI-specific rendering.
    * - `styleIdentifier`: the project ref in the stdout success line.
-   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
-   *   the functions dir in the no-functions error.
-   * - `styleWarning`: the `WARNING:` token on the "Docker is not running"
-   *   fallback line. Go: `utils.Yellow("WARNING:")` (`deploy.go:60`).
+   * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and the functions dir in
+   *   the no-functions error.
+   * - `styleWarning`: the `WARNING:` token on the "Docker is not running" fallback line.
    */
   readonly styleIdentifier?: (text: string) => string;
   readonly styleEmphasis?: (text: string) => string;
@@ -147,7 +147,7 @@ interface BundledFunction {
   readonly body: Uint8Array;
 }
 
-type RemoteFunction = typeof FunctionResponse.Type;
+type RemoteFunction = typeof FunctionResponse_Output.Type;
 type DeployFunctionResponse = typeof operationDefinitions.v1DeployAFunction.outputSchema.Type;
 type BulkUpdateFunction =
   (typeof operationDefinitions.v1BulkUpdateFunctions.inputSchema.Type.body)[number];
@@ -170,7 +170,9 @@ const defaultManifestFunctionConfig: ManifestFunctionConfig = {
   env: {},
 };
 
-const decodeFunctionListResponseSchema = Schema.decodeUnknownSync(Schema.Array(FunctionResponse));
+const decodeFunctionListResponseSchema = Schema.decodeUnknownSync(
+  Schema.Array(FunctionResponse_Output),
+);
 const decodeDeployFunctionResponseSchema = Schema.decodeUnknownSync(
   operationDefinitions.v1DeployAFunction.outputSchema,
 );
@@ -198,11 +200,9 @@ function decodeFunctionListResponse(value: unknown): ReadonlyArray<RemoteFunctio
   return decodeFunctionListResponseSchema(normalized);
 }
 
-// Format a raw response body for an unexpected-status error message. When the
-// body is JSON, re-stringify it so the message stays byte-identical to the
-// previous `JSON.stringify(parsedBody)` form; otherwise fall back to the raw
-// text (a non-JSON body was previously impossible because the response was
-// eagerly JSON-decoded before the status check).
+// Formats a raw response body for an unexpected-status error message: re-stringifies JSON so the
+// message stays byte-identical to a parsed-then-stringified body, falling back to raw text
+// otherwise.
 function formatUnexpectedStatusBody(text: string): string {
   try {
     return JSON.stringify(JSON.parse(text));
@@ -298,18 +298,14 @@ function explicitBooleanFlag(
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 /**
- * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`, deleted
- * in CLI-1970; last present at commit 7b469f5b3): the eszip
- * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
- * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
- * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
- * strict parity over the TS-only forwarding that #5645 had added.
+ * The eszip bundler container receives only `NPM_CONFIG_REGISTRY` from the host environment.
+ * `NPM_AUTH_TOKEN` is intentionally not forwarded, even though a caller might expect it to be.
  */
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
 
 function toBundledFileUrl(hostPath: string) {
   const url = new URL("file:///");
-  url.pathname = toDockerPath(hostPath).replaceAll("%", "%25");
+  url.pathname = toDockerPath(hostPath, { resolve }).replaceAll("%", "%25");
   return url.toString();
 }
 
@@ -322,6 +318,40 @@ export interface DockerBind {
 
 export function formatDockerBind(bind: DockerBind) {
   return `${bind.hostPath}:${bind.containerPath}:${bind.mode}`;
+}
+
+/**
+ * Drops every bind another bind already supplies verbatim: same mode, host
+ * path strictly beneath the other's, container path at the same relative
+ * offset. The import walker and import-map target enumeration routinely emit
+ * such pairs, and Docker rejects `docker cp` into a created container whose config nests a file
+ * bind inside a read-only parent bind. A bind that overrides its parent's source, mode, or
+ * container mapping is never collapsed.
+ */
+export function pruneRedundantDockerBinds(
+  binds: ReadonlyArray<DockerBind>,
+): ReadonlyArray<DockerBind> {
+  const entries = binds.map((bind) => ({ bind, host: toSlash(bind.hostPath) }));
+  const isCovered = (child: { readonly bind: DockerBind; readonly host: string }) =>
+    entries.some((parent) => {
+      if (parent.bind.mode !== child.bind.mode) {
+        return false;
+      }
+      // Only a root path keeps its trailing separator through resolve/realpath,
+      // so each prefix appends one exactly when its own side lacks it; the
+      // host-equality guard is what then keeps a root bind from covering
+      // itself.
+      const hostPrefix = parent.host.endsWith("/") ? parent.host : `${parent.host}/`;
+      const containerPrefix = parent.bind.containerPath.endsWith("/")
+        ? parent.bind.containerPath
+        : `${parent.bind.containerPath}/`;
+      return (
+        child.host !== parent.host &&
+        child.host.startsWith(hostPrefix) &&
+        child.bind.containerPath === `${containerPrefix}${child.host.slice(hostPrefix.length)}`
+      );
+    });
+  return entries.filter((entry) => !isCovered(entry)).map((entry) => entry.bind);
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
@@ -350,13 +380,9 @@ function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
 }
 
 /**
- * Go parity (`apps/cli-go/pkg/function/deploy.go:251-284`, via
- * `afero.IOFS.Open` → `fs.ValidPath`): `writeForm`'s `addFile` opens every
- * uploaded path through an `fs.FS`, which rejects any path containing a `..`
- * element before the read (and thus the upload) happens. A workdir≠git-root
- * layout can otherwise produce a multipart `File` name like
- * `../packages/shared/src/index.ts` that escapes the anchor dir — reject it
- * the same way Go does, before any upload is attempted.
+ * Rejects any path containing a `..` segment before it's uploaded. A workdir that differs from
+ * the git root can otherwise produce a multipart `File` name like
+ * `../packages/shared/src/index.ts` that escapes the anchor directory.
  */
 function hasParentPathSegment(relativePath: string) {
   return toSlash(relativePath)
@@ -380,9 +406,8 @@ async function realpathIfExists(pathname: string) {
   }
 }
 
-async function resolveFunctionsSourceRoot(projectRoot: string) {
-  return (await findGitRootPath(projectRoot)) ?? resolve(projectRoot);
-}
+const resolveFunctionsSourceRoot = (projectRoot: string) =>
+  findGitRootPath(projectRoot).pipe(Effect.map(Option.getOrElse(() => resolve(projectRoot))));
 
 function humanSize(bytes: number) {
   if (bytes < 1000) {
@@ -639,11 +664,8 @@ function substituteImportMapValue(
     if (prefix.length === 0) {
       continue;
     }
-    // Import-maps spec (implemented by Deno): a key matches exactly, or as a
-    // prefix only when it ends with "/". Go's walker prefix-matches every key
-    // (pkg/function/deno.go:150-155) — intentional divergence, see
-    // go-cli-divergences.md: the lax match fabricates paths the runtime
-    // can never resolve (the ENOTDIR family this PR fixes).
+    // Import-maps spec (implemented by Deno): a key matches exactly, or as a prefix only when it
+    // ends with "/" — see go-cli-divergences.md for why this differs from a naive prefix match.
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing
       // `/` is an invalid mapping — dropped, not concatenated.
@@ -737,10 +759,8 @@ async function walkImportPaths(
           await onWarning(`WARN: ${message}\n`);
           continue;
         }
-        // Go aborts on any other read error (pkg/function/deno.go:131-136); an
-        // ENOTDIR (import path routed through a file) gets Go's message instead
-        // of an unhandled raw Node error, via a classified error so telemetry
-        // books it as user-fixable config instead of a panic.
+        // An ENOTDIR (import path routed through a file) gets a classified, user-facing message
+        // instead of an unhandled raw Node error, so telemetry books it as user-fixable config.
         if (error.code === "ENOTDIR") {
           throw new FunctionImportNotDirectoryError({
             message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
@@ -767,10 +787,9 @@ async function walkImportPaths(
       );
       modulePath = toSlash(modulePath);
 
-      // A module file needs a dot in the FINAL path segment (Go's path.Ext
-      // semantics): a dot earlier in the path (`dist/index.mjs/core`) is a
-      // directory-shaped path, not a module file. Not basename(): a
-      // trailing-slash directory import must yield an empty final segment here.
+      // A module file needs a dot in the final path segment: a dot earlier in the path
+      // (`dist/index.mjs/core`) is a directory-shaped path, not a module file. Not basename():
+      // a trailing-slash directory import must yield an empty final segment here.
       const finalSegment = modulePath.slice(modulePath.lastIndexOf("/") + 1);
       if (!finalSegment.includes(".")) {
         continue;
@@ -995,9 +1014,8 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    // Uploaded file names are anchored at the workdir like Go's `toRelPath`
-    // (`apps/cli-go/pkg/function/deploy.go:94-103`, relative to `os.Getwd()`),
-    // NOT at `sourceRoot` — see the CLI-1985 note in `deployViaApi`.
+    // Uploaded file names are anchored at the workdir, not at `sourceRoot` — see the note in
+    // `deployViaApi`.
     const relativePath = toApiRelativePath(workdir, pathname);
     if (hasParentPathSegment(relativePath)) {
       throw new Error(`failed to read file: open ${relativePath}: invalid argument`);
@@ -1126,10 +1144,8 @@ async function writeSourceDeployForm(
 }
 
 /**
- * Server-recorded metadata paths are anchored at the workdir, matching Go's
- * `toRelPath` (`apps/cli-go/pkg/function/deploy.go:42-57,94-103`): relative to
- * `os.Getwd()` (the Go CLI chdirs to the workdir), forward slashes via
- * `filepath.ToSlash` — see the CLI-1985 note in `deployViaApi`.
+ * Server-recorded metadata paths are anchored at the workdir, with forward slashes regardless of
+ * platform — see the note in `deployViaApi`.
  */
 function createSourceMetadata(
   workdir: string,
@@ -1191,21 +1207,39 @@ function sanitizeDockerBinds(
   return result;
 }
 
-export async function buildDockerBinds(
+type DockerBindsOptions = {
+  readonly additionalModuleRoots?: ReadonlyArray<string>;
+  readonly onWarning?: (message: string) => Promise<void>;
+  readonly skipMissingImportMapTargets?: boolean;
+  /** Resolved marker presence, including an explicitly empty project value. */
+  readonly bitbucketCloneDirDefined?: boolean;
+};
+
+export const buildDockerBinds = (
   projectId: string,
   functionsDir: string,
   outputDir: string,
   config: ResolvedDeployFunctionConfig,
-  options: {
-    readonly additionalModuleRoots?: ReadonlyArray<string>;
-    readonly onWarning?: (message: string) => Promise<void>;
-    readonly skipMissingImportMapTargets?: boolean;
-  } = {},
+  options: DockerBindsOptions = {},
+) =>
+  resolveFunctionsSourceRoot(resolve(functionsDir, "..", "..")).pipe(
+    Effect.flatMap((sourceRoot) =>
+      Effect.promise(() =>
+        buildDockerBindsWithin(sourceRoot, projectId, functionsDir, outputDir, config, options),
+      ),
+    ),
+  );
+
+async function buildDockerBindsWithin(
+  sourceRoot: string,
+  projectId: string,
+  functionsDir: string,
+  outputDir: string,
+  config: ResolvedDeployFunctionConfig,
+  options: DockerBindsOptions,
 ): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
-  const projectRoot = resolve(functionsDir, "..", "..");
-  const sourceRoot = await resolveFunctionsSourceRoot(projectRoot);
   const realSourceRoot = await realpath(sourceRoot);
   const moduleRoots = [
     realSourceRoot,
@@ -1225,12 +1259,12 @@ export async function buildDockerBinds(
   const binds: DockerBind[] = [
     {
       hostPath: hostFunctionsDir,
-      containerPath: toDockerPath(hostFunctionsDir),
+      containerPath: toDockerPath(hostFunctionsDir, { resolve }),
       mode: "ro",
       externalScope: false,
     },
   ];
-  if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
+  if (options.bitbucketCloneDirDefined !== true) {
     const cacheVolume = edgeRuntimeCacheVolume(projectId);
     binds.unshift({
       hostPath: cacheVolume.name,
@@ -1243,7 +1277,7 @@ export async function buildDockerBinds(
   if (!hostOutputDir.startsWith(hostFunctionsDir)) {
     binds.push({
       hostPath: hostOutputDir,
-      containerPath: toDockerPath(hostOutputDir),
+      containerPath: toDockerPath(hostOutputDir, { resolve }),
       mode: "rw",
       externalScope: false,
     });
@@ -1258,7 +1292,7 @@ export async function buildDockerBinds(
     if (contained) {
       extraBinds.push({
         hostPath,
-        containerPath: toDockerPath(hostPath),
+        containerPath: toDockerPath(hostPath, { resolve }),
         mode: "ro",
         externalScope: false,
       });
@@ -1293,7 +1327,7 @@ export async function buildDockerBinds(
       if (!contained && kind === "scope") {
         const scopeBind: DockerBind = {
           hostPath,
-          containerPath: toDockerPath(target),
+          containerPath: toDockerPath(target, { resolve }),
           mode: "ro",
           externalScope: true,
         };
@@ -1390,7 +1424,7 @@ interface BundleFunctionWithDockerOptions {
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-const bundleFunctionWithDocker = Effect.fnUntraced(function* (
+const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(function* (
   options: BundleFunctionWithDockerOptions,
 ) {
   const {
@@ -1403,10 +1437,8 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     styleEmphasis = (text: string) => text,
     projectEnvValues,
   } = options;
+  const bitbucketCloneDirDefined = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
   const output = yield* Output;
-  // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
-  // (`internal/functions/deploy/bundle.go:30`) — the handler injects
-  // the bold styling via `styleEmphasis`; next stays plain.
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
@@ -1424,25 +1456,23 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       });
     }
     const outputPath = join(outputDir, "output.eszip");
-    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
-    // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
-    // prefix or not (see the helper's doc in `functions.shared.ts`).
-    const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
-    const binds = yield* Effect.promise(() =>
-      buildDockerBinds(projectId, functionsDir, outputDir, config, {
-        onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
-      }),
-    );
-    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
-    // — resolves ECR->GHCR->Docker-Hub candidates and pulls with retry, per
-    // container, before ever touching the network/volume. Deliberately NOT
-    // hoisted out of the per-function loop the way `download.ts`'s
-    // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
-    // `DockerStart` exactly, and the first resolve failure aborts the loop,
-    // so the only cost is one cached `docker image inspect` per function.
+    // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
+    // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
+    const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
+      bitbucketCloneDirDefined,
+      onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+    });
+    // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
+    // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
+    // cost is one cached `docker image inspect` per function.
     const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
+    yield* ensureDockerNamedVolume(
+      edgeRuntimeCacheVolume(projectId).name,
+      projectId,
+      projectEnvValues,
+    );
 
     const env: Array<string> = [];
     if (
@@ -1457,18 +1487,18 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const containerArgs = [
       "bundle",
       "--entrypoint",
-      toDockerPath(config.entrypoint),
+      toDockerPath(config.entrypoint, { resolve }),
       "--output",
-      toDockerPath(outputPath),
+      toDockerPath(outputPath, { resolve }),
     ];
     if (
       config.importMap.length > 0 &&
       !shouldUseDenoJsonDiscovery(config.entrypoint, config.importMap)
     ) {
-      containerArgs.push("--import-map", toDockerPath(config.importMap));
+      containerArgs.push("--import-map", toDockerPath(config.importMap, { resolve }));
     }
     for (const staticFile of config.staticFiles) {
-      containerArgs.push("--static", toDockerPath(staticFile));
+      containerArgs.push("--static", toDockerPath(staticFile, { resolve }));
     }
     if (verbose || process.env["DEBUG"] === "true") {
       containerArgs.push("--verbose");
@@ -1480,17 +1510,14 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       networkMode,
       binds: binds.map(formatDockerBind),
       env,
-      // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
-      // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is
-      // `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+      // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
       // own `projectRoot`.
-      workingDir: toDockerPath(resolve(functionsDir, "..", "..")),
+      workingDir: toDockerPath(resolve(functionsDir, "..", ".."), { resolve }),
       containerArgs,
     });
 
-    // Live-tees each chunk to `output.raw` as it arrives (Go's
-    // `DockerRunOnceWithConfig` copies the container's log stream live)
-    // rather than buffering the whole run until exit.
+    // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
+    // until exit.
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
@@ -1520,6 +1547,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     );
     const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
     const hash = Buffer.from(sha256).toString("hex");
+    yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
     return {
       slug: config.slug,
       metadata: createBundledMetadata(config, hash),
@@ -1532,7 +1560,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   }
 });
 
-const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(function* (
+  api: ApiClient,
+  projectRef: string,
+) {
   let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* api
@@ -1641,7 +1672,7 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   }
 });
 
-const uploadFunctionSource = Effect.fnUntraced(function* (
+const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(function* (
   api: ApiClient,
   projectRef: string,
   sourceRoot: string,
@@ -1723,7 +1754,7 @@ function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): Bulk
   };
 }
 
-const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
+const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunctions")(function* (
   api: ApiClient,
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
@@ -1779,7 +1810,7 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
   return yield* Effect.fail(lastError ?? new Error("failed to bulk update"));
 });
 
-const upsertBundledFunction = Effect.fnUntraced(function* (
+const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(function* (
   api: ApiClient,
   projectRef: string,
   bundled: BundledFunction,
@@ -1862,7 +1893,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
   return yield* Effect.fail(lastError ?? new Error("failed to upsert function"));
 });
 
-const deleteRemoteFunction = Effect.fnUntraced(function* (
+const deleteRemoteFunction = Effect.fn("functions.deploy.deleteFunction")(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,
@@ -1886,7 +1917,7 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
   );
 });
 
-export const discoverFunctionSlugs = Effect.fnUntraced(function* (
+export const discoverFunctionSlugs = Effect.fn("functions.deploy.discoverSlugs")(function* (
   projectRoot: string,
   configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
 ) {
@@ -1935,130 +1966,134 @@ const validateConfigFunctionSlugs = Effect.fnUntraced(function* (
   return configSlugs;
 });
 
-export const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
-  readonly slugs: ReadonlyArray<string>;
-  readonly cwd: string;
-  readonly projectRoot: string;
-  readonly supabaseDir: string;
-  readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-  readonly importMapOverride: Option.Option<string>;
-  readonly noVerifyJwtOverride: Option.Option<boolean>;
-}) {
-  const output = yield* Output;
-  const functionsDir = join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
-  const seenDeprecatedImportMap = new Set<string>();
-  const seenFallbackImportMap = new Set<string>();
-  const resolved: ResolvedDeployFunctionConfig[] = [];
+export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs")(
+  function* (input: {
+    readonly slugs: ReadonlyArray<string>;
+    readonly cwd: string;
+    readonly projectRoot: string;
+    readonly supabaseDir: string;
+    readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+    readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+    readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+    readonly importMapOverride: Option.Option<string>;
+    readonly noVerifyJwtOverride: Option.Option<boolean>;
+  }) {
+    const output = yield* Output;
+    const functionsDir = join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
+    const seenDeprecatedImportMap = new Set<string>();
+    const seenFallbackImportMap = new Set<string>();
+    const resolved: ResolvedDeployFunctionConfig[] = [];
 
-  const fallbackImportMapPath = join(functionsDir, "import_map.json");
-  const fallbackExists = yield* Effect.promise(() => isFile(fallbackImportMapPath));
+    const fallbackImportMapPath = join(functionsDir, "import_map.json");
+    const fallbackExists = yield* Effect.promise(() => isFile(fallbackImportMapPath));
 
-  const importMapOverride = Option.match(input.importMapOverride, {
-    onNone: () => "",
-    onSome: (pathname) => resolve(input.cwd, pathname),
-  });
-
-  for (const slug of input.slugs) {
-    const configured = input.configFunctions[slug] ?? defaultManifestFunctionConfig;
-    const override = input.configDeclaredFunctions[slug];
-    const enabled = configured.enabled;
-    const verifyJwt = Option.match(input.noVerifyJwtOverride, {
-      onNone: () =>
-        hasOwnKey(input.rawConfigFunctions[slug], "verify_jwt") ? configured.verify_jwt : undefined,
-      onSome: (noVerifyJwt) => !noVerifyJwt,
+    const importMapOverride = Option.match(input.importMapOverride, {
+      onNone: () => "",
+      onSome: (pathname) => resolve(input.cwd, pathname),
     });
 
-    const defaultEntrypoint = defaultFunctionEntrypoint(functionsDir, slug);
-    const entrypoint =
-      configured.entrypoint === undefined || configured.entrypoint.length === 0
-        ? defaultEntrypoint
-        : resolve(
-            configured.entrypoint.startsWith(".") || !isAbsolute(configured.entrypoint)
-              ? join(input.supabaseDir, configured.entrypoint)
-              : configured.entrypoint,
+    for (const slug of input.slugs) {
+      const configured = input.configFunctions[slug] ?? defaultManifestFunctionConfig;
+      const override = input.configDeclaredFunctions[slug];
+      const enabled = configured.enabled;
+      const verifyJwt = Option.match(input.noVerifyJwtOverride, {
+        onNone: () =>
+          hasOwnKey(input.rawConfigFunctions[slug], "verify_jwt")
+            ? configured.verify_jwt
+            : undefined,
+        onSome: (noVerifyJwt) => !noVerifyJwt,
+      });
+
+      const defaultEntrypoint = defaultFunctionEntrypoint(functionsDir, slug);
+      const entrypoint =
+        configured.entrypoint === undefined || configured.entrypoint.length === 0
+          ? defaultEntrypoint
+          : resolve(
+              configured.entrypoint.startsWith(".") || !isAbsolute(configured.entrypoint)
+                ? join(input.supabaseDir, configured.entrypoint)
+                : configured.entrypoint,
+            );
+
+      let importMap = importMapOverride;
+      if (importMap.length === 0) {
+        let configuredImportMap = "";
+        if (configured.import_map.length > 0) {
+          configuredImportMap = resolve(
+            configured.import_map.startsWith(".") || !isAbsolute(configured.import_map)
+              ? join(input.supabaseDir, configured.import_map)
+              : configured.import_map,
           );
+        }
 
-    let importMap = importMapOverride;
-    if (importMap.length === 0) {
-      let configuredImportMap = "";
-      if (configured.import_map.length > 0) {
-        configuredImportMap = resolve(
-          configured.import_map.startsWith(".") || !isAbsolute(configured.import_map)
-            ? join(input.supabaseDir, configured.import_map)
-            : configured.import_map,
-        );
-      }
+        if (
+          configuredImportMap.length > 0 &&
+          !(
+            (override === undefined || override.import_map.length === 0) &&
+            entrypoint !== defaultEntrypoint &&
+            configuredImportMap === defaultFunctionImportMap(functionsDir, slug)
+          )
+        ) {
+          importMap = configuredImportMap;
+        } else {
+          const functionDir = dirname(entrypoint);
+          const denoJson = join(functionDir, "deno.json");
+          const denoJsonc = join(functionDir, "deno.jsonc");
+          const deprecatedImportMap = join(functionDir, "import_map.json");
 
-      if (
-        configuredImportMap.length > 0 &&
-        !(
-          (override === undefined || override.import_map.length === 0) &&
-          entrypoint !== defaultEntrypoint &&
-          configuredImportMap === defaultFunctionImportMap(functionsDir, slug)
-        )
-      ) {
-        importMap = configuredImportMap;
-      } else {
-        const functionDir = dirname(entrypoint);
-        const denoJson = join(functionDir, "deno.json");
-        const denoJsonc = join(functionDir, "deno.jsonc");
-        const deprecatedImportMap = join(functionDir, "import_map.json");
-
-        if (yield* Effect.promise(() => isFile(denoJson))) {
-          importMap = denoJson;
-        } else if (yield* Effect.promise(() => isFile(denoJsonc))) {
-          importMap = denoJsonc;
-        } else if (yield* Effect.promise(() => isFile(deprecatedImportMap))) {
-          importMap = deprecatedImportMap;
-          seenDeprecatedImportMap.add(slug);
-        } else if (fallbackExists) {
-          if (fallbackExists) {
-            importMap = fallbackImportMapPath;
-            seenFallbackImportMap.add(slug);
+          if (yield* Effect.promise(() => isFile(denoJson))) {
+            importMap = denoJson;
+          } else if (yield* Effect.promise(() => isFile(denoJsonc))) {
+            importMap = denoJsonc;
+          } else if (yield* Effect.promise(() => isFile(deprecatedImportMap))) {
+            importMap = deprecatedImportMap;
+            seenDeprecatedImportMap.add(slug);
+          } else if (fallbackExists) {
+            if (fallbackExists) {
+              importMap = fallbackImportMapPath;
+              seenFallbackImportMap.add(slug);
+            }
           }
         }
       }
+
+      const staticFiles = configured.static_files.map((pathname) =>
+        isAbsolute(pathname) ? pathname : join(input.supabaseDir, pathname),
+      );
+
+      resolved.push({
+        slug,
+        enabled,
+        ...(verifyJwt === undefined ? {} : { verifyJwt }),
+        entrypoint,
+        importMap,
+        staticFiles,
+        env: configured.env,
+      });
     }
 
-    const staticFiles = configured.static_files.map((pathname) =>
-      isAbsolute(pathname) ? pathname : join(input.supabaseDir, pathname),
-    );
+    if (seenDeprecatedImportMap.size > 0) {
+      yield* output.raw(
+        `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
+        "stderr",
+      );
+    }
 
-    resolved.push({
-      slug,
-      enabled,
-      ...(verifyJwt === undefined ? {} : { verifyJwt }),
-      entrypoint,
-      importMap,
-      staticFiles,
-      env: configured.env,
-    });
-  }
+    if (seenFallbackImportMap.size > 0) {
+      yield* output.raw(
+        `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
+        "stderr",
+      );
+      yield* output.raw(
+        `Please use recommended per function dependency declaration  ${IMPORT_MAP_GUIDE_URL}\n`,
+        "stderr",
+      );
+    }
 
-  if (seenDeprecatedImportMap.size > 0) {
-    yield* output.raw(
-      `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
-      "stderr",
-    );
-  }
+    return resolved;
+  },
+);
 
-  if (seenFallbackImportMap.size > 0) {
-    yield* output.raw(
-      `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
-      "stderr",
-    );
-    yield* output.raw(
-      `Please use recommended per function dependency declaration  ${IMPORT_MAP_GUIDE_URL}\n`,
-      "stderr",
-    );
-  }
-
-  return resolved;
-});
-
-const deployViaApi = Effect.fnUntraced(function* (
+const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   projectRef: string,
   projectRoot: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
@@ -2066,22 +2101,13 @@ const deployViaApi = Effect.fnUntraced(function* (
   jobs: number,
 ) {
   const output = yield* Output;
-  // CLI-1985: uploaded file names and the server-recorded metadata paths
-  // (`entrypoint_path`, `import_map_path`, `static_patterns`) are anchored at the
-  // workdir (`projectRoot`), matching the pinned Go CLI's `toRelPath`, which is
-  // relative to `os.Getwd()` after the CLI chdirs to the workdir
-  // (`apps/cli-go/pkg/function/deploy.go:94-103`, `internal/utils/misc.go:238`).
-  // Upstream Go never anchored deploy paths at the git root — that was a TS-only
-  // divergence introduced by #5755. The import-walk *boundary* (which files may
-  // be uploaded at all) intentionally stays at the nearest git root: the boundary
-  // itself is a TS-only safeguard with no Go equivalent (Go's `WalkImportPaths`
-  // uploads any reachable import unbounded; #5755 widened the TS boundary from
-  // the workdir to the git root so monorepo imports outside the workdir deploy).
-  // Such files upload with Go-`toRelPath`-style `../`-relative names.
-  const sourceRoot = yield* Effect.tryPromise({
-    try: () => resolveFunctionsSourceRoot(projectRoot),
-    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
-  });
+  yield* Effect.annotateCurrentSpan({ "function.count": configs.length, "deploy.jobs": jobs });
+
+  // Uploaded file names and the server-recorded metadata paths are anchored at the workdir
+  // (`projectRoot`), not at `sourceRoot`. The import-walk boundary (which files may be uploaded
+  // at all) is intentionally wider, extending to the nearest git root, so files outside the
+  // workdir but inside a monorepo can still deploy — those upload with `../`-relative names.
+  const sourceRoot = yield* resolveFunctionsSourceRoot(projectRoot);
   const enabled = configs.filter((config) => config.enabled);
   for (const skipped of configs.filter((config) => !config.enabled)) {
     yield* output.raw(`Skipping disabled Function: ${skipped.slug}\n`, "stderr");
@@ -2111,10 +2137,10 @@ const deployViaApi = Effect.fnUntraced(function* (
     return;
   }
 
-  // INC-699: each bundleOnly upload writes the bundle and bumps the remote version without
-  // persisting metadata, which only the final bulk update does. Failing fast on the first
-  // upload error strands that metadata remotely and makes every later deploy conflict, so
-  // run every upload to completion, always persist what succeeded, then report the errors.
+  // Each bundleOnly upload writes the bundle and bumps the remote version without persisting
+  // metadata, which only the final bulk update does. Failing fast on the first upload error
+  // strands that metadata remotely and makes every later deploy conflict, so run every upload to
+  // completion, always persist what succeeded, then report the errors.
   const results = yield* Effect.forEach(
     enabled,
     (config) =>
@@ -2181,7 +2207,9 @@ interface DeployViaDockerOptions {
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOptions) {
+const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
+  options: DeployViaDockerOptions,
+) {
   const {
     projectId,
     projectRef,
@@ -2195,7 +2223,9 @@ const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOpt
     projectEnvValues,
   } = options;
   const output = yield* Output;
+  yield* Effect.annotateCurrentSpan({ "function.count": configs.length });
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
+
   const remoteBySlug = new Map(remoteFunctions.map((fn) => [fn.slug, fn]));
   const changed: BulkUpdateFunction[] = [];
 
@@ -2241,7 +2271,7 @@ const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOpt
   }
 });
 
-const pruneFunctions = Effect.fnUntraced(function* (
+const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
@@ -2259,11 +2289,9 @@ const pruneFunctions = Effect.fnUntraced(function* (
     return;
   }
 
-  // Go's `confirmPruneAll` + `fmt.Sprintln` (`deploy.go:189,206-212`): header, one
-  // ` • <bold slug>` line per function, and a trailing blank line before the
-  // `[y/N]` choices. Routed through `promptYesNo` (Go `PromptYesNo(msg,
-  // false)`, `console.go:64-82`) so `--yes`/`SUPABASE_YES` auto-confirms with the
-  // stderr echo and a non-TTY stdin honors a piped `y`/`n` answer (CLI-1974).
+  // Header, one ` • <bold slug>` line per function, and a trailing blank line before the [y/N]
+  // choices. Routed through `promptYesNo` so `--yes`/`SUPABASE_YES` auto-confirms with the
+  // stderr echo, and a non-TTY stdin still honors a piped `y`/`n` answer.
   const prompt = `${[
     "Do you want to delete the following Functions from your project?",
     ...toDelete.map((slug) => ` • ${bold(slug)}`),
@@ -2290,10 +2318,9 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
     const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
     const commandPath = ["functions", "deploy"] as const;
-    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — mirrors
-    // cobra's `Changed()`-driven `MarkFlagsMutuallyExclusive`, so it's only used for the
-    // mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard)
-    // key off the resolved `flags.useApi` value instead, matching Go's own `if useApi`.
+    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
+    // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
+    // off the resolved `flags.useApi` value instead.
     const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
     const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
     const explicitLegacyBundle = hasExplicitLongFlag(
@@ -2316,30 +2343,23 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       );
     }
 
-    // Go parity (`cmd/functions.go:79-80`): `if useApi { useDocker = false }` mutates the
-    // resolved boolean, not a presence flag — `--use-api=false` alone must NOT force the
-    // API path, it should fall through to whatever `--use-docker`/`--legacy-bundle`
-    // already resolved to.
+    // `--use-api=false` alone must not force the API path — it should fall through to whatever
+    // `--use-docker`/`--legacy-bundle` already resolved to.
     const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
-    // Go parity (`cmd/functions.go:79-82`): the guard is `if useApi { ... } else if
-    // maxJobs > 1 { error }` — keyed on the resolved `--use-api` value alone, not on
-    // whether local bundling (Docker/legacy-bundle) is in play.
+    // Keyed on the resolved `--use-api` value alone, not on whether local bundling
+    // (Docker/legacy-bundle) is in play.
     if (!flags.useApi && jobs > 1) {
       return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-    // `@supabase/config` merges the matching `[remotes.*]` block over the base
-    // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
-    // config already reflects any remote function/edge_runtime overrides.
-    // In the CLI this also runs the same `Config.Validate`/dotenv/
-    // env-override pipeline `start`/`stop`/`status` already go through — see
-    // `functions-config.ts`. Go: `flags.LoadConfig` runs before validating any
-    // slug (`deploy.go:22-28`), so this must precede the loop below too — an
-    // invalid `config.toml` is reported ahead of a malformed slug when both
-    // are wrong (review round on CLI-1963).
+    // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
+    // already reflects any remote function/edge_runtime overrides, through the same
+    // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
+    // `functions-config.ts`). Must precede the slug-validation loop below, so an invalid
+    // `config.toml` is reported ahead of a malformed slug when both are wrong.
     const context = yield* loadFunctionsCliConfig({
       projectRoot: dependencies.projectRoot,
       projectRef,
@@ -2358,11 +2378,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "no-verify-jwt",
       flags.noVerifyJwt,
     );
-    // Go gates the bundler's `--verbose` on `viper.GetBool("DEBUG")`
-    // (`bundle.go:59`), so `--debug=false` must resolve to `false` — a plain
-    // presence check would get that backwards (same rule as `download.ts`'s
-    // own `--debug` read; the `SUPABASE_DEBUG` env fallback is deferred
-    // there too).
+    // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
+    // (same rule as `download.ts`'s own `--debug` read).
     const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
     const deployConfig = context.loaded?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
@@ -2372,11 +2389,9 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
-      // Matches `loadFunctionsCliConfig`'s own options above (`search: false,
-      // tomlOnly: true` for the CLI): no ancestor directory is
-      // searched past `dependencies.projectRoot` for EITHER load, so they can
-      // never resolve two different projects (same rationale as
-      // `start.handler.ts`'s equivalent call).
+      // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
+      // past `dependencies.projectRoot` for either load, so they can never resolve two
+      // different projects.
       search: dependencies.goConfigCompat === undefined,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
@@ -2390,11 +2405,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     if (slugs.length === 0) {
       return yield* Effect.fail(
         new NoFunctionsToDeployError({
-          // Go: `errors.Errorf("No Functions specified or found in %s",
-          // utils.Bold(utils.FunctionsDir))` (`internal/functions/deploy/deploy.go:35`) —
-          // the handler injects the bold styling via `styleEmphasis`. Styling is
-          // text-mode only: in `--output-format json`/`stream-json` this message lands in
-          // the structured error payload, which must stay free of ANSI escapes.
+          // Styling is text-mode only: in `--output-format json`/`stream-json` this message
+          // lands in the structured error payload, which must stay free of ANSI escapes.
           message: `No Functions specified or found in ${
             output.format === "text"
               ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
@@ -2448,12 +2460,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             return yield* deployWithApi;
           }
 
-          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs
-          // "never touched" distinction `resolveDockerNetworkMode` needs to
-          // decide whether `SUPABASE_NETWORK_ID` applies — see that
-          // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
-          // project dotenv) is CLI-only — same Go-viper-parity gate
-          // as `context.projectEnvValues` itself (`undefined` for library callers).
+          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
+          // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
+          // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
+          // callers.
           const networkMode = resolveDockerNetworkMode({
             explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
             envOverride:
@@ -2486,12 +2496,8 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     if (output.format === "text") {
-      // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
-      // utils.Aqua(flags.ProjectRef), strings.Join(slugs, ", "))`
-      // (`internal/functions/deploy/deploy.go:70`) — the handler injects
-      // the aqua styling via `styleIdentifier` (stdout-bound, so its TTY gate
-      // must check stdout); next stays plain. Go joins the raw `slugs` list, not
-      // the deduped set, so `functions deploy foo foo` prints "foo, foo".
+      // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
+      // "foo, foo".
       yield* output.raw(
         `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
       );

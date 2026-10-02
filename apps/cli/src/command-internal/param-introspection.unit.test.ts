@@ -32,12 +32,6 @@ describe("unwrapParam", () => {
   });
 
   it("marks a zero-minimum variadic flag (Flag.atLeast(0)) as variadic but NOT optional, with variadicMin 0", () => {
-    // This is the exact shape `stringSliceFlag` builds on
-    // (`string-slice-flag.ts`) — a real bug (CLI-1965 review) treated
-    // this as "required" for shell-completion purposes because it isn't
-    // `Optional`-wrapped, even though `Param.ts`'s `parseOptionVariadic` only
-    // fails with `MissingOption` when `count < min` and `min > 0`, so a
-    // zero-minimum variadic flag can legitimately be omitted entirely.
     const result = unwrapParam(Flag.string("domains").pipe(Flag.atLeast(0)));
     expect(result?.single.name).toBe("domains");
     expect(result?.isOptional).toBe(false);

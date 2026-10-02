@@ -14,9 +14,8 @@ import { getDefaultCliConfig } from "./sparse.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * Builds the diff input the way the command layer does: the local operand is
- * the loaded `{config, document}` pair (so raw-presence masking applies and
- * the declared-key set comes from the same load), the remote operand is
+ * Builds the diff input the way the command layer does: the local operand is the loaded
+ * `{config, document}` pair (so raw-presence masking applies), the remote operand is
  * `fromApiProjectConfig` over bare v2 `data.attributes`.
  */
 function diffWith(
@@ -69,9 +68,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("remote-only drift keeps the materialized local default and declared: false", () => {
-    // The primary someone-changed-it-in-the-dashboard case: the file is
-    // silent, the local projection carries the schema default (1000), and a
-    // push would overwrite the remote 250 with it — the change must say so.
+    // The file is silent, so the local projection carries the schema default; a push would
+    // overwrite the remote value with it, so the change must say so.
     const result = diffWith({}, { api: { max_rows: 250 } });
     const change = changeAt(result.changes, ["api", "max_rows"]);
     expect(change).toMatchObject({
@@ -83,9 +81,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("raw-presence-masked sections suppress zero-valued remotes", () => {
-    // db.ssl_enforcement is raw-presence-masked on the document arm (ADR
-    // 0021), so its local projection is silent when the file never declares
-    // it; the platform reporting the unconfigured state is not drift.
+    // db.ssl_enforcement is raw-presence-masked (ADR 0021): its local projection stays silent
+    // when the file never declares it, so the platform's unconfigured state is not drift.
     const clean = diffWith({}, { database: { ssl_enforced: false } });
     expect(changeAt(clean.changes, ["db", "ssl_enforcement", "enabled"])).toBeUndefined();
 
@@ -97,10 +94,9 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("push-gated containers fall back to the raw schema default as baseline", () => {
-    // The registry maps network-restriction CIDRs unconditionally, but push
-    // gates them on the local `enabled` toggle, so the default projection is
-    // silent on them. The raw schema default (allow-all) IS the platform's
-    // unconfigured state — reporting it would flag every untouched project.
+    // Push gates network-restriction CIDRs on the local `enabled` toggle, so the default
+    // projection is silent on them; the raw schema default (allow-all) is the platform's
+    // unconfigured state, so reporting it would flag every untouched project.
     const clean = diffWith(
       {},
       {
@@ -133,10 +129,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("canonicalized zero durations suppress via the row's unconfiguredValue", () => {
-    // GoTrue reports 0 hours for unconfigured session bounds; the transform
-    // canonicalizes that to the STRING "0s", which no type-level zero check
-    // recognizes — the registry row's `unconfiguredValue` must. An untouched
-    // project reporting both bounds is clean; a real timebox is drift.
+    // GoTrue reports 0 hours for unconfigured session bounds; the transform canonicalizes that
+    // to the string "0s", which the registry row's `unconfiguredValue` recognizes as clean.
     const clean = diffWith({}, { auth: { sessions_timebox: 0, sessions_inactivity_timeout: 0 } });
     expect(clean.changes).toEqual([]);
 
@@ -148,11 +142,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("platform-rendered mailer subjects suppress regardless of the remote string", () => {
-    // Subject lines are rendered by the platform, so there is no fixed
-    // baseline string to pin — the row's `platformRendered` flag suppresses
-    // ANY remote string while the file stays silent, unlike
-    // `unconfiguredValue`'s exact-match baseline (still exercised here via
-    // the sibling notification `enabled` row).
+    // Subject lines are rendered by the platform, so there's no fixed baseline string to pin;
+    // `platformRendered` suppresses any remote string while the file stays silent.
     const clean = diffWith(
       {},
       {
@@ -183,8 +174,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("a declared mailer subject still classifies normally against the remote", () => {
-    // `platformRendered` only suppresses while the local projection is
-    // silent — a locally DECLARED subject compares like any other field.
+    // `platformRendered` only suppresses while the local projection is silent — a locally
+    // declared subject compares like any other field.
     const differs = diffWith(
       { auth: { email: { template: { confirmation: { subject: "Welcome to ACME" } } } } },
       { auth: { mailer_subjects_confirmation: "Confirm your email address" } },
@@ -208,16 +199,11 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("every comparable path without a config-side baseline makes a deliberate choice", () => {
-    // Registry-driven guard for the remote_only suppression baseline: for
-    // each comparable path the default config's projection AND the raw
-    // default config are silent on, either its row declares the platform's
-    // `unconfiguredValue` (and a remote report equal to it classifies clean),
-    // or its row is `platformRendered` (and ANY remote report classifies
-    // clean, unconditionally), or the platform's unconfigured report is
-    // structural ABSENCE (sentinel-pruned SMTP/captcha/SMS/hook siblings,
-    // sparse postgres_settings) and a zero-form remote — which absence-class
-    // paths never receive — must REPORT rather than be silently swallowed by
-    // type-level zero inference.
+    // Registry-driven guard: for each comparable path the default config is silent on, its row
+    // must declare either `unconfiguredValue` (a matching remote report classifies clean),
+    // `platformRendered` (any remote report classifies clean), or rely on structural absence —
+    // in which case a zero-form remote value must still report as drift, not be silently
+    // swallowed.
     const defaults = fromConfigDocument(getDefaultCliConfig());
     const raw = getDefaultCliConfig();
     const valueAt = (root: unknown, path: ReadonlyArray<string>): unknown => {
@@ -251,7 +237,7 @@ describe("diffProjectConfig classification", () => {
       const row = rowFor(path);
       expect(row, path.join(".")).toBeDefined();
       if (row !== undefined && row.unconfiguredValue !== undefined) {
-        // The declared unconfigured value classifies clean...
+        // The declared unconfigured value classifies clean.
         const projected: Record<string, unknown> = {};
         let cursor = projected;
         for (const segment of path.slice(0, -1)) {
@@ -265,9 +251,8 @@ describe("diffProjectConfig classification", () => {
         });
         expect(changeAt(result.changes, path), path.join(".")).toBeUndefined();
       } else if (row !== undefined && row.platformRendered === true) {
-        // ...a platform-rendered row classifies clean for ANY remote value,
-        // since it has no local default to compare against — verify with an
-        // arbitrary string, not the one the platform happens to send today.
+        // A platform-rendered row classifies clean for any remote value, verified with an
+        // arbitrary string rather than the one the platform happens to send today.
         const projected: Record<string, unknown> = {};
         let cursor = projected;
         for (const segment of path.slice(0, -1)) {
@@ -281,11 +266,8 @@ describe("diffProjectConfig classification", () => {
         });
         expect(changeAt(result.changes, path), path.join(".")).toBeUndefined();
       } else {
-        // ...and a path relying on structural absence must not silently
-        // swallow a zero-form value if the platform ever starts reporting
-        // one: inject a zero-form leaf directly into the remote projection
-        // (bypassing the normalizer, which today omits these paths) and
-        // assert it REPORTS.
+        // A path relying on structural absence must still report a zero-form remote value:
+        // inject one directly into the projection, bypassing the normalizer that omits it today.
         const projected: Record<string, unknown> = {};
         let cursor = projected;
         for (const segment of path.slice(0, -1)) {
@@ -348,14 +330,9 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("a declared push-unmanaged sibling surfaces in unmanaged, never as a false clean", () => {
-    // A disabled `auth.oauth_server`'s siblings (`allow_dynamic_registration`,
-    // `authorization_url_path`) are retained-but-inert platform state that
-    // `config push` cannot communicate at all — pruned from the document
-    // projection by `DISABLED_SENTINEL_PRUNES` — so a declared value
-    // disagreeing with the remote's cannot be a `change` entry. It must
-    // surface in `unmanaged` so the clean changes list is visibly partial.
-    // `enabled` itself is an ordinary comparable path (CLI-2314) — see the
-    // next test.
+    // A disabled `auth.oauth_server`'s siblings are retained-but-inert platform state that
+    // `config push` cannot communicate — pruned from the document projection — so a disagreeing
+    // declared value must surface in `unmanaged`, not as a false clean `change`.
     const result = diffWith(
       { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
       { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/other" } },
@@ -365,11 +342,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("a push-unmanaged sibling is excluded from classification even when the remote AGREES with it", () => {
-    // The disagreeing case above happened to pass even before the loop
-    // structurally excluded unmanaged paths, because the remote's value
-    // coincidentally matched. Matching values here proves the exclusion
-    // itself, not an accidental match — ADR 0022's "unmanaged paths can never
-    // classify either" applies even when local and remote agree.
+    // Matching values here proves the exclusion itself, not an accidental match (ADR 0022):
+    // unmanaged paths can never classify, even when local and remote agree.
     const result = diffWith(
       { auth: { oauth_server: { enabled: false, authorization_url_path: "/consent" } } },
       { auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/consent" } },
@@ -380,13 +354,9 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("push-unmanaged siblings are excluded from classification even when the remote DIFFERS from them", () => {
-    // Live repro: config.toml declares storage.analytics disabled with a
-    // max_namespaces value, the platform reports it enabled with a different
-    // value — `max_namespaces` is pruned from the document projection while
-    // the container is declared disabled, so it can never become a
-    // `remote_only` change, only `unmanaged`. `enabled` itself is an
-    // ordinary comparable path (CLI-2314) and correctly classifies as an
-    // `update`.
+    // Live repro: config.toml declares storage.analytics disabled with a max_namespaces value,
+    // the platform reports it enabled with a different value — `max_namespaces` is pruned from
+    // the document projection, so it can only be `unmanaged`, never `remote_only`.
     const result = diffWith(
       { storage: { analytics: { enabled: false, max_namespaces: 5 } } },
       { storage: { features: { iceberg_catalog: { enabled: true, max_namespaces: 10 } } } },
@@ -402,9 +372,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("declared siblings of a disabled container surface in unmanaged", () => {
-    // Push writes only the disable sentinel for a disabled SMTP block, so a
-    // declared host is never communicated — the projection prunes it and the
-    // unmanaged list says so.
+    // Push writes only the disable sentinel for a disabled SMTP block, so a declared host is
+    // never communicated — the projection prunes it, and `unmanaged` says so.
     const result = diffWith(
       { auth: { email: { smtp: { enabled: false, host: "mail.example.com" } } } },
       { auth: {} },
@@ -418,19 +387,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("db.major_version and db.pooler.* classify as normal update/remote_only, never unmanaged (PR #6451 correction)", () => {
-    // Both are `comparableProjectConfigPaths` members (`fromApiProjectConfig`
-    // maps them from real, `v2GetProjectConfig`-reported state) AND
-    // `fromConfigDocument` populates both normally (CLI-2316's package review
-    // round). The ORIGINAL version of this test asserted the opposite —
-    // excluding them from the document arm entirely, which made them
-    // permanently `unmanaged` for every stock project (the `supabase init`
-    // template declares all of these), silently blocking `config pull` from
-    // ever syncing the platform's real Postgres version or pooler settings:
-    // `unmanaged` paths never reach `changes` (`hasAncestorPathKey` above),
-    // and `config pull`'s planner (`planConfigPull`) only ever writes
-    // from `changes`. `config push` itself doesn't consult `ProjectConfig` at
-    // all today (still the legacy v1 `config-sync` mappers), so there was
-    // never a push-correctness reason to exclude them either.
+    // Both are `comparableProjectConfigPaths` members that `fromConfigDocument` populates
+    // normally, so they classify as ordinary update/remote_only rather than `unmanaged`.
     const result = diffWith(
       { db: { major_version: 15, pooler: { pool_mode: "session", default_pool_size: 15 } } },
       {
@@ -457,10 +415,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("db.pooler.enabled and db.pooler.port are never comparable — v2GetProjectConfig reports neither", () => {
-    // Unlike their 3 siblings above, these 2 have no registry row at all
-    // (`isComparableProjectConfigPath` is false for both), so they never
-    // reach the comparison loop regardless of local/remote presence — there
-    // is no remote value to ever compare or pull for either.
+    // Unlike their siblings above, these two have no registry row at all, so they never reach
+    // the comparison loop regardless of local/remote presence.
     const result = diffWith(
       { db: { pooler: { enabled: false, port: 12345 } } },
       { pooler: { pool_mode: "session" } },
@@ -472,10 +428,8 @@ describe("diffProjectConfig classification", () => {
   });
 
   test("sequence arrays register reordering as drift", () => {
-    // api.schemas is order-significant (the first entry is PostgREST's
-    // default schema), so local ["public","extensions"] vs the wire's
-    // "extensions,public" is a real difference — in both declared and
-    // undeclared classifications.
+    // api.schemas is order-significant (the first entry is PostgREST's default schema), so a
+    // reordering is real drift.
     const result = diffWith(
       { api: { schemas: ["public", "extensions"] } },
       { api: { db_schema: "extensions,public" } },
@@ -585,11 +539,9 @@ describe("diffProjectConfig classification", () => {
 
 describe("absence policy", () => {
   test("absent-is-hands-off masks a fixed-list field (auth.captcha) out of local entirely, reporting remote_only with local: undefined", () => {
-    // `auth.captcha` is never declared in the document at all, and the
-    // remote is customized — `applyRawPresenceMask`'s fixed list removes the
-    // field from the local projection entirely rather than letting the
-    // schema default stand in, so a consumer can never mistake this for
-    // "push the default over the remote customization".
+    // `auth.captcha` is never declared; `applyRawPresenceMask`'s fixed list removes it from the
+    // local projection entirely rather than defaulting it, so this can't be mistaken for "push
+    // the default over the remote customization".
     const result = diffWith(
       {},
       { auth: { security_captcha_enabled: true, security_captcha_provider: "hcaptcha" } },
@@ -603,14 +555,10 @@ describe("absence policy", () => {
   });
 
   test("documents the hazardous cell: absent-is-default reports remote_only with the schema default masquerading as local", () => {
-    // No `document` at all — `diffProjectConfig({local: {config}, remote})`,
-    // the exact Studio-shaped call `ConfigAbsencePolicy` is named for. With
-    // no raw document to mask against, the local projection still carries
-    // the materialized schema default (`enabled: false`) as though it were a
-    // real declared value. This is deliberately NOT a "works correctly"
-    // assertion — it documents the one hazardous cell in the danger matrix: a
-    // consumer that treated `remote_only` as "safe to push" here would
-    // silently revert a genuine hosted customization to the schema default.
+    // No `document` supplied — the exact Studio-shaped call `ConfigAbsencePolicy` is named for.
+    // With no raw document to mask against, the local projection carries the schema default as
+    // though it were declared. This documents the one hazardous cell: a consumer that treated
+    // `remote_only` as "safe to push" here would silently revert a real customization.
     const result = diffProjectConfig({
       local: { config: decodeCliConfig({}) },
       remote: fromApiProjectConfig({
@@ -626,12 +574,8 @@ describe("absence policy", () => {
   });
 
   test("a comparable path outside the raw-presence mask's fixed list classifies identically under both policies", () => {
-    // api.max_rows is not one of applyRawPresenceMask's fixed paths, so the
-    // extra masking `absent-is-hands-off` applies makes no difference to it
-    // either way — the generic `declared` mechanism alone is what keeps both
-    // call shapes from misclassifying an undeclared, remote-customized field
-    // as `update`, proving the fixed-list mask is additive, not the only
-    // thing standing between an undeclared field and a false `update`.
+    // api.max_rows isn't one of the fixed masked paths, so both call shapes rely on the
+    // generic `declared` mechanism alone to avoid misclassifying it as `update`.
     const attributes = { api: { max_rows: 250 } };
     const withDocument = diffWith({}, attributes);
     const withoutDocument = diffProjectConfig({
@@ -668,8 +612,8 @@ describe("isEqualConfigValue", () => {
 
   test("set semantics on request are membership-only", () => {
     expect(isEqualConfigValue(["a", "b"], ["b", "a"], "set")).toBe(true);
-    // Duplicates carry no meaning for a set-mode field — identical
-    // membership with different duplicate counts is NOT drift.
+    // Duplicates carry no meaning for a set-mode field — identical membership with different
+    // duplicate counts is not drift.
     expect(isEqualConfigValue(["a", "a", "b"], ["a", "b", "b"], "set")).toBe(true);
     expect(isEqualConfigValue(["a", "a"], ["a", "b"], "set")).toBe(false);
     expect(isEqualConfigValue(["a", "b"], ["a"], "set")).toBe(false);

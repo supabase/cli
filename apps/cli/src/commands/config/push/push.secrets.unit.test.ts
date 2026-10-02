@@ -1,7 +1,3 @@
-/**
- * Unit tests for push.secrets.ts.
- */
-
 import type { CliConfig, ProjectConfig } from "@supabase/config";
 import { getDefaultCliConfig } from "@supabase/config";
 import { projectConfigMappingRows } from "@supabase/config/internal";
@@ -335,8 +331,7 @@ describe("resolveAuthSecrets", () => {
 
     it("gates when the container is present but its `enabled` field is not a boolean (never coerced to eligible)", () => {
       const config = buildFullyEnabledConfig();
-      // No `enabled` key at all on the captcha container — an undetermined
-      // state, not an eligible one.
+      // No `enabled` key at all here — an undetermined state, not an eligible one.
       const local: ProjectConfig = { auth: { captcha: {} } };
       const decisions = resolveAuthSecrets({
         maskedPaths: [["auth", "captcha", "secret"]],

@@ -10,17 +10,17 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../shared/services/dockerfile-images.ts";
-import {
-  POSTGRES_FALLBACK_IMAGE_PG14,
-  POSTGRES_FALLBACK_IMAGE_PG15,
-  POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
-} from "../shared/services/services.shared.ts";
-import { imageTag, toSlimImage } from "../shared/services/slim-images.ts";
+import { imageTag } from "../shared/services/slim-images.ts";
+import { expectedPinnedImage, GHCR_SLIM_IMAGE_PATTERN } from "../../tests/helpers/slim-images.ts";
 import { resolveDbImage } from "./db-image.ts";
 
 const currentPostgres = dockerfileServiceImageRaw("pg");
 const currentPostgresTag = imageTag(currentPostgres) ?? "";
-const pg15SlimTag = imageTag(POSTGRES_FALLBACK_IMAGE_PG15_SLIM) ?? "";
+// PG13/15 and PG14 now come from the Dockerfile's generated `pg15`/hand-pinned `pg14` stages
+// (the single version table), not hardcoded fallback constants.
+const pg15Image = dockerfileServiceImageRaw("pg15");
+const pg15Tag = imageTag(pg15Image) ?? "";
+const pg14Image = dockerfileServiceImageRaw("pg14");
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "db-image-"));
 
@@ -49,19 +49,19 @@ describe("resolveDbImage", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
       expect(yield* resolve(dir, 13)).toEqual({
-        image: POSTGRES_FALLBACK_IMAGE_PG15,
-        configImage: POSTGRES_FALLBACK_IMAGE_PG15,
+        image: pg15Image,
+        configImage: pg15Image,
       });
       expect(yield* resolve(dir, 14)).toEqual({
-        image: POSTGRES_FALLBACK_IMAGE_PG14,
-        configImage: POSTGRES_FALLBACK_IMAGE_PG14,
+        image: pg14Image,
+        configImage: pg14Image,
       });
       expect(yield* resolve(dir, 15)).toEqual({
-        image: POSTGRES_FALLBACK_IMAGE_PG15,
-        configImage: POSTGRES_FALLBACK_IMAGE_PG15,
+        image: pg15Image,
+        configImage: pg15Image,
       });
       expect(yield* resolve(dir, 17)).toEqual({
-        image: dockerfileServiceImage("pg"),
+        image: dockerfileServiceImage("pg", false),
         configImage: currentPostgres,
       });
       rmSync(dir, { recursive: true, force: true });
@@ -93,8 +93,8 @@ describe("resolveDbImage", () => {
     const dir = withTemp();
     return Effect.gen(function* () {
       expect(yield* resolve(dir, 14, "16.0.0.1")).toEqual({
-        image: POSTGRES_FALLBACK_IMAGE_PG14,
-        configImage: POSTGRES_FALLBACK_IMAGE_PG14,
+        image: pg14Image,
+        configImage: pg14Image,
       });
       rmSync(dir, { recursive: true, force: true });
     });
@@ -106,24 +106,26 @@ describe("resolveDbImage", () => {
       const dir = withTemp();
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 14)).toEqual({
-          image: POSTGRES_FALLBACK_IMAGE_PG14,
-          configImage: POSTGRES_FALLBACK_IMAGE_PG14,
+          image: pg14Image,
+          configImage: pg14Image,
         });
         rmSync(dir, { recursive: true, force: true });
       });
     });
 
-    it.effect("rewrites the current PG15 fallback to the slim registry", () => {
+    it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
+      const pinned = expectedPinnedImage("pg", pg15Image);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
+          image: pinned,
+          configImage: pg15Image,
         });
         expect(yield* resolve(dir, 13)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
+          image: pinned,
+          configImage: pg15Image,
         });
         rmSync(dir, { recursive: true, force: true });
       });
@@ -142,14 +144,16 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("rewrites a current PG15 pin to the slim registry", () => {
+    it.effect("rewrites a current PG15 pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
-      writePin(dir, pg15SlimTag);
+      writePin(dir, pg15Tag);
+      const pinned = expectedPinnedImage("pg", pg15Image);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 15)).toEqual({
-          image: toSlimImage("pg", POSTGRES_FALLBACK_IMAGE_PG15_SLIM),
-          configImage: POSTGRES_FALLBACK_IMAGE_PG15_SLIM,
+          image: pinned,
+          configImage: pg15Image,
         });
         rmSync(dir, { recursive: true, force: true });
       });
@@ -168,13 +172,15 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("rewrites the current Dockerfile pin to the slim registry", () => {
+    it.effect("rewrites the current Dockerfile pin to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
       writePin(dir, currentPostgresTag);
+      const pinned = expectedPinnedImage("pg", currentPostgres);
+      expect(pinned).toMatch(GHCR_SLIM_IMAGE_PATTERN);
       return Effect.gen(function* () {
         expect(yield* resolve(dir, 17)).toEqual({
-          image: toSlimImage("pg", currentPostgres),
+          image: pinned,
           configImage: currentPostgres,
         });
         rmSync(dir, { recursive: true, force: true });

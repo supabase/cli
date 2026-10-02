@@ -6,19 +6,14 @@ import { PAGE_LIMIT, type StorageGateway } from "../../command-internal/storage-
 import { goPathSplit, splitBucketPrefix } from "../../command-internal/storage-url.ts";
 
 /**
- * Pagination + BFS traversal shared by `storage ls/cp/mv/rm`. The `callback`
- * receives each entry name (or full path, for the recursive variant); a
- * directory entry has a trailing `/`. Errors from the gateway or the
- * callback short-circuit the loop, returning the first error.
- *
- * The `Loading page:` notice is emitted only in text mode — json/stream-json
- * consumers don't want the pagination noise on stderr.
+ * Pagination + traversal helpers shared by `storage ls/cp/mv/rm`. `callback` receives
+ * each entry name (or full path for the recursive variant); a directory entry has a
+ * trailing `/`. The `Loading page:` notice is text-mode only.
  */
 
 /**
- * Go `ls.IterateStoragePaths` (`ls.go:44-82`): when the path resolves to the
- * bucket root, list buckets filtered by the (possibly empty) bucket prefix;
- * otherwise page through objects under the prefix.
+ * Lists buckets filtered by prefix when `remotePath` resolves to the bucket root;
+ * otherwise pages through objects under the prefix.
  */
 export const iterateStoragePaths = <E>(
   gateway: StorageGateway,
@@ -52,10 +47,7 @@ export const iterateStoragePaths = <E>(
     }
   });
 
-/**
- * Go `ls.ListStoragePaths` (`ls.go:35-42`): collect every entry name under the
- * path into an array.
- */
+/** Collects every entry name under `remotePath` into an array. */
 export const listStoragePaths = (
   gateway: StorageGateway,
   output: typeof Output.Service,
@@ -72,9 +64,8 @@ export const listStoragePaths = (
   });
 
 /**
- * Go `ls.IterateStoragePathsAll` (`ls.go:94-136`): BFS over the directory tree
- * (LIFO queue), invoking `callback` with each object's full path. An empty
- * bucket is reported as `<bucket>/`.
+ * Walks the directory tree with a stack, invoking `callback` with each object's
+ * full path. An empty bucket is reported as `<bucket>/`.
  */
 export const iterateStoragePathsAll = <E>(
   gateway: StorageGateway,
@@ -112,7 +103,6 @@ export const iterateStoragePathsAll = <E>(
           yield* callback(objectPath);
         }),
       );
-      // Also report empty buckets (Go: a top-level empty bucket → `<bucket>/`).
       const [bucket, prefix] = splitBucketPrefix(dirPath);
       if (empty && prefix.length === 0) {
         yield* callback(`${bucket}/`);

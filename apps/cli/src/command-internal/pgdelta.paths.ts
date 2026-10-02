@@ -14,7 +14,7 @@ import type { Path } from "effect";
 
 import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
 
-/** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles (`declarative.go:44`). */
+/** `supabase/.temp/pgdelta` — catalog snapshots and debug bundles. */
 export function pgDeltaTempPath(path: Path.Path, workdir: string): string {
   return path.join(workdir, "supabase", ".temp", "pgdelta");
 }
@@ -31,5 +31,5 @@ export function shadowBaselineCacheDir(
   env: Readonly<Record<string, string | undefined>> = process.env,
   homeDir: string = homedir(),
 ): string {
-  return path.join(resolveSupabaseHome(env, homeDir), "cache", "shadow-baseline");
+  return path.join(resolveSupabaseHome(path, env, homeDir), "cache", "shadow-baseline");
 }

@@ -6,11 +6,6 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-// ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
-// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
-// ---------------------------------------------------------------------------
-
 export class ProjectsListNetworkError extends Data.TaggedError("ProjectsListNetworkError")<{
   readonly message: string;
 }> {
@@ -60,7 +55,7 @@ export class ProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// Interactive org list fetched by `create` when `--org-id` is omitted.
+/** Interactive org list fetched by `create` when `--org-id` is omitted. */
 export class ProjectsOrgsListNetworkError extends Data.TaggedError("ProjectsOrgsListNetworkError")<{
   readonly message: string;
   readonly decode?: boolean;
@@ -107,7 +102,7 @@ export class ProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// "Project does not exist:<ref>" (404 branch of the delete flow).
+/** 404 branch of the delete flow. */
 export class ProjectsDeleteNotFoundError extends Data.TaggedError("ProjectsDeleteNotFoundError")<{
   readonly message: string;
 }> {
@@ -139,11 +134,7 @@ export class ProjectsApiKeysUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pure-path errors (validation, prompt-time semantics, user cancellation).
-// ---------------------------------------------------------------------------
-
-// `list` rejects `--output env` (`utils.ErrEnvNotSupported`).
+/** `list` rejects `--output env`. */
 export class ProjectsEnvNotSupportedError extends Data.TaggedError("ProjectsEnvNotSupportedError")<{
   readonly message: string;
 }> {
@@ -152,8 +143,7 @@ export class ProjectsEnvNotSupportedError extends Data.TaggedError("ProjectsEnvN
   }
 }
 
-// Non-interactive `create` missing required params — `--org-id`,
-// `--db-password`, `--region` are required, plus exactly 1 positional arg.
+/** Non-interactive `create` missing a required param: `--org-id`, `--db-password`, `--region`, or the name argument. */
 export class ProjectsCreateMissingArgError extends Data.TaggedError(
   "ProjectsCreateMissingArgError",
 )<{
@@ -164,7 +154,7 @@ export class ProjectsCreateMissingArgError extends Data.TaggedError(
   }
 }
 
-// Interactive `create` name prompt returned blank.
+/** Interactive `create` name prompt returned blank. */
 export class ProjectsCreateNameEmptyError extends Data.TaggedError("ProjectsCreateNameEmptyError")<{
   readonly message: string;
 }> {
@@ -173,8 +163,7 @@ export class ProjectsCreateNameEmptyError extends Data.TaggedError("ProjectsCrea
   }
 }
 
-// `delete` non-interactive with no positional ref — exactly 1 positional
-// arg is required on a non-TTY.
+/** `delete` non-interactive with no positional ref given on a non-TTY. */
 export class ProjectsDeleteRefRequiredError extends Data.TaggedError(
   "ProjectsDeleteRefRequiredError",
 )<{
@@ -185,7 +174,7 @@ export class ProjectsDeleteRefRequiredError extends Data.TaggedError(
   }
 }
 
-// User declined the delete confirmation prompt (`errors.New(context.Canceled)`).
+/** User declined the delete confirmation prompt. */
 export class ProjectsDeleteCancelledError extends Data.TaggedError("ProjectsDeleteCancelledError")<{
   readonly message: string;
 }> {

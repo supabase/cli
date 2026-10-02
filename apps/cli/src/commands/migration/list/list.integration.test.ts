@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import {
@@ -78,9 +76,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
-  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
-  // (not just the hardcoded `VALID_REF` fallback) drives the linked ref.
+  // Gives an explicit --project-ref flag precedence over the VALID_REF fallback, so a
+  // test can prove the flag drives the linked ref.
   const projectRef = Layer.succeed(ProjectRefResolver, {
     resolve: () => Effect.succeed(VALID_REF),
     resolveForLink: () => Effect.succeed(VALID_REF),
@@ -121,38 +118,37 @@ const flags = (over: Partial<MigrationListFlags> = {}): MigrationListFlags => ({
   password: over.password ?? Option.none(),
 });
 
-const seedMigrations = (workdir: string, names: ReadonlyArray<string>) => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  for (const name of names) writeFileSync(join(dir, name), "select 1;\n");
-};
+const seedMigrations = Effect.fnUntraced(function* (workdir: string, names: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dir = path.join(workdir, "supabase", "migrations");
+  yield* fs.makeDirectory(dir, { recursive: true });
+  for (const name of names) yield* fs.writeFileString(path.join(dir, name), "select 1;\n");
+});
 
 const tmp = useTempWorkdir();
 
 describe("migration list", () => {
   it.live("lists merged local + remote migrations for the linked project by default", () => {
-    seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
     const ctx = setup(tmp.current, {
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql", "20240103000000_c.sql"]);
       yield* migrationList(flags());
-      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
       expect(stdout).toContain("Time (UTC)");
-      expect(stdout).toContain("`20240101000000`"); // in sync (both)
-      expect(stdout).toContain("`20240102000000`"); // remote only
-      expect(stdout).toContain("`20240103000000`"); // local only
-      // linked by default → resolver receives connType "linked" + cache written.
+      expect(stdout).toContain("`20240101000000`");
+      expect(stdout).toContain("`20240102000000`");
+      expect(stdout).toContain("`20240103000000`");
       expect(ctx.resolverCalls[0]?.connType).toBe("linked");
       expect(ctx.cache.cachedRef).toBe(VALID_REF);
     }).pipe(Effect.provide(ctx.layer));
   });
 
   it.live("shows an empty Remote column when the history table is absent (42P01)", () => {
-    seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const { layer, out } = setup(tmp.current, {
       remoteError: new DbExecError({
         message: 'relation "supabase_migrations.schema_migrations" does not exist',
@@ -160,6 +156,7 @@ describe("migration list", () => {
       }),
     });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       yield* migrationList(flags());
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240101000000`");
@@ -168,13 +165,13 @@ describe("migration list", () => {
   });
 
   it.live("skips init-schema and non-migration files when loading local versions", () => {
-    seedMigrations(tmp.current, [
-      "20211208000000_init.sql", // pre-cutoff init → skipped
-      "not-a-migration.txt", // non-matching → skipped
-      "20240105000000_keep.sql",
-    ]);
     const { layer, out } = setup(tmp.current, { remote: [] });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, [
+        "20211208000000_init.sql", // pre-cutoff init → skipped
+        "not-a-migration.txt", // non-matching → skipped
+        "20240105000000_keep.sql",
+      ]);
       yield* migrationList(flags());
       const stdout = stripAnsi(out.stdoutText);
       expect(stdout).toContain("`20240105000000`");
@@ -183,13 +180,12 @@ describe("migration list", () => {
   });
 
   it.live("lists the project given via --project-ref, overriding the default linked ref", () => {
-    // The fake resolver's own fallback (VALID_REF) represents whatever
-    // the workdir would resolve to absent the flag — the flag must win over it
-    // and drive the cached ref.
+    // VALID_REF is the fake resolver's fallback; the flag must win over it and drive
+    // the cached ref.
     const FLAG_REF = "flagflagflagflagflag";
-    seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       yield* migrationList(flags({ projectRef: Option.some(FLAG_REF) }));
       expect(ctx.cache.cachedRef).toBe(FLAG_REF);
       expect(ctx.cache.cachedRef).not.toBe(VALID_REF);
@@ -198,9 +194,9 @@ describe("migration list", () => {
 
   it.live("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, { args: ["--local"], isLocal: true, remote: [] });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       const exit = yield* migrationList(
         flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
       ).pipe(Effect.exit);
@@ -218,13 +214,13 @@ describe("migration list", () => {
   });
 
   it.live("targets the local database with --local and skips the linked cache", () => {
-    seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const ctx = setup(tmp.current, {
       args: ["--local"],
       isLocal: true,
       remote: [],
     });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       yield* migrationList(flags({ linked: false, local: true }));
       expect(ctx.resolverCalls[0]?.connType).toBe("local");
       expect(ctx.cache.cachedRef).toBeUndefined();
@@ -260,9 +256,9 @@ describe("migration list", () => {
   });
 
   it.live("emits structured migrations in json", () => {
-    seedMigrations(tmp.current, ["20240103000000_c.sql"]);
     const { layer, out } = setup(tmp.current, { format: "json", remote: ["20240102000000"] });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240103000000_c.sql"]);
       yield* migrationList(flags());
       expect(out.stdoutText).toBe(""); // no glamour table on stdout in json mode
       expect(out.messages).toContainEqual(
@@ -281,7 +277,6 @@ describe("migration list", () => {
   });
 
   it.live("propagates a non-undefined-table remote read failure", () => {
-    seedMigrations(tmp.current, ["20240101000000_a.sql"]);
     const { layer } = setup(tmp.current, {
       remoteError: new DbExecError({
         message: "permission denied for schema",
@@ -289,6 +284,7 @@ describe("migration list", () => {
       }),
     });
     return Effect.gen(function* () {
+      yield* seedMigrations(tmp.current, ["20240101000000_a.sql"]);
       const exit = yield* migrationList(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

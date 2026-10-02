@@ -1,15 +1,11 @@
 /**
- * Pure renderer for the `text/template`-style sources under `../templates/`:
- * every placeholder is a bare `{{ .FieldName }}` reference (no pipelines,
- * functions, or control structures), and a placeholder with no matching
- * field always throws — it never silently renders as empty.
+ * Pure renderer for `{{ .FieldName }}`-style templates under `../templates/`:
+ * a placeholder referencing a missing field throws — it never silently
+ * renders as empty.
  *
- * `custom_nginx.template` is deliberately NOT rendered here: it is not one of
- * these templates at all (see the comment on
- * `START_CUSTOM_NGINX_TEMPLATE`) and is injected byte-for-byte, with
- * its `${{VAR}}` placeholders substituted by Kong itself at container boot.
- * Callers needing that file should import `START_CUSTOM_NGINX_TEMPLATE`
- * directly from `../templates/custom_nginx.template.ts`.
+ * `custom_nginx.template` is not rendered here: its `${{VAR}}` placeholders
+ * are substituted by Kong itself at container boot. Import
+ * `START_CUSTOM_NGINX_TEMPLATE` directly for that file.
  */
 import { START_KONG_YML_TEMPLATE } from "../templates/kong.yml.ts";
 import { START_POOLER_EXS_TEMPLATE } from "../templates/pooler.exs.ts";

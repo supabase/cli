@@ -1,59 +1,30 @@
 /**
- * Go's root command binds every persistent flag to viper and enables
- * `AutomaticEnv` with the `SUPABASE` prefix and a `-`→`_` key replacer
- * (`apps/cli-go/cmd/root.go:318-320,334`):
- *
- * ```go
- * viper.SetEnvPrefix("SUPABASE")
- * viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
- * viper.AutomaticEnv()
- * viper.BindPFlags(flags)
- * ```
- *
- * The net effect is that any global flag `--foo-bar` falls back to the
- * `SUPABASE_FOO_BAR` env var when the flag is absent. `viper.GetBool` casts the
- * env string via `strconv.ParseBool` (through `cast.ToBool`), which recognizes
- * exactly `1/t/T/TRUE/true/True` as true and `0/f/F/FALSE/false/False` as false;
- * any other value (including `yes`/`on`/empty/garbage) parses to an error that
- * `cast.ToBool` swallows to `false`.
- *
- * This helper reproduces `viper.GetBool` for a single bound boolean key so the
- * CLI honors `SUPABASE_YES`, `SUPABASE_EXPERIMENTAL`, etc. exactly like
- * the Go CLI. Effect CLI's flag parser carries no env binding, so callers OR the
- * parsed flag value with this read (flag-set wins, matching viper precedence).
+ * Any global flag `--foo-bar` falls back to the `SUPABASE_FOO_BAR` env var
+ * when the flag is absent: `1/t/T/TRUE/true/True` parses as true,
+ * `0/f/F/FALSE/false/False` as false, and any other value (`yes`, `on`,
+ * empty, garbage) as false. Effect CLI's flag parser carries no env binding,
+ * so callers OR the parsed flag value with this read (flag-set wins).
  */
 
 const VIPER_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
-/** `viper.GetBool` truthiness for an already-resolved env value (see module doc). */
+/** Truthiness for an already-resolved env value (see module doc). */
 function viperBool(raw: string | undefined): boolean {
   return raw !== undefined && VIPER_TRUE.has(raw);
 }
 
-/** `viper.GetBool` for a single `SUPABASE_*` env var read from `process.env` (see module doc). */
+/** Reads a single `SUPABASE_*` boolean env var from `process.env` (see module doc). */
 export function viperEnvBool(name: string): boolean {
   return viperBool(process.env[name]);
 }
 
 /**
- * `viper.GetBool` for a `SUPABASE_*` key where a project `supabase/.env` value may also
- * apply. Go loads the project env via `godotenv.Load`, which builds its presence map from
- * `os.Environ()` and never overwrites a key that already exists in the shell env — even one
- * set to the empty string (`godotenv@v1.5.1/godotenv.go:184-200`, called by `loadNestedEnv`
- * at `apps/cli-go/pkg/config/config.go:1220-1261`). `viper.GetBool` then reads the merged
- * env, and since the CLI never enables `AllowEmptyEnv`, an empty shell value resolves to the
- * `false` default (`viper@v1.21.0/viper.go:442-450`).
- *
- * Net effect: shell *presence* — any value, including `false`, `""`, or garbage (all of
- * which cast to `false`) — suppresses the project value entirely; the file value is
- * consulted only when the variable is absent from the shell env. `??` (not `||`) encodes
- * exactly that presence check.
- *
- * `opts.whenUnset` is a CLI-chosen extension over viper (whose zero value is always `false`):
- * it resolves a key that is absent from BOTH the shell and the project env, letting an
- * opt-out gate (e.g. `SUPABASE_SHADOW_CACHE`) default ON while a *present* value keeps the
- * exact `ParseBool` semantics above — so `=0`, `=false`, empty, and garbage all still
- * disable.
+ * Resolves a `SUPABASE_*` boolean where a project `supabase/.env` value may
+ * also apply: shell presence (any value, including `false`, `""`, or
+ * garbage) suppresses the project value entirely; `??` encodes exactly that
+ * presence check. `opts.whenUnset` resolves a key absent from both shell and
+ * project env, letting an opt-out gate default on while any present value
+ * still disables.
  */
 export function viperEnvBoolWithProjectFallback(
   name: string,
@@ -66,13 +37,10 @@ export function viperEnvBoolWithProjectFallback(
 }
 
 /**
- * `viper.GetString` for a `SUPABASE_*` key where a project `supabase/.env` value may also
- * apply — same shell-*presence*-wins semantics as {@link viperEnvBoolWithProjectFallback}
- * (godotenv.Load's "don't override a key that already exists in `os.Environ()`" check is
- * presence-based, not value-based, so an empty shell value still blocks the project file's
- * value), but for a plain string-typed viper-bound flag — no `ParseBool`/`cast.ToBool` coercion,
- * just the raw merged string (or `""` when the key is absent from both, matching `viper.GetString`
- * always returning a string rather than `undefined`). `??` (not `||`) encodes the presence check.
+ * Resolves a `SUPABASE_*` string with the same shell-presence-wins semantics
+ * as {@link viperEnvBoolWithProjectFallback}, but with no boolean coercion —
+ * the raw merged string, or `""` when absent from both. `??` (not `||`)
+ * encodes the presence check.
  */
 export function viperEnvStringWithProjectFallback(
   name: string,

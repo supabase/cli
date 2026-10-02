@@ -1,10 +1,12 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { inspectReport } from "./report.handler.ts";
-import { inspectReportRuntimeLayer } from "./report.layers.ts";
+import { inspectBaseLayer } from "../inspect.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -47,12 +49,10 @@ export const inspectReportCommand = Command.make("report", config).pipe(
           "project-ref": flags.projectRef,
           "output-dir": flags.outputDir,
         },
-        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
-        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
-        // others) are unmarked, so it stays redacted.
+        // `--project-ref` has no telemetry-safety baseline, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(inspectReportRuntimeLayer),
+  Command.provide(Layer.merge(inspectBaseLayer, commandRuntimeLayer(["inspect", "report"]))),
 );

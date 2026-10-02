@@ -17,8 +17,8 @@ export interface HarnessOptions {
   accessToken: string;
   /** Working directory for the subprocess. Defaults to a fresh temp dir. */
   cwd?: string;
-  /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
-   *  this via viper (no --project-ref flag) for config validation in --local mode. */
+  /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands validate
+   *  against it (no --project-ref flag) for config validation in --local mode. */
   projectId?: string;
   /** Profile `project_host` — the domain the CLI derives per-project hosts from
    *  (storage `<ref>.<host>`, db `db.<ref>.<host>`, etc.). Defaults to "localhost"
@@ -133,20 +133,19 @@ export async function exec(
     // tests don't touch the developer's real ~/.supabase.
     SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
     ...(harness.options.projectId ? { SUPABASE_PROJECT_ID: harness.options.projectId } : {}),
-    // When a test writes a pooler-url file the Go CLI takes the pooler path in
-    // ParseDatabaseConfig. Setting a non-empty password avoids the initPoolerLogin
-    // API call so the only network traffic is the actual Management API call
-    // under test. Safe to set globally: it is only used when pooler-url exists.
+    // Setting a non-empty password avoids the interactive pooler login flow when a
+    // pooler-url file is present, so the only network traffic is the Management
+    // API call under test. Safe to set globally: only used when pooler-url exists.
     SUPABASE_DB_PASSWORD: "test-placeholder-password",
     ...(built.binaryOverride ? { SUPABASE_CLI_BINARY_OVERRIDE: built.binaryOverride } : {}),
     ...opts?.env,
   };
 
-  // The CLI selects its API base URL through the profile system rather than
-  // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name first and
-  // a YAML file path second, and the proxied commands' Go binary reads the same
-  // file via viper's SUPABASE_PROFILE when the value isn't a built-in name. Write
-  // a temporary profile file pointing at the replay server so both paths reach it.
+  // The CLI resolves its API base URL through the profile system, not
+  // SUPABASE_API_URL: `CommandSettings` accepts a built-in profile name or a YAML
+  // file path, and the still-proxied Go binary reads the same file via
+  // SUPABASE_PROFILE. Write a temp profile file pointing at the replay server so
+  // both paths reach it.
   const profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
   const url = harness.options.apiUrl;
   writeFileSync(

@@ -29,8 +29,9 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
 
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
   // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
-  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  // 403s on that ref for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const disabling =
@@ -39,7 +40,7 @@ export const branchesDisable = Effect.fn("branches.disable")(function* (
       Effect.tapError(() => disabling?.fail() ?? Effect.void),
       Effect.catch(mapDisableError),
     );
-    yield* disabling?.clear() ?? Effect.void;
+    yield* disabling?.clear ?? Effect.void;
 
     // Established behavior: this message writes to STDOUT.
     if (output.format === "json" || output.format === "stream-json") {

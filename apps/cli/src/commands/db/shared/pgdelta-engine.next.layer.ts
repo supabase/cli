@@ -114,16 +114,13 @@ export function parsePgDeltaNextEndpoint(
     if (endpoint.connection !== undefined) return endpoint.connection;
     const parsed = parseConnectionString(endpoint.ref, layeredParseEnv(projectEnv));
     if (parsed !== undefined) return parsed;
-    return yield* Effect.fail(
-      new PgDeltaEngineError({
-        message: "failed to parse Postgres connection string for pg-delta",
-        // `redactConnectionString`, not a local `:password@` regex: the input
-        // reaching here is by definition unparseable, and a hand-typed password
-        // containing `/`, `@`, or `:` defeats a naive single-character-class match
-        // (CWE-209). The shared redactor over-redacts instead of leaking.
-        cause: redactConnectionString(endpoint.ref),
-      }),
-    );
+    return yield* new PgDeltaEngineError({
+      message: "failed to parse Postgres connection string for pg-delta",
+      // The input is by definition unparseable, so a naive `:password@` regex could miss a
+      // hand-typed password containing `/`, `@`, or `:` (CWE-209); `redactConnectionString`
+      // over-redacts instead of risking a leak.
+      cause: redactConnectionString(endpoint.ref),
+    });
   });
 }
 
@@ -201,9 +198,11 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       );
     };
 
-    const diffPools = (
+    const diffPools = Effect.fn("PgDeltaNextEngine.diff")(function* (
       input: {
-        readonly context: { readonly cwd: string };
+        readonly context: {
+          readonly cwd: string;
+        };
         readonly schema: ReadonlyArray<string>;
         readonly formatOptions: string;
         readonly debug: boolean;
@@ -211,26 +210,29 @@ export const pgDeltaNextEngineLayer = Layer.effect(
       },
       sourcePool: Pool,
       desiredPool: Pool,
-    ) =>
-      Effect.gen(function* () {
-        const result = yield* adapter.diff({
-          sourcePool,
-          desiredPool,
-          allowDrops: true,
-          debug: input.debug,
-          schema: input.schema,
-          formatOptions: input.formatOptions,
-        });
-        const debugDirectory =
-          result.debug !== undefined
-            ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
-                ...result.debug,
-                diagnostics: result.diagnostics,
-              })
-            : undefined;
-        yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
-        return normalizeNextDiff(result, debugDirectory);
+    ) {
+      const result = yield* adapter.diff({
+        sourcePool,
+        desiredPool,
+        allowDrops: true,
+        debug: input.debug,
+        schema: input.schema,
+        formatOptions: input.formatOptions,
       });
+      const debugDirectory =
+        result.debug !== undefined
+          ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
+              ...result.debug,
+              diagnostics: result.diagnostics,
+            })
+          : undefined;
+      yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
+      yield* Effect.annotateCurrentSpan({
+        "diff.empty": !result.changes,
+        "diff.hazard_count": result.hazards.kinds.length,
+      });
+      return normalizeNextDiff(result, debugDirectory);
+    });
 
     return PgDeltaEngine.of({
       diffExplicit: (input) =>
@@ -245,12 +247,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                   : undefined;
             if (migrationsEndpoint !== undefined) {
               if (input.toml === undefined) {
-                return yield* Effect.fail(
-                  new PgDeltaEngineError({
-                    message: "pg-delta migrations endpoint requires loaded database config",
-                    cause: "missing database config",
-                  }),
-                );
+                return yield* new PgDeltaEngineError({
+                  message: "pg-delta migrations endpoint requires loaded database config",
+                  cause: "missing database config",
+                });
               }
               shadow = yield* shadowService.provisionMigrations({
                 context: input.context,
@@ -270,12 +270,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
                 }
                 const connection = parseConnectionString(shadow.migrationsUrl);
                 if (connection === undefined) {
-                  return yield* Effect.fail(
-                    new PgDeltaEngineError({
-                      message: "failed to parse pg-delta migrations shadow URL",
-                      cause: redactConnectionString(shadow.migrationsUrl),
-                    }),
-                  );
+                  return yield* new PgDeltaEngineError({
+                    message: "failed to parse pg-delta migrations shadow URL",
+                    cause: redactConnectionString(shadow.migrationsUrl),
+                  });
                 }
                 return yield* acquirePgPool(connection, {
                   isLocal: true,
@@ -288,7 +286,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             );
             return yield* diffPools(input, sourcePool, desiredPool);
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.diffExplicit"),
+        ),
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -296,7 +297,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
             return yield* diffPools(input, migrationsPool, desiredPool);
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.diffDatabase"),
+        ),
       exportDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -326,7 +330,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             );
             return { files: result.files, manifest: result.manifest };
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.exportDeclarativeSchema"),
+        ),
       planDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -339,12 +346,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
             const migrations = parseConnectionString(shadow.migrationsUrl);
             const declarative = parseConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {
-              return yield* Effect.fail(
-                new PgDeltaEngineError({
-                  message: "failed to parse pg-delta next shadow database URL",
-                  cause: "invalid password-free shadow output",
-                }),
-              );
+              return yield* new PgDeltaEngineError({
+                message: "failed to parse pg-delta next shadow database URL",
+                cause: "invalid password-free shadow output",
+              });
             }
             const [migrationsPool, declarativePool] = yield* Effect.all(
               [
@@ -384,7 +389,10 @@ export const pgDeltaNextEngineLayer = Layer.effect(
               targetRef: "pg-delta-next:declarative",
             };
           }),
-        ).pipe(Effect.mapError(pgDeltaNextEngineError)),
+        ).pipe(
+          Effect.mapError(pgDeltaNextEngineError),
+          Effect.withSpan("PgDeltaNextEngine.planDeclarativeSchema"),
+        ),
     });
   }),
 );

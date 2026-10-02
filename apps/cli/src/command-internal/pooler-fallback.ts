@@ -18,10 +18,7 @@ export interface PoolerFallbackOptions<A, E, R, R2, RF> {
   readonly classifyResult?: (result: A) => boolean;
 }
 
-/**
- * Go's IPv6 pooler-fallback warning (`internal/utils/connect.go:283-289`), to stderr,
- * `Yellow`-wrapped, byte-for-byte. Emitted just before the IPv4 pooler retry.
- */
+/** The established IPv6 pooler-fallback warning, yellow on stderr, emitted before the IPv4 retry. */
 export const emitPoolerFallbackWarning = (host: string): Effect.Effect<void, never, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;

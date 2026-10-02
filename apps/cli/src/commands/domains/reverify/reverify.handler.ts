@@ -30,7 +30,7 @@ export const domainsReverify = Effect.fn("domains.reverify")(function* (
       Effect.tapError(() => reverifying?.fail() ?? Effect.void),
       Effect.catch(gateMapError({ projectRef: ref }, mapReverifyError)),
     );
-    yield* reverifying?.clear() ?? Effect.void;
+    yield* reverifying?.clear ?? Effect.void;
 
     yield* emitHostnameResult(response, flags.includeRawOutput);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));

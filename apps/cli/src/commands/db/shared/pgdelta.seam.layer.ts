@@ -2,27 +2,33 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
 import { resolveDbImage } from "../../../command-internal/db-image.ts";
 import { readDbToml } from "../../../command-internal/db-config.toml-read.ts";
 import { getRegistryImageUrl } from "../../../command-internal/docker-registry.ts";
 import { isDockerDaemonUnreachable } from "../../../command-internal/docker-suggest.ts";
-import { isSlimImageRef } from "../../../shared/services/slim-images.ts";
+import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/slim-images.ts";
+import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
 import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
+import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
+import { stackEnsurePostgresOnlyStarted } from "../../../command-internal/stack-local-database.ts";
+import { StackCatalogSetup } from "../../../command-internal/stack-catalog-setup.ts";
 
 const shadowDockerCause = (stderr: string): { readonly docker: "daemon" } | Record<never, never> =>
   isDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
 
 /**
  * Whether an underlying failure signals the Docker daemon is unreachable, across every tagged
- * error class this seam composes over — `ShadowDbError.reason === "docker_daemon"`,
- * `ImagePrepullError.reason === "docker_daemon"`, `LocalDbRunningError.daemonDown`,
- * and every `*.docker === "daemon"` field. Checked structurally rather than per-tag so a
- * new error class in the union doesn't silently drop its own daemon signal.
+ * error class this seam composes over. Checked structurally (`reason`/`docker`/`daemonDown`
+ * fields) rather than per-tag, so a new error class in the union can't silently drop its own
+ * daemon signal.
  */
 function hasDaemonSignal(cause: {
   readonly message: string;
@@ -39,10 +45,9 @@ function hasDaemonSignal(cause: {
 }
 
 /**
- * Maps any failure from the native local-database bring-up stack (shadow create/setup, health
- * checks, config loading) into the seam's own {@link DeclarativeShadowDbError}, carrying
- * the underlying message. Every component error class in that stack declares `message: string`,
- * so this accepts the whole union structurally rather than enumerating each tag.
+ * Maps any failure from the native local-database bring-up stack into the seam's own
+ * {@link DeclarativeShadowDbError}. Every component error class declares `message: string`, so
+ * this accepts the whole union structurally rather than enumerating each tag.
  */
 export const toShadowDbError = (cause: {
   readonly message: string;
@@ -59,66 +64,86 @@ export const toShadowDbError = (cause: {
 
 /**
  * Real `DeclarativeSeam`: fully native. `ensureLocalDatabaseStarted` shares the same
- * `startLocalDatabase` bring-up `db start` uses; `ensureLocalPostgresImageCurrent` was
- * already native (CLI-1956) and is unchanged here.
+ * `startLocalDatabase` bring-up `db start` uses.
  */
 export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
+    const stackApi = yield* StackApi;
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // Captures every OTHER service `startLocalDatabase` needs internally (Output,
-    // RuntimeInfo, HttpClient, DbConnection, DockerRun, NetworkIdFlag, the
-    // `--experimental`/CliArgs global-flag machinery, …) into a plain `Context` so each closure
-    // below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape`'s
-    // `Effect<T, E>` (no leftover requirements) without hand-enumerating every transitive
-    // dependency — mirrors `command-platform-api-factory.layer.ts`'s identical
-    // capture-and-provide shape.
+    // Captures every service `startLocalDatabase` needs into a plain `Context`, so each
+    // closure below can `Effect.provideContext` it and satisfy `DeclarativeSeamShape` without
+    // hand-enumerating every transitive dependency.
+    const experimentalFlag = yield* ExperimentalFlag;
+    const cliArgs = yield* CliArgs;
+    const stackCatalogSetup = yield* StackCatalogSetup;
     const context = yield* Effect.context<StartLocalDatabaseDeps>();
 
     return DeclarativeSeam.of({
-      ensureLocalDatabaseStarted: () =>
-        Effect.gen(function* () {
-          const running = yield* isLocalDbRunning(
-            spawner,
-            fs,
-            path,
-            cliSettings.workdir,
-            Option.getOrUndefined(cliSettings.projectId),
-          ).pipe(
+      ensureLocalDatabaseStarted: Effect.gen(function* () {
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") {
+          return yield* stackEnsurePostgresOnlyStarted().pipe(
+            Effect.asVoid,
+            Effect.scoped,
+            Effect.provideContext(context),
+            Effect.provideService(StackApi, stackApi),
+            Effect.provideService(ExperimentalFlag, experimentalFlag),
+            Effect.provideService(CliArgs, cliArgs),
+            Effect.provideService(StackCatalogSetup, stackCatalogSetup),
             Effect.mapError(
               (cause) =>
                 new DeclarativeShadowDbError({
                   message: cause.message,
                   ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // Same propagation as the start-failure catch below: the inspect error's
-                  // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
-                  // seam, or the normalizer falls back to its generic debug hint.
                   ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
                 }),
             ),
           );
-          if (running) return; // already running — the seam never prints anything here.
-          yield* startLocalDatabase().pipe(
-            Effect.provideContext(context),
-            Effect.asVoid,
-            Effect.catch((cause) =>
-              Effect.fail(
-                new DeclarativeShadowDbError({
-                  message: `failed to start local database: ${cause.message}`,
-                  ...(hasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
-                  ...("suggestion" in cause && typeof cause.suggestion === "string"
-                    ? { suggestion: cause.suggestion }
-                    : {}),
-                }),
-              ),
-            ),
-          );
-        }),
-      ensureLocalPostgresImageCurrent: () =>
-        Effect.scoped(
+        }
+        const running = yield* isLocalDbRunning(
+          spawner,
+          fs,
+          path,
+          cliSettings.workdir,
+          Option.getOrUndefined(cliSettings.projectId),
+        ).pipe(
+          // Satisfies the probe's `LocalDockerEngine` requirement from the captured deps.
+          Effect.provideContext(context),
+          Effect.mapError(
+            (cause) =>
+              new DeclarativeShadowDbError({
+                message: cause.message,
+                ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                // The inspect error's Docker-install recovery text must survive the seam, or
+                // the normalizer falls back to its generic debug hint.
+                ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+              }),
+          ),
+        );
+        if (running) return; // already running — the seam never prints anything here.
+        yield* startLocalDatabase().pipe(
+          Effect.provideContext(context),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new DeclarativeShadowDbError({
+                message: `failed to start local database: ${cause.message}`,
+                ...(hasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
+                ...("suggestion" in cause && typeof cause.suggestion === "string"
+                  ? { suggestion: cause.suggestion }
+                  : {}),
+              }),
+          ),
+        );
+      }).pipe(Effect.withSpan("DeclarativeSeam.ensureLocalDatabaseStarted")),
+      ensureLocalPostgresImageCurrent: Effect.gen(function* () {
+        const backend = yield* currentStackBackend;
+        if (backend.kind === "stack") return;
+        return yield* Effect.scoped(
           Effect.gen(function* () {
             const toml = yield* readDbToml(fs, path, cliSettings.workdir).pipe(
               Effect.mapError(
@@ -208,56 +233,68 @@ export const declarativeSeamLayer = Layer.effect(
             const stdout = decodeChunks(stdoutChunks);
             if (inspectExit !== 0) {
               if (isMissingContainerInspectError(stderr)) return;
-              return yield* Effect.fail(
-                new DeclarativeShadowDbError({
-                  message:
-                    stderr.length > 0
-                      ? `failed to inspect local Postgres container: ${stderr}`
-                      : "failed to inspect local Postgres container.",
-                  ...shadowDockerCause(stderr),
-                }),
-              );
+              return yield* new DeclarativeShadowDbError({
+                message:
+                  stderr.length > 0
+                    ? `failed to inspect local Postgres container: ${stderr}`
+                    : "failed to inspect local Postgres container.",
+                ...shadowDockerCause(stderr),
+              });
             }
             const actual = resolveContainerInspectImageName(stdout);
-            const expected = getRegistryImageUrl(image).trim();
-            const actualTag = dockerImageTag(actual);
-            const expectedTag = dockerImageTag(expected);
-            if (actual.length === 0 || actualTag.length === 0 || expectedTag.length === 0) {
+            const expected = yield* getRegistryImageUrl(image, toml.projectEnv).pipe(
+              Effect.mapError(
+                (error) =>
+                  new DeclarativeShadowDbError({
+                    message: `failed to resolve local Postgres image registry: ${error.message}`,
+                  }),
+              ),
+              Effect.map((value) => value.trim()),
+            );
+            const actualTag = imageTag(actual);
+            const expectedTag = imageTag(expected);
+            if (actual.length === 0 || actualTag === undefined || expectedTag === undefined) {
               return;
             }
             // Slim refs never go through a registry mirror, so a family mismatch
             // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
-            // expectation) is stale even when the tags happen to match.
+            // expectation) is stale even when the upstream versions happen to match.
             const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
-            if (!familyMismatch && actualTag === expectedTag) {
-              return;
+            if (!familyMismatch) {
+              // Same family: within slim, a `-r<N>` hotfix bump must still be caught, so compare
+              // the digest when both refs carry one (most precise), or the full tag otherwise —
+              // never the bare upstream version, which would mask a same-upstream revision drift.
+              const actualDigest = imageDigest(actual);
+              const expectedDigest = imageDigest(expected);
+              const current =
+                actualDigest !== undefined && expectedDigest !== undefined
+                  ? actualDigest === expectedDigest
+                  : actualTag === expectedTag;
+              if (current) return;
             }
+            // Across families, only the upstream version is comparable (a slim tag's `-r<N>`
+            // has no docker.io equivalent) — used to pick the remediation wording, not staleness:
+            // a family mismatch is always stale.
+            const upstreamMatches =
+              upstreamVersionFromTag(actualTag) === upstreamVersionFromTag(expectedTag);
             const remediation =
-              familyMismatch && actualTag === expectedTag
+              familyMismatch && upstreamMatches
                 ? "The tags match but the image family does not (slim vs docker.io). Run supabase stop, then supabase start with the same SUPABASE_USE_SLIM_IMAGES setting before syncing declarative schemas."
                 : "Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.";
-            return yield* Effect.fail(
-              new DeclarativeShadowDbError({
-                message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
-              }),
-            );
+            return yield* new DeclarativeShadowDbError({
+              message: `local Postgres container image is stale: running ${actual} but expected ${expected}. ${remediation}`,
+            });
           }),
-        ),
+        );
+      }).pipe(Effect.withSpan("DeclarativeSeam.ensureLocalPostgresImageCurrent")),
     });
   }),
-);
+).pipe(Layer.provide(stackApiLayer));
 
 type StartLocalDatabaseDeps =
   ReturnType<typeof startLocalDatabase> extends Effect.Effect<infer _A, infer _E, infer R>
     ? R
     : never;
-
-function dockerImageTag(image: string): string {
-  const trimmed = image.trim();
-  const index = trimmed.lastIndexOf(":");
-  if (index < 0 || index === trimmed.length - 1) return "";
-  return trimmed.slice(index + 1);
-}
 
 export function isMissingContainerInspectError(stderr: string): boolean {
   return stderr.toLowerCase().includes("no such container");

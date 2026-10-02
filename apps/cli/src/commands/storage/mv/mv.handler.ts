@@ -1,6 +1,5 @@
-import * as nodePath from "node:path";
-
-import { Effect, Option } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Option, Path } from "effect";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
@@ -37,22 +36,19 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
   const telemetryState = yield* TelemetryState;
   const linkedProjectCache = yield* LinkedProjectCache;
   const resolver = yield* ProjectRefResolver;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
 
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
     yield* assertStorageWorkdir(cliSettings.workdir);
 
-    // `--project-ref` never implies `--linked` and must not be silently
-    // discarded on the local target — see push.handler.ts's identical guard
-    // (db push) for the full TS-only rationale.
+    // `--project-ref` only applies to the linked project; it never implies `--linked`.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new StorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new StorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -62,8 +58,8 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse + validate BEFORE building the client (Go `mv.go:24-39`): both must be
-    // ss://, at least one prefix non-empty, and the same bucket.
+    // Parse and validate both paths before building the client: both must be ss://, at
+    // least one prefix non-empty, and the same bucket.
     const srcParsed = yield* parseStorageUrlEffect(flags.src);
     const dstParsed = yield* parseStorageUrlEffect(flags.dst);
     const [srcBucket, srcPrefix] = splitBucketPrefix(srcParsed);
@@ -92,7 +88,6 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           );
 
           if (result.moved) {
-            // Go prints the move response message on success.
             yield* output.raw(`${result.message}\n`, "stderr");
             if (output.format !== "text") {
               yield* output.success("", { message: result.message });
@@ -101,7 +96,13 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
           }
 
           // Recursive fallback on `not_found`.
-          const moved = yield* moveStorageObjectAll(gateway, output, `${srcParsed}/`, dstParsed);
+          const moved = yield* moveStorageObjectAll(
+            gateway,
+            output,
+            posixPath,
+            `${srcParsed}/`,
+            dstParsed,
+          );
           if (output.format !== "text") {
             yield* output.success("", { message: "", moved });
           }
@@ -116,45 +117,45 @@ export const storageMv = Effect.fn("storage.mv")(function* (flags: StorageMvFlag
 });
 
 /**
- * Go `MoveStorageObjectAll` (`mv.go:55-88`): BFS over the source tree (LIFO),
- * moving each object with its `srcPrefix`→`dstPrefix` rewrite. `srcPath` is
- * terminated by `/`. Fails with `Object not found: <srcPath>` when nothing moved.
+ * BFS over the source tree (LIFO), moving each object with its `srcPrefix`→`dstPrefix` rewrite.
+ * `srcPath` is terminated by `/`. Fails with `Object not found: <srcPath>` when nothing moved.
  */
-const moveStorageObjectAll = (
+const moveStorageObjectAll = Effect.fn("storage.mv.moveAll")(function* (
   gateway: StorageGateway,
   output: typeof Output.Service,
+  posixPath: Path.Path,
   srcPath: string,
   dstPath: string,
-) =>
-  Effect.gen(function* () {
-    const [, dstPrefix] = splitBucketPrefix(dstPath);
-    let count = 0;
-    const queue: Array<string> = [srcPath];
-    while (queue.length > 0) {
-      const dirPath = queue.pop();
-      if (dirPath === undefined) break;
-      const paths = yield* listStoragePaths(gateway, output, dirPath);
-      for (const objectName of paths) {
-        const objectPath = dirPath + objectName;
-        if (objectName.endsWith("/")) {
-          queue.push(objectPath);
-          continue;
-        }
-        count++;
-        const relPath = objectPath.startsWith(srcPath)
-          ? objectPath.slice(srcPath.length)
-          : objectPath;
-        const [srcBucket, srcPrefix] = splitBucketPrefix(objectPath);
-        const absPath = nodePath.posix.join(dstPrefix, relPath);
-        yield* output.raw(
-          `Moving object: ${objectPath} => ${nodePath.posix.join(dstPath, relPath)}\n`,
-          "stderr",
-        );
-        yield* gateway.moveObject(srcBucket, srcPrefix, absPath);
+) {
+  const [, dstPrefix] = splitBucketPrefix(dstPath);
+  let count = 0;
+  const queue: Array<string> = [srcPath];
+  while (queue.length > 0) {
+    const dirPath = queue.pop();
+    if (dirPath === undefined) break;
+    const paths = yield* listStoragePaths(gateway, output, dirPath);
+    for (const objectName of paths) {
+      const objectPath = dirPath + objectName;
+      if (objectName.endsWith("/")) {
+        queue.push(objectPath);
+        continue;
       }
+      count++;
+      const relPath = objectPath.startsWith(srcPath)
+        ? objectPath.slice(srcPath.length)
+        : objectPath;
+      const [srcBucket, srcPrefix] = splitBucketPrefix(objectPath);
+      const absPath = posixPath.join(dstPrefix, relPath);
+      yield* output.raw(
+        `Moving object: ${objectPath} => ${posixPath.join(dstPath, relPath)}\n`,
+        "stderr",
+      );
+      yield* gateway.moveObject(srcBucket, srcPrefix, absPath);
     }
-    if (count === 0) {
-      return yield* new StorageObjectNotFoundError(srcPath);
-    }
-    return count;
-  });
+  }
+  yield* Effect.annotateCurrentSpan({ "file.count": count });
+  if (count === 0) {
+    return yield* new StorageObjectNotFoundError(srcPath);
+  }
+  return count;
+});

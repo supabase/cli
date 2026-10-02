@@ -1,13 +1,6 @@
 /**
- * Layer-exposure test for `genTypesRuntimeLayer`.
- *
- * Verifies that `IdentityStitch` is exposed at the top level of the
- * runtime layer so that `withCommandTelemetry` can read
- * `stitchedDistinctId()` via `Effect.serviceOption(IdentityStitch)` and
- * attribute the `cli_command_executed` event to the gotrue id.
- *
- * See `db/lint/lint.layers.unit.test.ts` for the canonical pattern and a
- * detailed explanation of the bug this guards against.
+ * Layer-exposure test for `genTypesRuntimeLayer`. See `db/lint/lint.layers.unit.test.ts` for
+ * the canonical pattern.
  */
 
 import { describe, expect, it } from "@effect/vitest";
@@ -80,8 +73,8 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL commandSettingsLayer against
-    // the real filesystem — see isolatedHomeLayer's docs.
+    // Builds the real commandSettingsLayer against the real filesystem — see
+    // isolatedHomeLayer's docs.
     isolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
@@ -104,7 +97,7 @@ describe("genTypesRuntimeLayer — IdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(IdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(genTypesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(genTypesRuntimeLayer.pipe(Layer.provide(ambientStubs()))));
     },
   );
 });

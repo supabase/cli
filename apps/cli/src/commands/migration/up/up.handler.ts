@@ -45,29 +45,23 @@ const runUp = Effect.fnUntraced(function* (
   const dnsResolver = yield* DnsResolverFlag;
 
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
-  // discarded on a non-linked target — see push.handler.ts's identical guard
-  // (db push) for the full TS-only rationale.
+  // discarded on a non-linked target; see push.handler.ts's identical guard.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
-    return yield* Effect.fail(
-      new MigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new MigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
-    // up defaults to `--local`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
@@ -76,11 +70,13 @@ const runUp = Effect.fnUntraced(function* (
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* readDbToml(fs, path, cliSettings.workdir, ref);
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": target.connType ?? "local",
+      "db.is_local": cfg.isLocal,
+    });
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // The connect diagnostic prints to stderr before dialing,
-        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -96,30 +92,24 @@ const runUp = Effect.fnUntraced(function* (
 
         let pending: ReadonlyArray<string>;
         if (result.kind === "missing-local") {
-          return yield* Effect.fail(
-            new MigrationMissingLocalError({
-              message: "Remote migration versions not found in local migrations directory.",
-              suggestion: suggestRevertHistory(
-                result.versions,
-                (target.connType ?? "local") === "local",
-              ),
-            }),
-          );
+          return yield* new MigrationMissingLocalError({
+            message: "Remote migration versions not found in local migrations directory.",
+            suggestion: suggestRevertHistory(
+              result.versions,
+              (target.connType ?? "local") === "local",
+            ),
+          });
         } else if (result.kind === "missing-remote") {
           if (!flags.includeAll) {
-            return yield* Effect.fail(
-              new MigrationMissingRemoteError({
-                message:
-                  "Found local migration files to be inserted before the last migration on remote database.",
-                suggestion: suggestIgnoreFlag(result.paths),
-              }),
-            );
+            return yield* new MigrationMissingRemoteError({
+              message:
+                "Found local migration files to be inserted before the last migration on remote database.",
+              suggestion: suggestIgnoreFlag(result.paths),
+            });
           }
-          // `--include-all`: the out-of-order set + everything after the
-          // applied prefix. Slices the same version-ordered list
-          // `result.paths` was taken from — indexing a name-ordered list with a
-          // version-ordered offset would skip a pending migration and re-apply
-          // an already-applied one.
+          // Slices the same version-ordered list `result.paths` was taken from; indexing
+          // a name-ordered list with this offset would skip a pending migration and
+          // re-apply an already-applied one.
           pending = [
             ...result.paths,
             ...sortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
@@ -130,6 +120,7 @@ const runUp = Effect.fnUntraced(function* (
 
         yield* upsertVaultSecrets(session, toml.vault);
 
+        yield* Effect.annotateCurrentSpan({ "migration.count": pending.length });
         for (const migrationPath of pending) {
           yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
           yield* applyMigrationFile(

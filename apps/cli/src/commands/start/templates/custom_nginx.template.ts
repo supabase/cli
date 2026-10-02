@@ -1,14 +1,7 @@
 /**
- * The canonical custom_nginx.template body — this is the sole source of
- * truth; do not hand-edit it. Unlike `kong.yml`, this file is NOT parsed as
- * a `text/template` — it's passed through unmodified into the Kong
- * container, where Kong's own openresty templating substitutes the
- * `${{VAR}}` placeholders (`LOG_LEVEL`, `NGINX_DAEMON`,
- * `NGINX_WORKER_PROCESSES`) from its own container env at boot.
- *
- * The `\${{...}}` sequences below are literal Kong template syntax, not a JS
- * template-literal interpolation — the backslash escapes are required so this
- * TS template literal doesn't try to evaluate `{{VAR}}` as an object literal.
+ * Canonical custom_nginx.template body; do not hand-edit. Unlike `kong.yml`, this is not parsed
+ * as a Go template — Kong's own openresty templating substitutes `${{VAR}}` at container boot, so
+ * the backslash in `\${{...}}` here only escapes JS template-literal syntax.
  */
 export const START_CUSTOM_NGINX_TEMPLATE = `pid pids/nginx.pid;                      # this setting is mandatory
 error_log logs/error.log \${{LOG_LEVEL}}; # can be set by kong.conf

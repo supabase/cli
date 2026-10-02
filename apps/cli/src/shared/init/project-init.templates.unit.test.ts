@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
 import {
   INIT_GITIGNORE_TEMPLATE,
@@ -11,50 +10,45 @@ import {
   renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const goCliRoot = join(here, "../../../../cli-go");
-// Vendored copies of Go's `internal/init/templates/` scaffold files (deleted in
-// CLI-1970; last present at commit 7b469f5b3). The dotted file names are
-// de-dotted so git/tooling don't interpret the fixtures themselves.
-const goTemplatesFixtureDir = join(here, "testdata/go-templates");
-
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
 }
 
-function readGoTemplate(...segments: ReadonlyArray<string>): string {
-  return normalizeNewlines(readFileSync(join(goCliRoot, ...segments), "utf8"));
-}
+// Vendored copies of the Go CLI's init-template scaffold files. Dotted file
+// names are de-dotted so git/tooling don't interpret the fixtures themselves.
+const readVendoredTemplate = Effect.fnUntraced(function* (name: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const contents = yield* fs.readFileString(
+    path.join(import.meta.dirname, "testdata/go-templates", name),
+  );
+  return normalizeNewlines(contents);
+});
 
-function readVendoredTemplate(name: string): string {
-  return normalizeNewlines(readFileSync(join(goTemplatesFixtureDir, name), "utf8"));
-}
-
-// Go renders its config.toml scaffold through text/template (config.Eject), so an action
-// containing a backtick raw string — {{ (backtick){{ .Code }}(backtick) }} in the template
-// source — is rendered to the literal string it quotes: {{ .Code }} in the ejected file.
-// This is the only text/template construct emulated here beyond the substituted fields;
-// the "models every template action" test below fails loudly if the Go scaffold ever
-// gains a construct this suite does not resolve.
+// Go's config.toml scaffold renders through text/template (`config.Eject`), so
+// an action wrapping a backtick raw string — {{ `{{ .Code }}` }} in the
+// source — is rendered to the literal string it quotes: `{{ .Code }}` in the
+// ejected file. This is the only text/template construct emulated here; the
+// "models every template action" test below fails loudly if that ever changes.
 function resolveGoTemplateEscapes(template: string): string {
   return template.replace(/\{\{\s*`([^`]*)`\s*\}\}/g, "$1");
 }
 
 // Emulates what Go's config.Eject writes to disk for a fresh `supabase init` project.
-function renderExpectedGoEject(): string {
-  return (
-    resolveGoTemplateEscapes(readGoTemplate("pkg", "config", "templates", "config.toml"))
+const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
+  Effect.map((template) =>
+    resolveGoTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
-      // supabase init always opts new projects into pg-delta; the Go template renders
-      // this from a flag set only on the init path (false when deriving defaults).
-      .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true")
-  );
-}
+      .replace("{{ .Db.OrioleDBVersion }}", "17.11.0.002")
+      // supabase init always opts new projects into pg-delta; the Go template
+      // renders this from a flag only set on the init path.
+      .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true"),
+  ),
+);
 
-// The residual Go scaffold still describes `auto_expose_new_tables` as unset-means-revoked and
-// deprecated. Platform projects never stopped auto-exposing new entities, so the native template
-// documents unset-means-exposed with `false` as the opt-out instead.
+// The Go scaffold still describes `auto_expose_new_tables` as unset-means-
+// revoked and deprecated; the native template documents unset-means-exposed
+// instead, since platform projects never stopped auto-exposing new entities.
 const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
 # default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
 # deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
@@ -64,30 +58,37 @@ const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the clou
 # instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true`;
 
-function renderExpectedNativeEject(): string {
-  return renderExpectedGoEject()
-    .replace(
-      '# content_path = "./templates/password_changed_notification.html"',
-      '# content_path = "./supabase/templates/password_changed_notification.html"',
-    )
-    .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT);
-}
+const renderExpectedNativeEject = renderExpectedGoEject.pipe(
+  Effect.map((eject) =>
+    eject
+      .replace(
+        '# content_path = "./templates/password_changed_notification.html"',
+        '# content_path = "./supabase/templates/password_changed_notification.html"',
+      )
+      .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT),
+  ),
+);
 
 describe("project init templates", () => {
-  it("renders config.toml with the native notification content_path base", () => {
-    expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(
-      renderExpectedNativeEject(),
-    );
-  });
+  it.effect("renders config.toml with the native notification content_path base", () =>
+    Effect.gen(function* () {
+      expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(
+        yield* renderExpectedNativeEject,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("models every template action in the Go scaffold, so parity cannot silently drift", () => {
-    // After escape resolution and field substitution, the only {{ ... }} occurrences left
-    // must be the GoTrue OTP placeholders quoted by the backtick escapes. Anything else
-    // means the Go template gained a construct this suite does not emulate yet — update
-    // resolveGoTemplateEscapes/renderExpectedGoEject to match config.Eject before shipping.
-    const unresolvedActions = renderExpectedGoEject().match(/\{\{[^}]*\}\}/g) ?? [];
-    expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
-  });
+  it.effect(
+    "models every template action in the Go scaffold, so parity cannot silently drift",
+    () =>
+      Effect.gen(function* () {
+        // Anything beyond the GoTrue OTP placeholder means the Go template gained
+        // a construct this suite doesn't emulate; update `resolveGoTemplateEscapes`
+        // to match before shipping.
+        const unresolvedActions = (yield* renderExpectedGoEject).match(/\{\{[^}]*\}\}/g) ?? [];
+        expect(new Set(unresolvedActions)).toEqual(new Set(["{{ .Code }}"]));
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
     const rendered = renderCliConfigTemplate("demo-project", false);
@@ -103,29 +104,55 @@ describe("project init templates", () => {
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
   });
 
-  it("matches the Go .gitignore scaffold", () => {
-    expect(INIT_GITIGNORE_TEMPLATE).toBe(readVendoredTemplate("gitignore"));
+  it("opts the experimental stack template into stack=true without default listener ports", () => {
+    const rendered = renderCliConfigTemplate("demo-project", false, true);
+    expect(rendered).toMatch(
+      /\[experimental\]\n# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.\nstack = true\n/,
+    );
+    expect(rendered).toContain("# smtp_port = 54325");
+    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
+    expect(rendered).not.toMatch(/^port = 54321$/m);
+    expect(rendered).not.toMatch(/^port = 54322$/m);
+    expect(rendered).not.toMatch(/^shadow_port = 54320$/m);
+    expect(rendered).not.toMatch(/^port = 54329$/m);
+    expect(rendered).not.toMatch(/^port = 54323$/m);
+    expect(rendered).not.toMatch(/^port = 54324$/m);
+    expect(rendered).not.toMatch(/^inspector_port = 8083$/m);
+    expect(rendered).not.toMatch(/^port = 54327$/m);
   });
 
-  it("matches the Go VS Code extensions scaffold", () => {
-    expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(readVendoredTemplate("vscode-extensions.json.golden"));
-  });
+  it.effect("matches the Go .gitignore scaffold", () =>
+    Effect.gen(function* () {
+      expect(INIT_GITIGNORE_TEMPLATE).toBe(yield* readVendoredTemplate("gitignore"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("matches the Go VS Code settings scaffold", () => {
-    expect(VSCODE_SETTINGS_TEMPLATE).toBe(readVendoredTemplate("vscode-settings.json.golden"));
-  });
+  it.effect("matches the Go VS Code extensions scaffold", () =>
+    Effect.gen(function* () {
+      expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(
+        yield* readVendoredTemplate("vscode-extensions.json.golden"),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("matches the Go IntelliJ scaffold", () => {
-    expect(INTELLIJ_DENO_TEMPLATE).toBe(readVendoredTemplate("idea-deno.xml"));
-  });
+  it.effect("matches the Go VS Code settings scaffold", () =>
+    Effect.gen(function* () {
+      expect(VSCODE_SETTINGS_TEMPLATE).toBe(
+        yield* readVendoredTemplate("vscode-settings.json.golden"),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("matches the Go IntelliJ scaffold", () =>
+    Effect.gen(function* () {
+      expect(INTELLIJ_DENO_TEMPLATE).toBe(yield* readVendoredTemplate("idea-deno.xml"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
 
-// ---------------------------------------------------------------------------
-// `config pull` (CLI-2064) surgical-editor round trip: `applyConfigEdits` (`@supabase/config`)
-// must edit the scaffold this module renders exactly as intended, and nothing else — line-level
-// diffing is what actually proves that, rather than trusting the editor's own report of what it
-// touched.
-// ---------------------------------------------------------------------------
+// `applyConfigEdits` must edit the scaffold exactly as intended and nothing
+// else; line-level diffing proves that, rather than trusting the editor's
+// own report of what it touched.
 
 interface DiffOp {
   readonly kind: "equal" | "removed" | "added";
@@ -211,9 +238,9 @@ describe("config pull surgical editor round trip over the rendered scaffold", ()
     }
 
     const ops = diffLines(source.split("\n"), outcome.text.split("\n"));
-    // The trailing blank line the block insertion adds can be aligned by the LCS against the
-    // file's pre-existing final blank, so blank lines are excluded here; their exact placement
-    // is pinned byte-for-byte by the tail assertion below instead.
+    // Blank lines are excluded: the block insertion's trailing blank can align
+    // with the file's pre-existing final blank via LCS. The tail assertions
+    // below pin blank-line placement byte-for-byte instead.
     const changed = ops.filter((op) => op.kind !== "equal" && op.line !== "");
 
     expect(changed).toEqual([

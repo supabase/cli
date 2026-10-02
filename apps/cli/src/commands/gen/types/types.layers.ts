@@ -9,10 +9,9 @@ import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
+import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
-import { pgDeltaSslProbeLayer } from "../../../command-internal/pgdelta-ssl-probe.layer.ts";
-import { PgDeltaSslProbe } from "../../../command-internal/pgdelta-ssl-probe.service.ts";
 import { IdentityStitch, identityStitchLayer } from "../../../command-internal/identity-stitch.ts";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { linkedProjectCacheLayer } from "../../../telemetry/linked-project-cache.layer.ts";
@@ -21,12 +20,13 @@ import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
+import { genTypesGeneratorLayer } from "./types.generator.layer.ts";
+import { GenTypesGenerator } from "./types.generator.service.ts";
 
 /**
- * `gen types --local` and `--db-url` do not use the Management API, so this
- * runtime deliberately avoids `managementApiRuntimeLayer`: that layer
- * eagerly builds the platform API client and requires an access token before
- * the handler can choose the local/db-url branch.
+ * Avoids `managementApiRuntimeLayer`, which eagerly builds the platform API client and
+ * requires an access token before the handler can choose the local/db-url branch — `gen types
+ * --local`/`--db-url` don't use the Management API.
  */
 export const genTypesRuntimeLayer = (() => {
   const cliSettings = commandSettingsLayer.pipe(Layer.provide(debugLoggerLayer));
@@ -35,9 +35,8 @@ export const genTypesRuntimeLayer = (() => {
     Layer.provide(cliSettings),
     Layer.provide(debugLoggerLayer),
   );
-  // `identityStitchLayer` (one per-command identity stitcher) is provided by
-  // the SAME reference to the platform-API factory and the linked-project cache so
-  // memoisation gives both a single `stitchAttempted` guard.
+  // The same `identityStitchLayer` reference is provided to the platform-API factory and the
+  // linked-project cache so memoisation gives both a single `stitchAttempted` guard.
   const platformApiFactory = commandPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliSettings),
@@ -50,10 +49,12 @@ export const genTypesRuntimeLayer = (() => {
     Layer.provide(debugLoggerLayer),
     Layer.provide(identityStitchLayer),
   );
+  const generator = genTypesGeneratorLayer.pipe(Layer.provide(dbConnectionLayer));
 
   const built = Layer.mergeAll(
     dbConfig,
     dbConnectionLayer,
+    generator,
     cliSettings,
     platformApiFactory,
     projectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
@@ -63,21 +64,18 @@ export const genTypesRuntimeLayer = (() => {
       Layer.provide(httpClient),
       Layer.provide(identityStitchLayer),
     ),
-    pgDeltaSslProbeLayer,
     telemetryStateLayer,
-    // The one per-command identity stitcher, exposed at top level so
-    // `withCommandTelemetry` can read
-    // `stitchedDistinctId()` and attribute the cli_command_executed event to the
-    // gotrue id. The SAME reference is provided to platformApiFactory /
-    // linkedProjectCache above, so memoisation gives both a single
-    // `stitchAttempted` guard — aliasing/persisting at most once. Its
-    // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
-    // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
+    // Exposed at top level so `withCommandTelemetry` can read `stitchedDistinctId()` and
+    // attribute the cli_command_executed event to the gotrue id.
     identityStitchLayer,
     commandRuntimeLayer(["gen", "types"]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<GenTypesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    GenTypesServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;
@@ -88,7 +86,8 @@ type GenTypesServices =
   | CommandSettings
   | ProjectRefResolver
   | DbConfigResolver
-  | PgDeltaSslProbe
+  | DbConnection
+  | GenTypesGenerator
   | LinkedProjectCache
   | TelemetryState
   | IdentityStitch

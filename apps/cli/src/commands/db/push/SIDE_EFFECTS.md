@@ -25,14 +25,14 @@ before migrations unless `--skip-vault` is set.
 
 ## Database Mutations
 
-| Statement                                                                                                           | When                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use one explicitly transactional extended-protocol batch (`BEGIN` … `COMMIT`) with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes                     |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations, when a read-only probe finds the ledger not yet provisioned (idempotent; supabase/cli#6393)                                                                                                                                 |
-| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); compatible statements use one explicitly transactional extended-protocol batch (`BEGIN` … `COMMIT`) with one final `Sync`, with the same standalone/sequential exceptions as migrations — see Notes |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                                                |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation; the `seed_files` DDL only when a read-only probe finds that ledger not yet provisioned); a dirty seed only refreshes the hash                                                               |
-| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236)                      |
+| Statement                                                                                                           | When                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use an implicit extended-protocol batch with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes                                      |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations, when a read-only probe finds the ledger not yet provisioned (idempotent; supabase/cli#6393)                                                                                                            |
+| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                                                       |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                           |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation; the `seed_files` DDL only when a read-only probe finds that ledger not yet provisioned); a dirty seed only refreshes the hash                                          |
+| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236) |
 
 ## API Routes
 
@@ -110,22 +110,29 @@ stdout is payload-only. A single `result` object is emitted:
   load, including decrypted `encrypted:` values. `--skip-vault` leaves them unchanged
   and does not resolve or decrypt their configured values.
 - **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
-  `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`,
-  `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
-  `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`, `ALTER DATABASE … SET TABLESPACE`, and
-  `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
-  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`,
-  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`, and
-  `REFRESH MATERIALIZED VIEW CONCURRENTLY`
-  cannot run inside a
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and `CLUSTER` cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
   the statement standalone outside any transaction, then resumes batching; the history
   insert stays in the final batch so the migration is recorded only after every
-  statement succeeds. A failed batch's transaction is rolled back (bounded) before its
-  connection is reused; a rollback that fails or times out discards the connection. Atomicity is therefore lost at each flush boundary: statements
+  statement succeeds. Atomicity is therefore lost at each flush boundary: statements
   committed in an earlier batch are **not** rolled back if a later statement fails,
   leaving the database partially migrated with **no history row** — a re-run replays
   the whole file from the top (which may then fail on already-applied statements).
   Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
   such statements in their own migration file. Intentional fix for supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`).
+
+- **Migration transaction guidance**: the per-file pipeline does not add `BEGIN` or
+  `COMMIT`. A SQLSTATE 25P01 failure retains its statement context and recommends
+  authored `BEGIN; ... COMMIT;` around statements such as `LOCK TABLE`. A top-level
+  `SET LOCAL` without authored transaction control emits one warning per file that
+  its setting may have no effect. Authored transaction controls execute as written.
+- Automatic splitting of pipeline-incompatible statements still applies, with one
+  warning per file explaining possible partial application and recommending a
+  separate migration file starting with `-- pg-delta: transaction=false`. SQLSTATE
+  25001 failures recommend that directive without an authored transaction block.
+  The directive matches the exact first line, allowing a UTF-8 BOM and LF/CRLF;
+  marked files execute one statement at a time and record history only after full
+  success. Their earlier statements remain applied if a later statement fails.
+  Warnings use stderr in text/JSON modes (including `-o` machine formats), and
+  structured warning log events in stream JSON. Dry runs emit no execution warnings.

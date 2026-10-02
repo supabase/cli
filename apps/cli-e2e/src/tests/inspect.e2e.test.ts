@@ -3,10 +3,6 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { testBehaviour } from "./test-context.ts";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function setupInspectWorkspace(dir: string, pgPort: number): void {
   mkdirSync(join(dir, "supabase"), { recursive: true });
   writeFileSync(
@@ -24,10 +20,6 @@ async function setPgFixture(apiUrl: string, key: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to set PG fixture "${key}": ${await res.text()}`);
 }
 
-// ---------------------------------------------------------------------------
-// Subcommand table
-// ---------------------------------------------------------------------------
-
 const SUBCOMMANDS = [
   { name: "db-stats", fixtureKey: "db-stats", assertValue: "42 MB" },
   { name: "replication-slots", fixtureKey: "replication-slots", assertValue: "test-slot" },
@@ -43,10 +35,6 @@ const SUBCOMMANDS = [
   { name: "table-stats", fixtureKey: "table-stats", assertValue: "public.orders" },
   { name: "traffic-profile", fixtureKey: "traffic-profile", assertValue: "sessions" },
 ] as const;
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("inspect:flags", () => {
   testBehaviour("rejects --db-url with --local", async ({ run, workspace, pgMockPort }) => {

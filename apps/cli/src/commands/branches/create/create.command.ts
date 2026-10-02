@@ -67,10 +67,8 @@ const config = {
     Flag.withDescription("Select a desired instance size for the branch database."),
     Flag.optional,
   ),
-  // Optional so the handler can distinguish "flag explicitly set false"
-  // from "flag absent". Effect CLI surface: `--persistent` sets
-  // `Option.some(true)`, `--no-persistent` sets `Option.some(false)`,
-  // absent stays `Option.none()`.
+  // Optional so the handler can distinguish "flag explicitly set false" from "flag absent":
+  // `--persistent`/`--no-persistent` set `Option.some(true|false)`; absent stays `Option.none()`.
   persistent: Flag.boolean("persistent").pipe(
     Flag.withDescription("Whether to create a persistent branch."),
     Flag.optional,
@@ -100,7 +98,6 @@ export const branchesCreateCommand = Command.make("create", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  // `stdinLayer`: the confirmation prompt reads piped stdin via `promptYesNo`
-  // on a non-TTY stdin.
+  // `stdinLayer` lets the confirmation prompt read piped stdin via `promptYesNo` on a non-TTY.
   Command.provide(Layer.mergeAll(managementApiRuntimeLayer(["branches", "create"]), stdinLayer)),
 );

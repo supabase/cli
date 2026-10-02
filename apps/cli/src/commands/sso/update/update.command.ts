@@ -8,9 +8,8 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { ssoUpdate } from "./update.handler.ts";
 
-// Go declares all three domain flags with pflag's `StringSliceVar`
-// (`cmd/sso.go:170-172`); malformed CSV fails at parse time with pflag's
-// exact diagnostic (CLI-2005, see `stringSliceFlag`).
+// All three domain flags are CSV string-slice flags; malformed CSV reports
+// pflag's diagnostic (see `stringSliceFlag`).
 export const ssoUpdateDomainsFlag = stringSliceFlag(
   "domains",
   "Replace domains with this comma separated list of email domains.",
@@ -71,9 +70,8 @@ const config = {
 export type SsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const ssoUpdateCommand = Command.make("update", config).pipe(
-  // This description includes the `of a already added` grammar slip
-  // verbatim and intentionally — it is an established output string; do not
-  // "fix" the grammar here.
+  // The `of a already added` grammar slip is part of the established output
+  // string — don't fix it here.
   Command.withDescription(
     "Update the configuration settings of a already added SSO identity provider.",
   ),

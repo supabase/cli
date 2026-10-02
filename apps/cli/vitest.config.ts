@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { defaultClientConditions, defaultServerConditions } from "vite";
 import { defineConfig } from "vitest/config";
+import { E2eSequencer } from "./tests/e2e-sequencer.ts";
 
 function dockerfileTextPlugin() {
   return {
@@ -16,16 +17,9 @@ function dockerfileTextPlugin() {
   };
 }
 
-// Workspace packages such as @supabase/config publish a `bun` export
-// condition pointing at their TypeScript source (see
-// packages/config/package.json's `exports` map); without it, Vite's resolver
-// falls through to the `default` condition and loads the built `dist/*.js`
-// output instead — which is stale, or missing entirely on a fresh clone
-// before the package has been built. Extending (not replacing) Vite's
-// default condition lists keeps every other package's exports resolution
-// unchanged. Required on every inline `test.projects` entry below too:
-// Vitest builds a separate Vite config per project and does not inherit
-// these from the root config (see PR #6366 finding 0).
+// Workspace packages such as @supabase/config publish a `bun` export condition
+// pointing at their TypeScript source; without it, Vite falls through to `default`
+// and loads the built `dist/*.js`, which can be stale or missing.
 const workspacePackageResolve = { conditions: [...defaultClientConditions, "bun"] };
 const workspacePackageSsrResolve = { conditions: [...defaultServerConditions, "bun"] };
 
@@ -35,6 +29,9 @@ export default defineConfig({
   plugins: [dockerfileTextPlugin()],
   test: {
     passWithNoTests: true,
+    // Vitest reads `sequence.sequencer` from the root config only; the sequencer
+    // itself applies duration-aware sharding to the e2e project alone.
+    sequence: { sequencer: E2eSequencer },
     coverage: {
       enabled: false,
       provider: "v8",
@@ -57,9 +54,6 @@ export default defineConfig({
     },
     projects: [
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
@@ -67,32 +61,29 @@ export default defineConfig({
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
+          hookTimeout: 120_000,
           include: ["**/*.integration.test.ts"],
+          // Integration workers start real service processes and containers.
+          maxWorkers: 4,
+          sequence: { groupOrder: 1 },
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
           fileParallelism: false,
           maxWorkers: 1,
           setupFiles: ["tests/e2e-setup.ts"],
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },
       },
       {
-        resolve: workspacePackageResolve,
-        ssr: { resolve: workspacePackageSsrResolve },
-        plugins: [dockerfileTextPlugin()],
         test: {
           // Live tests run against one provisioned project on the configured
           // platform. They are never part of the default unit/integration/e2e

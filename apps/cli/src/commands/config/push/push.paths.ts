@@ -1,8 +1,7 @@
 /**
  * Generic config-path helpers shared by `config push`'s pure modules
- * (push.encoders.ts, push.plan.ts, push.secrets.ts) and its handler. Kept in
- * one place so every module compares/looks up paths the same way — see the
- * architecture review's A4.
+ * (push.encoders.ts, push.plan.ts, push.secrets.ts) and its handler, so every module
+ * compares/looks up paths the same way.
  */
 
 import type { ProjectConfig } from "@supabase/config";
@@ -54,14 +53,9 @@ export function comparePaths(a: ReadonlyArray<string>, b: ReadonlyArray<string>)
 }
 
 /**
- * A container's own enabled state, read from the LOCAL (declared) projection
- * only — never `remote`, since gating decides whether `config push` even
- * attempts to write a container's fields at all, independently of the
- * project's current state (mirrors `fromConfigDocument`'s own raw-presence
- * mask and disabled-sentinel pruning). `undefined` means the container's
- * enabled state cannot be determined — it is absent from `local`, or present
- * without a boolean `enabled` field — and callers must never coerce that
- * into `false`/`""`.
+ * A container's own enabled state, read from the local (declared) projection only, never
+ * `remote` — gating decides whether `config push` attempts to write a container's fields at all.
+ * `undefined` means the state can't be determined; callers must never coerce that into `false`.
  */
 export function containerEnabled(
   local: ProjectConfig,

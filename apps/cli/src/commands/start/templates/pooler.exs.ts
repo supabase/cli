@@ -1,10 +1,8 @@
 /**
- * The canonical `pooler.exs` template — this is the sole source of truth; do
- * not hand-edit the Elixir body.
+ * Canonical `pooler.exs` template; do not hand-edit the Elixir body.
  *
- * Placeholders (`{{ .Field }}`): DbHost, DbPort, DbDatabase, DbPassword,
- * ExternalId, ModeType, DefaultMaxClients, DefaultPoolSize. Rendered by
- * `lib/template-render.ts`.
+ * Placeholders (`{{ .Field }}`): DbHost, DbPort, DbDatabase, DbPassword, ExternalId, ModeType,
+ * DefaultMaxClients, DefaultPoolSize — rendered by `lib/template-render.ts`.
  */
 export const START_POOLER_EXS_TEMPLATE = `{:ok, _} = Application.ensure_all_started(:supavisor)
 

@@ -1,9 +1,9 @@
 import { type GoType, goBool, goStruct } from "../../command-internal/go-struct-output.encoders.ts";
 
 /**
- * Type shape for `api.SslEnforcementResponse` (`apps/cli-go/pkg/api/types.gen.go`).
- * Shared by `ssl-enforcement get` and `ssl-enforcement update` for
- * `-o yaml` / `-o toml` (CLI-1975).
+ * Type shape for the SSL enforcement response, used to drive `-o yaml`/`-o
+ * toml` key casing. Shared by `ssl-enforcement get` and `ssl-enforcement
+ * update`.
  */
 export const GO_SSL_ENFORCEMENT_RESPONSE: GoType = goStruct([
   ["appliedSuccessfully", goBool],

@@ -1,24 +1,16 @@
-import type { ApiKeyResponse } from "@supabase/api/effect";
+import type { ApiKeyResponse_Output } from "@supabase/api/effect";
 
 import { renderGlamourTable } from "../../output/glamour-table.ts";
 import { apiKeyValue } from "../../command-internal/api-keys.format.ts";
+import { formatRegion } from "../../command-internal/region.format.ts";
 import { formatTimestamp } from "../../command-internal/timestamp.format.ts";
 
-// ---------------------------------------------------------------------------
-// Pure formatters — no Effect / no service dependencies, kept unit-testable.
-// Match the established byte output for `projects list`, `projects create`,
-// `projects api-keys`.
-// ---------------------------------------------------------------------------
-
-type ApiKey = typeof ApiKeyResponse.Type;
+type ApiKey = typeof ApiKeyResponse_Output.Type;
 
 /**
- * Lenient project record. `projects list` / `create` parse the `/v1/projects`
- * response via the raw HTTP client because the typed client's `ref:
- * isMinLength(20)` + `^[a-z]+$` schema rejects the cli-e2e `__PROJECT_REF__`
- * placeholder fixtures (the same reason `suggestUpgrade` and the
- * linked-project cache bypass the typed client). Projects therefore flow
- * through as plain JSON objects.
+ * Lenient project record. `projects list`/`create` parse the `/v1/projects` response via the raw
+ * HTTP client because the typed schema's `ref` pattern (20+ lowercase letters) rejects placeholder
+ * refs in test fixtures, so projects flow through as plain JSON objects.
  */
 export type LinkedProject = Readonly<Record<string, unknown>> & { readonly linked: boolean };
 
@@ -27,34 +19,6 @@ export function readProjectField(project: unknown, key: string): string {
   if (typeof project !== "object" || project === null) return "";
   const value = Reflect.get(project, key);
   return typeof value === "string" ? value : "";
-}
-
-// Region display names: known region codes render as a human-readable name;
-// unknown codes pass through unchanged.
-
-const REGION_MAP: Readonly<Record<string, string>> = {
-  "ap-east-1": "East Asia (Hong Kong)",
-  "ap-northeast-1": "Northeast Asia (Tokyo)",
-  "ap-northeast-2": "Northeast Asia (Seoul)",
-  "ap-south-1": "South Asia (Mumbai)",
-  "ap-southeast-1": "Southeast Asia (Singapore)",
-  "ap-southeast-2": "Oceania (Sydney)",
-  "ca-central-1": "Canada (Central)",
-  "eu-central-1": "Central EU (Frankfurt)",
-  "eu-central-2": "Central Europe (Zurich)",
-  "eu-north-1": "North EU (Stockholm)",
-  "eu-west-1": "West EU (Ireland)",
-  "eu-west-2": "West Europe (London)",
-  "eu-west-3": "West EU (Paris)",
-  "sa-east-1": "South America (São Paulo)",
-  "us-east-1": "East US (North Virginia)",
-  "us-east-2": "East US (Ohio)",
-  "us-west-1": "West US (North California)",
-  "us-west-2": "West US (Oregon)",
-};
-
-export function formatRegion(region: string): string {
-  return REGION_MAP[region] ?? region;
 }
 
 // Dashboard URL per profile. Defaults to the production dashboard for
@@ -70,13 +34,8 @@ export function dashboardUrlForProfile(profile: string): string {
   return DASHBOARD_URLS[profile] ?? DASHBOARD_URLS.supabase!;
 }
 
-// ---------------------------------------------------------------------------
-// Tables. `renderGlamourTable` lays out cells directly, so literal `|` in a
-// project name flows through unescaped and matches the established glamour
-// byte output (the markdown `\|` escape is decoded back to `|` by glamour
-// upstream).
-// ---------------------------------------------------------------------------
-
+// `renderGlamourTable` lays out cells directly, so a literal `|` in a project name passes
+// through unescaped.
 const LIST_HEADERS = [
   "LINKED",
   "ORG ID",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -130,7 +130,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SsoInvalidUuidError");
+        expect(Cause.pretty(exit.cause)).toContain("SsoInvalidUuidError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -155,7 +155,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SsoRemoveNotFoundError");
+        expect(Cause.pretty(exit.cause)).toContain("SsoRemoveNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -168,7 +168,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoRemoveUnexpectedStatusError");
         expect(dump).toContain("Unexpected error removing identity provider");
       }
@@ -217,7 +217,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
@@ -250,7 +250,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("SsoRemoveNetworkError");
+        expect(Cause.pretty(exit.cause)).toContain("SsoRemoveNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -263,7 +263,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoRemoveUnexpectedStatusError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
@@ -282,7 +282,7 @@ describe("sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Cause.pretty(exit.cause);
         expect(dump).toContain("SsoRemoveNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",

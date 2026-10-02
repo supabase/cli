@@ -1,25 +1,19 @@
 /**
  * AI review resolver: decides whether the one-shot AI review pipeline should
- * run for a PR.
+ * run for a PR. The pipeline runs once per PR, so this is the only gate
+ * between a new commit landing and Claude/Codex burning API budget again.
  *
- * The pipeline runs EXACTLY ONCE per PR, so this is the only gate standing
- * between "new commit lands" and "Claude + Codex burn API budget again". Two
- * triggers feed it:
- *   - manual (`workflow_dispatch` or an internal maintainer's `/ai-review`
- *     issue comment): a human explicitly asked for a review, so the
- *     marker/dedup guard and the draft/fork/bot skips are bypassed.
- *   - auto (`pull_request` `opened`/`ready_for_review`): only PRs whose
- *     author has repository write access get the automatic review. Skips
- *     drafts, bots, fork PRs, authors without write access (external
- *     contributors go through the manual maintainer path), and PRs that
- *     already carry a marker comment/review from a prior run.
+ * Two triggers:
+ *   - manual (`workflow_dispatch` or a maintainer's `/ai-review` issue
+ *     comment): bypasses the marker/dedup guard and the draft/fork/bot skips.
+ *   - auto (`pull_request` `opened`/`ready_for_review`): only for PRs whose
+ *     author has repository write access; skips drafts, bots, fork PRs, and
+ *     PRs that already carry a marker comment/review from a prior run.
  *
- * `resolveDecision` is the pure orchestration function (I/O injected, like
- * `evaluateAllOpenPrs` in `contribution-gate.ts`) that a test can drive
- * without the network; `main()` wires up the real GitHub I/O, writes the
- * step outputs `should_run`, `pr_number`, `head_ref`, and `trigger` to
- * `$GITHUB_OUTPUT`, and surfaces the skip reason (if any) in
- * `$GITHUB_STEP_SUMMARY`.
+ * `resolveDecision` is the pure orchestration function (I/O injected) a test
+ * can drive without the network; `main()` wires up the real GitHub I/O,
+ * writes `should_run`/`pr_number`/`head_ref`/`trigger` to `$GITHUB_OUTPUT`,
+ * and surfaces the skip reason (if any) in `$GITHUB_STEP_SUMMARY`.
  *
  * Run in CI as: `bun .github/scripts/ai-review/resolve.ts`.
  */
@@ -29,14 +23,11 @@ import { appendFileSync } from "node:fs";
 import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
 import { AI_REVIEW_MARKER } from "./post-review.ts";
 
-// Re-export so existing consumers (tests, this file's own dedup check) can
-// keep importing the marker from `resolve.ts`; `post-review.ts` — which owns
-// posting — is the single source of truth for the literal.
+// `post-review.ts` owns the literal; re-exported here for convenience.
 export { AI_REVIEW_MARKER };
 
 /** Login every review/comment posted by this workflow carries. Duplicated
- * (not imported) from `post-review.ts`'s `WORKFLOW_BOT_LOGIN`; keep the two
- * literals in sync. */
+ * from `post-review.ts`'s `WORKFLOW_BOT_LOGIN`; keep the two in sync. */
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 
 export type EventName = "workflow_dispatch" | "issue_comment" | "pull_request";
@@ -96,11 +87,9 @@ export interface ResolveResult {
   trigger: Trigger;
 }
 
-/** No size gate: Claude and Codex review agentically — reading the diff and the
- * changed files via their own tools over many turns, like the local CLI — so a
- * PR that clears the draft/bot/fork/dedup checks is reviewed regardless of its
- * size. Very large diffs are handled best-effort within the model's
- * context/turn budget. */
+/** No size gate: Claude and Codex review agentically over many turns, so any
+ * PR that clears the draft/bot/fork/dedup checks is reviewed regardless of
+ * size, best-effort within the model's context/turn budget. */
 function decideForPr(trigger: Trigger): ResolveResult {
   return { shouldRun: true, trigger };
 }
@@ -128,9 +117,8 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
         throw new Error("issue_comment trigger requires comment details");
       }
 
-      // Authoritative command match: the workflow's job `if:` only
-      // pre-filters on `startsWith('/ai-review')`, so `/ai-reviewers` or
-      // `/ai-review-please` would otherwise also reach here.
+      // The workflow's job `if:` only pre-filters on `startsWith('/ai-review')`,
+      // so `/ai-reviewers` or `/ai-review-please` would otherwise also reach here.
       const firstLine = comment.body.split("\n")[0]?.trim() ?? "";
       if (firstLine !== "/ai-review") {
         return {
@@ -140,13 +128,9 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
         };
       }
 
-      // Authoritative authorization: always resolve the commenter's
-      // effective repository permission and require write/admin. Only the
-      // repository OWNER may short-circuit that requirement — any other
-      // association (including MEMBER/COLLABORATOR, which merely mean "in
-      // the org"/"added as a collaborator", not necessarily push-capable)
-      // must pass the permission check. Mirrors `contribution-gate.ts`'s
-      // `WRITE_PERMISSIONS`.
+      // Only the repository OWNER short-circuits the permission check; any
+      // other association (MEMBER/COLLABORATOR only mean "in the org"/"added
+      // as a collaborator", not necessarily push-capable) must pass it.
       const permission = await io.fetchPermission(comment.authorLogin);
       const authorized =
         comment.authorAssociation === "OWNER" ||
@@ -175,8 +159,6 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     return decideForPr(trigger);
   }
 
-  // Auto trigger (`pull_request` events): internal PRs only, fires at most
-  // once per PR.
   if (pr.draft) {
     return { shouldRun: false, skipReason: "PR is a draft.", trigger };
   }
@@ -191,13 +173,10 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     };
   }
 
-  // Authoritative auto-trigger authorization: only PRs authored by someone
-  // with effective repository write access are reviewed automatically. This
-  // is the actual author check, not defense-in-depth — a same-repo head
-  // branch only proves the branch exists in this repo, not that the AUTHOR
-  // pushed it (a PR can be opened from a branch someone else pushed). An
-  // unresolvable permission counts as unauthorized. Mirrors the manual
-  // path's gate above and `contribution-gate.ts`'s `WRITE_PERMISSIONS`.
+  // A same-repo head branch only proves the branch exists in this repo, not
+  // that the author pushed it, so this checks the author's own permission
+  // rather than trusting the branch's origin. An unresolvable permission
+  // counts as unauthorized.
   const authorPermission = await io.fetchPermission(pr.authorLogin);
   if (authorPermission === undefined || !WRITE_PERMISSIONS.has(authorPermission)) {
     return {
@@ -214,9 +193,8 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     io.listReviews(pr.number),
     io.listIssueComments(pr.number),
   ]);
-  // Only a marker posted BY the workflow bot counts — otherwise anyone could
-  // paste the (invisible) marker into a comment to permanently suppress the
-  // auto review of their own PR.
+  // Only a marker posted by the workflow bot counts, or anyone could paste
+  // the invisible marker into a comment to suppress their own PR's review.
   const alreadyReviewed = [...reviews, ...comments].some(
     (entry) => entry.authorLogin === WORKFLOW_BOT_LOGIN && entry.body.includes(AI_REVIEW_MARKER),
   );
@@ -230,8 +208,6 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
 
   return decideForPr(trigger);
 }
-
-// --- GitHub I/O (only runs when executed directly) ---
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -275,11 +251,7 @@ function isRecordEntry(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * The validated boundary between `Response.json()` (typed `Promise<unknown>`
- * under `@tsconfig/bun`) and this file's typed shapes: `assert` narrows the
- * parsed value to `T` before any caller reads a field off it.
- */
+/** Narrows `Response.json()`'s `unknown` result to `T` via `assert` before any caller reads a field off it. */
 async function githubJson<T>(
   response: Response,
   assert: (value: unknown) => asserts value is T,
@@ -389,10 +361,8 @@ async function reactToComment(token: string, base: string, commentId: number): P
   });
 }
 
-/** Writes each `$GITHUB_OUTPUT` value using the heredoc/delimiter form (with
- * a random delimiter per line) rather than `name=value`, defensively — none
- * of today's values can contain a newline, but a future value shouldn't be
- * able to inject extra output lines either. */
+/** Writes each `$GITHUB_OUTPUT` value with a random per-line delimiter rather
+ * than `name=value`, so a future multi-line value can't inject extra output lines. */
 function writeOutputs(result: ResolveResult, prNumber: number): void {
   const outputFile = requireEnv("GITHUB_OUTPUT");
   const entries: Record<string, string> = {
@@ -410,9 +380,7 @@ function writeOutputs(result: ResolveResult, prNumber: number): void {
   appendFileSync(outputFile, `${lines.join("\n")}\n`);
 }
 
-/** Surfaces the skip reason (if any) in the job's step summary — the only
- * place it's actually read; it's not exposed as a job `outputs:` because
- * nothing downstream consumes it there. */
+/** Surfaces the skip reason (if any) in the job's step summary. */
 function writeStepSummary(result: ResolveResult): void {
   if (!result.skipReason) {
     return;

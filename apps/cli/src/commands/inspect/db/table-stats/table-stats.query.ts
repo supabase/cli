@@ -30,10 +30,9 @@ LEFT JOIN (
 ORDER BY ts.total_size_bytes DESC`;
 
 /**
- * `inspect db table-stats` — combined table size, index size, and row count.
- * Also the routed query for the deprecated `table-sizes` / `table-index-sizes` /
- * `total-table-sizes` aliases (but NOT `table-record-counts`, which routes to
- * index-stats — preserved in that alias's handler).
+ * `inspect db table-stats` — combined table size, index size, and row count. Also the routed
+ * query for the deprecated `table-sizes` / `table-index-sizes` / `total-table-sizes` aliases
+ * (not `table-record-counts`, which routes to index-stats instead).
  */
 export const tableStatsSpec: InspectQuerySpec = {
   name: "table-stats",

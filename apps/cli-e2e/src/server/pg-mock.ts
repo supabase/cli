@@ -22,12 +22,8 @@
  *   - Terminate ('X') → closes connection gracefully
  */
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 export interface PgFixture {
-  /** Lowercase column names matching Go Result struct field names. */
+  /** Lowercase column names, matching the field names the inspect commands map query results onto. */
   columns: string[];
   /**
    * Per-column Postgres type OIDs (text format is used throughout).
@@ -59,10 +55,6 @@ export interface PgMockHandle {
   setState(state: PgMockState): void;
   stop(): void;
 }
-
-// ---------------------------------------------------------------------------
-// Wire protocol helpers
-// ---------------------------------------------------------------------------
 
 const TEXT_OID = 25;
 const SSL_REQUEST_CODE = 80877103;
@@ -218,20 +210,12 @@ function buildCloseComplete(): Buffer {
   return msg(0x33, Buffer.alloc(0)); // '3'
 }
 
-// ---------------------------------------------------------------------------
-// Socket state
-// ---------------------------------------------------------------------------
-
 interface SocketData {
   buf: Buffer;
   phase: "startup" | "query";
   /** Number of $N parameters in the most recently parsed statement. */
   paramCount: number;
 }
-
-// ---------------------------------------------------------------------------
-// Response builders
-// ---------------------------------------------------------------------------
 
 function buildStartupResponse(): Buffer {
   return Buffer.concat([
@@ -247,12 +231,10 @@ function buildStartupResponse(): Buffer {
 }
 
 /**
- * Connection liveness probe (`SELECT 1`). The native TS driver eagerly forces its
- * lazily-connected `pg` client by running `SELECT 1` over the simple-query
- * protocol (Go's pgx connects eagerly at the protocol level and issues no such
- * query). A real Postgres always answers `SELECT 1` regardless of any fixtures, so
- * the mock must too — otherwise the empty-state "no fixture" guard rejects the
- * probe and the native command fails to connect before doing any real work.
+ * Connection liveness probe (`SELECT 1`), run by the driver to force its lazy
+ * connection. A real Postgres always answers it regardless of fixtures, so the
+ * mock must too, or the empty-state "no fixture" guard would reject it before
+ * the command does any real work.
  */
 function buildProbeResponse(): Buffer {
   return Buffer.concat([
@@ -341,10 +323,6 @@ function buildExecuteDataResponse(state: PgMockState): Buffer {
   // empty state — return CommandComplete with 0 rows
   return buildCommandComplete("SELECT 0");
 }
-
-// ---------------------------------------------------------------------------
-// Message processing
-// ---------------------------------------------------------------------------
 
 function processMessages(socket: Bun.Socket<SocketData>, getState: () => PgMockState): void {
   while (true) {
@@ -446,10 +424,6 @@ function processMessages(socket: Bun.Socket<SocketData>, getState: () => PgMockS
     // 'H' (0x48) Flush — no response required (we write synchronously)
   }
 }
-
-// ---------------------------------------------------------------------------
-// Public factory
-// ---------------------------------------------------------------------------
 
 export function startPgMock(): PgMockHandle {
   let state: PgMockState = { type: "empty" };

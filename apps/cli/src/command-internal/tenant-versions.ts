@@ -2,24 +2,15 @@ import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
+import { tagForServiceVersion } from "../shared/services/services.shared.ts";
+
 /**
- * Best-effort probes for the deployed versions of a project's REST (PostgREST),
- * Auth (GoTrue) and Storage services. Mirrors `apps/cli-go/internal/utils/tenant/
- * {postgrest,gotrue,storage}.go`, which `supabase link`'s `LinkServices` calls to
- * write `rest-version` / `gotrue-version` / `storage-version` under
- * `supabase/.temp/`.
- *
- * Requests go directly to the project's service gateway
- * (`https://<ref>.<projectHost>`) using the service-role key, replicating Go's
- * `fetcher.NewServiceGateway` auth headers (`apps/cli-go/pkg/fetcher/gateway.go:25-31`):
- *  - always send `apikey: <serviceKey>`;
- *  - additionally send `Authorization: Bearer <serviceKey>` unless the key is a
- *    new-style `sb_…` key (which carries auth in the `apikey` header alone).
- *
- * Every probe is best-effort: any transport error, non-200 status, parse failure,
- * or empty/sentinel version resolves to `Option.none()` so the caller skips the
- * corresponding file write without failing the link. This matches Go, where each
- * job's error is only logged to the debug logger.
+ * Best-effort probes for the deployed versions of a project's REST, Auth,
+ * and Storage services, used by `supabase link`. Requests use the
+ * service-role key: always `apikey: <serviceKey>`, plus `Authorization:
+ * Bearer <serviceKey>` unless the key is a new-style `sb_…` key. Any
+ * transport error, non-200 status, parse failure, or missing version
+ * resolves to `Option.none()` instead of failing the link.
  */
 
 interface TenantVersionOptions {
@@ -29,12 +20,9 @@ interface TenantVersionOptions {
   readonly userAgent: string;
 }
 
-// Pure parsers — exported for focused unit coverage.
-
 /**
- * PostgREST advertises its version in the OpenAPI/Swagger `info.version` field at
- * `GET /rest/v1/`. Go takes the first whitespace-delimited token and prefixes it
- * with `v` (`postgrest.go:37-40`).
+ * PostgREST's OpenAPI `info.version` at `GET /rest/v1/`. The first
+ * whitespace-delimited token becomes the image tag. Empty means not found.
  */
 export function parsePostgrestVersion(body: unknown): Option.Option<string> {
   if (typeof body !== "object" || body === null) return Option.none();
@@ -44,12 +32,12 @@ export function parsePostgrestVersion(body: unknown): Option.Option<string> {
   if (typeof version !== "string" || version.trim().length === 0) return Option.none();
   const first = version.trim().split(/\s+/)[0];
   if (first === undefined || first.length === 0) return Option.none();
-  return Option.some(`v${first}`);
+  return Option.some(tagForServiceVersion("postgrest", first));
 }
 
 /**
- * GoTrue reports its version in the `version` field of `GET /auth/v1/health`
- * (`gotrue.go:28-31`). Returned verbatim (no `v` prefix).
+ * GoTrue reports its version in the `version` field of `GET /auth/v1/health`.
+ * Returned verbatim (no `v` prefix).
  */
 export function parseGotrueVersion(body: unknown): Option.Option<string> {
   if (typeof body !== "object" || body === null) return Option.none();
@@ -59,16 +47,14 @@ export function parseGotrueVersion(body: unknown): Option.Option<string> {
 }
 
 /**
- * Storage returns its bare version string at `GET /storage/v1/version`. Go treats
- * an empty body or the `0.0.0` sentinel as "not found" and otherwise prefixes the
- * body with `v` (`storage.go:25-28`).
+ * Storage's `GET /storage/v1/version` body. Empty or `0.0.0` means not found.
+ * Any other body becomes the storage image tag.
  */
 export function parseStorageVersion(body: string): Option.Option<string> {
-  if (body.length === 0 || body === "0.0.0") return Option.none();
-  return Option.some(`v${body}`);
+  const version = body.trim();
+  if (version.length === 0 || version === "0.0.0") return Option.none();
+  return Option.some(tagForServiceVersion("storage", version));
 }
-
-// Effectful probes.
 
 function tenantRequest(opts: TenantVersionOptions, pathName: string) {
   let request = HttpClientRequest.get(`https://${opts.ref}.${opts.projectHost}${pathName}`).pipe(

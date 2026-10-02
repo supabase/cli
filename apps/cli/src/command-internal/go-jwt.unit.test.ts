@@ -38,8 +38,6 @@ describe("generateGoJwt", () => {
     const token = generateGoJwt(SECRET, "anon");
     const [header] = token.split(".");
     expect(header).toBeDefined();
-    // Go's jwt.NewWithClaims builds Header as map[string]any{"typ":..,"alg":..};
-    // encoding/json marshals map keys in sorted order, so "alg" sorts before "typ".
     expect(decodeSegment(header ?? "")).toBe('{"alg":"HS256","typ":"JWT"}');
   });
 
@@ -48,8 +46,6 @@ describe("generateGoJwt", () => {
     const [, payload] = token.split(".");
     expect(payload).toBeDefined();
     const raw = decodeSegment(payload ?? "");
-    // Byte-exact key order: iss, role, exp — ref/is_anonymous/iat are omitted
-    // entirely (`omitempty`), matching status's no-ref, non-anonymous use.
     expect(raw).toBe('{"iss":"supabase-demo","role":"anon","exp":1983812996}');
 
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -99,11 +95,6 @@ describe("generateAsymmetricGoJwt", () => {
   });
 
   it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go", async () => {
-    // `jwkToRSAPrivateKey`
-    // never reads `dp`/`dq`/`qi` — it builds the key from `n`/`e`/`d`/`p`/`q`
-    // alone, and Go's stdlib derives the CRT params itself when absent. A
-    // hand-authored signing-keys file that omits them (common — RFC 7517 marks
-    // them optional) must still sign successfully here.
     const jwk = generateRsaJwk("rsa-kid");
     const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
     const token = generateAsymmetricGoJwt(jwkWithoutCrtParams, "anon");
@@ -151,14 +142,6 @@ describe("generateAsymmetricGoJwt", () => {
     expect(() => generateAsymmetricGoJwt(jwkWithoutAlg, "anon")).toThrow("unsupported algorithm: ");
   });
 
-  // Go has NO explicit kty<->alg cross-check (verified against the real binary,
-  // CLI-1961): `jwkToPrivateKey` only validates kty/curve, and the algorithm
-  // switch only validates `jwk.Algorithm` — a mismatched pair reaches
-  // `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
-  // method with "key is of invalid type: ...", wrapped as "failed to sign
-  // JWT: %w". These two tests previously asserted an
-  // "unsupported key type" message that Go never actually produces for this
-  // input — corrected here.
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
     const jwk = { ...generateEcJwk(), alg: "RS256" };
     expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
@@ -182,8 +165,6 @@ describe("generateAsymmetricGoJwt", () => {
   });
 
   it("rejects a JWK with no kty at all, wrapped like Go's GenerateAsymmetricJWT", () => {
-    // `bearerjwt_test.go`'s "throws error on unsupported kty" fixture uses exactly
-    // this shape (`{"kty": "oct"}`, no `alg`) — kty is checked before alg regardless.
     const jwk = { kty: "oct" } as Jwk;
     expect(() => generateAsymmetricGoJwt(jwk, "anon")).toThrow(
       "failed to convert JWK to private key: unsupported key type: oct",
@@ -199,12 +180,6 @@ describe("generateAsymmetricGoJwt", () => {
   });
 
   it("rejects a padded EC coordinate instead of signing a token Go would refuse to produce (CLI-1961 Codex review finding)", () => {
-    // `jwkToECDSAPrivateKey` decodes x/y/d with `base64.RawURLEncoding.DecodeString`,
-    // which genuinely rejects `=` padding — verified directly against the real binary:
-    // the exact same padded x coordinate produces
-    // "failed to convert JWK to private key: failed to decode x coordinate: illegal base64
-    // data at input byte 43". Node's own `createPrivateKey({format:"jwk"})` accepts the
-    // padding and would otherwise sign successfully, minting a token Go could never produce.
     const jwk = generateEcJwk("ec-kid");
     const padded = { ...jwk, x: `${jwk.x}=` };
     expect(() => generateAsymmetricGoJwt(padded, "anon")).toThrow(
@@ -229,9 +204,8 @@ describe("generateAsymmetricGoJwt", () => {
 describe("signJwtWithJwk", () => {
   it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
     const jwk = generateEcJwk("ec-kid");
-    // Deliberately NOT alphabetically sorted and containing characters Go's
-    // `encoding/json` would HTML-escape (`&`) — this function must sign exactly
-    // the bytes it's given, leaving ordering/escaping decisions to the caller.
+    // Unsorted and containing `&`, which Go's encoder would normally HTML-escape: this function
+    // must sign exactly the bytes it's given.
     const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
     const token = signJwtWithJwk(jwk, payloadJson);
     const [, payload] = token.split(".");
@@ -243,11 +217,6 @@ describe("signJwtWithJwk", () => {
   });
 
   it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
-    // `token.SignedString` marshals the protected header via `encoding/json`'s
-    // default `json.Marshal`, which HTML-escapes `<`/`>`/`&` — verified directly against
-    // the Go standard library. A plain `JSON.stringify` leaves those characters literal,
-    // which would sign different header bytes (and thus a different signature) than Go
-    // for an otherwise-identical kid.
     const jwk = generateEcJwk("a<b>c&d");
     const token = signJwtWithJwk(jwk, '{"role":"anon"}');
     const [header] = token.split(".");

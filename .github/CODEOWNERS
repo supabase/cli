@@ -7,7 +7,7 @@
 **/package.json
 **/go.mod
 **/go.sum
-/apps/cli-go/pkg/config/templates/Dockerfile
+/apps/cli/src/shared/services/Dockerfile
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
 
@@ -22,6 +22,10 @@
 /.github/workflows/github-scripts-ci.yml @supabase/cli
 /.github/scripts/ai-review/** @supabase/cli
 /.github/ai-review/** @supabase/cli
+
+# The cli-artifacts infra workflow deploys with account-admin credentials from develop;
+# keep it under maintainer review rather than the ownerless workflow-files rule above.
+/.github/workflows/cli-artifacts-infra.yml @supabase/cli
 
 # Generated code. These ownerless rules override the catch-all above so
 # CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.

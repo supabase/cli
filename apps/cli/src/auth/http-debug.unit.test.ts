@@ -1,12 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { redactHttpUrl } from "./http-debug.layer.ts";
 
-/**
- * `--debug` logs every request URL to stderr. For a presigned object-store URL
- * the query string *is* the credential — for the Workers build-context upload,
- * one that authorizes overwriting the archive a deploy is about to build from —
- * so it must not survive into scrollback or a CI log.
- */
 describe("redactHttpUrl", () => {
   test.each([
     [
@@ -34,10 +28,8 @@ describe("redactHttpUrl", () => {
     expect(redactHttpUrl(url)).not.toContain("deadbeef");
   });
 
-  // The debug log is only useful if ordinary requests still read normally, so
-  // redaction has to be the exception rather than the rule.
   test.each([
-    ["a Management API route", "https://api.supabase.com/v2/projects/abc/workers/api"],
+    ["a Management API route", "https://api.supabase.com/v2/projects/abc/compute/api"],
     ["an ordinary query string", "https://api.supabase.com/v1/projects?limit=10"],
     ["a URL with no query at all", "https://api.supabase.com/v1/projects"],
   ])("leaves %s untouched", (_label, url) => {

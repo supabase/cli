@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import {
@@ -25,6 +23,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withEnvVar,
 } from "../../../tests/helpers/command-mocks.ts";
 import { EventLoginCompleted } from "../../shared/telemetry/event-catalog.ts";
 import { login } from "./login.handler.ts";
@@ -52,6 +51,7 @@ interface SetupOpts {
   readonly saveFails?: boolean;
   readonly promptTextFail?: boolean;
   readonly profileFlag?: string;
+  readonly profileEnvValue?: Option.Option<string>;
   readonly homeDir?: string;
   /** Raw argv for explicit `--profile` detection. */
   readonly argv?: ReadonlyArray<string>;
@@ -84,6 +84,7 @@ function setupLogin(opts: SetupOpts = {}) {
   const analytics = mockAnalytics();
   const cliSettings = mockCommandSettings({
     workdir: tempRoot.current,
+    profileEnvValue: opts.profileEnvValue,
     accessToken:
       opts.accessTokenEnv !== undefined
         ? Option.some(Redacted.make(opts.accessTokenEnv))
@@ -152,9 +153,9 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags({ token: Option.some("not-a-token") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LoginSaveTokenError");
-        expect(json).toContain("cannot save provided token:");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("LoginSaveTokenError");
+        expect(causeText).toContain("cannot save provided token:");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -165,9 +166,9 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LoginMissingTokenError");
-        expect(json).toContain("Cannot use automatic login flow inside non-TTY environments");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("LoginMissingTokenError");
+        expect(causeText).toContain("Cannot use automatic login flow inside non-TTY environments");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -199,7 +200,6 @@ describe("login integration", () => {
     const { layer, out } = setupLogin({ isTTY: true });
     return Effect.gen(function* () {
       yield* login(flags());
-      // mockLoginCrypto default token name.
       expect(out.stdoutText).toContain("Token cli_test@host_123 created successfully.");
     }).pipe(Effect.provide(layer));
   });
@@ -210,7 +210,6 @@ describe("login integration", () => {
       yield* login(flags());
       expect(out.stderrText).toContain("Retry (1/2): ");
       expect(out.stderrText).toContain("Retry (2/2): ");
-      // 2 failures + 1 success = 3 poll attempts.
       expect(loginApi.loginCallCount).toBe(3);
       expect(out.stdoutText).toContain("You are now logged in. Happy coding!");
     }).pipe(Effect.provide(layer));
@@ -222,9 +221,8 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LoginFailedError");
+        expect(Cause.pretty(exit.cause)).toContain("LoginFailedError");
       }
-      // The 3rd (final) failure gives up without printing a Retry notice.
       expect(out.stderrText).toContain("Retry (2/2): ");
       expect(out.stderrText).not.toContain("Retry (3/2): ");
     }).pipe(Effect.provide(layer));
@@ -236,9 +234,9 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LoginDecryptError");
-        expect(json).toContain("cannot decrypt access token");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("LoginDecryptError");
+        expect(causeText).toContain("cannot decrypt access token");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -293,7 +291,7 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LoginCryptoError");
+        expect(Cause.pretty(exit.cause)).toContain("LoginCryptoError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -314,20 +312,14 @@ describe("login integration", () => {
   it.live(
     "prints the Claude Code plugin hint to stderr when in Claude Code with a TTY stdout",
     () => {
-      const prev = process.env["CLAUDECODE"];
-      process.env["CLAUDECODE"] = "1";
       const { layer, out } = setupLogin({ stdoutIsTty: true });
-      return Effect.gen(function* () {
-        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-        expect(out.stderrText).toContain("claude-code-hint");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["CLAUDECODE"];
-            else process.env["CLAUDECODE"] = prev;
-          }),
-        ),
+      return withEnvVar(
+        "CLAUDECODE",
+        "1",
+        Effect.gen(function* () {
+          yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+          expect(out.stderrText).toContain("claude-code-hint");
+        }).pipe(Effect.provide(layer)),
       );
     },
   );
@@ -337,49 +329,101 @@ describe("login integration", () => {
       profileFlag: "supabase-staging",
       homeDir: tempRoot.current,
     });
-    return Effect.gen(function* () {
-      yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-      const profilePath = join(tempRoot.current, ".supabase", "profile");
-      expect(existsSync(profilePath)).toBe(true);
-      expect(readFileSync(profilePath, "utf8")).toBe("supabase-staging");
-    }).pipe(Effect.provide(layer));
-  });
-
-  // The shadowed env value must never be re-persisted (Go: pflag `Changed`).
-  it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
-    const prev = process.env["SUPABASE_PROFILE"];
-    process.env["SUPABASE_PROFILE"] = "rogue-profile";
-    const { layer } = setupLogin({
-      argv: ["login", "--profile", "supabase", "--token", VALID_TOKEN],
-      homeDir: tempRoot.current,
-    });
-    return Effect.gen(function* () {
-      yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-      const profilePath = join(tempRoot.current, ".supabase", "profile");
-      expect(readFileSync(profilePath, "utf8")).toBe("supabase");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_PROFILE"];
-          else process.env["SUPABASE_PROFILE"] = prev;
-        }),
-      ),
+    // An ambient SUPABASE_HOME would win over the mocked homeDir and write the real
+    // profile file, so the persistence tests unset it for their duration.
+    return withEnvVar(
+      "SUPABASE_HOME",
+      undefined,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const profilePath = path.join(tempRoot.current, ".supabase", "profile");
+        const exists = yield* fs.exists(profilePath);
+        expect(exists).toBe(true);
+        const persisted = yield* fs.readFileString(profilePath);
+        expect(persisted).toBe("supabase-staging");
+      }).pipe(Effect.provide(layer)),
     );
   });
 
-  // Permanently heals a file persisted by an older lenient version (#6091).
+  it.live("persists SUPABASE_PROFILE verbatim when neither --profile nor argv names one", () => {
+    const { layer } = setupLogin({
+      argv: ["login", "--token", VALID_TOKEN],
+      homeDir: tempRoot.current,
+      profileEnvValue: Option.some("supabase-staging"),
+    });
+    return withEnvVar(
+      "SUPABASE_HOME",
+      undefined,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const persisted = yield* fs.readFileString(
+          path.join(tempRoot.current, ".supabase", "profile"),
+        );
+        expect(persisted).toBe("supabase-staging");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
+  it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
+    const { layer } = setupLogin({
+      argv: ["login", "--profile", "supabase", "--token", VALID_TOKEN],
+      homeDir: tempRoot.current,
+      profileEnvValue: Option.some("rogue-profile"),
+    });
+    return withEnvVar(
+      "SUPABASE_HOME",
+      undefined,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const profilePath = path.join(tempRoot.current, ".supabase", "profile");
+        const persisted = yield* fs.readFileString(profilePath);
+        expect(persisted).toBe("supabase");
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
+  it.live("persists the raw YAML path selected by SUPABASE_PROFILE", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const profilePath = path.join(tempRoot.current, "profile.yaml");
+      const { layer } = setupLogin({
+        homeDir: tempRoot.current,
+        profileEnvValue: Option.some(profilePath),
+      });
+      yield* login(flags({ token: Option.some(VALID_TOKEN) })).pipe(Effect.provide(layer));
+      expect(yield* fs.readFileString(path.join(tempRoot.current, ".supabase", "profile"))).toBe(
+        profilePath,
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("explicit --profile supabase heals a stale persisted profile file", () => {
-    mkdirSync(join(tempRoot.current, ".supabase"), { recursive: true });
-    writeFileSync(join(tempRoot.current, ".supabase", "profile"), "resms");
     const { layer } = setupLogin({
       argv: ["login", "--profile=supabase"],
       homeDir: tempRoot.current,
     });
-    return Effect.gen(function* () {
-      yield* login(flags({ token: Option.some(VALID_TOKEN) }));
-      expect(readFileSync(join(tempRoot.current, ".supabase", "profile"), "utf8")).toBe("supabase");
-    }).pipe(Effect.provide(layer));
+    return withEnvVar(
+      "SUPABASE_HOME",
+      undefined,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profilePath = path.join(tempRoot.current, ".supabase", "profile");
+        yield* fs.makeDirectory(path.join(tempRoot.current, ".supabase"), { recursive: true });
+        yield* fs.writeFileString(profilePath, "resms");
+
+        yield* login(flags({ token: Option.some(VALID_TOKEN) }));
+        const healed = yield* fs.readFileString(profilePath);
+        expect(healed).toBe("supabase");
+      }).pipe(Effect.provide(layer)),
+    );
   });
 
   it.live("browser flow in json mode fails cleanly at the prompt", () => {
@@ -388,7 +432,7 @@ describe("login integration", () => {
       const exit = yield* Effect.exit(login(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("NonInteractiveError");
+        expect(Cause.pretty(exit.cause)).toContain("NonInteractiveError");
       }
     }).pipe(Effect.provide(layer));
   });

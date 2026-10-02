@@ -22,10 +22,10 @@ import {
 } from "../../../command-internal/go-struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { formatTimestamp } from "../../../command-internal/timestamp.format.ts";
-import { formatRegion } from "../backups.format.ts";
+import { formatRegion } from "../../../command-internal/region.format.ts";
 import type { BackupsListFlags } from "./list.command.ts";
 
-/** Type shape for `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+/** Struct shape for `-o yaml|toml` encoding of the backups response. */
 const GO_BACKUPS_RESPONSE = goStruct([
   [
     "backups",
@@ -99,18 +99,16 @@ export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsLi
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Write the linked-project cache and persist the telemetry state file
-  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
-    // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
-    // it would surface dangling `[task] start:` lines on stderr with no completion message.
+    // Spinner is text-mode only; in JSON/stream-json it would leave a dangling `[task] start:`
+    // line on stderr with no completion message.
     const fetching =
       output.format === "text" ? yield* output.task("Fetching backups...") : undefined;
     const response = yield* api.v1.listAllBackups({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
-    yield* fetching?.clear() ?? Effect.void;
+    yield* fetching?.clear ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
@@ -123,9 +121,8 @@ export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsLi
       return;
     }
     if (goFmt === "toml") {
-      // The schema decodes the PITR-only `"backups": null` to `[]` (see the
-      // `nullForEmptyArrays` JSON hint above); mirror that by treating an
-      // empty list as a nil slice, which BurntSushi omits entirely.
+      // Treats an empty backups list as absent, matching the nullForEmptyArrays JSON handling
+      // above.
       yield* output.raw(
         encodeGoToml(
           {
@@ -142,8 +139,6 @@ export const backupsList = Effect.fn("backups.list")(function* (flags: BackupsLi
       return;
     }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-    // otherwise render the Glamour-styled table (Go --output pretty parity).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", response);
       return;

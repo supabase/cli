@@ -3,9 +3,6 @@ import { SchemaAST } from "effect";
 /**
  * Pure JSON Schema post-processing used by `build.ts`'s `renderJsonSchema` on
  * both generated artifacts (`dist/schema.json`, `dist/project-schema.json`).
- * Extracted to its own module (rather than inlined in `build.ts`) so
- * `json-schema-postprocess.unit.test.ts` can exercise it directly against an
- * in-memory document, without spawning the real build.
  */
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,16 +33,11 @@ interface RecoveredAnnotations {
 }
 
 /**
- * `description`/`default` for every `Schema.Number` leaf reachable from
- * `ast`, keyed by dotted property path (`"*"` for a record/array element) —
- * the only two annotations Effect's `Schema.toJsonSchemaDocument` silently
- * drops when it splits a plain `Schema.Number` into the `anyOf` union
- * {@link collapseNonFiniteNumberUnions} collapses back down (verified
- * empirically against `api.max_rows`, which carries both). A `.check()`ed
- * number (e.g. `workers.*.instances`'s `isInt()`) renders as a plain
- * `"type": "integer"` node instead of this union, so it never reaches this
- * map's consumer in the first place — collected here regardless, since this
- * walk narrows number leaves only through `SchemaAST.isNumber`.
+ * `description`/`default` for every `Schema.Number` leaf reachable from `ast`,
+ * keyed by dotted property path (`"*"` for a record/array element) — the only
+ * two annotations `Schema.toJsonSchemaDocument` drops when it splits a plain
+ * `Schema.Number` into the `anyOf` union {@link collapseNonFiniteNumberUnions}
+ * collapses back down.
  */
 function collectNumberLeafAnnotations(
   ast: SchemaAST.AST,
@@ -190,10 +182,9 @@ function collapseSchemaNode(
     result["$defs"] = Object.fromEntries(
       Object.entries(defs).map(([name, child]) => [
         name,
-        // `$defs` members don't correspond to a reachable property path off
-        // `ast` (they're keyed by ref name, not position) — pass `path`
-        // through unchanged. Neither generated document actually emits
-        // `$defs` today (no shared/recursive substructure), so this is inert.
+        // `$defs` members are keyed by ref name, not position, so `path` passes
+        // through unchanged; neither generated document currently emits `$defs`,
+        // so this is inert.
         collapseSchemaNode(child, path, annotationsByPath),
       ]),
     );
@@ -204,12 +195,10 @@ function collapseSchemaNode(
 
 /**
  * Collapses every `anyOf: [{ type: "number", ... }, { type: "string", enum:
- * [subset of "Infinity"/"-Infinity"/"NaN"] }]` node anywhere in `document`
- * down to the plain `{ type: "number", ... }` branch, re-attaching that
- * leaf's `description`/`default` from `rootAst` when the union node itself
- * doesn't already carry them (Effect's `Schema.toJsonSchemaDocument` drops
- * both when it renders a plain `Schema.Number` as this non-finite-safe
- * union). `rootAst` must be the same schema `document` was rendered from.
+ * [subset of "Infinity"/"-Infinity"/"NaN"] }]` node in `document` down to the
+ * plain `{ type: "number", ... }` branch, re-attaching `description`/`default`
+ * from `rootAst` when the union node doesn't already carry them. `rootAst` must
+ * be the same schema `document` was rendered from.
  */
 export function collapseNonFiniteNumberUnions(document: unknown, rootAst: SchemaAST.AST): unknown {
   const annotationsByPath = collectNumberLeafAnnotations(rootAst);
@@ -218,11 +207,9 @@ export function collapseNonFiniteNumberUnions(document: unknown, rootAst: Schema
 
 /**
  * Injects `$id`/`title`/`description` right after `$schema`, ahead of the
- * rest of the document's own keys — used by `build.ts` on both generated
- * artifacts (CLI-2234). `metadata` is authoritative: any `$id`/`title`/
- * `description` already present on the incoming `document` is discarded
- * rather than allowed to win over the caller-supplied values through the
- * trailing `...rest` spread.
+ * document's own keys. `metadata` is authoritative: any `$id`/`title`/
+ * `description` already on `document` is discarded rather than allowed to win
+ * via the trailing `...rest` spread.
  */
 export function withSchemaMetadata(
   document: Record<string, unknown>,

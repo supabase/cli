@@ -1,15 +1,22 @@
-// Docker orchestration primitives shared by `deploy.ts` and `download.ts`
-// (the `functions` command family root, `src/shared/functions/`) — plus
-// `serve.ts` (same family) and `command-internal/db-bootstrap/container-lifecycle.ts`
-// (a different family, reaching in for the generic `isUserDefinedDockerNetwork`
-// predicate), both of which already imported these primitives from `deploy.ts`
-// before this file existed.
-import { resolve } from "node:path";
-import { Effect, Stream } from "effect";
+// Docker orchestration primitives shared by `deploy.ts`, `download.ts`, and
+// `serve.ts` (the `functions` family), plus
+// `command-internal/db-bootstrap/container-lifecycle.ts` (a different
+// family, using the generic `isUserDefinedDockerNetwork` predicate).
+import type { PlatformError } from "effect/PlatformError";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  unwrapNativeFailure,
+} from "../telemetry/error-actionability.ts";
+
+import type { Path } from "effect";
+import { Data, Effect, Option, Predicate, Runtime, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../command-internal/container-cli.ts";
 import { makeDockerImageResolver } from "../../command-internal/docker-image-resolve.ts";
 import { DENO1_EDGE_RUNTIME_VERSION } from "./functions.shared.ts";
+import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -45,25 +52,11 @@ export function edgeRuntimeCacheVolume(projectId: string) {
 }
 
 /**
- * Go: `DockerStart`'s network selection (`internal/utils/docker.go:379-383`)
- * combined with root's `viper.BindPFlags`/`AutomaticEnv` for the persistent
- * `--network-id` flag (`cmd/root.go:316-334`). viper's `find()` resolves a
- * `Changed` pflag *before* it ever consults a bound env var (`viper.go`'s
- * flag-override branch precedes its env-override branch) — so an explicit
- * `--network-id=` (empty, but still marks the flag `Changed`) makes
- * `viper.GetString("network-id")` return `""` and stop there, WITHOUT
- * falling through to `SUPABASE_NETWORK_ID`; only THEN does the consuming
- * `len(networkId) > 0` check fall through, straight to the generated
- * default. An explicit-but-empty *env* value, by contrast, genuinely means
- * unset (viper never enables `AllowEmptyEnv`) and falls through to the
- * default the normal way. Net effect: `explicit === undefined` (flag never
- * touched) is the ONLY case that consults `envOverride` — `explicit === ""`
- * (flag explicitly cleared) skips straight to the generated default, same
- * as a non-empty `explicit` skips it by using the flag's own value. Callers
- * MUST pass a flag reader that preserves this 3-way distinction — see
+ * Resolves the Docker network mode. `explicit` is tri-state: `undefined`
+ * (never set) falls through to `envOverride`; `""` (explicitly cleared) and
+ * any non-empty value both skip `envOverride` and resolve immediately.
+ * Callers must pass a flag reader that preserves this distinction — see
  * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
- * `envOverride` is `undefined` for callers without the Go-viper env-binding
- * hook — see `resolveDockerNetworkMode`'s callers.
  */
 export function resolveDockerNetworkMode(input: {
   readonly explicit: string | undefined;
@@ -89,8 +82,8 @@ export function dockerProjectLabels(projectId: string) {
   };
 }
 
-export function toDockerPath(hostPath: string) {
-  const normalized = toSlash(resolve(hostPath));
+export function toDockerPath(hostPath: string, path: Pick<Path.Path, "resolve">) {
+  const normalized = toSlash(path.resolve(hostPath));
   return normalized.replace(/^[A-Za-z]:/, "");
 }
 
@@ -117,17 +110,13 @@ export function containerArchiveBytes(
 export interface FunctionsDockerRunSpec {
   /** Already registry/pull-resolved image reference. */
   readonly image: string;
-  /** Go's `Config.ProjectId` — the label value (`docker.go:374-376`). */
+  /** The label value applied to the container. */
   readonly projectId: string;
   readonly networkMode: string;
   readonly binds: ReadonlyArray<string>;
   /** `KEY=VALUE` entries, each emitted as `-e KEY=VALUE`. */
   readonly env?: ReadonlyArray<string>;
-  /**
-   * Emitted as `-w <dir>` — Go's bundler sets `WorkingDir:
-   * utils.ToDockerPath(cwd)` (`bundle.go:79`); the unbundler sets none
-   * (`download.go:268-281`), so this is optional.
-   */
+  /** Emitted as `-w <dir>`; optional because only the bundler container sets a working directory. */
   readonly workingDir?: string;
   /** argv after the image, e.g. `["bundle", "--entrypoint", …]`. */
   readonly containerArgs: ReadonlyArray<string>;
@@ -137,13 +126,10 @@ export interface FunctionsDockerRunSpec {
 /**
  * Assembles the one-shot `docker run` invocation shared by `deploy.ts`'s
  * bundler and `download.ts`'s unbundler containers: binds, network, the
- * linux `host.docker.internal` workaround, env, and Go's unconditional
- * `com.supabase.cli.project`/`com.docker.compose.project` labels
- * (`DockerStart`, `internal/utils/docker.go:349-386`) — previously applied
- * only to the network/volume these containers depend on
- * (`ensureDockerNetwork`/`ensureDockerNamedVolume` above), never to the
- * one-shot containers themselves, so label-based cleanup/inspection couldn't
- * associate an orphaned container with the project.
+ * linux `host.docker.internal` workaround, env, and the unconditional
+ * `com.supabase.cli.project`/`com.docker.compose.project` labels — applied
+ * to the container itself (not just the network/volume it depends on) so
+ * label-based cleanup/inspection can find an orphaned container.
  */
 export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array<string> {
   const command = ["run", "--rm", ...spec.binds.flatMap((bind) => ["-v", bind])];
@@ -168,16 +154,13 @@ export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array
   return command;
 }
 
-// Decodes a byte stream to text, both accumulating the full text (returned,
-// for callers that need to post-process it, e.g. scanning stderr for
-// "invalid eszip v2") AND tee-ing each decoded chunk to `onChunk` as it
-// arrives — Go's `DockerStreamLogs`/`DockerRunOnceWithConfig` copy a
-// container's log stream live while it runs, rather than buffering the whole
-// thing until exit.
-function collectByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
+// Decodes a byte stream to text, accumulating the full text (returned, for
+// callers that post-process it, e.g. scanning stderr for "invalid eszip
+// v2") while also tee-ing each decoded chunk to `onChunk` as it arrives.
+function collectByteStream<E>(
+  stream: Stream.Stream<Uint8Array, E>,
   onChunk?: (chunk: string) => Effect.Effect<void>,
-): Effect.Effect<string, unknown> {
+): Effect.Effect<string, E> {
   return Effect.suspend(() => {
     const decoder = new TextDecoder();
     let text = "";
@@ -194,15 +177,11 @@ function collectByteStream(
   });
 }
 
-// Runs a container CLI command and collects its output. Every caller runs
-// `docker`, so the spawn goes through `spawnContainerCli` to fall back to
-// `podman` on Docker-less hosts. `command` is retained for the extendEnv
-// default and the `functions serve` dependency-injection seam.
-// `Effect.scoped` closes the spawn's own acquireRelease scope as soon as the
-// process has exited and both streams are drained — without it, every call
-// parks a release finalizer in the CALLER's scope, and `functions serve`'s
-// session-long restart loop (one `Effect.scoped` around an infinite loop)
-// would accumulate one per docker invocation per file-change restart.
+// Falls back to `podman` on Docker-less hosts via `spawnContainerCli`.
+// `Effect.scoped` closes the spawn's own scope as soon as the process exits
+// and both streams drain — without it, a release finalizer would leak into
+// the caller's scope, and `functions serve`'s session-long restart loop
+// would accumulate one per docker invocation.
 export const runChildProcess = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -247,21 +226,19 @@ export const runChildProcess = Effect.fnUntraced(function* (
   );
 });
 
-// Go: `container.NetworkMode.IsContainer()` (`docker/api/types/container/hostconfig.go:152-155`,
-// via the unexported `containerID` helper, same file:493-499) — `--network container:<name|id>`
-// (Docker's syntax for attaching to another container's network stack) is recognized by a bare
-// `"container:"` prefix before the first `:`, regardless of what (if anything) follows it.
+// Docker's `--network container:<name|id>` syntax (attaching to another
+// container's network stack) is recognized by a bare "container:" prefix
+// before the first `:`, regardless of what follows.
 function isContainerDockerNetworkMode(networkMode: string) {
   const separatorIndex = networkMode.indexOf(":");
   return separatorIndex !== -1 && networkMode.slice(0, separatorIndex) === "container";
 }
 
-// Go: `container.NetworkMode.IsUserDefined()` (`docker/api/types/container/hostconfig_unix.go:23-25`)
-// — `!IsDefault() && !IsBridge() && !IsHost() && !IsNone() && !IsContainer()`. Omitting the
-// `IsContainer()` exclusion would make `DockerNetworkCreateIfNotExists`
-// (`internal/utils/docker.go:63`) run `docker network inspect`/`create` against a
-// `container:<name|id>` mode, which isn't a network name at all — Go passes that mode straight
-// through to the container's `NetworkMode` without ever touching the network subsystem.
+// A "user-defined" network is any mode besides default/bridge/host/none/
+// container:<id>. Omitting the container exclusion would make network
+// creation try to inspect/create a network named "container:<id>", which
+// isn't a real network — that mode passes straight through to the
+// container's own NetworkMode instead.
 export function isUserDefinedDockerNetwork(networkMode: string) {
   return (
     networkMode.length > 0 &&
@@ -273,7 +250,7 @@ export function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
+export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(function* (
   networkMode: string,
   projectId: string,
 ) {
@@ -284,7 +261,8 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
   const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  yield* Effect.annotateCurrentSpan({ "docker.network.exists": inspect.exitCode === 0 });
   if (inspect.exitCode === 0) {
     return;
   }
@@ -307,15 +285,16 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+    return yield* nativeFailure(new Error(`failed to create docker network: ${networkMode}`));
   }
 });
 
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")(function* (
   volumeName: string,
   projectId: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ) {
-  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
+  if (Option.isSome(yield* bitbucketCloneDir(projectEnvValues))) {
     return;
   }
 
@@ -337,31 +316,30 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
+    return yield* nativeFailure(new Error(`failed to create docker volume: ${volumeName}`));
   }
 });
 
-export const isDockerRunning = Effect.fnUntraced(function* () {
+export const isDockerRunning = Effect.fn("FunctionsDocker.isRunning")(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  const running = result.exitCode === 0;
+  yield* Effect.annotateCurrentSpan({ "docker.running": running });
+  return running;
 });
 
 /**
- * Resolves the edge-runtime image TAG (fed verbatim into
- * `edgeRuntimeImage`, `functions.shared.ts` — Go's `replaceImageTag`
- * semantics, no `v` synthesis). `defaultVersion` is the
- * `supabase/.temp/edge-runtime-version` pin when present, else the
- * Dockerfile default tag (`resolveEdgeRuntimeVersionPin`); `deno_version = 1`
- * overrides EITHER with Go's `deno1` image tag, matching `Config.Validate`
- * running after the pin was applied (`pkg/config/config.go:847-849,1164-1169`).
+ * Resolves the edge-runtime image tag (fed verbatim into `edgeRuntimeImage`).
+ * `defaultVersion` is the `.temp/edge-runtime-version` pin when present, else
+ * the Dockerfile default tag; `deno_version = 1` overrides either with the
+ * deno-1 image tag.
  */
 export function resolveEdgeRuntimeVersion(
   denoVersion: number | undefined,
   defaultVersion: string,
-): Effect.Effect<string, Error> {
+): Effect.Effect<string, NativeFailure> {
   if (denoVersion === undefined || denoVersion === 2) {
     return Effect.succeed(defaultVersion);
   }
@@ -369,24 +347,66 @@ export function resolveEdgeRuntimeVersion(
     return Effect.succeed(DENO1_EDGE_RUNTIME_VERSION);
   }
   return Effect.fail(
-    new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
+    nativeFailure(
+      new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
+    ),
   );
 }
 
 /**
- * Go: `DockerStart` -> `DockerResolveImageIfNotCached`/`DockerImagePullWithRetry`
- * (`internal/utils/docker.go:304-348,366-370`) — checks every registry
- * candidate (ECR/GHCR/Docker Hub) for a local cache hit first, then pulls
- * with 2 retries per candidate (4s/8s backoff), returning whichever
- * candidate answered. Shared by every `functions` Docker path
- * (`deploy`/`download`/`serve`) — `getRegistryImageUrl`'s single-URL
- * mapping is already called unconditionally by both today, so the retry is
- * strictly-better resilience, not a Go-only quirk.
+ * Resolves a functions Docker image, checking every registry candidate
+ * (ECR/GHCR/Docker Hub) for a local cache hit first, then pulling with 2
+ * retries per candidate (4s/8s backoff) and returning whichever candidate
+ * answered. Shared by every `functions` Docker path (`deploy`, `download`,
+ * `serve`).
  */
-export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
+export const resolveFunctionsDockerImage = Effect.fn("FunctionsDocker.resolveImage")(function* (
   image: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  const resolved = yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  yield* Effect.annotateCurrentSpan({ "docker.image.resolved": resolved });
+  return resolved;
 });
+
+/** Retains native failure diagnostics while exposing a typed Effect failure. */
+export class NativeFailure extends Data.TaggedError("NativeFailure")<{
+  readonly cause: Error;
+}> {
+  override get message() {
+    const cause = unwrapNativeFailure(this);
+    return cause instanceof Error ? cause.message : "";
+  }
+
+  override get [Runtime.errorExitCode]() {
+    return Runtime.getErrorExitCode(unwrapNativeFailure(this));
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.unknown;
+  }
+}
+
+export function nativeFailure(cause: unknown): NativeFailure {
+  return cause instanceof NativeFailure
+    ? cause
+    : new NativeFailure({ cause: cause instanceof Error ? cause : new Error(String(cause)) });
+}
+
+/** Preserves the host error carried by an injected platform operation. */
+export function nativePlatformFailure(error: PlatformError, pathname?: string): NativeFailure {
+  const reason = error.reason;
+  if (reason.cause !== undefined && reason.cause !== null) return nativeFailure(reason.cause);
+  // The native adapter drops synchronous argument causes; NUL input identifies the host error.
+  if (
+    Predicate.isTagged(reason, "BadArgument") &&
+    reason.module === "FileSystem" &&
+    pathname?.includes("\0")
+  ) {
+    return nativeFailure(
+      Object.assign(new TypeError(reason.description), { code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  }
+  return nativeFailure(reason);
+}

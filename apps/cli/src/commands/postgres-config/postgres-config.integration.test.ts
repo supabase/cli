@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -61,9 +61,8 @@ describe("postgres-config get", () => {
   });
 
   it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
-    // Go decodes the API response with `json.Unmarshal` into `map[string]any`,
-    // so every JSON number is a `float64`; `get.go:32-35`'s `%+v` then prints
-    // it with shortest `%g` — 1000000 renders as `1e+06`, never `1000000`.
+    // The established table output renders every JSON number as a float64 with shortest `%g`
+    // formatting, so 1000000 renders as `1e+06`, never `1000000`.
     const out = mockOutput({ format: "text" });
     const api = mockCommandPlatformApi({
       response: { status: 200, body: { max_connections: 1000000 } },
@@ -213,9 +212,9 @@ describe("postgres-config get", () => {
       const exit = yield* Effect.exit(postgresConfigGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigGetUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected config overrides status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigGetUnexpectedStatusError");
+        expect(causeText).toContain("unexpected config overrides status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -229,9 +228,9 @@ describe("postgres-config get", () => {
       const exit = yield* Effect.exit(postgresConfigGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigGetNetworkError");
-        expect(errorJson).toContain("failed to retrieve Postgres config overrides");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigGetNetworkError");
+        expect(causeText).toContain("failed to retrieve Postgres config overrides");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -378,9 +377,9 @@ describe("postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigInvalidConfigValueError");
-        expect(errorJson).toContain("expected config value in key:value format");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigInvalidConfigValueError");
+        expect(causeText).toContain("expected config value in key:value format");
       }
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
@@ -409,9 +408,9 @@ describe("postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigUpdateUnexpectedStatusError");
-        expect(errorJson).toContain("unexpected update config overrides status 503");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigUpdateUnexpectedStatusError");
+        expect(causeText).toContain("unexpected update config overrides status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -432,9 +431,9 @@ describe("postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigGetNetworkError");
-        expect(errorJson).toContain("failed to retrieve Postgres config overrides");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigGetNetworkError");
+        expect(causeText).toContain("failed to retrieve Postgres config overrides");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -463,9 +462,9 @@ describe("postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigUpdateNetworkError");
-        expect(errorJson).toContain("failed to update config overrides");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigUpdateNetworkError");
+        expect(causeText).toContain("failed to update config overrides");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -592,8 +591,8 @@ describe("postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigDeleteUnexpectedStatusError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigDeleteUnexpectedStatusError");
       }
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
@@ -617,8 +616,8 @@ describe("postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigGetUnexpectedStatusError");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigGetUnexpectedStatusError");
       }
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.method).toBe("GET");
@@ -645,9 +644,9 @@ describe("postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
-        expect(errorJson).toContain("PostgresConfigDeleteNetworkError");
-        expect(errorJson).toContain("failed to delete config overrides");
+        const causeText = Cause.pretty(exit.cause);
+        expect(causeText).toContain("PostgresConfigDeleteNetworkError");
+        expect(causeText).toContain("failed to delete config overrides");
       }
     }).pipe(Effect.provide(layer));
   });

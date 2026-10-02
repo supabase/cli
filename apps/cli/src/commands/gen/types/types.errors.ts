@@ -17,6 +17,16 @@ export class GenTypesNetworkError extends Data.TaggedError("GenTypesNetworkError
   }
 }
 
+export class GenTypesBranchCredentialsUnavailableError extends Data.TaggedError(
+  "GenTypesBranchCredentialsUnavailableError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
+
 export class GenTypesUnexpectedStatusError extends Data.TaggedError(
   "GenTypesUnexpectedStatusError",
 )<{
@@ -30,16 +40,6 @@ export class GenTypesUnexpectedStatusError extends Data.TaggedError(
 }
 
 export class InvalidGenTypesDurationError extends Data.TaggedError("InvalidGenTypesDurationError")<{
-  readonly message: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-export class InvalidGenTypesDatabaseUrlError extends Data.TaggedError(
-  "InvalidGenTypesDatabaseUrlError",
-)<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -61,11 +61,8 @@ export class GenTypesWorkdirError extends Data.TaggedError("GenTypesWorkdirError
 }
 
 /**
- * `loadCliConfig` failed to parse `supabase/config.toml`/`config.json`, or
- * found two `[remotes.*]` blocks declaring the same `project_id`. Mirrors
- * `ConfigDiffLoadConfigError`'s parse-error/duplicate-remote handling
- * (`config diff`'s `loadLocalConfig`) so a malformed config reports its own
- * parse failure instead of the raw `CliConfigParseError`/
+ * `loadCliConfig` failed to parse the config, or found two `[remotes.*]` blocks with the same
+ * `project_id`. Reports a clean parse failure instead of the raw `CliConfigParseError`/
  * `DuplicateRemoteProjectIdError` tag leaking through as the message.
  */
 export class GenTypesParseConfigError extends Data.TaggedError("GenTypesParseConfigError")<{
@@ -77,12 +74,9 @@ export class GenTypesParseConfigError extends Data.TaggedError("GenTypesParseCon
 }
 
 /**
- * An explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config, on a
- * path that would otherwise load one (`--linked`/`--project-id`/`--db-url`,
- * or the linked fallback) — raised instead of silently falling back to the
- * embedded default schemas, which would drop a declared `[api].schemas` and
- * write a public-only types file at exit 0. A DEFAULTED workdir keeps the
- * established tolerant fallback.
+ * Raised when an explicit `--workdir`/`SUPABASE_WORKDIR` holds no project config on a path that
+ * would otherwise load one, instead of silently falling back to the embedded default schemas
+ * (which would drop a declared `[api].schemas`). A defaulted workdir keeps the tolerant fallback.
  */
 export class GenTypesMissingProjectConfigError extends Data.TaggedError(
   "GenTypesMissingProjectConfigError",
@@ -91,5 +85,49 @@ export class GenTypesMissingProjectConfigError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
+  }
+}
+
+/**
+ * Raised when `--network-id` is set: `gen types` now generates in-process instead of running a
+ * pg-meta container, so there is no Docker network to join.
+ */
+export class GenTypesNetworkIdUnsupportedError extends Data.TaggedError(
+  "GenTypesNetworkIdUnsupportedError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class GenTypesFlagUsageError extends Data.TaggedError("GenTypesFlagUsageError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class GenTypesLocalDbNotRunningError extends Data.TaggedError(
+  "GenTypesLocalDbNotRunningError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
+
+export class GenTypesLocalDbInspectError extends Data.TaggedError("GenTypesLocalDbInspectError")<{
+  readonly message: string;
+  readonly daemonDown: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    return actionability.unknown;
   }
 }

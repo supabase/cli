@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 // non-recursive definitions
-export const SupavisorConfigResponse = Schema.Struct({
+export const SupavisorConfigResponse_Output = Schema.Struct({
   identifier: Schema.String,
   database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
   is_using_scram_auth: Schema.Boolean,
@@ -50,8 +50,8 @@ export const SupavisorConfigResponse = Schema.Struct({
     Schema.Null,
   ]),
   pool_mode: Schema.Literals(["transaction", "session"]),
-}).annotate({ identifier: "SupavisorConfigResponse" });
-export const ApiKeyResponse = Schema.Struct({
+}).annotate({ identifier: "SupavisorConfigResponse_Output" });
+export const ApiKeyResponse_Output = Schema.Struct({
   api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   id: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   type: Schema.optionalKey(
@@ -73,8 +73,8 @@ export const ApiKeyResponse = Schema.Struct({
   updated_at: Schema.optionalKey(
     Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
-}).annotate({ identifier: "ApiKeyResponse" });
-export const V1ServiceHealthResponse = Schema.Struct({
+}).annotate({ identifier: "ApiKeyResponse_Output" });
+export const V1ServiceHealthResponse_Output = Schema.Struct({
   name: Schema.Literals([
     "auth",
     "db",
@@ -114,8 +114,8 @@ export const V1ServiceHealthResponse = Schema.Struct({
     ]),
   ),
   error: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "V1ServiceHealthResponse" });
-export const BranchResponse = Schema.Struct({
+}).annotate({ identifier: "V1ServiceHealthResponse_Output" });
+export const BranchResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
@@ -186,16 +186,16 @@ export const BranchResponse = Schema.Struct({
       "RESIZING",
     ]),
   ),
-}).annotate({ identifier: "BranchResponse" });
-export const V1StorageBucketResponse = Schema.Struct({
+}).annotate({ identifier: "BranchResponse_Output" });
+export const V1StorageBucketResponse_Output = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   owner: Schema.String,
   created_at: Schema.String,
   updated_at: Schema.String,
   public: Schema.Boolean,
-}).annotate({ identifier: "V1StorageBucketResponse" });
-export const FunctionResponse = Schema.Struct({
+}).annotate({ identifier: "V1StorageBucketResponse_Output" });
+export const FunctionResponse_Output = Schema.Struct({
   id: Schema.String,
   slug: Schema.String,
   name: Schema.String,
@@ -240,8 +240,8 @@ export const FunctionResponse = Schema.Struct({
   entrypoint_path: Schema.optionalKey(Schema.String),
   import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "FunctionResponse" });
-export const OrganizationResponseV1 = Schema.Struct({
+}).annotate({ identifier: "FunctionResponse_Output" });
+export const OrganizationResponseV1_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `slug` instead." }),
   slug: Schema.String.annotate({ description: "Organization slug" }).check(
     Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
@@ -249,8 +249,8 @@ export const OrganizationResponseV1 = Schema.Struct({
     }),
   ),
   name: Schema.String,
-}).annotate({ identifier: "OrganizationResponseV1" });
-export const V1ProjectWithDatabaseResponse = Schema.Struct({
+}).annotate({ identifier: "OrganizationResponseV1_Output" });
+export const V1ProjectWithDatabaseResponse_Output = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
   ref: Schema.String.annotate({ description: "Project ref" })
     .check(Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }))
@@ -294,21 +294,21 @@ export const V1ProjectWithDatabaseResponse = Schema.Struct({
     postgres_engine: Schema.String.annotate({ description: "Database engine" }),
     release_channel: Schema.String.annotate({ description: "Release channel" }),
   }),
-}).annotate({ identifier: "V1ProjectWithDatabaseResponse" });
-export const SecretResponse = Schema.Struct({
+}).annotate({ identifier: "V1ProjectWithDatabaseResponse_Output" });
+export const SecretResponse_Output = Schema.Struct({
   name: Schema.String,
   value: Schema.String,
   updated_at: Schema.optionalKey(Schema.String),
-}).annotate({ identifier: "SecretResponse" });
-export const V1OrganizationMemberResponse = Schema.Struct({
+}).annotate({ identifier: "SecretResponse_Output" });
+export const V1OrganizationMemberResponse_Output = Schema.Struct({
   user_id: Schema.String,
   user_name: Schema.String,
   email: Schema.optionalKey(Schema.String),
-  role_name: Schema.String,
+  role_name: Schema.optionalKey(Schema.String),
   mfa_enabled: Schema.Boolean,
   avatar_url: Schema.Union([Schema.String, Schema.Null]),
-}).annotate({ identifier: "V1OrganizationMemberResponse" });
-export const ThirdPartyAuth = Schema.Struct({
+}).annotate({ identifier: "V1OrganizationMemberResponse_Output" });
+export const ThirdPartyAuth_Output = Schema.Struct({
   id: Schema.String.annotate({ format: "uuid" }).check(
     Schema.isPattern(
       new RegExp(
@@ -327,68 +327,28 @@ export const ThirdPartyAuth = Schema.Struct({
   inserted_at: Schema.String,
   updated_at: Schema.String,
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
-}).annotate({ identifier: "ThirdPartyAuth" });
+}).annotate({ identifier: "ThirdPartyAuth_Output" });
 // recursive definitions
-export type UpdateCustomHostnameResponseJsonValue =
+export type JsonValue_Output =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
-  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
-export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
+  | ReadonlyArray<JsonValue_Output>
+  | { readonly [x: string]: JsonValue_Output };
+export const JsonValue_Output = Schema.Union([
   Schema.Union([
     Schema.String,
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Boolean,
     Schema.Null,
   ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
-  ),
+  Schema.Array(Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output)),
   Schema.Record(
     Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
+    Schema.suspend((): Schema.Codec<JsonValue_Output> => JsonValue_Output),
   ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "UpdateCustomHostnameResponseJsonValue",
-});
-export type ListProjectAddonsResponseJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
-  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
-export const ListProjectAddonsResponseJsonValue = Schema.Union([
-  Schema.Union([
-    Schema.String,
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    Schema.Boolean,
-    Schema.Null,
-  ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-  Schema.Record(
-    Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
-]).annotate({
-  description: "Any JSON-serializable value",
-  identifier: "ListProjectAddonsResponseJsonValue",
-});
+]).annotate({ description: "Any JSON-serializable value", identifier: "JsonValue_Output" });
 // binary input helpers
 export const BinaryInput = Schema.Union([
   Schema.Uint8Array,
@@ -437,9 +397,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -507,26 +465,37 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -647,20 +616,21 @@ export const V1AuthorizeJitAccessInput = Schema.Struct({
   ]),
 });
 export const V1AuthorizeJitAccessOutput = Schema.Struct({
-  user_id: Schema.String.annotate({ format: "uuid" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-    }),
-  ),
-  user_role: Schema.Struct({
-    role: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+  user_id: Schema.optionalKey(
+    Schema.String.annotate({ format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
     ),
+  ),
+  act: Schema.optionalKey(Schema.String),
+  user_role: Schema.Struct({
+    role: Schema.String,
     expires_at: Schema.optionalKey(
       Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     ),
@@ -1323,8 +1293,8 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -1353,8 +1323,8 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -1874,8 +1844,8 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -2524,9 +2494,7 @@ export const V1GetAMigrationInput = Schema.Struct({
   ),
 });
 export const V1GetAMigrationOutput = Schema.Struct({
-  version: Schema.String.check(
-    Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-  ),
+  version: Schema.String,
   name: Schema.optionalKey(Schema.String),
   statements: Schema.optionalKey(Schema.Array(Schema.String)),
   rollback: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -2572,7 +2540,7 @@ export const V1GetASnippetOutput = Schema.Struct({
         description: "Deprecated: Rely on root-level favorite property instead.",
       }),
     ),
-    schema_version: Schema.String,
+    schema_version: Schema.optionalKey(Schema.String),
     sql: Schema.String,
   }),
 });
@@ -2612,8 +2580,8 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -3292,6 +3260,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -3619,17 +3588,10 @@ export const V1GetDatabaseMetadataInput = Schema.Struct({
 });
 export const V1GetDatabaseMetadataOutput = Schema.Struct({
   databases: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.String,
-        schemas: Schema.Array(
-          Schema.StructWithRest(Schema.Struct({ name: Schema.String }), [
-            Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
-          ]),
-        ),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+    Schema.Struct({
+      name: Schema.String,
+      schemas: Schema.Array(Schema.Struct({ name: Schema.String })),
+    }),
   ),
 });
 export const V1GetDatabaseOpenapiInput = Schema.Struct({
@@ -3693,26 +3655,37 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -3742,9 +3715,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -3808,6 +3779,7 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
     Schema.Struct({
       state: Schema.Literal("unavailable"),
       unavailableReason: Schema.Literals([
+        "platform_unsupported",
         "postgres_upgrade_required",
         "ssl_enforcement_required",
         "temporarily_unavailable",
@@ -4024,90 +3996,87 @@ export const V1GetPerformanceAdvisorsInput = Schema.Struct({
 });
 export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
-          "unindexed_foreign_keys",
-          "auth_users_exposed",
-          "auth_rls_initplan",
-          "no_primary_key",
-          "unused_index",
-          "multiple_permissive_policies",
-          "policy_exists_rls_disabled",
-          "rls_enabled_no_policy",
-          "duplicate_index",
-          "security_definer_view",
-          "function_search_path_mutable",
-          "rls_disabled_in_public",
-          "extension_in_public",
-          "rls_references_user_metadata",
-          "materialized_view_in_api",
-          "foreign_table_in_api",
-          "unsupported_reg_types",
-          "auth_otp_long_expiry",
-          "auth_otp_short_length",
-          "ssl_not_enforced",
-          "log_connections_not_enabled",
-          "network_restrictions_not_set",
-          "password_requirements_min_length",
-          "pitr_not_enabled",
-          "auth_leaked_password_protection",
-          "auth_insufficient_mfa_options",
-          "auth_password_policy_missing",
-          "leaked_service_key",
-          "no_backup_admin",
-          "vulnerable_postgres_version",
-          "db_not_reachable",
-          "db_connection_failing",
-          "db_connection_limit_reached",
-          "instance_telemetry_lost",
-          "instance_db_down",
-          "instance_alert_firing",
-          "log_service_error_rate_high",
-          "project_not_active",
-          "advisor_check_unavailable",
-        ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    Schema.Struct({
+      name: Schema.Literals([
+        "unindexed_foreign_keys",
+        "auth_users_exposed",
+        "auth_rls_initplan",
+        "no_primary_key",
+        "unused_index",
+        "multiple_permissive_policies",
+        "policy_exists_rls_disabled",
+        "rls_enabled_no_policy",
+        "duplicate_index",
+        "security_definer_view",
+        "function_search_path_mutable",
+        "rls_disabled_in_public",
+        "extension_in_public",
+        "rls_references_user_metadata",
+        "materialized_view_in_api",
+        "foreign_table_in_api",
+        "unsupported_reg_types",
+        "auth_otp_long_expiry",
+        "auth_otp_short_length",
+        "ssl_not_enforced",
+        "log_connections_not_enabled",
+        "network_restrictions_not_set",
+        "password_requirements_min_length",
+        "pitr_not_enabled",
+        "auth_leaked_password_protection",
+        "auth_insufficient_mfa_options",
+        "auth_password_policy_missing",
+        "leaked_service_key",
+        "no_backup_admin",
+        "vulnerable_postgres_version",
+        "db_not_reachable",
+        "db_connection_failing",
+        "db_connection_limit_reached",
+        "instance_telemetry_lost",
+        "instance_db_down",
+        "instance_alert_firing",
+        "log_data_api_error_rate_high",
+        "log_auth_error_rate_high",
+        "log_storage_error_rate_high",
+        "log_edge_function_error_rate_high",
+        "project_not_active",
+        "advisor_check_unavailable",
+      ]),
+      title: Schema.String,
+      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Literals([
+              "table",
+              "view",
+              "materialized view",
+              "foreign table",
+              "auth",
+              "function",
+              "extension",
+              "compliance",
+              "health",
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetPgsodiumConfigInput = Schema.Struct({
@@ -4137,7 +4106,7 @@ export const V1GetPoolerConfigInput = Schema.Struct({
       }),
     ),
 });
-export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse);
+export const V1GetPoolerConfigOutput = Schema.Array(SupavisorConfigResponse_Output);
 export const V1GetPostgresConfigInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -4432,6 +4401,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
         Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") }),
         Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
         Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
+        Schema.Struct({ type: Schema.Literal("btree_gist_nan_reindex") }),
       ],
       { mode: "oneOf" },
     ),
@@ -4454,9 +4424,7 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
     Schema.Struct({
       initiated_at: Schema.String,
       latest_status_at: Schema.String,
-      target_version: Schema.Number.check(
-        Schema.isFinite().annotate({ expected: "a finite number" }),
-      ),
+      target_version: Schema.String,
       error: Schema.optionalKey(
         Schema.Literals([
           "1_upgraded_instance_launch_failed",
@@ -4670,7 +4638,7 @@ export const V1GetProjectApiKeysInput = Schema.Struct({
     ),
   reveal: Schema.optionalKey(Schema.Union([Schema.String, Schema.Boolean])),
 });
-export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse);
+export const V1GetProjectApiKeysOutput = Schema.Array(ApiKeyResponse_Output);
 export const V1GetProjectClaimTokenInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -4836,31 +4804,6 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-});
-export const V1GetProjectLogsAllOutput = Schema.Struct({
-  result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
-  error: Schema.optionalKey(
-    Schema.Union([
-      Schema.String,
-      Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-        errors: Schema.Array(
-          Schema.Struct({
-            domain: Schema.String,
-            location: Schema.String,
-            locationType: Schema.String,
-            message: Schema.String,
-            reason: Schema.String,
-          }),
-        ),
-        message: Schema.String,
-        status: Schema.String,
-      }),
-    ]),
-  ),
 });
 export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5229,8 +5172,8 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
     Schema.Null,
@@ -5339,6 +5282,13 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   presence_enabled: Schema.Boolean.annotate({ description: "Whether to enable presence" }),
+  admin_suspended_at: Schema.Union([
+    Schema.String.annotate({
+      description: "If set, the Realtime service has been suspended by an admin.",
+      format: "date-time",
+    }),
+    Schema.Null,
+  ]),
 });
 export const V1GetRestorePointInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5375,90 +5325,87 @@ export const V1GetSecurityAdvisorsInput = Schema.Struct({
 });
 export const V1GetSecurityAdvisorsOutput = Schema.Struct({
   lints: Schema.Array(
-    Schema.StructWithRest(
-      Schema.Struct({
-        name: Schema.Literals([
-          "unindexed_foreign_keys",
-          "auth_users_exposed",
-          "auth_rls_initplan",
-          "no_primary_key",
-          "unused_index",
-          "multiple_permissive_policies",
-          "policy_exists_rls_disabled",
-          "rls_enabled_no_policy",
-          "duplicate_index",
-          "security_definer_view",
-          "function_search_path_mutable",
-          "rls_disabled_in_public",
-          "extension_in_public",
-          "rls_references_user_metadata",
-          "materialized_view_in_api",
-          "foreign_table_in_api",
-          "unsupported_reg_types",
-          "auth_otp_long_expiry",
-          "auth_otp_short_length",
-          "ssl_not_enforced",
-          "log_connections_not_enabled",
-          "network_restrictions_not_set",
-          "password_requirements_min_length",
-          "pitr_not_enabled",
-          "auth_leaked_password_protection",
-          "auth_insufficient_mfa_options",
-          "auth_password_policy_missing",
-          "leaked_service_key",
-          "no_backup_admin",
-          "vulnerable_postgres_version",
-          "db_not_reachable",
-          "db_connection_failing",
-          "db_connection_limit_reached",
-          "instance_telemetry_lost",
-          "instance_db_down",
-          "instance_alert_firing",
-          "log_service_error_rate_high",
-          "project_not_active",
-          "advisor_check_unavailable",
-        ]),
-        title: Schema.String,
-        level: Schema.Literals(["ERROR", "WARN", "INFO"]),
-        facing: Schema.Literal("EXTERNAL"),
-        categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
-        description: Schema.String,
-        detail: Schema.String,
-        remediation: Schema.String,
-        metadata: Schema.optionalKey(
-          Schema.StructWithRest(
-            Schema.Struct({
-              schema: Schema.optionalKey(Schema.String),
-              name: Schema.optionalKey(Schema.String),
-              entity: Schema.optionalKey(Schema.String),
-              type: Schema.optionalKey(
-                Schema.Literals([
-                  "table",
-                  "view",
-                  "materialized view",
-                  "foreign table",
-                  "auth",
-                  "function",
-                  "extension",
-                  "compliance",
-                  "health",
-                ]),
-              ),
-              fkey_name: Schema.optionalKey(Schema.String),
-              fkey_columns: Schema.optionalKey(
-                Schema.Array(
-                  Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-                ),
-              ),
-            }),
-            [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+    Schema.Struct({
+      name: Schema.Literals([
+        "unindexed_foreign_keys",
+        "auth_users_exposed",
+        "auth_rls_initplan",
+        "no_primary_key",
+        "unused_index",
+        "multiple_permissive_policies",
+        "policy_exists_rls_disabled",
+        "rls_enabled_no_policy",
+        "duplicate_index",
+        "security_definer_view",
+        "function_search_path_mutable",
+        "rls_disabled_in_public",
+        "extension_in_public",
+        "rls_references_user_metadata",
+        "materialized_view_in_api",
+        "foreign_table_in_api",
+        "unsupported_reg_types",
+        "auth_otp_long_expiry",
+        "auth_otp_short_length",
+        "ssl_not_enforced",
+        "log_connections_not_enabled",
+        "network_restrictions_not_set",
+        "password_requirements_min_length",
+        "pitr_not_enabled",
+        "auth_leaked_password_protection",
+        "auth_insufficient_mfa_options",
+        "auth_password_policy_missing",
+        "leaked_service_key",
+        "no_backup_admin",
+        "vulnerable_postgres_version",
+        "db_not_reachable",
+        "db_connection_failing",
+        "db_connection_limit_reached",
+        "instance_telemetry_lost",
+        "instance_db_down",
+        "instance_alert_firing",
+        "log_data_api_error_rate_high",
+        "log_auth_error_rate_high",
+        "log_storage_error_rate_high",
+        "log_edge_function_error_rate_high",
+        "project_not_active",
+        "advisor_check_unavailable",
+      ]),
+      title: Schema.String,
+      level: Schema.Literals(["ERROR", "WARN", "INFO"]),
+      facing: Schema.Literal("EXTERNAL"),
+      categories: Schema.Array(Schema.Literals(["PERFORMANCE", "SECURITY", "HEALTH"])),
+      description: Schema.String,
+      detail: Schema.String,
+      remediation: Schema.String,
+      metadata: Schema.optionalKey(
+        Schema.Struct({
+          schema: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          entity: Schema.optionalKey(Schema.String),
+          type: Schema.optionalKey(
+            Schema.Literals([
+              "table",
+              "view",
+              "materialized view",
+              "foreign table",
+              "auth",
+              "function",
+              "extension",
+              "compliance",
+              "health",
+            ]),
           ),
-        ),
-        cache_key: Schema.String,
-        observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
-      }),
-      [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
-    ),
+          fkey_name: Schema.optionalKey(Schema.String),
+          fkey_columns: Schema.optionalKey(
+            Schema.Array(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+          ),
+        }),
+      ),
+      cache_key: Schema.String,
+      observed_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+    }),
   ),
 });
 export const V1GetServicesHealthInput = Schema.Struct({
@@ -5503,7 +5450,7 @@ export const V1GetServicesHealthInput = Schema.Struct({
       ),
   ),
 });
-export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse);
+export const V1GetServicesHealthOutput = Schema.Array(V1ServiceHealthResponse_Output);
 export const V1GetSslEnforcementConfigInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5609,10 +5556,13 @@ export const V1GetStorageConfigOutput = Schema.Struct({
         ),
     }),
   }),
-  capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+  capabilities: Schema.Struct({
+    list_v2: Schema.Boolean,
+    iceberg_catalog: Schema.Boolean,
+    object_versioning: Schema.Boolean,
+  }),
   external: Schema.Struct({ upstreamTarget: Schema.Literals(["main", "canary"]) }),
-  migrationVersion: Schema.String,
-  databasePoolMode: Schema.optionalKey(Schema.String),
+  migrationVersion: Schema.Union([Schema.String, Schema.Null]),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5726,9 +5676,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -5913,7 +5861,7 @@ export const V1ListAllBranchesInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllBranchesOutput = Schema.Array(BranchResponse);
+export const V1ListAllBranchesOutput = Schema.Array(BranchResponse_Output);
 export const V1ListAllBucketsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5925,7 +5873,7 @@ export const V1ListAllBucketsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse);
+export const V1ListAllBucketsOutput = Schema.Array(V1StorageBucketResponse_Output);
 export const V1ListAllFunctionsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5937,7 +5885,7 @@ export const V1ListAllFunctionsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse);
+export const V1ListAllFunctionsOutput = Schema.Array(FunctionResponse_Output);
 export const V1ListAllNetworkBansInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5973,9 +5921,9 @@ export const V1ListAllNetworkBansEnrichedOutput = Schema.Struct({
   ),
 });
 export const V1ListAllOrganizationsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1);
+export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1_Output);
 export const V1ListAllProjectsInput = Schema.Record(Schema.String, Schema.Never);
-export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse);
+export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse_Output);
 export const V1ListAllSecretsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -5987,7 +5935,7 @@ export const V1ListAllSecretsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListAllSecretsOutput = Schema.Array(SecretResponse);
+export const V1ListAllSecretsOutput = Schema.Array(SecretResponse_Output);
 export const V1ListAllSnippetsInput = Schema.Struct({
   project_ref: Schema.optionalKey(
     Schema.String.check(
@@ -6060,8 +6008,8 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                     array: Schema.optionalKey(Schema.Boolean),
+                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                   }),
                 ),
               ),
@@ -6141,9 +6089,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.Null,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6203,9 +6149,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
         expires_at: Schema.String,
         user_roles: Schema.Array(
           Schema.Struct({
-            role: Schema.String.check(
-              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-            ),
+            role: Schema.String,
             expires_at: Schema.optionalKey(
               Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
@@ -6264,12 +6208,7 @@ export const V1ListMigrationHistoryInput = Schema.Struct({
     ),
 });
 export const V1ListMigrationHistoryOutput = Schema.Array(
-  Schema.Struct({
-    version: Schema.String.check(
-      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-    ),
-    name: Schema.optionalKey(Schema.String),
-  }),
+  Schema.Struct({ version: Schema.String, name: Schema.optionalKey(Schema.String) }),
 );
 export const V1ListOrganizationMembersInput = Schema.Struct({
   slug: Schema.String.check(
@@ -6278,7 +6217,7 @@ export const V1ListOrganizationMembersInput = Schema.Struct({
     }),
   ),
 });
-export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse);
+export const V1ListOrganizationMembersOutput = Schema.Array(V1OrganizationMemberResponse_Output);
 export const V1ListProjectAddonsInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -6340,7 +6279,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
           interval: Schema.Literals(["monthly", "hourly"]),
           amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         }),
-        meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+        meta: Schema.optionalKey(JsonValue_Output),
       }),
     }),
   ),
@@ -6397,7 +6336,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
               Schema.isFinite().annotate({ expected: "a finite number" }),
             ),
           }),
-          meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
+          meta: Schema.optionalKey(JsonValue_Output),
         }),
       ),
     }),
@@ -6414,7 +6353,7 @@ export const V1ListProjectTpaIntegrationsInput = Schema.Struct({
       }),
     ),
 });
-export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth);
+export const V1ListProjectTpaIntegrationsOutput = Schema.Array(ThirdPartyAuth_Output);
 export const V1MergeABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
     Schema.String.annotate({ description: "Project ref" })
@@ -7220,8 +7159,8 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
         }),
       ),
     }),
@@ -7250,8 +7189,8 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
               }),
             ),
           ),
@@ -7514,21 +7453,29 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session timebox in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
-        Schema.isGreaterThanOrEqualTo(0).annotate({
-          expected: "a value greater than or equal to 0",
-        }),
-      ),
+      Schema.Number.annotate({
+        description: "Session inactivity timeout in hours. Maximum 8760 hours (1 year).",
+      })
+        .check(Schema.isFinite().annotate({ expected: "a finite number" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
       Schema.Null,
     ]),
   ),
@@ -7694,9 +7641,20 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_update_password_require_reauthentication: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Null]),
   ),
+  security_update_password_require_current_password: Schema.optionalKey(
+    Schema.Union([
+      Schema.Boolean.annotate({
+        description: "Require the user's current password when updating their password.",
+      }),
+      Schema.Null,
+    ]),
+  ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Number.annotate({
+        description: "Refresh token reuse interval in seconds. Maximum 300 seconds (5 minutes).",
+      })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -8477,6 +8435,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  security_update_password_require_current_password: Schema.Union([Schema.Boolean, Schema.Null]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
     Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
@@ -8683,26 +8642,37 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -8791,9 +8761,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
   ),
   user_roles: Schema.Array(
     Schema.Struct({
-      role: Schema.String.check(
-        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
-      ),
+      role: Schema.String,
       expires_at: Schema.optionalKey(
         Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
@@ -8858,6 +8826,7 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
     Schema.Struct({
       state: Schema.Literal("unavailable"),
       unavailableReason: Schema.Literals([
+        "platform_unsupported",
         "postgres_upgrade_required",
         "ssl_enforcement_required",
         "temporarily_unavailable",
@@ -9621,8 +9590,8 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
         }),
       )
       .check(
-        Schema.isLessThanOrEqualTo(50000).annotate({
-          expected: "a value less than or equal to 50000",
+        Schema.isLessThanOrEqualTo(300000).annotate({
+          expected: "a value less than or equal to 300000",
         }),
       ),
   ),
@@ -9899,26 +9868,37 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
   custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
-    errors: Schema.Array(UpdateCustomHostnameResponseJsonValue),
-    messages: Schema.Array(UpdateCustomHostnameResponseJsonValue),
+    errors: Schema.Array(JsonValue_Output),
+    messages: Schema.Array(JsonValue_Output),
     result: Schema.Struct({
       id: Schema.String,
       hostname: Schema.String,
-      ssl: Schema.Struct({
-        status: Schema.String,
-        validation_records: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
-        ),
-        validation_errors: Schema.optionalKey(
-          Schema.Array(Schema.Struct({ message: Schema.String })),
-        ),
-      }),
-      ownership_verification: Schema.optionalKey(
-        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ssl: Schema.optionalKey(
+        Schema.Struct({
+          status: Schema.optionalKey(Schema.String),
+          validation_records: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                txt_name: Schema.optionalKey(Schema.String),
+                txt_value: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          ),
+          validation_errors: Schema.optionalKey(
+            Schema.Array(Schema.Struct({ message: Schema.String })),
+          ),
+        }),
       ),
-      custom_origin_server: Schema.String,
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({
+          type: Schema.optionalKey(Schema.String),
+          name: Schema.optionalKey(Schema.String),
+          value: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      custom_origin_server: Schema.optionalKey(Schema.String),
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
-      status: Schema.String,
+      status: Schema.optionalKey(Schema.String),
     }),
   }),
 });
@@ -9941,7 +9921,13 @@ export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
   data: Schema.Struct({
     type: Schema.Literal("organization_member_role").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
-      role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+      role: Schema.Literals([
+        "owner",
+        "administrator",
+        "developer",
+        "read-only",
+        "no-access",
+      ]).annotate({
         description:
           "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
       }),
@@ -9971,6 +9957,185 @@ export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
       }),
       projects: Schema.Array(Schema.Struct({ ref: Schema.String, name: Schema.String })).annotate({
         description: "Project refs this role is scoped to. Empty array for org-level roles.",
+      }),
+    }),
+  }),
+});
+export const V2CreateABranchInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }).check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Git branch to track. Must exist on the connected GitHub repository when the project has one.",
+        }).check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      region: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Region to create the branch in. Omit to inherit the region of the project it branches from.",
+        }),
+      ),
+      persistent: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description:
+            "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+        }),
+      ),
+      with_data: Schema.optionalKey(
+        Schema.Boolean.annotate({
+          description: "Whether to seed the branch from the project's latest physical backup.",
+        }),
+      ),
+      desired_instance_size: Schema.optionalKey(
+        Schema.Literals([
+          "nano",
+          "micro",
+          "small",
+          "medium",
+          "large",
+          "xlarge",
+          "2xlarge",
+          "4xlarge",
+          "8xlarge",
+          "12xlarge",
+          "16xlarge",
+          "24xlarge",
+          "24xlarge_optimized_memory",
+          "24xlarge_optimized_cpu",
+          "24xlarge_high_memory",
+          "48xlarge",
+          "48xlarge_optimized_memory",
+          "48xlarge_optimized_cpu",
+          "48xlarge_high_memory",
+        ]).annotate({
+          description:
+            "Desired instance size. Omit this field to always default to the smallest possible size.",
+        }),
+      ),
+      desired_disk_size_gb: Schema.optionalKey(
+        Schema.Number.annotate({
+          description:
+            "Desired disk size in GB. Omit this field to default to the smallest disk size available on the plan.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(8).annotate({
+              expected: "a value greater than or equal to 8",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(61440).annotate({
+              expected: "a value less than or equal to 61440",
+            }),
+          ),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint to receive branch status updates.",
+          format: "uri",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2CreateABranchOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("branch").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "ID of the branch.", format: "uuid" }).check(
+      Schema.isPattern(
+        new RegExp(
+          "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+      ).annotate({
+        expected:
+          "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      }),
+    ),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({ description: "Name of the branch." }),
+      project_ref: Schema.String.annotate({
+        description: "Ref of the project backing this branch.",
+      }),
+      parent_project_ref: Schema.String.annotate({
+        description: "Ref of the project it branches from.",
+      }),
+      is_default: Schema.Boolean.annotate({
+        description: "Whether this is the default branch of the project.",
+      }),
+      persistent: Schema.Boolean.annotate({
+        description:
+          "Whether the branch is kept when its git branch is deleted or its PR is merged.",
+      }),
+      with_data: Schema.Boolean.annotate({
+        description: "Whether the branch is seeded from the project's data.",
+      }),
+      git_branch: Schema.optionalKey(
+        Schema.String.annotate({ description: "Git branch being tracked." }),
+      ),
+      notify_url: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "HTTP endpoint receiving branch status updates.",
+          format: "uri",
+        }),
+      ),
+      created_at: Schema.String.annotate({
+        description: "Creation timestamp.",
+        format: "date-time",
+      }),
+      updated_at: Schema.String.annotate({
+        description: "Last update timestamp.",
+        format: "date-time",
+      }),
+    }),
+  }),
+});
+export const V2CreateComputeInstanceUploadInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2CreateComputeInstanceUploadOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_compute_instance_upload").annotate({
+      description: "Resource type.",
+    }),
+    id: Schema.String.annotate({
+      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+    }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description: "Presigned destination for the `.tar.gz` build context.",
+      }),
+      method: Schema.String,
+      expires_at: Schema.String.annotate({
+        description: "When the slot stops accepting the upload.",
       }),
     }),
   }),
@@ -10186,6 +10351,356 @@ export const V2CreateLogDrainOutput = Schema.Struct({
     }),
   }),
 });
+export const V2CreateNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.check(
+        Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+      ).check(
+        Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+      ),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxLength(10000).annotate({
+            expected: "a value with a length of at most 10000",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      content: Schema.Struct({
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("markdown"),
+                  text: Schema.String,
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("database"),
+                  sql: Schema.String.annotate({
+                    description: "SQL run against the project database.",
+                  }),
+                  row_limit: Schema.optionalKey(
+                    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                      .check(
+                        Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                          expected: "a value less than or equal to 9007199254740991",
+                        }),
+                      )
+                      .check(
+                        Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                      ),
+                  ),
+                  database_identifier: Schema.optionalKey(
+                    Schema.String.annotate({
+                      description: "Read replica to run against. Omit to use the primary database.",
+                    }),
+                  ),
+                  title: Schema.optionalKey(Schema.String),
+                  view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ).check(
+                          Schema.isMaxLength(3).annotate({
+                            expected: "a value with a length of at most 3",
+                          }),
+                        ),
+                        scale: Schema.Literals(["linear", "log"]),
+                        cumulative: Schema.Boolean,
+                        show_labels: Schema.Boolean,
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+              Schema.StructWithRest(
+                Schema.Struct({
+                  id: Schema.optionalKey(Schema.String),
+                  type: Schema.Literal("log"),
+                  sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                  time_range: Schema.Union(
+                    [
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literal("absolute"),
+                          start: Schema.String.annotate({
+                            description: "ISO 8601 start of the range.",
+                          }),
+                          end: Schema.String.annotate({
+                            description: "ISO 8601 end of the range.",
+                          }),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literal("relative"),
+                          unit: Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                          amount: Schema.Number.check(
+                            Schema.isInt().annotate({ expected: "an integer" }),
+                          )
+                            .check(
+                              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                expected: "a value less than or equal to 9007199254740991",
+                              }),
+                            )
+                            .check(
+                              Schema.isGreaterThan(0).annotate({
+                                expected: "a value greater than 0",
+                              }),
+                            ),
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ),
+                    ],
+                    { mode: "oneOf" },
+                  ),
+                  title: Schema.optionalKey(Schema.String),
+                  view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                  chart: Schema.optionalKey(
+                    Schema.StructWithRest(
+                      Schema.Struct({
+                        type: Schema.Literals(["bar", "line"]),
+                        x_column: Schema.String.annotate({
+                          description: "Result column used for the x axis.",
+                        }),
+                        y_series: Schema.Array(
+                          Schema.StructWithRest(
+                            Schema.Struct({
+                              column: Schema.String.annotate({
+                                description: "Result column plotted as a series.",
+                              }),
+                            }),
+                            [
+                              Schema.Record(
+                                Schema.String,
+                                Schema.Json.annotate({ expected: "JSON value" }),
+                              ),
+                            ],
+                          ),
+                        ).check(
+                          Schema.isMaxLength(3).annotate({
+                            expected: "a value with a length of at most 3",
+                          }),
+                        ),
+                        scale: Schema.Literals(["linear", "log"]),
+                        cumulative: Schema.Boolean,
+                        show_labels: Schema.Boolean,
+                      }),
+                      [
+                        Schema.Record(
+                          Schema.String,
+                          Schema.Json.annotate({ expected: "JSON value" }),
+                        ),
+                      ],
+                    ).annotate({
+                      description: "Chart configuration, retained even while `view` is `table`.",
+                    }),
+                  ),
+                }),
+                [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+              ),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
+    }),
+  }),
+});
+export const V2CreateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
+    }),
+  }),
+});
 export const V2CreateOrganizationInvitationsInput = Schema.Struct({
   slug: Schema.String.check(
     Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
@@ -10209,9 +10724,15 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
               "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
           }),
         ),
-        role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+        role: Schema.Literals([
+          "owner",
+          "administrator",
+          "developer",
+          "read-only",
+          "no-access",
+        ]).annotate({
           description:
-            "Role name to assign. Must be on a Team or Enterprise plan to use the read-only role.",
+            "Role name to assign. Must be on an Enterprise plan to use the read-only or no-access roles. no-access grants no project visibility until project-scoped roles are assigned separately.",
         }),
         projects: Schema.optionalKey(
           Schema.Array(
@@ -10408,6 +10929,10 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         description:
           "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
       }),
+      custom_dns_name: Schema.String.annotate({
+        description:
+          "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
+      }),
       resource_access_manager_resource_config_id: Schema.optionalKey(
         Schema.String.annotate({
           description:
@@ -10429,40 +10954,7 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
     }),
   }),
 });
-export const V2CreateWorkerUploadInput = Schema.Struct({
-  ref: Schema.String.check(
-    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
-  )
-    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
-    .check(
-      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
-        expected: "a string matching the RegExp ^[a-z]+$",
-      }),
-    ),
-  name: Schema.String.check(
-    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
-      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
-    }),
-  ),
-});
-export const V2CreateWorkerUploadOutput = Schema.Struct({
-  data: Schema.Struct({
-    type: Schema.Literal("project_worker_upload").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({
-      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
-    }),
-    attributes: Schema.Struct({
-      url: Schema.String.annotate({
-        description: "Presigned destination for the `.tar.gz` build context.",
-      }),
-      method: Schema.String,
-      expires_at: Schema.String.annotate({
-        description: "When the slot stops accepting the upload.",
-      }),
-    }),
-  }),
-});
-export const V2DeleteAWorkerInput = Schema.Struct({
+export const V2DeleteAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10479,6 +10971,27 @@ export const V2DeleteAWorkerInput = Schema.Struct({
   ),
 });
 export const V2DeleteLogDrainInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2DeleteNotebookInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10575,7 +11088,7 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
 });
-export const V2DeployAWorkerInput = Schema.Struct({
+export const V2DeployAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10591,7 +11104,7 @@ export const V2DeployAWorkerInput = Schema.Struct({
     }),
   ),
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10618,10 +11131,10 @@ export const V2DeployAWorkerInput = Schema.Struct({
     }),
   }),
 });
-export const V2DeployAWorkerOutput = Schema.Struct({
+export const V2DeployAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10696,7 +11209,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
     }),
   }),
 });
-export const V2GetAWorkerInput = Schema.Struct({
+export const V2GetAComputeInstanceInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -10712,10 +11225,10 @@ export const V2GetAWorkerInput = Schema.Struct({
     }),
   ),
 });
-export const V2GetAWorkerOutput = Schema.Struct({
+export const V2GetAComputeInstanceOutput = Schema.Struct({
   data: Schema.Struct({
-    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-    id: Schema.String.annotate({ description: "Worker name." }),
+    type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Compute instance name." }),
     attributes: Schema.Struct({
       spec: Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
@@ -10787,6 +11300,166 @@ export const V2GetAWorkerOutput = Schema.Struct({
         }),
       ),
       instances_error: Schema.optionalKey(Schema.String),
+    }),
+  }),
+});
+export const V2GetNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2GetNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
     }),
   }),
 });
@@ -11386,10 +12059,13 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           }),
         }),
-        capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+        capabilities: Schema.Struct({
+          list_v2: Schema.Boolean,
+          iceberg_catalog: Schema.Boolean,
+          object_versioning: Schema.Boolean,
+        }),
         upstream_target: Schema.Literals(["main", "canary"]),
-        migration_version: Schema.String,
-        database_pool_mode: Schema.String,
+        migration_version: Schema.Union([Schema.String, Schema.Null]),
       }).annotate({
         description:
           "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
@@ -11397,7 +12073,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     }),
   }),
 });
-export const V2ListAllWorkersInput = Schema.Struct({
+export const V2ListAllComputeInstancesInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
   )
@@ -11408,11 +12084,11 @@ export const V2ListAllWorkersInput = Schema.Struct({
       }),
     ),
 });
-export const V2ListAllWorkersOutput = Schema.Struct({
+export const V2ListAllComputeInstancesOutput = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
-      type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
-      id: Schema.String.annotate({ description: "Worker name." }),
+      type: Schema.Literal("project_compute_instance").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Compute instance name." }),
       attributes: Schema.Struct({
         spec: Schema.Struct({
           runtime: Schema.optionalKey(Schema.String),
@@ -11600,6 +12276,105 @@ export const V2ListLogDrainsOutput = Schema.Struct({
       }),
     }),
   ),
+});
+export const V2ListNotebooksInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+      after: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  filter: Schema.optionalKey(
+    Schema.Struct({
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  sort: Schema.optionalKey(Schema.Literals(["name", "-name", "inserted_at", "-inserted_at"])),
+});
+export const V2ListNotebooksOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+      id: Schema.String,
+      attributes: Schema.Struct({
+        name: Schema.String,
+        description: Schema.Union([Schema.String, Schema.Null]),
+        favorite: Schema.Boolean,
+        inserted_at: Schema.String,
+        updated_at: Schema.String,
+        owner: Schema.Union([
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            username: Schema.String,
+          }).annotate({ description: "User who created the notebook." }),
+          Schema.Null,
+        ]),
+        updated_by: Schema.Union([
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            username: Schema.String,
+          }).annotate({ description: "User who last wrote to the notebook." }),
+          Schema.Null,
+        ]),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+  }),
 });
 export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   slug: Schema.String.check(
@@ -12127,6 +12902,10 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           description:
             "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
         }),
+        custom_dns_name: Schema.String.annotate({
+          description:
+            "The custom DNS name configured on the AWS VPC Lattice resource configuration.",
+        }),
         resource_access_manager_resource_config_id: Schema.optionalKey(
           Schema.String.annotate({
             description:
@@ -12228,7 +13007,10 @@ export const V2RunProjectAdvisorsInput = Schema.Struct({
               "instance_telemetry_lost",
               "instance_db_down",
               "instance_alert_firing",
-              "log_service_error_rate_high",
+              "log_data_api_error_rate_high",
+              "log_auth_error_rate_high",
+              "log_storage_error_rate_high",
+              "log_edge_function_error_rate_high",
             ]),
           }),
         )
@@ -12286,7 +13068,10 @@ export const V2RunProjectAdvisorsOutput = Schema.Struct({
             "instance_telemetry_lost",
             "instance_db_down",
             "instance_alert_firing",
-            "log_service_error_rate_high",
+            "log_data_api_error_rate_high",
+            "log_auth_error_rate_high",
+            "log_storage_error_rate_high",
+            "log_edge_function_error_rate_high",
             "project_not_active",
             "advisor_check_unavailable",
           ]),
@@ -12568,6 +13353,383 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
     }),
   }),
 });
+export const V2UpdateNotebookInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ).check(
+          Schema.isMaxLength(255).annotate({ expected: "a value with a length of at most 255" }),
+        ),
+      ),
+      description: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMaxLength(10000).annotate({
+            expected: "a value with a length of at most 10000",
+          }),
+        ),
+      ),
+      favorite: Schema.optionalKey(Schema.Boolean),
+      content: Schema.optionalKey(
+        Schema.Struct({
+          cells: Schema.Array(
+            Schema.Union(
+              [
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("markdown"),
+                    text: Schema.String,
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("database"),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project database.",
+                    }),
+                    row_limit: Schema.optionalKey(
+                      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    ),
+                    database_identifier: Schema.optionalKey(
+                      Schema.String.annotate({
+                        description:
+                          "Read replica to run against. Omit to use the primary database.",
+                      }),
+                    ),
+                    title: Schema.optionalKey(Schema.String),
+                    view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ).check(
+                            Schema.isMaxLength(3).annotate({
+                              expected: "a value with a length of at most 3",
+                            }),
+                          ),
+                          scale: Schema.Literals(["linear", "log"]),
+                          cumulative: Schema.Boolean,
+                          show_labels: Schema.Boolean,
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+                Schema.StructWithRest(
+                  Schema.Struct({
+                    id: Schema.optionalKey(Schema.String),
+                    type: Schema.Literal("log"),
+                    sql: Schema.String.annotate({
+                      description: "SQL run against the project logs.",
+                    }),
+                    time_range: Schema.Union(
+                      [
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            type: Schema.Literal("absolute"),
+                            start: Schema.String.annotate({
+                              description: "ISO 8601 start of the range.",
+                            }),
+                            end: Schema.String.annotate({
+                              description: "ISO 8601 end of the range.",
+                            }),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                        Schema.StructWithRest(
+                          Schema.Struct({
+                            type: Schema.Literal("relative"),
+                            unit: Schema.Literals([
+                              "minute",
+                              "hour",
+                              "day",
+                              "week",
+                              "month",
+                              "year",
+                            ]),
+                            amount: Schema.Number.check(
+                              Schema.isInt().annotate({ expected: "an integer" }),
+                            )
+                              .check(
+                                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                                  expected: "a value less than or equal to 9007199254740991",
+                                }),
+                              )
+                              .check(
+                                Schema.isGreaterThan(0).annotate({
+                                  expected: "a value greater than 0",
+                                }),
+                              ),
+                          }),
+                          [
+                            Schema.Record(
+                              Schema.String,
+                              Schema.Json.annotate({ expected: "JSON value" }),
+                            ),
+                          ],
+                        ),
+                      ],
+                      { mode: "oneOf" },
+                    ),
+                    title: Schema.optionalKey(Schema.String),
+                    view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                    chart: Schema.optionalKey(
+                      Schema.StructWithRest(
+                        Schema.Struct({
+                          type: Schema.Literals(["bar", "line"]),
+                          x_column: Schema.String.annotate({
+                            description: "Result column used for the x axis.",
+                          }),
+                          y_series: Schema.Array(
+                            Schema.StructWithRest(
+                              Schema.Struct({
+                                column: Schema.String.annotate({
+                                  description: "Result column plotted as a series.",
+                                }),
+                              }),
+                              [
+                                Schema.Record(
+                                  Schema.String,
+                                  Schema.Json.annotate({ expected: "JSON value" }),
+                                ),
+                              ],
+                            ),
+                          ).check(
+                            Schema.isMaxLength(3).annotate({
+                              expected: "a value with a length of at most 3",
+                            }),
+                          ),
+                          scale: Schema.Literals(["linear", "log"]),
+                          cumulative: Schema.Boolean,
+                          show_labels: Schema.Boolean,
+                        }),
+                        [
+                          Schema.Record(
+                            Schema.String,
+                            Schema.Json.annotate({ expected: "JSON value" }),
+                          ),
+                        ],
+                      ).annotate({
+                        description: "Chart configuration, retained even while `view` is `table`.",
+                      }),
+                    ),
+                  }),
+                  [Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" }))],
+                ),
+              ],
+              { mode: "oneOf" },
+            ),
+          ),
+        }).annotate({
+          description:
+            "Replaces the notebook body. A cell keeps its identity by echoing back its `id`; a cell sent without an `id` is added as a new one.",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2UpdateNotebookOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("notebook").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.Union([Schema.String, Schema.Null]),
+      favorite: Schema.Boolean,
+      inserted_at: Schema.String,
+      updated_at: Schema.String,
+      owner: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who created the notebook." }),
+        Schema.Null,
+      ]),
+      updated_by: Schema.Union([
+        Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          username: Schema.String,
+        }).annotate({ description: "User who last wrote to the notebook." }),
+        Schema.Null,
+      ]),
+      content: Schema.Struct({
+        schema_version: Schema.Number.check(
+          Schema.isFinite().annotate({ expected: "a finite number" }),
+        ),
+        cells: Schema.Array(
+          Schema.Union(
+            [
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("markdown"),
+                text: Schema.String,
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("database"),
+                sql: Schema.String.annotate({
+                  description: "SQL run against the project database.",
+                }),
+                row_limit: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                  .check(
+                    Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                      expected: "a value less than or equal to 9007199254740991",
+                    }),
+                  )
+                  .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
+                database_identifier: Schema.optionalKey(
+                  Schema.String.annotate({
+                    description: "Read replica to run against. Omit to use the primary database.",
+                  }),
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+              Schema.Struct({
+                id: Schema.String,
+                type: Schema.Literal("log"),
+                sql: Schema.String.annotate({ description: "SQL run against the project logs." }),
+                time_range: Schema.Union(
+                  [
+                    Schema.Struct({
+                      type: Schema.Literal("absolute"),
+                      start: Schema.String.annotate({
+                        description: "ISO 8601 start of the range.",
+                      }),
+                      end: Schema.String.annotate({ description: "ISO 8601 end of the range." }),
+                    }),
+                    Schema.Struct({
+                      type: Schema.Literal("relative"),
+                      unit: Schema.Literals(["minute", "hour", "day", "week", "month", "year"]),
+                      amount: Schema.Number.check(
+                        Schema.isInt().annotate({ expected: "an integer" }),
+                      )
+                        .check(
+                          Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                            expected: "a value less than or equal to 9007199254740991",
+                          }),
+                        )
+                        .check(
+                          Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" }),
+                        ),
+                    }),
+                  ],
+                  { mode: "oneOf" },
+                ),
+                title: Schema.optionalKey(Schema.String),
+                view: Schema.optionalKey(Schema.Literals(["table", "chart"])),
+                chart: Schema.optionalKey(
+                  Schema.Struct({
+                    type: Schema.Literals(["bar", "line"]),
+                    x_column: Schema.String.annotate({
+                      description: "Result column used for the x axis.",
+                    }),
+                    y_series: Schema.Array(
+                      Schema.Struct({
+                        column: Schema.String.annotate({
+                          description: "Result column plotted as a series.",
+                        }),
+                      }),
+                    ),
+                    scale: Schema.Literals(["linear", "log"]),
+                    cumulative: Schema.Boolean,
+                    show_labels: Schema.Boolean,
+                  }).annotate({
+                    description: "Chart configuration, retained even while `view` is `table`.",
+                  }),
+                ),
+              }),
+            ],
+            { mode: "oneOf" },
+          ),
+        ),
+      }),
+    }),
+  }),
+});
 export const V1ApplyAMigrationOutput = Schema.Void;
 export const V1ApplyProjectAddonOutput = Schema.Void;
 export const V1AuthorizeUserOutput = Schema.Void;
@@ -12586,6 +13748,7 @@ export const V1DeleteProjectClaimTokenOutput = Schema.Void;
 export const V1DisablePreviewBranchingOutput = Schema.Void;
 export const V1DisableReadonlyModeTemporarilyOutput = Schema.Void;
 export const V1EnableDatabaseWebhookOutput = Schema.Void;
+export const V1GetProjectLogsAllOutput = Schema.Void;
 export const V1ModifyDatabaseDiskOutput = Schema.Void;
 export const V1OauthAuthorizeProjectClaimOutput = Schema.Void;
 export const V1PatchAMigrationOutput = Schema.Void;
@@ -12606,8 +13769,9 @@ export const V1UndoOutput = Schema.Void;
 export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
-export const V2DeleteAWorkerOutput = Schema.Void;
+export const V2DeleteAComputeInstanceOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
+export const V2DeleteNotebookOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
 export const V2TransferAProjectOutput = Schema.Void;
@@ -12784,20 +13948,25 @@ export const openApiOperationIdMap = {
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
   "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
+  "v2-create-a-branch": "v2CreateABranch",
+  "v2-create-compute-instance-upload": "v2CreateComputeInstanceUpload",
   "v2-create-log-drain": "v2CreateLogDrain",
+  "v2-create-notebook": "v2CreateNotebook",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
-  "v2-create-worker-upload": "v2CreateWorkerUpload",
-  "v2-delete-a-worker": "v2DeleteAWorker",
+  "v2-delete-a-compute-instance": "v2DeleteAComputeInstance",
   "v2-delete-log-drain": "v2DeleteLogDrain",
+  "v2-delete-notebook": "v2DeleteNotebook",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
-  "v2-deploy-a-worker": "v2DeployAWorker",
-  "v2-get-a-worker": "v2GetAWorker",
+  "v2-deploy-a-compute-instance": "v2DeployAComputeInstance",
+  "v2-get-a-compute-instance": "v2GetAComputeInstance",
+  "v2-get-notebook": "v2GetNotebook",
   "v2-get-project-config": "v2GetProjectConfig",
-  "v2-list-all-workers": "v2ListAllWorkers",
+  "v2-list-all-compute-instances": "v2ListAllComputeInstances",
   "v2-list-log-drains": "v2ListLogDrains",
+  "v2-list-notebooks": "v2ListNotebooks",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
   "v2-list-organization-members": "v2ListOrganizationMembers",
   "v2-list-organization-projects": "v2ListOrganizationProjects",
@@ -12807,6 +13976,7 @@ export const openApiOperationIdMap = {
   "v2-run-project-advisors": "v2RunProjectAdvisors",
   "v2-transfer-a-project": "v2TransferAProject",
   "v2-update-log-drain": "v2UpdateLogDrain",
+  "v2-update-notebook": "v2UpdateNotebook",
 } as const;
 
 export const operationDefinitions = {
@@ -12825,7 +13995,8 @@ export const operationDefinitions = {
   },
   v1ActivateCustomHostname: {
     id: "v1ActivateCustomHostname",
-    description: "[Beta] Activates a custom hostname for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/activate",
     pathParams: ["ref"],
@@ -12838,7 +14009,8 @@ export const operationDefinitions = {
   },
   v1ActivateVanitySubdomainConfig: {
     id: "v1ActivateVanitySubdomainConfig",
-    description: "[Beta] Activates a vanity subdomain for a project.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/activate",
     pathParams: ["ref"],
@@ -12899,7 +14071,8 @@ export const operationDefinitions = {
   },
   v1AuthorizeUser: {
     id: "v1AuthorizeUser",
-    description: "[Beta] Authorize user through oauth",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/oauth/authorize",
     pathParams: [],
@@ -12977,7 +14150,8 @@ export const operationDefinitions = {
   },
   v1CheckVanitySubdomainAvailability: {
     id: "v1CheckVanitySubdomainAvailability",
-    description: "[Beta] Checks vanity subdomain availability",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/vanity-subdomain/check-availability",
     pathParams: ["ref"],
@@ -13149,7 +14323,8 @@ export const operationDefinitions = {
   },
   v1CreateLoginRole: {
     id: "v1CreateLoginRole",
-    description: "[Beta] Create a login role for CLI with temporary password",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13239,7 +14414,8 @@ export const operationDefinitions = {
   },
   v1DeactivateVanitySubdomainConfig: {
     id: "v1DeactivateVanitySubdomainConfig",
-    description: "[Beta] Deletes a project's vanity subdomain configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -13252,7 +14428,8 @@ export const operationDefinitions = {
   },
   v1DeleteHostnameConfig: {
     id: "v1DeleteHostnameConfig",
-    description: "[Beta] Deletes a project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13344,7 +14521,8 @@ export const operationDefinitions = {
   },
   v1DeleteLoginRoles: {
     id: "v1DeleteLoginRoles",
-    description: "[Beta] Delete existing login roles used by CLI",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/cli/login-role",
     pathParams: ["ref"],
@@ -13357,7 +14535,8 @@ export const operationDefinitions = {
   },
   v1DeleteNetworkBans: {
     id: "v1DeleteNetworkBans",
-    description: "[Beta] Remove network bans.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "DELETE",
     path: "/v1/projects/{ref}/network-bans",
     pathParams: ["ref"],
@@ -13426,7 +14605,8 @@ export const operationDefinitions = {
   },
   v1DiffABranch: {
     id: "v1DiffABranch",
-    description: "Diffs the specified database branch",
+    description:
+      "Diffs the specified database branch\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/branches/{branch_id_or_ref}/diff",
     pathParams: ["branch_id_or_ref"],
@@ -13465,7 +14645,8 @@ export const operationDefinitions = {
   },
   v1EnableDatabaseWebhook: {
     id: "v1EnableDatabaseWebhook",
-    description: "[Beta] Enables Database Webhooks on the project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/webhooks/enable",
     pathParams: ["ref"],
@@ -13479,7 +14660,7 @@ export const operationDefinitions = {
   v1ExchangeOauthToken: {
     id: "v1ExchangeOauthToken",
     description:
-      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.",
+      "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/token",
     pathParams: [],
@@ -13662,7 +14843,8 @@ export const operationDefinitions = {
   },
   v1GetAvailableRegions: {
     id: "v1GetAvailableRegions",
-    description: "[Beta] Gets the list of available regions that can be used for a new project",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/available-regions",
     pathParams: [],
@@ -13742,7 +14924,8 @@ export const operationDefinitions = {
   },
   v1GetHostnameConfig: {
     id: "v1GetHostnameConfig",
-    description: "[Beta] Gets project's custom hostname config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/custom-hostname",
     pathParams: ["ref"],
@@ -13768,7 +14951,8 @@ export const operationDefinitions = {
   },
   v1GetJitAccessConfig: {
     id: "v1GetJitAccessConfig",
-    description: "[Beta] Get project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -13795,7 +14979,8 @@ export const operationDefinitions = {
   },
   v1GetNetworkRestrictions: {
     id: "v1GetNetworkRestrictions",
-    description: "[Beta] Gets project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -13849,7 +15034,8 @@ export const operationDefinitions = {
   },
   v1GetPgsodiumConfig: {
     id: "v1GetPgsodiumConfig",
-    description: "[Beta] Gets project's pgsodium config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -13888,7 +15074,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeEligibility: {
     id: "v1GetPostgresUpgradeEligibility",
-    description: "[Beta] Returns the project's eligibility for upgrades",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/eligibility",
     pathParams: ["ref"],
@@ -13901,7 +15088,8 @@ export const operationDefinitions = {
   },
   v1GetPostgresUpgradeStatus: {
     id: "v1GetPostgresUpgradeStatus",
-    description: "[Beta] Gets the latest status of the project's upgrade",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/upgrade/status",
     pathParams: ["ref"],
@@ -14047,14 +15235,14 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
+      "This endpoint has been removed and always responds with `410 Gone`. Use `GET /v1/projects/{ref}/analytics/endpoints/logs` instead. See the [migration guide](https://supabase.com/changelog/48235-migration-of-supabase-management-api-logs-all-analytics-endpoint-to-logs-endpoint).",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
-    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
-    response: { kind: "json" },
+    response: { kind: "void" },
     inputSchema: V1GetProjectLogsAllInput,
     outputSchema: V1GetProjectLogsAllOutput,
   },
@@ -14204,7 +15392,8 @@ export const operationDefinitions = {
   },
   v1GetSslEnforcementConfig: {
     id: "v1GetSslEnforcementConfig",
-    description: "[Beta] Get project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -14230,7 +15419,8 @@ export const operationDefinitions = {
   },
   v1GetVanitySubdomainConfig: {
     id: "v1GetVanitySubdomainConfig",
-    description: "[Beta] Gets current vanity subdomain config",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "GET",
     path: "/v1/projects/{ref}/vanity-subdomain",
     pathParams: ["ref"],
@@ -14322,7 +15512,8 @@ export const operationDefinitions = {
   },
   v1ListAllNetworkBans: {
     id: "v1ListAllNetworkBans",
-    description: "[Beta] Gets project's network bans",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve",
     pathParams: ["ref"],
@@ -14336,7 +15527,7 @@ export const operationDefinitions = {
   v1ListAllNetworkBansEnriched: {
     id: "v1ListAllNetworkBansEnriched",
     description:
-      "[Beta] Gets project's network bans with additional information about which databases they affect",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-bans/retrieve/enriched",
     pathParams: ["ref"],
@@ -14555,7 +15746,8 @@ export const operationDefinitions = {
   },
   v1PatchNetworkRestrictions: {
     id: "v1PatchNetworkRestrictions",
-    description: "[Alpha] Updates project's network restrictions by adding or removing CIDRs",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "PATCH",
     path: "/v1/projects/{ref}/network-restrictions",
     pathParams: ["ref"],
@@ -14594,7 +15786,8 @@ export const operationDefinitions = {
   },
   v1ReadOnlyQuery: {
     id: "v1ReadOnlyQuery",
-    description: "All entity references must be schema qualified.",
+    description:
+      "All entity references must be schema qualified.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query/read-only",
     pathParams: ["ref"],
@@ -14607,7 +15800,8 @@ export const operationDefinitions = {
   },
   v1RemoveAReadReplica: {
     id: "v1RemoveAReadReplica",
-    description: "[Beta] Remove a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/remove",
     pathParams: ["ref"],
@@ -14730,7 +15924,8 @@ export const operationDefinitions = {
   },
   v1RevokeToken: {
     id: "v1RevokeToken",
-    description: "[Beta] Revoke oauth app authorization and it's corresponding tokens",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/oauth/revoke",
     pathParams: [],
@@ -14760,7 +15955,8 @@ export const operationDefinitions = {
   },
   v1RunAQuery: {
     id: "v1RunAQuery",
-    description: "[Beta] Run sql query",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/database/query",
     pathParams: ["ref"],
@@ -14791,7 +15987,8 @@ export const operationDefinitions = {
   },
   v1SetupAReadReplica: {
     id: "v1SetupAReadReplica",
-    description: "[Beta] Set up a read replica",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/read-replicas/setup",
     pathParams: ["ref"],
@@ -15007,6 +16204,7 @@ export const operationDefinitions = {
         "password_required_characters",
         "security_manual_linking_enabled",
         "security_update_password_require_reauthentication",
+        "security_update_password_require_current_password",
         "security_refresh_token_reuse_interval",
         "mailer_otp_exp",
         "mailer_otp_length",
@@ -15202,7 +16400,8 @@ export const operationDefinitions = {
   },
   v1UpdateHostnameConfig: {
     id: "v1UpdateHostnameConfig",
-    description: "[Beta] Updates project's custom hostname configuration",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/initialize",
     pathParams: ["ref"],
@@ -15228,7 +16427,8 @@ export const operationDefinitions = {
   },
   v1UpdateJitAccessConfig: {
     id: "v1UpdateJitAccessConfig",
-    description: "[Beta] Update project's temporary access configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/jit-access",
     pathParams: ["ref"],
@@ -15241,7 +16441,8 @@ export const operationDefinitions = {
   },
   v1UpdateNetworkRestrictions: {
     id: "v1UpdateNetworkRestrictions",
-    description: "[Beta] Updates project's network restrictions",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/network-restrictions/apply",
     pathParams: ["ref"],
@@ -15259,7 +16460,7 @@ export const operationDefinitions = {
   v1UpdatePgsodiumConfig: {
     id: "v1UpdatePgsodiumConfig",
     description:
-      "[Beta] Updates project's pgsodium config. Updating the root_key can cause all data encrypted with the older key to become inaccessible.",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/pgsodium",
     pathParams: ["ref"],
@@ -15443,7 +16644,8 @@ export const operationDefinitions = {
   },
   v1UpdateSslEnforcementConfig: {
     id: "v1UpdateSslEnforcementConfig",
-    description: "[Beta] Update project's SSL enforcement configuration.",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "PUT",
     path: "/v1/projects/{ref}/ssl-enforcement",
     pathParams: ["ref"],
@@ -15473,7 +16675,8 @@ export const operationDefinitions = {
   },
   v1UpgradePostgresVersion: {
     id: "v1UpgradePostgresVersion",
-    description: "[Beta] Upgrades the project's Postgres version",
+    description:
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/upgrade",
     pathParams: ["ref"],
@@ -15508,7 +16711,7 @@ export const operationDefinitions = {
   v1VerifyDnsConfig: {
     id: "v1VerifyDnsConfig",
     description:
-      "[Beta] Attempts to verify the DNS configuration for project's custom hostname configuration",
+      "This is an **experimental** endpoint. It is subject to change or removal in future versions. Use it with caution, as it may not remain supported or stable.\n\nThis endpoint is currently in its **Beta** stage.",
     method: "POST",
     path: "/v1/projects/{ref}/custom-hostname/reverify",
     pathParams: ["ref"],
@@ -15533,6 +16736,34 @@ export const operationDefinitions = {
     inputSchema: V2AssignOrganizationMemberRoleInput,
     outputSchema: V2AssignOrganizationMemberRoleOutput,
   },
+  v2CreateABranch: {
+    id: "v2CreateABranch",
+    description:
+      "Creates a database branch from the specified project. Compute and disk size can be set here so the branch is provisioned at the requested size, instead of being resized after creation.",
+    method: "POST",
+    path: "/v2/projects/{ref}/branches",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateABranchInput,
+    outputSchema: V2CreateABranchOutput,
+  },
+  v2CreateComputeInstanceUpload: {
+    id: "v2CreateComputeInstanceUpload",
+    description:
+      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.\n\nThis endpoint is currently in its **Alpha** stage.",
+    method: "POST",
+    path: "/v2/projects/{ref}/compute/{name}/uploads",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2CreateComputeInstanceUploadInput,
+    outputSchema: V2CreateComputeInstanceUploadOutput,
+  },
   v2CreateLogDrain: {
     id: "v2CreateLogDrain",
     description: "Create a log drain for a project",
@@ -15545,6 +16776,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2CreateLogDrainInput,
     outputSchema: V2CreateLogDrainOutput,
+  },
+  v2CreateNotebook: {
+    id: "v2CreateNotebook",
+    description:
+      "Creates a notebook shared with everyone who has access to the project. Cell ids are assigned by the server and returned in the response.",
+    method: "POST",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateNotebookInput,
+    outputSchema: V2CreateNotebookOutput,
   },
   v2CreateOrganizationInvitations: {
     id: "v2CreateOrganizationInvitations",
@@ -15574,32 +16819,19 @@ export const operationDefinitions = {
     inputSchema: V2CreatePrivateLinkAssociationInput,
     outputSchema: V2CreatePrivateLinkAssociationOutput,
   },
-  v2CreateWorkerUpload: {
-    id: "v2CreateWorkerUpload",
+  v2DeleteAComputeInstance: {
+    id: "v2DeleteAComputeInstance",
     description:
-      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.",
-    method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/uploads",
-    pathParams: ["ref", "name"],
-    queryParams: [],
-    headerParams: [],
-    requestBody: { kind: "none" },
-    response: { kind: "json" },
-    inputSchema: V2CreateWorkerUploadInput,
-    outputSchema: V2CreateWorkerUploadOutput,
-  },
-  v2DeleteAWorker: {
-    id: "v2DeleteAWorker",
-    description: "Tombstones the worker. Its instances and image are torn down asynchronously.",
+      "Tombstones the compute instance. Its running instances and image are torn down asynchronously.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "DELETE",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "void" },
-    inputSchema: V2DeleteAWorkerInput,
-    outputSchema: V2DeleteAWorkerOutput,
+    inputSchema: V2DeleteAComputeInstanceInput,
+    outputSchema: V2DeleteAComputeInstanceOutput,
   },
   v2DeleteLogDrain: {
     id: "v2DeleteLogDrain",
@@ -15613,6 +16845,19 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V2DeleteLogDrainInput,
     outputSchema: V2DeleteLogDrainOutput,
+  },
+  v2DeleteNotebook: {
+    id: "v2DeleteNotebook",
+    description: "Delete a notebook",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteNotebookInput,
+    outputSchema: V2DeleteNotebookOutput,
   },
   v2DeleteOrganizationInvitations: {
     id: "v2DeleteOrganizationInvitations",
@@ -15655,38 +16900,51 @@ export const operationDefinitions = {
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
   },
-  v2DeployAWorker: {
-    id: "v2DeployAWorker",
+  v2DeployAComputeInstance: {
+    id: "v2DeployAComputeInstance",
     description:
-      "Creates the worker if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the worker reaches `build_state` `active` or `failed` later.",
+      "Creates the compute instance if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the compute instance reaches `build_state` `active` or `failed` later.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "POST",
-    path: "/v2/projects/{ref}/workers/{name}/deploy",
+    path: "/v2/projects/{ref}/compute/{name}/deploy",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
     response: { kind: "json" },
-    inputSchema: V2DeployAWorkerInput,
-    outputSchema: V2DeployAWorkerOutput,
+    inputSchema: V2DeployAComputeInstanceInput,
+    outputSchema: V2DeployAComputeInstanceOutput,
   },
-  v2GetAWorker: {
-    id: "v2GetAWorker",
+  v2GetAComputeInstance: {
+    id: "v2GetAComputeInstance",
     description:
-      "Returns a worker along with its instance tally. Poll this after a deploy until `build_state` leaves `building`.",
+      "Returns a compute instance along with the counts of its running instances. Poll this after a deploy until `build_state` leaves `building`.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers/{name}",
+    path: "/v2/projects/{ref}/compute/{name}",
     pathParams: ["ref", "name"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2GetAWorkerInput,
-    outputSchema: V2GetAWorkerOutput,
+    inputSchema: V2GetAComputeInstanceInput,
+    outputSchema: V2GetAComputeInstanceOutput,
+  },
+  v2GetNotebook: {
+    id: "v2GetNotebook",
+    description: "Get a notebook",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetNotebookInput,
+    outputSchema: V2GetNotebookOutput,
   },
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
     description:
-      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.",
+      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
     path: "/v2/projects/{ref}/config",
     pathParams: ["ref"],
@@ -15697,18 +16955,19 @@ export const operationDefinitions = {
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
   },
-  v2ListAllWorkers: {
-    id: "v2ListAllWorkers",
-    description: "Returns all workers you've previously deployed to the specified project.",
+  v2ListAllComputeInstances: {
+    id: "v2ListAllComputeInstances",
+    description:
+      "Returns all compute instances you've previously deployed to the specified project.\n\nThis endpoint is currently in its **Alpha** stage.",
     method: "GET",
-    path: "/v2/projects/{ref}/workers",
+    path: "/v2/projects/{ref}/compute",
     pathParams: ["ref"],
     queryParams: [],
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V2ListAllWorkersInput,
-    outputSchema: V2ListAllWorkersOutput,
+    inputSchema: V2ListAllComputeInstancesInput,
+    outputSchema: V2ListAllComputeInstancesOutput,
   },
   v2ListLogDrains: {
     id: "v2ListLogDrains",
@@ -15722,6 +16981,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2ListLogDrainsInput,
     outputSchema: V2ListLogDrainsOutput,
+  },
+  v2ListNotebooks: {
+    id: "v2ListNotebooks",
+    description:
+      "Returns a cursor-paginated list of the project notebooks. Notebook bodies are omitted — read a single notebook to get its cells.",
+    method: "GET",
+    path: "/v2/projects/{ref}/notebooks",
+    pathParams: ["ref"],
+    queryParams: ["page", "filter", "sort"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListNotebooksInput,
+    outputSchema: V2ListNotebooksOutput,
   },
   v2ListOrganizationGithubConnections: {
     id: "v2ListOrganizationGithubConnections",
@@ -15843,6 +17116,20 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2UpdateLogDrainInput,
     outputSchema: V2UpdateLogDrainOutput,
+  },
+  v2UpdateNotebook: {
+    id: "v2UpdateNotebook",
+    description:
+      "Updates the attributes provided and leaves the rest untouched. Sending `content` replaces the whole notebook body.",
+    method: "PATCH",
+    path: "/v2/projects/{ref}/notebooks/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2UpdateNotebookInput,
+    outputSchema: V2UpdateNotebookOutput,
   },
 } as const;
 

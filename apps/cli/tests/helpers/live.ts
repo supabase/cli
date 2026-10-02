@@ -2,19 +2,27 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { Predicate } from "effect";
+import { Effect, Predicate } from "effect";
 import pg from "pg";
 import { expect, inject, test as vitestTest } from "vitest";
 
-import { makeTempHome, requireCliSuccess, runSupabase } from "./cli.ts";
-import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
+import { rootCaBundle } from "../../src/commands/gen/types/types.shared.ts";
+import {
+  type CliRunError,
+  makeTempHome,
+  requireCliSuccess,
+  runSupabase,
+  runSupabaseEffect,
+} from "./cli.ts";
+import { LIVE_EXIT_TIMEOUT_MS, LIVE_SHADOW_PORT } from "./live-env.ts";
 import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
 export type LiveProject = LiveCliProjectEnvironment["project"];
 type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
+type RunEffectOptions = Parameters<typeof runSupabaseEffect>[1];
 
-export interface LiveWorkspace {
+interface LiveWorkspace {
   readonly path: string;
 }
 
@@ -29,6 +37,10 @@ export interface LiveFixtures {
   readonly workspace: LiveWorkspace;
   readonly home: ReturnType<typeof makeTempHome>;
   readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
+  readonly cliEffect: (
+    args: string[],
+    options?: RunEffectOptions,
+  ) => Effect.Effect<RunResult, CliRunError>;
   readonly invoke: (
     slug: string,
     options?: { readonly anonKey?: string; readonly payload?: unknown },
@@ -36,8 +48,7 @@ export interface LiveFixtures {
 }
 
 const base = vitestTest.extend<LiveFixtures>({
-  // eslint-disable-next-line no-empty-pattern
-  project: async ({}, use) => use(inject("liveProject")),
+  project: async ({ task: _task }, use) => use(inject("liveProject")),
 
   home: async ({ task: _task }, use) => {
     const home = makeTempHome();
@@ -77,6 +88,23 @@ const base = vitestTest.extend<LiveFixtures>({
         exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
         env: {
           SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
+          ...options?.env,
+        },
+      }),
+    );
+  },
+
+  cliEffect: async ({ workspace, home }, use) => {
+    await use((args, options) =>
+      runSupabaseEffect(args, {
+        ...options,
+        cwd: options?.cwd ?? workspace.path,
+        home: home.dir,
+        exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
+        env: {
+          SUPABASE_PROFILE: inject("liveProfilePath"),
+          SUPABASE_DB_SHADOW_PORT: LIVE_SHADOW_PORT,
           ...options?.env,
         },
       }),
@@ -147,23 +175,6 @@ export async function removeStorageLiveObject(
     !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
   ) {
     throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
-  }
-}
-
-/** Exact cleanup for branches live tests by name or ref; deleting an already-removed branch is tolerated. */
-export async function removeLiveBranch(
-  cli: LiveFixtures["cli"],
-  project: LiveProject,
-  branch: string,
-): Promise<void> {
-  const removed = await cli(["branches", "delete", branch, "--project-ref", project.ref, "--yes"]);
-  if (
-    removed.exitCode !== 0 &&
-    !/not found|does not exist|status 404\b/i.test(`${removed.stdout}\n${removed.stderr}`)
-  ) {
-    throw new Error(
-      `branches delete cleanup for ${branch} failed (exit ${removed.exitCode})\n${removed.stdout}\n${removed.stderr}`,
-    );
   }
 }
 
@@ -244,50 +255,6 @@ export async function expectPostgresConfigLiveOverride(
 }
 
 /**
- * Waits until `branches list` shows no non-default branch on the live project.
- * `branches delete` returns before the platform finishes tearing the branch
- * down, and `branches disable` is refused ("Please delete all non-default
- * branches before disabling branching.") while any non-default branch still
- * exists, so a caller that needs an empty branching setup does one fail-fast
- * read and then polls the list (2s apart, 120s deadline, each attempt bounded).
- */
-export async function awaitLiveBranchesRemoved(
-  cli: LiveFixtures["cli"],
-  project: LiveProject,
-): Promise<void> {
-  const label = "branches list while awaiting branch removal";
-  const read = async (): Promise<ReadonlyArray<string>> => {
-    const listed = await cli(
-      ["branches", "list", "--output", "json", "--project-ref", project.ref],
-      { exitTimeoutMs: 20_000 },
-    );
-    requireCliSuccess(listed, label);
-    let branches: unknown;
-    try {
-      branches = JSON.parse(listed.stdout);
-    } catch {
-      branches = undefined;
-    }
-    if (!Array.isArray(branches)) {
-      throw new Error(
-        `${label}: unexpected branches list payload\nstdout:\n${listed.stdout}\nstderr:\n${listed.stderr}`,
-      );
-    }
-    return branches
-      .filter((branch: { is_default: boolean }) => !branch.is_default)
-      .map((branch: { name: string }) => branch.name);
-  };
-  if ((await read()).length === 0) return;
-  await expect
-    .poll(read, {
-      interval: 2_000,
-      timeout: 120_000,
-      message: "non-default preview branches still exist",
-    })
-    .toEqual([]);
-}
-
-/**
  * Unique migration version for a live test: a sortable `YYYYMMDDHHMMSS` UTC
  * stamp plus four random digits, so it always orders after any conventional
  * timestamp version already in the shared project's migration history.
@@ -312,7 +279,8 @@ export async function queryLiveDb<T extends Record<string, unknown>>(
   query: string,
   values?: ReadonlyArray<unknown>,
 ): Promise<T[]> {
-  const client = new pg.Client({ connectionString: dbUrl });
+  // Verified TLS against the Supabase CA, so the query works whatever the project's SSL enforcement.
+  const client = new pg.Client({ connectionString: dbUrl, ssl: { ca: rootCaBundle() } });
   await client.connect();
   try {
     const result = await client.query(query, values === undefined ? undefined : [...values]);

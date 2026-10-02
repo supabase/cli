@@ -1,16 +1,11 @@
-/**
- * Unit tests for push.secret.ts.
- *
- * The HMAC keys/values below were captured from the same `createHmac` the
- * implementation uses; they lock the exact bare-hex digest.
- */
-
 import { describe, expect, it } from "vitest";
 
 import { secretDigestHex, secretPlaintext } from "./push.secret.ts";
 
-// Shared test vector — same one `vault-decrypt.unit.test.ts` uses.
-// Decrypts to the plaintext "value".
+// The HMAC keys/values below were captured from the same `createHmac` the implementation uses;
+// they lock the exact bare-hex digest.
+
+// Shared test vector (also used by `vault-decrypt.unit.test.ts`); decrypts to "value".
 const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -40,7 +35,6 @@ describe("secretDigestHex", () => {
   });
 
   it("hashes a value that merely contains (but does not start with) 'encrypted:'", () => {
-    // Only the dotenvx prefix is special; an embedded substring is a real secret.
     expect(secretDigestHex("test", "not-encrypted:value", [])).toBe(
       secretDigestHex("test", "not-encrypted:value", []),
     );

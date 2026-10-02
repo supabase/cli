@@ -33,7 +33,12 @@ function mockCliSettings(opts: {
   projectHost?: string;
 }) {
   return Layer.succeed(CommandSettings, {
+    dbPassword: Option.none(),
+    githubToken: Option.none(),
+    workdirEnvValue: Option.none(),
     profile: opts.profile ?? "supabase",
+    profileEnvValue: Option.none(),
+    supabaseHome: "/tmp/.supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: "supabase.com",
@@ -72,9 +77,7 @@ function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? "/tmp/supabase-cli-test-home",
-      tracesDir: path.join(opts.configDir ?? "/tmp/supabase-cli-test-home", "traces"),
       consent: "granted",
-      showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
       identity: makeTelemetryIdentity(opts.distinctId),
@@ -173,11 +176,8 @@ function withBaseDeps(
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
-  // The typed client now consumes the single `IdentityStitch` service rather
-  // than building its own stitcher, so build that service from the test's
-  // Analytics / TelemetryRuntime / FileSystem / Path fakes and provide it. The
-  // underlying stitch behaviour is identical (the service wraps the same
-  // `makeIdentityStitcher`), so all alias/persist assertions still hold.
+  // Builds the shared `IdentityStitch` service from the test's Analytics/TelemetryRuntime/
+  // FileSystem/Path fakes; alias/persist assertions rely on this real service instance.
   const identityStitch = identityStitchLayer.pipe(
     Layer.provide(analytics.layer),
     Layer.provide(
@@ -281,9 +281,6 @@ describe("commandPlatformApiLayer", () => {
   it.effect(
     "fails with the invalid-token error when the env token is malformed (Go parity)",
     () => {
-      // The env token is validated against the sbp_ pattern before any API
-      // call; a malformed SUPABASE_ACCESS_TOKEN must fail with the
-      // invalid-token error, not be sent to the API.
       const http = captureRequests();
       const layer = commandPlatformApiLayer.pipe(
         Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
@@ -530,11 +527,9 @@ describe("commandPlatformApiLayer", () => {
   });
 });
 
-// The lazy factory underpins the `--linked` db-config resolver's auth-free
-// `--password` path, which only loads a token when no password is supplied.
-// Building the factory must therefore resolve NO token; the friendly auth
-// error must still surface when a command branch actually reaches `make`
-// (e.g. minting a temp role).
+// The lazy factory backs the `--linked` db-config resolver's auth-free `--password` path, which
+// must build without resolving a token but still surface the auth error once `make` is actually
+// reached.
 describe("commandPlatformApiFactoryLayer (lazy token)", () => {
   it.effect("builds without resolving an access token even when none is configured", () => {
     const layer = commandPlatformApiFactoryLayer.pipe(
@@ -542,9 +537,6 @@ describe("commandPlatformApiFactoryLayer (lazy token)", () => {
       Layer.provide(mockCredentials(Option.none())),
       withBaseDeps(),
     );
-    // The eager `commandPlatformApiLayer` would fail to build here; obtaining the
-    // factory service without touching `make` must succeed — this is exactly the
-    // `--linked --password` path, which never mints a temp role.
     return Effect.gen(function* () {
       const factory = yield* CommandPlatformApiFactory;
       expect(typeof factory.make).toBe("object");
@@ -579,8 +571,6 @@ describe("commandPlatformApiFactoryLayer (lazy token)", () => {
       const factory = yield* CommandPlatformApiFactory;
       const first = yield* factory.make;
       const second = yield* factory.make;
-      // `Effect.cached` guarantees the token is resolved once and the same client
-      // instance is reused across repeated `make` calls within one command run.
       expect(first).toBe(second);
     }).pipe(Effect.provide(layer));
   });
