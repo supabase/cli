@@ -114,10 +114,11 @@ Postgres tables (`_analytics.sources` and `_analytics.log_events_<token>` in the
 `_supabase` database) to confirm which events are stored, posts only the missing ones, and
 advances the position once all are stored. While those tables cannot be read, shipping waits and
 logs one warning. Events an Analytics process accepted are not posted to it again while it may
-still store them; events still missing are posted again after Analytics restarts or the owner
-restarts, once 5 seconds passed since the request ended, and a pending request is confirmed the
-same way. Events still missing 60 seconds after Analytics accepted them are posted one at a time,
-and one that is still not stored is skipped with a warning. NUL characters and unpaired
+still store them; events still missing are posted again 5 seconds after the request ended once
+Analytics restarted, or 60 seconds after it once the owner restarted, and a pending request is
+confirmed the same way. Events still missing after 60 seconds of Analytics serving are posted
+again in halves; one that is still not stored on its own is skipped with a warning once Analytics
+stored a later request, and kept otherwise. NUL characters and unpaired
 surrogates in shipped lines are replaced with U+FFFD. Shipping never wakes Analytics
 and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
 services log. Service log streams and `supabase stack logs` are never blocked by shipping.

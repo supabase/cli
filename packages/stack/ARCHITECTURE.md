@@ -696,13 +696,17 @@ check is retried and shipping waits, with one warning per outage. A known source
 holds no events. The pending body is written atomically before each post, and a failed write
 blocks posting. Only ids not yet stored are posted. A post ends by its 5 second timeout, which the
 pending body records. Logflare can take many seconds to store what it accepted, so a post that
-succeeded, timed out or was interrupted is not repeated to the Analytics launch that took it
-while it may still store it: the owner polls the stored ids until all are stored, then advances
-the cursor and clears the pending body. Ids still missing are posted again once that launch ended
-(a new launch, or another owner) and 5 seconds passed since the post ended; a 5xx answer is posted
-again 5 seconds after it. Ids the accepting launch leaves unstored for 60 seconds count as a lost
-batch: each is posted on its own, and one that still is not stored alone is skipped with a
-warning, so one unstorable event cannot block an instance. Event text and metadata strings have
+succeeded, timed out or broke after it was sent is not repeated to the Analytics launch that took
+it while it may still store it: the owner polls the stored ids until all are stored, then advances
+the cursor and clears the pending body. Ids still missing are posted again once that launch can no
+longer store them: 5 seconds after the post ended when it was a launch of this owner, which starts
+a launch only after the previous one exited, and 60 seconds after it when it was another owner's,
+whose process may still be draining. Any other HTTP status and a request that was never sent are
+posted again 5 seconds later. Ids the serving launch leaves unstored for 60 seconds of serving
+count as a lost batch: they are posted again in halves until each unstored one was posted alone.
+A lone unstored id is skipped with a warning once a later post to the launch was stored, which
+shows Analytics is storing; otherwise it stays pending and is posted alone again, with one warning,
+so an Analytics that stores nothing loses nothing. Event text and metadata strings have
 NUL and unpaired surrogates replaced with U+FFFD before posting, because Postgres `jsonb` rejects
 them and drops the whole batch. A start, restart or retarget reconciles a pending body before
 later records; pending records already deleted by retention are skipped with a warning. A 401, 403

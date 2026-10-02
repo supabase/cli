@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref } from "effect";
+import { Context, Effect, Exit, FileSystem, Layer, Redacted, Ref, Scope } from "effect";
 import { connect, createServer, type Socket } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { tmpdir } from "node:os";
 import { makeService } from "../Service.ts";
@@ -32,7 +32,14 @@ const analyticsDatabase = Effect.gen(function* () {
     cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
     runtime: "native",
   });
-  const service = yield* makeService(recipe.definition, { id: "database", config });
+  // The service runs its operations in its own scope, which must stay open while it is destroyed.
+  const serviceScope = yield* Scope.make();
+  const service = yield* makeService(recipe.definition, { id: "database", config }).pipe(
+    Scope.provide(serviceScope),
+  );
+  yield* Effect.addFinalizer(() =>
+    service.destroy.pipe(Effect.ignore, Effect.andThen(Scope.close(serviceScope, Exit.void))),
+  );
   yield* service.start;
   yield* service.ready;
   const endpoint = yield* recipe.endpoint;
@@ -59,7 +66,7 @@ const analyticsDatabase = Effect.gen(function* () {
       `);
     }),
   );
-  return { database, destroy: service.destroy };
+  return database;
 });
 
 /** Relays TCP connections to a Unix socket until `cut` drops them all and refuses new ones. */
@@ -109,7 +116,7 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
     "reads stored ids from a source's table, none before Analytics creates it, and fails for an unknown source",
     () =>
       Effect.gen(function* () {
-        const { database, destroy } = yield* analyticsDatabase;
+        const database = yield* analyticsDatabase;
         const storage = yield* LogflareStorage.make(Effect.succeed(database));
 
         const stored = yield* storage.storedIds("postgres.logs", [storedId, missingId]);
@@ -119,13 +126,12 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
         expect([...stored]).toEqual([storedId]);
         expect([...uncreated]).toEqual([]);
         expect(unknown.message).toBe("Analytics has no storage.logs sources");
-        yield* destroy;
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("connects again after a failed query, so it follows a database that moved", () =>
     Effect.gen(function* () {
-      const { database, destroy } = yield* analyticsDatabase;
+      const database = yield* analyticsDatabase;
       const relay = yield* socketRelay(`${database.host}/.s.PGSQL.${database.port}`);
       const location = yield* Ref.make<LogflareStorage.AnalyticsDatabase>({
         ...database,
@@ -143,7 +149,6 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
       expect([...before]).toEqual([storedId]);
       expect(Exit.isFailure(failed)).toBe(true);
       expect([...after]).toEqual([storedId]);
-      yield* destroy;
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });
