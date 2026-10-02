@@ -13,6 +13,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import type { LogRecord } from "./host/LogRecord.ts";
@@ -177,6 +178,61 @@ describe("owner persisted logs", () => {
         expect(
           records.filter(({ kind }) => kind === "launch").map(({ launchId }) => launchId),
         ).toEqual([1, 2]);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("keeps shared API requests as gateway logs across owner restarts until destroy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-gateway-" });
+        const firstScope = yield* Scope.make();
+        // Closes the first owner if the test fails before the restart closes it.
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+        const first = yield* openOwner("owner-logs-gateway-", "native", { root }).pipe(
+          Scope.provide(firstScope),
+        );
+        const rest = yield* first.rpc.createService({
+          service: "rest",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* first.rpc.configureComposition({
+          members: [{ id: rest.id, activation: "lazy" }],
+          dependencies: [],
+        });
+        yield* first.rpc.startComposition();
+        const api = (yield* first.state.read(first.stack.id))?.ports.find(
+          ({ key }) => key === "api",
+        );
+        if (api === undefined) return yield* Effect.die("the shared API port was not claimed");
+
+        const response = yield* client.get(`http://127.0.0.1:${api.port}/unrouted`);
+        const [recorded] = yield* firstOutput(first.rpc.readLogs({ id: "gateway", follow: true }));
+
+        expect(response.status).toBe(404);
+        expect(recorded?.text).toContain("/unrouted");
+        const directory = path.join(first.logsRoot, "gateway", "gateway");
+        expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
+        yield* Scope.close(firstScope, Exit.void);
+
+        const state = Context.get(
+          yield* Layer.build(State.layer({ root: first.stateRoot })),
+          State.Service,
+        );
+        const saved = yield* state.read(first.stack.id);
+        if (saved === undefined) return yield* Effect.die("the stopped stack was not saved");
+        const second = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        const history = Array.from(
+          yield* second.rpc.readLogs({ id: "gateway", follow: false }).pipe(Stream.runCollect),
+        );
+
+        expect(history).toContainEqual(recorded);
+        yield* second.namespace.destroy;
+        expect(yield* fs.exists(first.logsRoot)).toBe(false);
       }),
     ).pipe(Effect.provide(services)),
   );

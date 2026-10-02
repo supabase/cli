@@ -3,7 +3,7 @@ import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
@@ -70,6 +70,7 @@ const makeNetwork = (options: {
   readonly stackId: string;
   readonly runtime: NetworkRuntime;
   readonly state: State.Interface;
+  readonly onAccess?: HttpAccessSink;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -174,7 +175,13 @@ const makeNetwork = (options: {
                                   });
                                 return { proxy: current.proxy };
                               }
-                              return { proxy: yield* makeHttpProxy({ host, port }) };
+                              return {
+                                proxy: yield* makeHttpProxy({
+                                  host,
+                                  port,
+                                  onAccess: options.onAccess,
+                                }),
+                              };
                             }
                             if (endpoint.protocol === "http") {
                               const proxy = yield* makeHttpProxy({ host, port });
@@ -341,7 +348,12 @@ const makeNetwork = (options: {
     return { register, release: release() } satisfies Interface;
   });
 
-export const layer = (options: { readonly stackId: string; readonly runtime: NetworkRuntime }) =>
+export const layer = (options: {
+  readonly stackId: string;
+  readonly runtime: NetworkRuntime;
+  /** Receives the shared API listener's completed requests. */
+  readonly onAccess?: HttpAccessSink;
+}) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {

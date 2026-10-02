@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { StackError, type DatabaseInstance, type Stack } from "@supabase/stack/effect";
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 
 import {
   alwaysReadyHttpClientLayer,
@@ -164,6 +165,7 @@ function generateStackApi(workdir: string) {
     },
     stop: unusedStack,
     destroy: unusedStack,
+    gateway: unusedGateway,
     commands: { run: unusedStackFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };

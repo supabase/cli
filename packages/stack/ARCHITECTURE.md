@@ -670,12 +670,24 @@ The owner is the only subscriber of each instance's output and persists it as re
   of instances no longer saved, so a failed deletion is retried. Destroying the stack removes
   `logs/`; resetting database data keeps them.
 
+#### Gateway access logs
+
+The shared API listener is the stack's gateway. Each completed request, and each WebSocket upgrade
+once its handshake status is known, becomes one nginx combined line plus duration, with credential
+query and fragment values (API keys, tokens, token hashes, PKCE codes), values that nest one or a
+URL with userinfo, and URL userinfo redacted in the target and the Referer. The proxy hands it to
+a bounded sliding buffer after the response settles, so logging never delays a response or holds
+a target's activity. The owner persists these lines as the `gateway` stream,
+`logs/gateway/gateway/`, with one launch per owner run; it is not a service instance, so orphan
+cleanup keeps it.
+
 #### Shipping logs to Analytics
 
 While the composed Analytics instance is running and healthy, the owner ships the persisted
 stdout/stderr records of the Auth, REST, Realtime, Storage, Functions and database instances of the
-composition to its direct backend, never the proxy, so shipping neither wakes it nor counts as
-activity; standalone instances such as shadow databases are not shipped. The owner logs
+composition, and of the gateway stream as Studio's API Gateway source, to its direct backend, never
+the proxy, so shipping neither wakes it nor counts as activity; standalone instances such as shadow
+databases are not shipped. The owner logs
 each target change, and the target is re-selected when the composition, Analytics' health or its
 launch changes.
 
