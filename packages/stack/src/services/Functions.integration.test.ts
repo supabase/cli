@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -16,10 +16,8 @@ import {
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only candidate start, not the injected Crypto service.
-import { randomInt as nodeRandomInt } from "node:crypto";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
-import { reserveNativePort } from "../Ports.ts";
+import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { makeService } from "../Service.ts";
 import type * as State from "../State.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
@@ -27,12 +25,14 @@ import * as Functions from "./Functions.ts";
 
 // No saved stacks to consult; this test never launches the native backend it configures.
 const testReadPortClaims = Effect.succeed([]);
-const testRandomStart = Effect.sync(() => nodeRandomInt(0, 1_000_000));
 const testReserveNativePort = (
   key: string,
   claims: ReadonlyArray<State.StackClaims>,
   excluded: ReadonlySet<number>,
-) => reserveNativePort(claims, key, testRandomStart, excluded);
+) =>
+  Effect.flatMap(Crypto.Crypto, (crypto) =>
+    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+  ).pipe(Effect.provide(NodeCrypto.layer));
 
 const options = (root: string) => ({
   stackId: "catalog-functions",

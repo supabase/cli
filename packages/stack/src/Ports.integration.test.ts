@@ -1,7 +1,7 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Ref, Scope } from "effect";
-import { makePorts, PortError, reserveNativePort } from "./Ports.ts";
+import { makePorts, portBase, portSpan, PortError, reserveNativePort } from "./Ports.ts";
 import * as State from "./State.ts";
 
 const makeTestState = (root: string) =>
@@ -425,6 +425,17 @@ it.live("lets exactly one of two stacks sharing a saved port bind it when both s
 // Fixed so a test can force two reservations to the same candidate; production uses randomPortSpanStart.
 const fixedStart = Effect.succeed(0);
 
+// Binds a real listener directly in the native-reservation span, retrying past occupied
+// candidates, instead of reserving then releasing a port that something else could grab meanwhile.
+const bindBlockingPort = (host: string) =>
+  Effect.gen(function* () {
+    for (let offset = 0; offset < portSpan; offset++) {
+      const attempt = yield* Effect.exit(bind(host, portBase + offset));
+      if (Exit.isSuccess(attempt)) return { port: portBase + offset, listener: attempt.value };
+    }
+    return yield* Effect.die("No port in the native reservation span was free for the fixture");
+  });
+
 it.live("skips a native backend port claimed by another saved stack", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -451,17 +462,12 @@ it.live("skips a native backend port claimed by another saved stack", () =>
 it.live("skips a native backend port a wildcard listener holds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const probeScope = yield* Scope.make();
-      const probe = yield* reserveNativePort([], "pooler", fixedStart).pipe(
-        Effect.provideService(Scope.Scope, probeScope),
-      );
-      yield* Scope.close(probeScope, Exit.void);
-
       // A wildcard bind is reachable through loopback, so a loopback-only probe would miss it.
-      yield* bind("0.0.0.0", probe.port);
+      const blocked = yield* bindBlockingPort("0.0.0.0");
+      const forcedStart = Effect.succeed(blocked.port - portBase);
 
-      const reserved = yield* reserveNativePort([], "pooler", fixedStart);
-      expect(reserved.port).not.toBe(probe.port);
+      const reserved = yield* reserveNativePort([], "pooler", forcedStart);
+      expect(reserved.port).not.toBe(blocked.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -493,14 +499,10 @@ it.live("skips a public auto candidate a loopback listener already holds", () =>
       const request = { stackId: "stack", key: "api", host: "0.0.0.0", port: "auto" as const };
       const accept = (_host: string, port: number) => Effect.succeed(port);
 
-      const probeScope = yield* Scope.make();
-      const probe = yield* ports
-        .acquire(request, accept)
-        .pipe(Effect.provideService(Scope.Scope, probeScope));
-      yield* Scope.close(probeScope, Exit.void);
+      // A loopback-only listener keeps occupying the port while only its saved claim is released,
+      // so the next auto allocation has to skip it for real via loopbackOccupied, not a real bind.
+      const probe = yield* ports.acquire(request, (_host, port) => bind("127.0.0.1", port));
       yield* ports.release("stack", "api");
-
-      yield* bind("127.0.0.1", probe.port);
 
       const acquired = yield* ports.acquire(request, accept);
       expect(acquired.port).not.toBe(probe.port);
