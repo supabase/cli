@@ -20,6 +20,8 @@ const sourceToken = "0b6d7c8e-1f2a-4b3c-8d4e-5f6a7b8c9d0e";
 const uncreatedToken = "1c7e8d9f-2a3b-4c5d-9e6f-7a8b9c0d1e2f";
 const storedId = "8f0e7a9b-6c5d-8e4f-9a3b-2c1d0e9f8a7b";
 const missingId = "9a1b2c3d-4e5f-8a6b-9c7d-8e9f0a1b2c3d";
+/** Analytics' database URL as its runtime addresses the bound database. */
+const databaseUrl = `postgresql://supabase_admin:${Redacted.value(config.databasePassword)}@db-runtime:5432/postgres`;
 
 /** A native stack database whose `_supabase` database holds a Logflare-shaped source table. */
 const analyticsDatabase = Effect.gen(function* () {
@@ -44,18 +46,10 @@ const analyticsDatabase = Effect.gen(function* () {
   yield* service.ready;
   const endpoint = yield* recipe.endpoint;
   if (endpoint.kind !== "unix") return yield* Effect.die("native database has no socket");
-  const database: LogflareStorage.AnalyticsDatabase = {
-    host: endpoint.path,
-    port: endpoint.port,
-    database: "_supabase",
-    username: "supabase_admin",
-    password: Redacted.value(config.databasePassword),
-  };
+  const database = yield* LogflareStorage.analyticsDatabase(databaseUrl, endpoint);
   yield* Effect.scoped(
     Effect.gen(function* () {
-      const services = yield* Layer.build(
-        PgClient.layer({ ...database, password: config.databasePassword }),
-      );
+      const services = yield* Layer.build(PgClient.layer({ url: Redacted.make(database.url) }));
       yield* Context.get(services, PgClient.PgClient).unsafe(`
         CREATE SCHEMA IF NOT EXISTS _analytics;
         CREATE TABLE _analytics.sources (name text NOT NULL, token uuid NOT NULL);
@@ -66,7 +60,7 @@ const analyticsDatabase = Effect.gen(function* () {
       `);
     }),
   );
-  return database;
+  return { database, socket: `${endpoint.path}/.s.PGSQL.${endpoint.port}` };
 });
 
 /** Relays TCP connections to a Unix socket until `cut` drops them all and refuses new ones. */
@@ -116,7 +110,7 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
     "reads stored ids from a source's table, none before Analytics creates it, and fails for an unknown source",
     () =>
       Effect.gen(function* () {
-        const database = yield* analyticsDatabase;
+        const { database } = yield* analyticsDatabase;
         const storage = yield* LogflareStorage.make(Effect.succeed(database));
 
         const stored = yield* storage.storedIds("postgres.logs", [storedId, missingId]);
@@ -131,13 +125,15 @@ describe("LogflareStorage", { timeout: 180_000 }, () => {
 
   it.live("connects again after a failed query, so it follows a database that moved", () =>
     Effect.gen(function* () {
-      const database = yield* analyticsDatabase;
-      const relay = yield* socketRelay(`${database.host}/.s.PGSQL.${database.port}`);
-      const location = yield* Ref.make<LogflareStorage.AnalyticsDatabase>({
-        ...database,
-        host: "127.0.0.1",
-        port: relay.port,
-      });
+      const { database, socket } = yield* analyticsDatabase;
+      const relay = yield* socketRelay(socket);
+      const location = yield* Ref.make(
+        yield* LogflareStorage.analyticsDatabase(databaseUrl, {
+          kind: "tcp",
+          host: "127.0.0.1",
+          port: relay.port,
+        }),
+      );
       const storage = yield* LogflareStorage.make(Ref.get(location));
       const before = yield* storage.storedIds("postgres.logs", [storedId]);
 

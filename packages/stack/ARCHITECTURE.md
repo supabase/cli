@@ -673,8 +673,9 @@ The owner is the only subscriber of each instance's output and persists it as re
 #### Shipping logs to Analytics
 
 While the composed Analytics instance is running and healthy, the owner ships the persisted
-stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances to its
-direct backend, never the proxy, so shipping neither wakes it nor counts as activity. The owner logs
+stdout/stderr records of the Auth, REST, Realtime, Storage, Functions and database instances of the
+composition to its direct backend, never the proxy, so shipping neither wakes it nor counts as
+activity; standalone instances such as shadow databases are not shipped. The owner logs
 each target change, and the target is re-selected when the composition, Analytics' health or its
 launch changes.
 

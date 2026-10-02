@@ -154,7 +154,7 @@ describe("saved Vector instance migration", () => {
   );
 
   it.live(
-    "keeps Vector saved when removing its files fails, and retries at the next migration",
+    "retries removing Vector files that a failed migration left after the state is saved again",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -185,24 +185,64 @@ describe("saved Vector instance migration", () => {
         const runtime = path.join(root, "legacy", "data", "vector", "runtime");
 
         yield* state.migrate("legacy");
-        const afterFailure = yield* savedServices(yield* fs.readFileString(file));
         const keptFiles = yield* fs.exists(runtime);
+        const saved = yield* state.read("legacy");
+        if (saved === undefined) return yield* Effect.die("the legacy stack is not saved");
+        yield* state.save(saved);
         yield* state.migrate("legacy");
 
-        expect(afterFailure).toEqual(["analytics", "mail", "vector", "vector"]);
         expect(keptFiles).toBe(true);
         expect(yield* savedServices(yield* fs.readFileString(file))).toEqual(["analytics", "mail"]);
         expect(yield* fs.exists(runtime)).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.live("rejects a saved Vector id that escapes the stack without touching other stacks", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-escape-" });
+      const state = yield* stateFor(root);
+      const sibling = path.join(root, "other", "data", "vector", "runtime", "vector");
+      yield* fs.makeDirectory(sibling, { recursive: true });
+      yield* fs.writeFileString(path.join(sibling, "vector.yaml"), "sibling");
+      const escaping = "../../other/data/vector";
+      const document = legacyDocument("legacy", root);
+      yield* fs.makeDirectory(path.join(root, "legacy", "data"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "legacy", "state.json"),
+        yield* Schema.encodeEffect(Json)({
+          ...document,
+          instances: [
+            ...document.instances.filter(({ creation }) => creation.service !== "vector"),
+            { id: escaping, creation: { service: "vector", config: {} } },
+          ],
+          composition: {
+            members: [...document.composition.members, { id: escaping, activation: "eager" }],
+            dependencies: [],
+          },
+        }),
+      );
+
+      yield* state.migrate("legacy");
+      const failure = yield* state.read("legacy").pipe(Effect.flip);
+
+      expect(failure.operation).toBe("decode");
+      expect(yield* fs.readFileString(path.join(sibling, "vector.yaml"))).toBe("sibling");
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.live("checks a state without Vector while another operation holds the registry lock", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-unlocked-" });
       const state = yield* stateFor(root);
       yield* writeLegacyState(root, "legacy", root);
       yield* state.migrate("legacy");
+      const callerConfig = path.join(root, "legacy", "data", "vector", "runtime", "vector");
+      yield* fs.makeDirectory(callerConfig, { recursive: true });
+      yield* fs.writeFileString(path.join(callerConfig, "pipeline.yaml"), "caller");
       const held = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const holder = yield* state

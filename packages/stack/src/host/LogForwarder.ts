@@ -318,6 +318,8 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   const forwarderScope = yield* Effect.scope;
   const candidates = yield* Ref.make<ReadonlyMap<string, Candidate>>(new Map());
   const target = yield* SubscriptionRef.make<Target | undefined>(undefined);
+  /** The composition's member ids; instances outside it, such as shadow databases, are not shipped. */
+  const memberIds = yield* SubscriptionRef.make<ReadonlySet<string>>(new Set());
   const targetScope = yield* Ref.make<
     { readonly scope: Scope.Closeable; readonly users: Semaphore.Semaphore } | undefined
   >(undefined);
@@ -331,6 +333,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
 
   const rebind = Effect.gen(function* () {
     const members = new Set((yield* options.composition).members.map(({ id }) => id));
+    yield* SubscriptionRef.set(memberIds, members);
     const serving = [...(yield* Ref.get(candidates)).values()].find(
       (candidate) => candidate.serving && members.has(candidate.instance.id),
     );
@@ -848,10 +851,19 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       Stream.runDrain,
     );
 
+  /** Waits until the instance joins the composition, or leaves it. */
+  const membership = (instanceId: string, member: boolean) =>
+    SubscriptionRef.changes(memberIds).pipe(
+      Stream.filter((ids) => ids.has(instanceId) === member),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+
   /** Ships until the instance unregisters or the store detaches its logs, which ends a session. */
   const forward = (instance: ForwardedInstance, service: ShippedService) =>
     Effect.gen(function* () {
       while (true) {
+        yield* membership(instance.id, true);
         const current = yield* serving;
         const failing = yield* Ref.make(false);
         const posting = yield* Semaphore.make(1);
@@ -869,9 +881,13 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           }),
           Effect.as(true),
           Effect.catch(() => retargeted(current).pipe(Effect.as(false))),
-          // A retarget lets a started post finish, so its answer decides the pending body.
+          // A retarget or leaving the composition lets a started post finish, so its answer decides
+          // the pending body.
           Effect.raceFirst(
-            retargeted(current).pipe(Effect.andThen(posting.take(1)), Effect.as(false)),
+            Effect.raceFirst(retargeted(current), membership(instance.id, false)).pipe(
+              Effect.andThen(posting.take(1)),
+              Effect.as(false),
+            ),
           ),
         );
         if (detached)

@@ -133,11 +133,14 @@ interface LineState {
 export interface Splitter {
   /** Records take the publish time of their first byte. */
   readonly push: (chunk: LaunchOutput) => ReadonlyArray<LogEntry>;
-  /** Flushes the partial lines of a launch that ended. */
-  readonly endLaunch: (launchId: number, now: number) => ReadonlyArray<LogEntry>;
-  /** Flushes partial lines late chunks of ended launches left once they are idle for a grace. */
-  readonly flushEnded: (now: number) => ReadonlyArray<LogEntry>;
-  /** The earliest time `flushEnded` has a partial line to flush. */
+  /** Marks a launch ended; `flushEnded` flushes its partial lines. */
+  readonly endLaunch: (launchId: number) => void;
+  /**
+   * Flushes partial lines of ended launches: those of launches still ending once `idle` proves
+   * every published chunk split, and late ones once they are idle for a grace.
+   */
+  readonly flushEnded: (now: number, idle: boolean) => ReadonlyArray<LogEntry>;
+  /** The earliest time `flushEnded` has a partial line to flush, already past while a launch ends. */
   readonly endedDue: () => number | undefined;
   readonly flush: (now: number) => ReadonlyArray<LogEntry>;
 }
@@ -175,6 +178,8 @@ const lastBytes = (held: Uint8Array, bytes: Uint8Array) => {
 export const makeSplitter = (limit = maxLineBytes): Splitter => {
   const states = new Map<string, LineState>();
   const ended = new Set<number>();
+  /** Ended launches whose partial lines wait only for the output published before the end. */
+  const ending = new Set<number>();
   const latestParts = new Map<number, number>();
   /** Next expected `seq` per launch and stream, which spans the launch's parts. */
   const expected = new Map<string, number>();
@@ -242,6 +247,7 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
       const stale = (launchId: number) => launchId <= latest - retainedLaunches;
       for (const [key, state] of states) if (stale(state.launchId)) states.delete(key);
       for (const launchId of ended) if (stale(launchId)) ended.delete(launchId);
+      for (const launchId of ending) if (stale(launchId)) ending.delete(launchId);
       for (const launchId of latestParts.keys()) if (stale(launchId)) latestParts.delete(launchId);
       for (const key of expected.keys())
         if (stale(Number(key.slice(0, key.indexOf(":"))))) expected.delete(key);
@@ -319,27 +325,27 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
     return out;
   };
 
-  const endLaunch = (launchId: number, now: number) => {
+  const endLaunch = (launchId: number) => {
+    if (ended.has(launchId)) return;
     ended.add(launchId);
-    const out: Array<LogEntry> = [];
-    for (const state of states.values())
-      if (state.launchId === launchId) flushLine(state, now, out);
-    return out;
+    ending.add(launchId);
   };
 
-  const flushEnded = (now: number) => {
+  const flushEnded = (now: number, idle: boolean) => {
     const out: Array<LogEntry> = [];
     for (const state of states.values())
       if (
         ended.has(state.launchId) &&
         pending(state) &&
-        now - state.lastChunk >= endedLineGraceMillis
+        ((idle && ending.has(state.launchId)) || now - state.lastChunk >= endedLineGraceMillis)
       )
         flushLine(state, now, out);
+    if (idle) ending.clear();
     return out;
   };
 
   const endedDue = () => {
+    if (ending.size > 0) return Number.NEGATIVE_INFINITY;
     let due: number | undefined;
     for (const state of states.values())
       if (ended.has(state.launchId) && pending(state))
