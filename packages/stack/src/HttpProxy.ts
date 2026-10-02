@@ -528,7 +528,19 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
           upstream.destroy();
         });
       });
-    }),
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Deferred.isDoneUnsafe(handshake)
+            ? Deferred.await(handshake).pipe(
+                Effect.flatMap((status) =>
+                  Effect.annotateCurrentSpan({ "http.response.status_code": status }),
+                ),
+              )
+            : Effect.void,
+        ),
+      ),
+    ),
 );
 
 export const makeHttpProxy = (options: {
