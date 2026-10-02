@@ -44,6 +44,7 @@ describe("service catalog", () => {
           },
         },
         dockerOptions(databaseRoot),
+        Effect.succeed([]),
       );
       const databaseService = yield* makeService(databaseRecipe.definition, {
         id: "database",
@@ -87,6 +88,7 @@ describe("service catalog", () => {
               config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const analytics = yield* makeService(analyticsRecipe.definition, {
             id: "analytics",
@@ -120,6 +122,7 @@ describe("service catalog", () => {
               config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const analytics = yield* makeService(analyticsRecipe.definition, {
             id: "analytics",
@@ -139,6 +142,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           yield* fs.writeFileString(
             `${root}/vector.yaml`,
@@ -176,6 +180,7 @@ describe("service catalog", () => {
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: imageRoot } },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const imgproxy = yield* makeService(imgproxyRecipe.definition, {
             id: "imgproxy",

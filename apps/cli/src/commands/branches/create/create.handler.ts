@@ -81,6 +81,7 @@ export const branchesCreate = Effect.fn("branches.create")(function* (flags: Bra
   // holds the branch's own ref, and the platform 403s on that ref for every branches-management
   // endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const creating =

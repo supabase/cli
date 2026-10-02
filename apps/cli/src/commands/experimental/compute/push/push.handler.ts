@@ -217,7 +217,7 @@ function addYourCode(sourceDisplay: string): string {
   return `Add your compute's code to ${sourceDisplay}, then run this command again.`;
 }
 
-const deployOneCompute = Effect.fnUntraced(function* (input: {
+const deployOneCompute = Effect.fn("compute.push.deployOne")(function* (input: {
   readonly project: ComputeProject;
   readonly name: string;
   readonly projectRef: string;
@@ -324,6 +324,13 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
   // finding it out mid-walk would mean reporting it after the packaging step announced itself.
   const exclude = yield* compileComputeExclude({ name, patterns: compute.entry?.exclude });
 
+  yield* Effect.annotateCurrentSpan({
+    "compute.runtime": runtime,
+    "compute.size": size,
+    "compute.exposure": exposure,
+    "compute.instances": instances,
+  });
+
   let contextUploadId: string;
   {
     const packaging = yield* output.task("Packaging compute...");
@@ -331,6 +338,11 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
       Effect.tapError(() => packaging.fail()),
     );
     yield* packaging.clear;
+    yield* Effect.annotateCurrentSpan({
+      "compute.file_count": packaged.fileCount,
+      "compute.excluded_count": packaged.excludedCount,
+      "compute.bundle_bytes": packaged.archive.length,
+    });
     // The excluded count rides along on the same line, and only when patterns are configured:
     // an over-broad pattern is otherwise visible only as a file count nobody had a number to
     // compare against, and by then the archive is already uploaded.
@@ -408,6 +420,11 @@ const deployOneCompute = Effect.fnUntraced(function* (input: {
               ? deploying.message("Building compute...")
               : Effect.void,
         }).pipe(Effect.tapError(() => deploying.fail()));
+
+  yield* Effect.annotateCurrentSpan({
+    "compute.waited": !input.noWait && accepted.buildState === "building",
+    "compute.build_state": settled.buildState,
+  });
 
   // Checked regardless of whether the build was waited on: the verdict can
   // arrive on the deploy response as readily as on a poll.

@@ -57,7 +57,7 @@ const follow = Effect.fn("functions.serve.follow")(function* (
       { concurrency: 2 },
     ),
     Stream.runForEach(
-      Effect.fn(function* ({ channel, line }) {
+      Effect.fnUntraced(function* ({ channel, line }) {
         const timestamp = DateTime.formatIso(yield* DateTime.now);
         yield* output.format === "stream-json"
           ? output.event({
@@ -74,8 +74,8 @@ const follow = Effect.fn("functions.serve.follow")(function* (
     ),
     Effect.forkScoped({ startImmediately: true }),
   );
-  yield* launch;
-  yield* instance.ready;
+  yield* launch.pipe(Effect.withSpan("functions.serve.launch"));
+  yield* instance.ready.pipe(Effect.withSpan("functions.serve.waitReady"));
   const url = (yield* instance.credentials()).url;
   if (url === undefined) return yield* invalidConfig("Functions has no public HTTP endpoint.");
   if (output.format === "stream-json") yield* output.result({ instance_id: instance.id, url });
@@ -168,6 +168,10 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
       ...(Option.isSome(flags.noVerifyJwt) ? { verifyJwt: !flags.noVerifyJwt.value } : {}),
     };
     const changed = !Equal.equals(saved, desired);
+    yield* Effect.annotateCurrentSpan({
+      "functions.instance": "existing",
+      "config.changed": changed,
+    });
     const launch = changed
       ? Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -213,6 +217,7 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
   const identity = yield* stack.credentials.get;
   if (identity === undefined) return yield* invalidConfig("The stack has no saved credentials.");
   const config = yield* loadStackConfig(settings.workdir);
+  yield* Effect.annotateCurrentSpan("functions.instance", "temporary");
   const refreshedJwks = yield* config.remoteJwks.pipe(
     Effect.catch((cause) =>
       output
@@ -270,11 +275,13 @@ const session = Effect.fn("functions.serve.session")(function* (flags: Functions
     },
     endpoints: { ...source.endpoints, http: { port } },
   };
-  const temporary = yield* Effect.acquireRelease(stack.services.create(creation), (instance) =>
-    instance.status.pipe(
-      Effect.andThen(instance.destroy),
-      Effect.catch((error) => cleanupWarning("Failed to remove temporary Functions", error)),
-    ),
+  const temporary = yield* Effect.acquireRelease(
+    stack.services.create(creation).pipe(Effect.withSpan("functions.serve.createInstance")),
+    (instance) =>
+      instance.status.pipe(
+        Effect.andThen(instance.destroy),
+        Effect.catch((error) => cleanupWarning("Failed to remove temporary Functions", error)),
+      ),
   );
   yield* follow(temporary, temporary.start);
 });

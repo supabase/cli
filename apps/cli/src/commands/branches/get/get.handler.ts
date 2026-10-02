@@ -86,6 +86,7 @@ export const branchesGet = Effect.fn("branches.get")(function* (flags: BranchesG
   // `branches` is parent-scoped: after `supabase link <branch>`, `supabase/.temp/project-ref`
   // holds the branch's own ref, which the platform 403s on for every branches-management endpoint.
   const ref = yield* resolveParentScopedProjectRef(flags.projectRef);
+  yield* Effect.annotateCurrentSpan("project.ref", ref);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* promptBranchId(flags.name, ref);

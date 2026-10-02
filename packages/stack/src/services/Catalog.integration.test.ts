@@ -24,6 +24,7 @@ describe("service catalog", () => {
             endpoints: { smtp: { port: "auto" } },
           },
           options(root),
+          Effect.succeed([]),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         const misplacedDatabaseVersion = yield* makeServiceRecipe(
@@ -38,6 +39,7 @@ describe("service catalog", () => {
             },
           },
           options(root),
+          Effect.succeed([]),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(misplacedDatabaseVersion)).toBe(true);
       }),
@@ -56,6 +58,7 @@ describe("service catalog", () => {
               config: { databaseUrl: "postgres://db" },
             },
             options(root),
+            Effect.succeed([]),
           ),
         );
         expect(error.operation).toBe("config");

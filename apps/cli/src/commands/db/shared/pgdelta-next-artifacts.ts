@@ -39,7 +39,7 @@ interface PgDeltaNextArtifactMetadata {
  * Writes bundled-engine debug data below the v2 generation. These files are
  * diagnostics only: they are never considered catalog-cache inputs.
  */
-export const savePgDeltaNextDebugArtifacts = Effect.fnUntraced(function* (
+export const savePgDeltaNextDebugArtifacts = Effect.fn("PgDeltaNextArtifacts.save")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,

@@ -33,6 +33,7 @@ describe("vector recipe", () => {
                 endpoints: { http: { port: "auto" } },
               },
               options(root, runtime),
+              Effect.succeed([]),
             );
             const vector = yield* makeService(recipe.definition, {
               id: "vector",
@@ -74,6 +75,7 @@ describe("vector recipe", () => {
               endpoints: { http: { port: "auto" } },
             },
             options(root, "docker"),
+            Effect.succeed([]),
           );
           const vector = yield* makeService(recipe.definition, {
             id: "vector",
@@ -107,6 +109,7 @@ describe("vector recipe", () => {
                 endpoints: { http: { port: "auto" } },
               },
               options(root, "docker"),
+              Effect.succeed([]),
             );
             const vector = yield* makeService(recipe.definition, {
               id: "vector",

@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -17,9 +17,22 @@ import {
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
+import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { makeService } from "../Service.ts";
+import type * as State from "../State.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+
+// No saved stacks to consult; this test never launches the native backend it configures.
+const testReadPortClaims = Effect.succeed([]);
+const testReserveNativePort = (
+  key: string,
+  claims: ReadonlyArray<State.StackClaims>,
+  excluded: ReadonlySet<number>,
+) =>
+  Effect.flatMap(Crypto.Crypto, (crypto) =>
+    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+  ).pipe(Effect.provide(NodeCrypto.layer));
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -45,86 +58,90 @@ const dockerInfo = Effect.scoped(
 ).pipe(Effect.orElseSucceed(() => "docker info unavailable"));
 
 describe("service catalog", () => {
-  it.live("serves a standalone Functions bootstrap over HTTP", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const client = yield* HttpClient.HttpClient;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-functions-" });
-        const stackId = "b".repeat(64);
-        const instanceId = "functions-instance";
-        const functionsRoot = root + "/user-functions";
-        yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
-        yield* fs.writeFileString(
-          functionsRoot + "/hello/index.ts",
-          "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
-        );
-        const recipe = yield* makeServiceRecipe(
-          {
-            service: "functions",
-            config: {
-              functionsRoot,
-              databaseUrl: "postgres://functions-db",
-              apiUrl: "http://functions-api",
-              jwtSecret: "functions-jwt-secret",
-              jwks: "functions-jwks",
-              anonKey: "active-anon-key",
-              serviceRoleKey: "active-service-role-key",
-              publishableKey: "active-publishable-key",
-              secretKey: "active-secret-key",
-              env: {
-                CUSTOM_ENV: "custom-value",
-                SUPABASE_INTERNAL_FUNCTIONS_ROOT: "overridden-root",
-                EDGE_RUNTIME_PORT: "overridden-port",
-                SUPABASE_URL: "overridden-url",
-                SUPABASE_DB_URL: "overridden-db",
-                SUPABASE_INTERNAL_JWT_SECRET: "overridden-jwt",
-                SUPABASE_ANON_KEY: "overridden-anon",
-                SUPABASE_SERVICE_ROLE_KEY: "overridden-service",
-                SUPABASE_JWKS: "overridden-jwks",
-                SUPABASE_INTERNAL_PUBLISHABLE_KEY: "overridden-publishable",
-                SUPABASE_INTERNAL_SECRET_KEY: "overridden-secret",
+  it.live(
+    "serves a standalone Functions bootstrap over HTTP",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const client = yield* HttpClient.HttpClient;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-functions-" });
+          const stackId = "b".repeat(64);
+          const instanceId = "functions-instance";
+          const functionsRoot = root + "/user-functions";
+          yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
+          yield* fs.writeFileString(
+            functionsRoot + "/hello/index.ts",
+            "Deno.serve(() => Response.json({ custom: Deno.env.get('CUSTOM_ENV'), root: Deno.env.get('SUPABASE_INTERNAL_FUNCTIONS_ROOT'), port: Deno.env.get('EDGE_RUNTIME_PORT'), url: Deno.env.get('SUPABASE_URL'), db: Deno.env.get('SUPABASE_DB_URL'), jwt: Deno.env.get('SUPABASE_INTERNAL_JWT_SECRET'), jwks: Deno.env.get('SUPABASE_JWKS'), anon: Deno.env.get('SUPABASE_ANON_KEY'), service: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'), publishable: Deno.env.get('SUPABASE_PUBLISHABLE_KEYS'), secret: Deno.env.get('SUPABASE_SECRET_KEYS') }));",
+          );
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "functions",
+              config: {
+                functionsRoot,
+                databaseUrl: "postgres://functions-db",
+                apiUrl: "http://functions-api",
+                jwtSecret: "functions-jwt-secret",
+                jwks: "functions-jwks",
+                anonKey: "active-anon-key",
+                serviceRoleKey: "active-service-role-key",
+                publishableKey: "active-publishable-key",
+                secretKey: "active-secret-key",
+                env: {
+                  CUSTOM_ENV: "custom-value",
+                  SUPABASE_INTERNAL_FUNCTIONS_ROOT: "overridden-root",
+                  EDGE_RUNTIME_PORT: "overridden-port",
+                  SUPABASE_URL: "overridden-url",
+                  SUPABASE_DB_URL: "overridden-db",
+                  SUPABASE_INTERNAL_JWT_SECRET: "overridden-jwt",
+                  SUPABASE_ANON_KEY: "overridden-anon",
+                  SUPABASE_SERVICE_ROLE_KEY: "overridden-service",
+                  SUPABASE_JWKS: "overridden-jwks",
+                  SUPABASE_INTERNAL_PUBLISHABLE_KEY: "overridden-publishable",
+                  SUPABASE_INTERNAL_SECRET_KEY: "overridden-secret",
+                },
+                verifyJwt: false,
+                inspector: true,
               },
-              verifyJwt: false,
-              inspector: true,
             },
-          },
-          { ...dockerOptions(root), stackId, instanceId },
-        );
-        const instance = yield* makeService(recipe.definition, {
-          id: instanceId,
-          config: recipe.creation,
-        });
-        yield* instance.start;
-        yield* instance.ready;
-        const endpoint = yield* recipe.endpoint("http");
-        const response = yield* client.execute(
-          HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
-        );
-        expect(response.status).toBe(200);
-        expect(yield* response.json).toEqual(
-          expect.objectContaining({
-            custom: "custom-value",
-            port: "9000",
-            url: "http://functions-api",
-            db: "postgres://functions-db",
-            jwks: "functions-jwks",
-            anon: "active-anon-key",
-            service: "active-service-role-key",
-            publishable: '{"default":"active-publishable-key"}',
-            secret: '{"default":"active-secret-key"}',
-          }),
-        );
-        const inspector = yield* recipe.endpoint("inspector");
-        const inspectorResponse = yield* client.execute(
-          HttpClientRequest.get(
-            "http://" + inspector.host + ":" + inspector.port + "/json/version",
-          ),
-        );
-        expect(inspectorResponse.status).toBe(200);
-        yield* instance.stop;
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+            { ...dockerOptions(root), stackId, instanceId },
+            Effect.succeed([]),
+          );
+          const instance = yield* makeService(recipe.definition, {
+            id: instanceId,
+            config: recipe.creation,
+          });
+          yield* instance.start;
+          yield* instance.ready;
+          const endpoint = yield* recipe.endpoint("http");
+          const response = yield* client.execute(
+            HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
+          );
+          expect(response.status).toBe(200);
+          expect(yield* response.json).toEqual(
+            expect.objectContaining({
+              custom: "custom-value",
+              port: "9000",
+              url: "http://functions-api",
+              db: "postgres://functions-db",
+              jwks: "functions-jwks",
+              anon: "active-anon-key",
+              service: "active-service-role-key",
+              publishable: '{"default":"active-publishable-key"}',
+              secret: '{"default":"active-secret-key"}',
+            }),
+          );
+          const inspector = yield* recipe.endpoint("inspector");
+          const inspectorResponse = yield* client.execute(
+            HttpClientRequest.get(
+              "http://" + inspector.host + ":" + inspector.port + "/json/version",
+            ),
+          );
+          expect(inspectorResponse.status).toBe(200);
+          yield* instance.stop;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
   );
 
   const ancestors = [
@@ -190,6 +207,7 @@ describe("service catalog", () => {
                 instanceId: "ancestor",
                 cacheRoot: "/tmp/supabase-stack-artifacts",
               },
+              Effect.succeed([]),
             );
             const logs = yield* Ref.make("");
             yield* recipe.logs.pipe(
@@ -258,6 +276,7 @@ describe("service catalog", () => {
               instanceId: "deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           yield* recipe.logs.pipe(
@@ -329,6 +348,7 @@ describe("service catalog", () => {
               instanceId: "plain-deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           const warned = yield* Deferred.make<void>();
@@ -439,6 +459,7 @@ for (const runtime of ["native", "docker"] as const) {
               runtime,
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           yield* recipe.logs.pipe(
@@ -549,6 +570,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           client: yield* HttpClient.HttpClient,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           container,
+          readPortClaims: testReadPortClaims,
+          reserveNativePort: testReserveNativePort,
         },
       );
       const scope = yield* Scope.make();

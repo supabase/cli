@@ -89,10 +89,12 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   // A decode error folds into the same `failed to fetch … advisors: %w` path,
   // so map both JSON syntax errors and structural-shape rejections (thrown by
   // `apiResponseToAdvisorLints`) to the endpoint's network error.
-  return yield* Effect.try({
+  const lints = yield* Effect.try({
     try: () => decodeAdvisorsBody(rawBody),
     catch: (cause) => endpoint.network(String(cause), { decode: true }),
   });
+  yield* Effect.annotateCurrentSpan("advisor.count", lints.length);
+  return lints;
 });
 
 export const fetchSecurityAdvisors = (ref: string, stitch: StitchFn) =>
@@ -113,6 +115,10 @@ export const fetchSecurityAdvisors = (ref: string, stitch: StitchFn) =>
         }),
     },
     stitch,
+  ).pipe(
+    Effect.withSpan("v1GetSecurityAdvisors", {
+      attributes: { "api.operation": "v1GetSecurityAdvisors" },
+    }),
   );
 
 export const fetchPerformanceAdvisors = (ref: string, stitch: StitchFn) =>
@@ -133,4 +139,8 @@ export const fetchPerformanceAdvisors = (ref: string, stitch: StitchFn) =>
         }),
     },
     stitch,
+  ).pipe(
+    Effect.withSpan("v1GetPerformanceAdvisors", {
+      attributes: { "api.operation": "v1GetPerformanceAdvisors" },
+    }),
   );

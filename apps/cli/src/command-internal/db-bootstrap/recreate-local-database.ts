@@ -143,7 +143,9 @@ const PG_INVALID_CATALOG_NAME = "3D000";
  * Disables new connections to `postgres`/`_supabase`, terminates existing backends, then waits
  * for WAL senders to drop their replication slots (1-second backoff, 10 retries max).
  */
-export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSession) {
+export const resetDisconnectClients = Effect.fn("DbBootstrap.disconnectClients")(function* (
+  session: DbSession,
+) {
   // Must run sequentially, unwrapped: looping these in a transaction is unsupported, and
   // Effect's short-circuit-on-failure stops at the first bad statement.
   const disconnectResult = yield* Effect.forEach(
@@ -197,11 +199,19 @@ export const resetDisconnectClients = Effect.fnUntraced(function* (session: DbSe
           : Effect.void;
       }),
     );
-  yield* countReplicationSlots.pipe(
+  let slotChecks = 0;
+  yield* Effect.suspend(() => {
+    slotChecks += 1;
+    return countReplicationSlots;
+  }).pipe(
+    Effect.withTracerEnabled(false),
     Effect.retry({
       schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
       while: (error) => error.retryable,
     }),
+    Effect.ensuring(
+      Effect.suspend(() => Effect.annotateCurrentSpan("retry.attempt_count", slotChecks)),
+    ),
   );
 });
 
@@ -221,7 +231,9 @@ const RESET_RECREATE_DATABASES_STATEMENTS = [
  * statements. Roles are not dropped here since they are cluster-level entities — use stop then
  * start instead.
  */
-const resetRecreateDatabases = Effect.fnUntraced(function* (session: DbSession) {
+const resetRecreateDatabases = Effect.fn("DbBootstrap.recreateDatabases")(function* (
+  session: DbSession,
+) {
   yield* resetDisconnectClients(session);
   for (const [index, statement] of RESET_RECREATE_DATABASES_STATEMENTS.entries()) {
     yield* session.exec(statement).pipe(
@@ -361,7 +373,7 @@ const recreateLocalDatabase14 = <E>(
         yield* applyApiPrivileges(session, fs, path, tmpDir, toml.baseline.apiAutoExposeNewTables);
         yield* applyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
       }),
-    );
+    ).pipe(Effect.withSpan("DbBootstrap.initSchema14"));
 
     // "Restarting containers..." first, then an actual restart of the `db` container itself
     // (pg_cron must restart after `pg_terminate_backend`); not tolerant of "not found", unlike
@@ -407,6 +419,11 @@ export const recreateLocalDatabase = <E>(
   | FileSystem.FileSystem
   | Path.Path
 > =>
-  input.setup.majorVersion <= 14
+  (input.setup.majorVersion <= 14
     ? recreateLocalDatabase14(spawner, input)
-    : recreateLocalDatabase15(spawner, input);
+    : recreateLocalDatabase15(spawner, input)
+  ).pipe(
+    Effect.withSpan("DbBootstrap.recreateLocalDatabase", {
+      attributes: { "db.major_version": input.setup.majorVersion },
+    }),
+  );
