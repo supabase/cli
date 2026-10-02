@@ -51,8 +51,12 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
       .filter((line) => line.length > 0)
       .map((line) => {
         const [id, instance, managed] = line.split("\t");
-        return { identity: `${id ?? ""} ${instance ?? ""}`.trim(), managed };
-      });
+        return { identity: `${id ?? ""} ${instance ?? ""}`.trim(), instance, managed };
+      })
+      // The stack label alone also tags best-effort containers that carry neither an instance
+      // nor a `stack-managed` identity, such as the host-gateway probe (see `readProbeHosts` in
+      // `Container.ts`); only the two documented identity labels promise a workload.
+      .filter((record) => (record.instance ?? "") !== "" || record.managed === "true");
     return {
       identities: records
         .filter((record) => record.managed !== "true")

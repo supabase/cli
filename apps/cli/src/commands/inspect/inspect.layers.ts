@@ -2,7 +2,7 @@ import { Layer } from "effect";
 
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { dbConfigLayer } from "../../command-internal/db-config.layer.ts";
-import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../telemetry/telemetry-state.layer.ts";

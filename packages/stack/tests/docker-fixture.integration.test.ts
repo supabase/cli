@@ -54,7 +54,7 @@ const volumeExists = Effect.fn("DockerFixture.volumeExists")((volume: string) =>
 );
 
 describe("Docker database fixture isolation", { timeout: 180_000 }, () => {
-  it.live("isolates equal identities and removes both owned volumes", () =>
+  it.live("isolates equal identities across separate owned volumes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -133,7 +133,7 @@ describe("Docker database fixture isolation", { timeout: 180_000 }, () => {
         ),
       ),
       Effect.tap((results) =>
-        Effect.sync(() => results.forEach(({ exists }) => expect(exists).toBe(false))),
+        Effect.sync(() => results.forEach(({ exists }) => expect(exists).toBe(true))),
       ),
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
     ),

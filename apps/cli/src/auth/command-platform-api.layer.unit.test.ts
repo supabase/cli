@@ -77,9 +77,7 @@ function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? "/tmp/supabase-cli-test-home",
-      tracesDir: path.join(opts.configDir ?? "/tmp/supabase-cli-test-home", "traces"),
       consent: "granted",
-      showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
       identity: makeTelemetryIdentity(opts.distinctId),

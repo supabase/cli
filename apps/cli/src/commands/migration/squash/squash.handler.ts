@@ -84,7 +84,7 @@ type Spawner = ChildProcessSpawnerType["Service"];
  * creation, so a SIGINT during the health-wait lands immediately from a single
  * cancellable scope.
  */
-const squashMigrations = Effect.fnUntraced(function* (
+const squashMigrations = Effect.fn("MigrationSquash.squashMigrations")(function* (
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -319,7 +319,7 @@ interface SquashToVersionResult {
  * the last into the shadow-produced dump, then removes the merged files. A removal
  * failure is non-fatal: only printed to stderr, then continues.
  */
-const squashToVersion = Effect.fnUntraced(function* (
+const squashToVersion = Effect.fn("MigrationSquash.squashToVersion")(function* (
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -331,6 +331,7 @@ const squashToVersion = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const migrations = yield* loadPartialMigrations(fs, path, migrationsDir, version);
+  yield* Effect.annotateCurrentSpan({ "migration.count": migrations.length });
   if (migrations.length === 0) {
     return yield* new MigrationSquashMissingVersionError({ message: "version not found" });
   }
@@ -383,7 +384,7 @@ const squashToVersion = Effect.fnUntraced(function* (
  * the "Baselining…" banner before connecting, then deletes every history row `<=
  * version` and inserts the target migration's row in one transaction.
  */
-const baselineMigrations = Effect.fnUntraced(function* (
+const baselineMigrations = Effect.fn("MigrationSquash.baselineMigrations")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationsDir: string,
@@ -534,6 +535,7 @@ const runSquash = Effect.fnUntraced(function* (
       linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+    yield* Effect.annotateCurrentSpan({ "db.conn_type": connType, "db.is_local": cfg.isLocal });
 
     // Loads after the flag-group check above, so a flag conflict surfaces before any
     // .env read; a SUPABASE_YES set only in supabase/.env still auto-confirms the

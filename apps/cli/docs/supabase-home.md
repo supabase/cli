@@ -52,8 +52,8 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
 ```text
 <SUPABASE_HOME>/
   access-token
+  cli-latest
   telemetry.json
-  traces/
   bin/
   stacks/
     <stack-id>/
@@ -119,6 +119,16 @@ selected by the managed supervisor and are not written to the document.
 Auth, telemetry, traces, and downloaded binaries remain machine-global under `SUPABASE_HOME`.
 Legacy installer artifacts may coexist under that root, but they are not part of managed stack
 coordination.
+
+## Release check cache
+
+After a successful command, the upgrade notice compares the running version with the latest
+GitHub release. The release tag is cached for ten hours in `supabase/.temp/cli-latest` when the
+project directory has a real `supabase/` directory, and in `<SUPABASE_HOME>/cli-latest`
+otherwise. `--version` and `--help` check only the current directory, so from a project
+subdirectory they use `<SUPABASE_HOME>/cli-latest`. A failed fetch writes an empty file, which
+suppresses the notice and further fetches until it expires. The cache is skipped when the file,
+`supabase/.temp`, or `SUPABASE_HOME` is a symlink. `SUPABASE_NO_UPDATE_NOTIFIER=1` disables the check.
 
 ## Related docs
 

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
+import { Effect, Option, Tracer } from "effect";
 
 import {
   type UpgradeNoticeDeps,
@@ -109,6 +109,11 @@ describe("runUpgradeNotice", () => {
         utimesSync(cacheFile, then, then);
       }
     }
+    // A symlinked SUPABASE_HOME disables the user-level cache, so runs outside a
+    // project record no backoff.
+    const supabaseHome = join(workdir, "home");
+    mkdirSync(join(workdir, "home-target"));
+    symlinkSync(join(workdir, "home-target"), supabaseHome);
     let fetchCalls = 0;
     const stderr: Array<string> = [];
     const deps: UpgradeNoticeDeps = {
@@ -116,6 +121,7 @@ describe("runUpgradeNotice", () => {
       args: opts.args ?? ["db", "start"],
       cwd: workdir,
       currentVersion: opts.currentVersion ?? "2.113.0",
+      supabaseHome,
       now: Date.now,
       fetchLatestTag: () => {
         fetchCalls += 1;
@@ -191,10 +197,11 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("--version forces a fetch through a fresh cache", async () => {
+  it("--version reads a fresh cache instead of fetching", async () => {
     const ctx = setup({ args: ["--version"], cacheContent: "v2.115.0", cacheAgeMs: 60_000 });
     await runUpgradeNotice(ctx.deps);
-    expect(ctx.fetchCalls).toBe(1);
+    expect(ctx.fetchCalls).toBe(0);
+    expect(ctx.stderr).toContain("v2.115.0");
     ctx.cleanup();
   });
 
@@ -248,7 +255,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a failed fetch surfaces its error under --debug when there is no project to back off in", async () => {
+  it("a failed fetch surfaces its error under --debug when no cache can record the backoff", async () => {
     const ctx = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug"] });
     await runUpgradeNotice(ctx.deps);
     expect(ctx.stderr).toContain("Failed to fetch latest release");
@@ -339,8 +346,8 @@ describe("runUpgradeNotice", () => {
   });
 
   it("a false root version flag before a leaf runs the normal path, workdir included", async () => {
-    // `--version=false <leaf>` still marks the flag as set, forcing the fetch;
-    // only the built-in classification must not trigger.
+    // `--version=false <leaf>` is not the version built-in, so the cache
+    // resolves under `--workdir`.
     const ctx = setup({ project: false });
     const flagged = join(workdir, "flagged");
     mkdirSync(join(flagged, "supabase"), { recursive: true });
@@ -396,14 +403,6 @@ describe("runUpgradeNotice", () => {
     // The empty-cache backoff write succeeds, so no debug line is emitted.
     expect(ctx.stderr).toBe("");
     expect(readFileSync(ctx.cachePath, "utf8")).toBe("");
-    ctx.cleanup();
-  });
-
-  it("outside a project the notice still prints but nothing is cached", async () => {
-    const ctx = setup({ project: false });
-    await runUpgradeNotice(ctx.deps);
-    expect(ctx.stderr).toContain("v2.114.0");
-    expect(() => readFileSync(ctx.cachePath, "utf8")).toThrow();
     ctx.cleanup();
   });
 
@@ -614,6 +613,16 @@ describe("runUpgradeNotice", () => {
     },
   );
 
+  it.each(["", "/", "/."])(
+    "never writes through a symlinked SUPABASE_HOME spelled with suffix %j",
+    async (suffix) => {
+      const ctx = setup({ project: false });
+      await runUpgradeNotice({ ...ctx.deps, supabaseHome: `${ctx.deps.supabaseHome}${suffix}` });
+      expect(readdirSync(join(workdir, "home-target"))).toEqual([]);
+      ctx.cleanup();
+    },
+  );
+
   it("validates exact cache bytes and rejects embedded escape bytes", async () => {
     for (const cacheContent of ["v2.115.0\n", "v2.115.0\r\n", "v2.115.0\u001b[31mboo"]) {
       const ctx = setup({ cacheContent, cacheAgeMs: 60_000 });
@@ -631,13 +640,21 @@ describe("runUpgradeNotice", () => {
  * to one command would break the moment it's ported.
  */
 describe("upgradeNoticeHook", () => {
-  async function stderrFromHook(delegatedToGo: boolean): Promise<string> {
+  async function runHook(opts: { readonly delegatedToGo?: boolean; readonly cached?: boolean }) {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-hook-"));
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    // Fresh cache: the hook reads it instead of fetching, so this never touches
-    // the network.
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+    if (opts.cached !== false) {
+      writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+    }
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
 
     const written: Array<string> = [];
     const realWrite = process.stderr.write.bind(process.stderr);
@@ -650,12 +667,16 @@ describe("upgradeNoticeHook", () => {
 
     try {
       await Effect.runPromise(
-        upgradeNoticeHook(["db", "branch", "list"], {
-          cleanShowHelp: false,
-          delegatedToGo,
-          workingDirectory: workdir,
-          isValueTakingFlagToken: () => false,
-        }),
+        upgradeNoticeHook(
+          ["db", "branch", "list"],
+          {
+            cleanShowHelp: false,
+            delegatedToGo: opts.delegatedToGo === true,
+            workingDirectory: workdir,
+            isValueTakingFlagToken: () => false,
+          },
+          () => Promise.resolve("v99.99.99"),
+        ).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true)),
       );
     } finally {
       process.stderr.write = realWrite;
@@ -663,16 +684,37 @@ describe("upgradeNoticeHook", () => {
       else process.env["SUPABASE_NO_UPDATE_NOTIFIER"] = realOptOut;
       rmSync(workdir, { recursive: true, force: true });
     }
-    return stripVTControlCharacters(written.join(""));
+    const span = (name: string) => spans.find((candidate) => candidate.name === name);
+    return { stderr: stripVTControlCharacters(written.join("")), span };
   }
 
   it("prints the notice for a natively handled command", async () => {
-    expect(await stderrFromHook(false)).toContain(
+    expect((await runHook({})).stderr).toContain(
       "A new version of Supabase CLI is available: v99.99.99",
     );
   });
 
   it("stays silent when the run delegated to Go, which printed its own notice", async () => {
-    expect(await stderrFromHook(true)).toBe("");
+    expect((await runHook({ delegatedToGo: true })).stderr).toBe("");
+  });
+
+  it("traces a cache hit on the check span without a fetch span", async () => {
+    const { span } = await runHook({});
+    expect(Object.fromEntries(span("UpgradeNotice.check")!.attributes)).toEqual({
+      "cache.location": "project",
+      "cache.hit": true,
+    });
+    expect(span("UpgradeNotice.fetch")).toBeUndefined();
+  });
+
+  it("traces a cache miss with the release fetch as a child of the check span", async () => {
+    const { span } = await runHook({ cached: false });
+    const check = span("UpgradeNotice.check")!;
+    expect(Object.fromEntries(check.attributes)).toEqual({
+      "cache.location": "project",
+      "cache.hit": false,
+    });
+    const parent = span("UpgradeNotice.fetch")!.parent;
+    expect(Option.isSome(parent) ? parent.value.spanId : undefined).toBe(check.spanId);
   });
 });

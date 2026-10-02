@@ -220,11 +220,13 @@ export const createComputeUpload = Effect.fnUntraced(function* (
  * signature in the URL is the authorization. That's also why `httpClientLayer` redacts query
  * strings before logging: under `--debug` this URL is a write-capable credential.
  */
-export const uploadBuildContext = Effect.fnUntraced(function* (
+export const uploadBuildContext = Effect.fn("Compute.uploadContext")(function* (
   slot: ComputeUploadSlot,
   archive: Uint8Array,
 ) {
   const client = yield* HttpClient.HttpClient;
+
+  yield* Effect.annotateCurrentSpan({ "upload.bytes": archive.byteLength });
 
   // The slot names its own method; anything other than `POST` falls back to `PUT`, the only
   // method documented for a presigned object-store destination.
@@ -247,6 +249,7 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
         }),
     ),
   );
+  yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
 
   if (response.status < 200 || response.status >= 300) {
     const body = yield* bodyText(response);
@@ -344,7 +347,7 @@ const isPermanentReadFailure = (error: unknown) =>
   error instanceof ComputeUnavailableError ||
   error instanceof ComputeProjectNotFoundError;
 
-export const awaitComputeBuild = Effect.fnUntraced(function* (
+export const awaitComputeBuild = Effect.fn("Compute.awaitBuild")(function* (
   api: ApiClient,
   projectRef: string,
   name: string,
@@ -361,7 +364,10 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
     readonly refSuffix?: string;
   } = {},
 ) {
+  let attempts = 0;
+  // Polls emit no request spans; this span's attempt count stands in for them.
   const poll = Effect.gen(function* () {
+    attempts += 1;
     // A build runs for minutes; one blip on one read must not abandon a deploy that is fine.
     const compute = yield* getCompute(api, projectRef, name).pipe(
       Effect.retry({
@@ -377,7 +383,7 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
       yield* options.onPoll(compute.value);
     }
     return compute.value.buildState === "building" ? undefined : compute.value;
-  });
+  }).pipe(Effect.withTracerEnabled(false));
 
   const settled = yield* poll.pipe(
     Effect.repeat({
@@ -385,6 +391,7 @@ export const awaitComputeBuild = Effect.fnUntraced(function* (
       until: (result) => result !== undefined,
     }),
   );
+  yield* Effect.annotateCurrentSpan({ "poll.attempt_count": attempts });
 
   if (settled === undefined) {
     return yield* new ComputeBuildTimeoutError({

@@ -54,6 +54,7 @@ import {
   strToArr,
 } from "./local-config-values.ts";
 import { generateAsymmetricGoJwt } from "./go-jwt.ts";
+import { recordOrioleDbTelemetry } from "./db-image.ts";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
@@ -988,6 +989,10 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
           });
         }),
       );
+      yield* recordOrioleDbTelemetry(
+        validatedConfig.db.orioledb_version,
+        validatedConfig.db.major_version,
+      );
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
@@ -1087,6 +1092,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               yield* resolveRemoteJwks(issuer).pipe(
                 Effect.provide(FetchHttpClient.layer),
                 Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+                Effect.withSpan("StackConfig.fetchRemoteJwks"),
               ),
             );
       });

@@ -10,7 +10,7 @@ import {
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CommandPlatformApiFactory } from "../../../../auth/command-platform-api-factory.service.ts";
-import { dbConnectionLayer } from "../../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../../command-internal/db-connection.sql-pg.layer.ts";
 import { DbConnection } from "../../../../command-internal/db-connection.service.ts";
 import { parseConnectionString } from "../../../../command-internal/db-config.parse.ts";
 import { stackCatalogSetupLayer } from "../../../../command-internal/stack-catalog-setup.ts";

@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Ref, Stdio } from "effect";
 import { Param } from "effect/unstable/cli";
 import {
   CommandRuntime,
@@ -10,6 +10,7 @@ import { GLOBAL_FLAGS, OutputFlag, globalFlagValues } from "../command-internal/
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
   type CliErrorActionability,
   classifyCliErrorActionability,
@@ -22,6 +23,7 @@ import {
   PropDurationMs,
   PropExitCode,
   PropOutputFormat,
+  PropStackBackend,
 } from "../shared/telemetry/event-catalog.ts";
 import {
   failureTelemetryPropertiesForCause,
@@ -39,6 +41,11 @@ import {
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../command-internal/db-target-flags.ts";
 import { unwrapToSingleParam } from "../command-internal/param-introspection.ts";
+import { StackBackendContext } from "../command-internal/stack-backend.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "./command-telemetry-attributes.ts";
 
 /**
  * Classifies a command that succeeded its Effect but recorded a nonzero exit code through
@@ -314,19 +321,31 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   return result;
 }
 
+const annotateCommandSpan = Effect.fnUntraced(function* (commandRunId: string, command: string) {
+  const telemetryRuntime = yield* Effect.serviceOption(TelemetryRuntime);
+  // Trace export needs no consent, so persistent identifiers are recorded only when it is granted.
+  yield* Effect.annotateCurrentSpan({
+    command_run_id: commandRunId,
+    command,
+    ...(Option.isSome(telemetryRuntime) &&
+      telemetryRuntime.value.consent === "granted" && {
+        device_id: telemetryRuntime.value.deviceId,
+        session_id: telemetryRuntime.value.sessionId,
+        is_first_run: telemetryRuntime.value.isFirstRun,
+      }),
+  });
+});
+
 function withCommandTracingImplementation() {
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const commandRuntime = yield* CommandRuntime;
       const command = getCommandRuntimeCommand(commandRuntime);
 
-      return yield* Effect.gen(function* () {
-        yield* Effect.annotateCurrentSpan({
-          command_run_id: commandRuntime.commandRunId,
-          command,
-        });
-        return yield* self;
-      }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
+      return yield* annotateCommandSpan(commandRuntime.commandRunId, command).pipe(
+        Effect.andThen(self),
+        Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)),
+      );
     });
 }
 
@@ -341,10 +360,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
       const command = getCommandRuntimeCommand(commandRuntime);
 
       return yield* Effect.gen(function* () {
-        yield* Effect.annotateCurrentSpan({
-          command_run_id: commandRuntime.commandRunId,
-          command,
-        });
+        yield* annotateCommandSpan(commandRuntime.commandRunId, command);
 
         const analytics = yield* Analytics;
         const output = yield* Output;
@@ -370,8 +386,18 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           flags,
         } as const;
 
-        const exit = yield* self.pipe(withAnalyticsContext(analyticsContext), Effect.exit);
+        const stackBackend = yield* Effect.serviceOption(StackBackendContext);
+        const attributes = yield* Ref.make<CommandTelemetryAttributeValues>({});
+
+        const exit = yield* self.pipe(
+          Effect.provideService(CommandTelemetryAttributes, {
+            record: (values) => Ref.update(attributes, (current) => ({ ...current, ...values })),
+          }),
+          withAnalyticsContext(analyticsContext),
+          Effect.exit,
+        );
         const finishedAt = yield* Clock.currentTimeMillis;
+        const recordedAttributes = yield* Ref.get(attributes);
 
         // A command that resolves its own `--output` (e.g. `db query`, defaulting `table`/`json`
         // by agent mode) records it here; read optionally so commands that don't provide the
@@ -424,6 +450,8 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
               ? resolvedOutputFormat.value
               : resolveOutputFormatForTelemetry(args, output.format),
+            ...(Option.isSome(stackBackend) ? { [PropStackBackend]: stackBackend.value.kind } : {}),
+            ...recordedAttributes,
             ...failureMetadata,
           })
           .pipe(

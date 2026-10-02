@@ -1,4 +1,6 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, Predicate, type FileSystem, type Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import { randomUUID } from "node:crypto";
 
 /** The container mount target for an instance-scoped directory owned on the host. */
 export const containerInstancePath = "/instance";
@@ -7,6 +9,23 @@ const safeInstanceIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u;
 
 /** True when `instanceId` is safe to join to a root as one path segment, without traversal. */
 const isSafeInstanceId = (instanceId: string): boolean => safeInstanceIdPattern.test(instanceId);
+
+/** Name a staging file for `ownerFileName`, recognizable so directory scans can ignore it. */
+const stagingFileName = (ownerFileName: string) => `.${ownerFileName}.${randomUUID()}.tmp`;
+
+/** True when `entry` looks like one of our own staging files for `ownerFileName`. */
+const isStagingEntry = (ownerFileName: string, entry: string): boolean =>
+  entry.startsWith(`.${ownerFileName}.`) && entry.endsWith(".tmp");
+
+/** True when `error` signals the filesystem does not support hard links. */
+const isUnsupportedLink = (error: unknown): boolean => {
+  if (!Predicate.hasProperty(error, "cause")) return false;
+  const code =
+    Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
+      ? error.cause.code
+      : undefined;
+  return code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP";
+};
 
 export interface OwnedInstanceRootParams {
   readonly fs: FileSystem.FileSystem;
@@ -36,6 +55,34 @@ export const ensureOwnedInstanceRoot = Effect.fn("InstanceRoot.ensureOwnedInstan
     if (existing !== marker)
       return yield* Effect.fail(onError("data", `${label} belongs to another instance`));
   });
+  const claimIfAlreadyExists = (effect: Effect.Effect<void, PlatformError>) =>
+    effect.pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "AlreadyExists",
+        () => Effect.void,
+      ),
+    );
+  // Staging the full marker next to `ownerFile` and hard-linking it into place keeps `wx`'s
+  // exclusivity without ever exposing the partial content a direct write there could risk.
+  const writeMarkerAtomically = Effect.suspend(() => {
+    const tempFile = path.join(root, stagingFileName(ownerFileName));
+    return fs.writeFileString(tempFile, marker, { mode: 0o600, flag: "wx" }).pipe(
+      Effect.andThen(() =>
+        fs.link(tempFile, ownerFile).pipe(
+          claimIfAlreadyExists,
+          // Filesystems without hard links (e.g. exFAT, some network shares) fall back to the
+          // direct exclusive create this replaced; it stays correct, just racy on those alone.
+          Effect.catchIf(isUnsupportedLink, () =>
+            fs
+              .writeFileString(ownerFile, marker, { mode: 0o600, flag: "wx" })
+              .pipe(claimIfAlreadyExists),
+          ),
+        ),
+      ),
+      Effect.ensuring(fs.remove(tempFile, { force: true }).pipe(Effect.ignore)),
+      Effect.mapError((cause) => onError("data", cause)),
+    );
+  });
   return Effect.gen(function* () {
     if (!isSafeInstanceId(instanceId))
       return yield* Effect.fail(onError("data", `${label} instance id is not a safe path segment`));
@@ -46,24 +93,18 @@ export const ensureOwnedInstanceRoot = Effect.fn("InstanceRoot.ensureOwnedInstan
       .exists(ownerFile)
       .pipe(Effect.mapError((cause) => onError("data", cause)));
     if (present) return yield* claimExistingMarker;
-    const entries = yield* fs
-      .readDirectory(root)
-      .pipe(Effect.mapError((cause) => onError("data", cause)));
+    const entries = yield* fs.readDirectory(root).pipe(
+      Effect.map((entries) => entries.filter((entry) => !isStagingEntry(ownerFileName, entry))),
+      Effect.mapError((cause) => onError("data", cause)),
+    );
     if (entries.length > 0) {
       // A concurrent first claim may have written the marker between the `exists` and
       // `readDirectory` calls above; an otherwise-empty root is still safe to compare.
       if (entries.length === 1 && entries[0] === ownerFileName) return yield* claimExistingMarker;
       return yield* Effect.fail(onError("data", `${label} is non-empty and unmarked`));
     }
-    yield* fs.writeFileString(ownerFile, marker, { mode: 0o600, flag: "wx" }).pipe(
-      // A concurrent first claim may win the exclusive create; the loser re-reads the marker
-      // instead of failing, since both wrote the same stack+instance marker.
-      Effect.catchIf(
-        (error) => error.reason._tag === "AlreadyExists",
-        () => claimExistingMarker,
-      ),
-      Effect.catchTag("PlatformError", (cause) => Effect.fail(onError("data", cause))),
-    );
+    yield* writeMarkerAtomically;
+    return yield* claimExistingMarker;
   });
 });
 

@@ -340,6 +340,10 @@ export function isLocalDbRunning(
       // Engine probe first; `Option.none()` falls through to the CLI spawn below.
       const engine = yield* LocalDockerEngine;
       const engineAnswer = yield* engine.containerExists(containerId);
+      yield* Effect.annotateCurrentSpan(
+        "probe.method",
+        Option.isSome(engineAnswer) ? "engine" : "cli",
+      );
       if (Option.isSome(engineAnswer)) return engineAnswer.value;
       // Discard stdout (the inspect JSON) so the unconsumed pipe can never
       // deadlock; only the exit code + stderr matter.
@@ -388,5 +392,5 @@ export function isLocalDbRunning(
       }
       return false;
     }),
-  );
+  ).pipe(Effect.withSpan("LocalDb.isRunning"));
 }

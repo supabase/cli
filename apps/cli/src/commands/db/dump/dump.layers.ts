@@ -6,7 +6,7 @@ import { commandPlatformApiFactoryLayer } from "../../../auth/command-platform-a
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { projectRefLayer } from "../../../config/project-ref.layer.ts";
 import { dbConfigLayer } from "../../../command-internal/db-config.layer.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { dockerRunLayer } from "../../../command-internal/docker-run.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../../command-internal/identity-stitch.ts";

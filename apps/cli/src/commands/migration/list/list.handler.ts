@@ -86,6 +86,10 @@ const runList = Effect.fnUntraced(function* (
     );
 
     const rows = makeMigrationListRows(remote, local);
+    yield* Effect.annotateCurrentSpan({
+      "db.is_local": cfg.isLocal,
+      "migration.count": rows.length,
+    });
     if (output.format === "text") {
       yield* output.raw(renderGlamourTable([...LIST_HEADERS], migrationListTableCells(rows)));
     } else {

@@ -29,7 +29,7 @@ function parseManifestJson(raw: string): unknown {
 }
 
 /** Reads a next-engine export manifest from an explicit declarative directory. */
-export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
+export const ReadPgDeltaExportManifest = Effect.fn("PgDeltaFiles.readExportManifest")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   directory: string,
@@ -90,7 +90,7 @@ export const ReadPgDeltaExportManifest = Effect.fnUntraced(function* (
 });
 
 /** Recursively loads path-safe `.sql` files in stable POSIX-relative order. */
-export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
+export const LoadPgDeltaSqlFiles = Effect.fn("PgDeltaFiles.loadSqlFiles")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   directory: string,
@@ -120,5 +120,6 @@ export const LoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
       );
     files.push({ name, sql });
   }
+  yield* Effect.annotateCurrentSpan({ "file.count": files.length });
   return files;
 });

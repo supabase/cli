@@ -2,7 +2,7 @@ import { Layer } from "effect";
 
 import { commandSettingsLayer } from "../config/command-settings.layer.ts";
 import { dbConfigLayer } from "./db-config.layer.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { dockerRunLayer } from "./docker-run.layer.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";

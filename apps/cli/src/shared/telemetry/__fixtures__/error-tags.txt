@@ -1,5 +1,4 @@
 AccessTokenRequiredError
-ApiError
 BackupListNetworkError
 BackupListUnexpectedStatusError
 BackupRestoreNetworkError
@@ -315,14 +314,12 @@ InvalidFunctionDeploySlugError
 InvalidFunctionDownloadResponseError
 InvalidFunctionSlugError
 InvalidGenTypesDurationError
-InvalidLocalServiceVersionsStateError
 InvalidOutputFormatError
 InvalidProjectLinkStateError
 InvalidProjectRefError
 InvalidRemoteProjectIdError
 InvalidSecretPairError
 InvalidServiceVersionTagError
-InvalidTokenError
 KongReloadError
 LinkApiKeysNetworkError
 LinkAuthTokenError
@@ -406,7 +403,6 @@ PgDeltaFilesError
 PgDeltaMigrationWriteError
 PgDeltaNextError
 PgDeltaSslProbeError
-PlatformAuthRequiredError
 PostgresConfigDeleteNetworkError
 PostgresConfigDeleteSerializeError
 PostgresConfigDeleteUnexpectedStatusError

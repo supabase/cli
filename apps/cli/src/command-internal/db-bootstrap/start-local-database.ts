@@ -93,7 +93,9 @@ interface StartLocalDatabaseResult {
  * before being passed in; the declarative seam's `ensureLocalDatabaseStarted` always calls with
  * no argument.
  */
-export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: string) {
+export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(function* (
+  fromBackupFlag?: string,
+) {
   const output = yield* Output;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
@@ -581,6 +583,7 @@ export const startLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: 
     cliSettings.workdir,
     Option.getOrUndefined(cliSettings.projectId),
   );
+  yield* Effect.annotateCurrentSpan("db.already_running", running);
   if (running) {
     return { status: "already-running" } satisfies StartLocalDatabaseResult;
   }

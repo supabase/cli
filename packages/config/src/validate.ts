@@ -13,7 +13,7 @@ const decodeRemotesWithoutChecks = Schema.decodeUnknownEffect(RemotesSchema, {
  * structurally with business-rule checks disabled until that remote is
  * selected and merged into the effective config.
  */
-export const validateCliConfig = Effect.fnUntraced(function* (value: unknown) {
+export const validateCliConfig = Effect.fn("CliConfig.validate")(function* (value: unknown) {
   const document = isObject(value) ? { ...value, remotes: {} } : value;
   const config = yield* decodeCliConfig(document);
   const remotes = isObject(value) ? value.remotes : undefined;
