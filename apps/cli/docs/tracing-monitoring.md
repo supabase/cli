@@ -70,9 +70,11 @@ flag for more than one command, and use `--cwd-setup init` when a command, such 
 run inside an initialized project. Pass `--json` for a machine-readable report, `--out <file>` to
 also write the raw per-run samples, and `--cpu-prof` to capture a Bun CPU profile of one untimed
 branch launch (`BUN_OPTIONS=--cpu-prof`), printing its `.cpuprofile` path. Launches set
-`SUPABASE_NO_UPDATE_NOTIFIER=1`, because the release check calls GitHub on every run outside a
-project; pass `--update-check` to include it. The extra traced launches add machine load, so take
-wall-time conclusions from a run without `--trace`.
+`SUPABASE_NO_UPDATE_NOTIFIER=1`; pass `--update-check` to include the release check. Each launch's
+fresh `SUPABASE_HOME` has no cached release tag, so the check calls GitHub on every launch, except
+with `--cwd-setup init`, where the setup `init` caches the tag in the project before the measured
+command runs. The extra traced launches add machine load, so take wall-time conclusions from a run
+without `--trace`.
 
 To build a base binary from another commit without disturbing this worktree:
 
@@ -112,6 +114,9 @@ Any collector that accepts OTLP/HTTP JSON works; pass credentials with `SUPABASE
 - Command span (`command.<path>`): `command` and `command_run_id`. When telemetry consent is
   granted, also `device_id`, `session_id`, and `is_first_run`.
 - Layer spans such as `CliSettings.load`, `CliProjectContext.load`, and `ProjectLinkState.load`.
+- `UpgradeNotice.check`, the post-command release check: `cache.location` (`project`, `user`, or
+  `disabled` when a symlink blocks the cache) and `cache.hit`. A cache miss adds an
+  `UpgradeNotice.fetch` child for the GitHub request.
 - HTTP client spans with method, host, path, status, and allowlisted headers.
 - Process spans with the executable basename, argument count, exit code, and for docker or
   podman the verb (such as `container inspect`). Children receive a

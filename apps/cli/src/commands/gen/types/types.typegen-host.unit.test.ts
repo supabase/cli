@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { SpawnRequest, SpawnResult } from "@supabase/typegen";
-import { Data, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
+import { Data, Deferred, Effect, FileSystem, Path, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { makeTypegenHost } from "./types.typegen-host.ts";
 
@@ -15,13 +15,15 @@ interface SpawnCall {
   stdin: string;
 }
 
-/** Records what `spawnForTypegen` asks for and answers like a finished process. */
+/** Records what `spawnForTypegen` asks for and exits like a tool once it has read its stdin. */
 function fakeSpawner(
   opts: {
     readonly exitCode?: number;
     readonly stdout?: string;
     readonly stderr?: string;
     readonly notFound?: boolean;
+    /** The tool exits without ever reading its stdin, which stays blocked. */
+    readonly stdinBlocked?: boolean;
   } = {},
 ) {
   const calls: Array<SpawnCall> = [];
@@ -50,18 +52,28 @@ function fakeSpawner(
           description: `${command.command} not found`,
         });
       }
+      const stdinRead = yield* Deferred.make<void>();
+      const exitCode = ChildProcessSpawner.ExitCode(opts.exitCode ?? 0);
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(4242),
         stdout: Stream.make(encoder.encode(opts.stdout ?? "")),
         stderr: Stream.make(encoder.encode(opts.stderr ?? "")),
         all: Stream.empty,
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(opts.exitCode ?? 0)),
+        exitCode:
+          opts.stdinBlocked === true
+            ? Effect.succeed(exitCode)
+            : Deferred.await(stdinRead).pipe(Effect.as(exitCode)),
         isRunning: Effect.succeed(false),
-        stdin: Sink.forEach((chunk: Uint8Array) =>
-          Effect.sync(() => {
-            call.stdin += decoder.decode(chunk, { stream: true });
-          }),
-        ),
+        stdin:
+          opts.stdinBlocked === true
+            ? Sink.fromEffect(Effect.never)
+            : Sink.forEach((chunk: Uint8Array) =>
+                Effect.sync(() => {
+                  call.stdin += decoder.decode(chunk, { stream: true });
+                }),
+              ).pipe(
+                Sink.mapEffect(() => Deferred.succeed(stdinRead, undefined).pipe(Effect.asVoid)),
+              ),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         getInputFd: () => Sink.drain,
@@ -132,6 +144,15 @@ describe("makeTypegenHost", () => {
 
       expect(result).toEqual({ exitCode: 0, stdout: "class Tickets {}\n", stderr: "summary\n" });
       expect(calls[0]?.stdin).toBe('{"version":1}');
+    }),
+  );
+
+  it.effect("returns once a tool exits without reading its stdin", () =>
+    Effect.gen(function* () {
+      const { spawner } = fakeSpawner({ stdinBlocked: true, exitCode: 3, stderr: "usage\n" });
+      const result: SpawnResult = yield* spawnOf(spawner)(request());
+
+      expect(result).toEqual({ exitCode: 3, stdout: "", stderr: "usage\n" });
     }),
   );
 
