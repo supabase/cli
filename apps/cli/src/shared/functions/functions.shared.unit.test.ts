@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect } from "effect";
+import { vi } from "vitest";
 
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
 import {
@@ -38,10 +40,14 @@ describe("edgeRuntimeImage", () => {
 });
 
 describe("resolveEdgeRuntimeVersionPin", () => {
-  it("falls back to the Dockerfile tag, not the ghcr host, when slim is on and no pin file exists", async () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
-    const tag = await Effect.runPromise(resolveEdgeRuntimeVersionPin("/no-such-supabase-dir"));
-    expect(tag).toBe(currentEdgeRuntimeTag);
-    expect(tag.includes("/")).toBe(false);
-  });
+  it.effect(
+    "falls back to the Dockerfile tag, not the ghcr host, when slim is on and no pin file exists",
+    () =>
+      Effect.gen(function* () {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+        const tag = yield* resolveEdgeRuntimeVersionPin("/no-such-supabase-dir");
+        expect(tag).toBe(currentEdgeRuntimeTag);
+        expect(tag.includes("/")).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

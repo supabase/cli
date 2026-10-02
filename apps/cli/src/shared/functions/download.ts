@@ -1,9 +1,8 @@
+import { BunPath } from "@effect/platform-bun";
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Path, type PlatformError, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -23,6 +22,7 @@ import {
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
+  nativePlatformFailure,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -39,6 +39,7 @@ import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
+  FunctionEszipDownloadError,
   InvalidFunctionDownloadResponseError,
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
@@ -170,15 +171,20 @@ function getObjectProperty(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 }
 
-function isContainedPath(root: string, candidate: string): boolean {
-  const relativeCandidate = relative(root, candidate);
+function isContainedPath(path: Path.Path, root: string, candidate: string): boolean {
+  const relativeCandidate = path.relative(root, candidate);
   return (
     relativeCandidate === "" ||
-    (!isAbsolute(relativeCandidate) &&
+    (!path.isAbsolute(relativeCandidate) &&
       relativeCandidate !== ".." &&
-      !relativeCandidate.startsWith(`..${sep}`))
+      !relativeCandidate.startsWith(`..${path.sep}`))
   );
 }
+
+const hostErrorMessage = (error: PlatformError.PlatformError, pathname: string) =>
+  nativePlatformFailure(error, pathname).cause.message;
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugError> {
   if (validateFunctionSlugMessage(slug) === undefined) {
@@ -439,7 +445,7 @@ function readContentDispositionParam(
     new RegExp(`(?:^|;)\\s*${paramPattern}=([^;]*)`, "i"),
   );
   if (assignmentMatch === null) {
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   }
   const token = assignmentMatch[1]?.trim() ?? "";
   if (token.length > 0 && !token.startsWith('"') && !/\s/.test(token)) {
@@ -489,7 +495,7 @@ function readFormFieldName(
 ): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
   const contentDisposition = headers["content-disposition"];
   if (contentDisposition === undefined) {
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   }
   return readContentDispositionParam(contentDisposition, "name");
 }
@@ -592,6 +598,7 @@ function resolveEntrypointPath(
 }
 
 function resolveDownloadDestination(
+  { path, posixPath }: { readonly path: Path.Path; readonly posixPath: Path.Path },
   functionsRoot: string,
   functionDir: string,
   entrypointPath: string,
@@ -600,15 +607,15 @@ function resolveDownloadDestination(
   const normalizedEntrypoint = entrypointPath.replaceAll("\\", "/");
   const normalizedPartPath = partPath.replaceAll("\\", "/");
   const relativePath =
-    posix.isAbsolute(normalizedEntrypoint) === posix.isAbsolute(normalizedPartPath)
-      ? posix.relative(normalizedEntrypoint, normalizedPartPath)
-      : posix.join("..", normalizedPartPath);
-  const entrypointName = posix.basename(normalizedEntrypoint);
+    posixPath.isAbsolute(normalizedEntrypoint) === posixPath.isAbsolute(normalizedPartPath)
+      ? posixPath.relative(normalizedEntrypoint, normalizedPartPath)
+      : posixPath.join("..", normalizedPartPath);
+  const entrypointName = posixPath.basename(normalizedEntrypoint);
   const destination =
     relativePath.length === 0
-      ? resolve(functionDir, entrypointName)
-      : resolve(functionDir, entrypointName, ...relativePath.split("/"));
-  if (isContainedPath(resolve(functionsRoot), destination)) {
+      ? path.resolve(functionDir, entrypointName)
+      : path.resolve(functionDir, entrypointName, ...relativePath.split("/"));
+  if (isContainedPath(path, path.resolve(functionsRoot), destination)) {
     return Effect.succeed(destination);
   }
 
@@ -620,8 +627,8 @@ function resolveDownloadDestination(
   );
 }
 
-function ensureContainedPath(root: string, candidate: string, sourcePath: string) {
-  if (isContainedPath(root, candidate)) {
+function ensureContainedPath(path: Path.Path, root: string, candidate: string, sourcePath: string) {
+  if (isContainedPath(path, root, candidate)) {
     return Effect.void;
   }
 
@@ -639,34 +646,47 @@ function writeFileWithoutFollowingSymlinks(
   sourcePath: string,
 ) {
   return Effect.gen(function* () {
-    const tempDestination = join(dirname(destination), `.supabase-download-${randomUUID()}.tmp`);
-    const file = yield* Effect.tryPromise({
-      try: () => open(tempDestination, "wx"),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to create temporary Function file while extracting ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDestination = path.join(
+      path.dirname(destination),
+      `.supabase-download-${randomUUID()}.tmp`,
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(tempDestination, { flag: "wx" }).pipe(
+          Effect.mapError(
+            (error) =>
+              new UnsafeFunctionDownloadPathError({
+                message: `failed to create temporary Function file while extracting ${sourcePath}: ${hostErrorMessage(error, tempDestination)}`,
+              }),
+          ),
+        );
 
-    yield* Effect.tryPromise({
-      try: () => file.writeFile(body),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to write Function file: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(Effect.ensuring(Effect.promise(() => file.close()).pipe(Effect.ignore)));
+        if (body.byteLength > 0) {
+          yield* file.writeAll(body).pipe(
+            Effect.mapError(
+              (error) =>
+                new UnsafeFunctionDownloadPathError({
+                  message: `failed to write Function file: ${sourcePath}: ${hostErrorMessage(error, tempDestination)}`,
+                }),
+            ),
+          );
+        }
+      }),
+    );
 
-    yield* Effect.tryPromise({
-      try: () => rename(tempDestination, destination),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to move Function file into place: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.promise(() => rm(tempDestination, { force: true })).pipe(
-          Effect.ignore,
-          Effect.andThen(() => Effect.fail(error)),
+    yield* fs.rename(tempDestination, destination).pipe(
+      Effect.mapError(
+        (error) =>
+          new UnsafeFunctionDownloadPathError({
+            message: `failed to move Function file into place: ${sourcePath}: ${hostErrorMessage(error, destination)}`,
+          }),
+      ),
+      Effect.tapError(() =>
+        fs.remove(tempDestination, { force: true }).pipe(
+          Effect.mapError((error) => nativePlatformFailure(error, tempDestination).cause),
+          Effect.orDie,
         ),
       ),
     );
@@ -682,43 +702,46 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
-    return yield* Effect.fail(
-      new FunctionsApiStatusError({
-        status: response.status,
-        message: `unexpected list functions status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected list functions status ${response.status}: ${body}`,
+    });
   }
 
-  return yield* Effect.try({
-    try: () => {
-      const parsed = JSON.parse(body);
-      if (!Array.isArray(parsed)) {
-        throw new Error("expected functions list response to be an array");
-      }
-      // A missing/null "slug" coerces to "" here (rather than being filtered
-      // out) so it fails loudly downstream via `validateRemoteSlug`, instead
-      // of silently vanishing from the list.
-      //
-      // A "slug" typed as something other than string/null throws here,
-      // failing the whole list call before any function is downloaded —
-      // never after some entries have already been fetched.
-      return parsed.map((value) => {
-        const slug = getObjectProperty(value, "slug");
-        if (slug === null || slug === undefined) {
-          return "";
-        }
-        if (typeof slug !== "string") {
-          throw new Error(`expected function slug to be a string, got ${typeof slug}`);
-        }
-        return slug;
+  const parsed = yield* decodeJson(body).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidFunctionDownloadResponseError({
+          message: `failed to read functions list: ${error.message}`,
+        }),
+    ),
+  );
+  if (!Array.isArray(parsed)) {
+    return yield* new InvalidFunctionDownloadResponseError({
+      message: "failed to read functions list: expected functions list response to be an array",
+    });
+  }
+  // A missing/null "slug" coerces to "" here (rather than being filtered
+  // out) so it fails loudly downstream via `validateRemoteSlug`, instead
+  // of silently vanishing from the list.
+  //
+  // A "slug" typed as something other than string/null fails here,
+  // failing the whole list call before any function is downloaded —
+  // never after some entries have already been fetched.
+  const slugs: Array<string> = [];
+  for (const value of parsed) {
+    const slug = getObjectProperty(value, "slug");
+    if (slug === null || slug === undefined) {
+      slugs.push("");
+    } else if (typeof slug === "string") {
+      slugs.push(slug);
+    } else {
+      return yield* new InvalidFunctionDownloadResponseError({
+        message: `failed to read functions list: expected function slug to be a string, got ${typeof slug}`,
       });
-    },
-    catch: (cause) =>
-      new InvalidFunctionDownloadResponseError({
-        message: `failed to read functions list: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+    }
+  }
+  return slugs;
 });
 
 const getRemoteFunction = Effect.fnUntraced(function* (
@@ -738,33 +761,28 @@ const getRemoteFunction = Effect.fnUntraced(function* (
     case 200:
       break;
     case 404:
-      return yield* Effect.fail(
-        new FunctionDownloadNotFoundError({
-          message: `Function ${slug} does not exist on the Supabase project.`,
-        }),
-      );
+      return yield* new FunctionDownloadNotFoundError({
+        message: `Function ${slug} does not exist on the Supabase project.`,
+      });
     default:
-      return yield* Effect.fail(
-        new FunctionsApiStatusError({
-          status: response.status,
-          message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
-        }),
-      );
+      return yield* new FunctionsApiStatusError({
+        status: response.status,
+        message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
+      });
   }
 
-  return yield* Effect.try({
-    try: () => {
-      const parsed = JSON.parse(body);
-      const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
-      return typeof entrypointPath === "string" && entrypointPath.length > 0
-        ? { entrypoint_path: entrypointPath }
-        : { entrypoint_path: legacyEntrypointPath };
-    },
-    catch: (cause) =>
-      new InvalidFunctionDownloadResponseError({
-        message: `failed to get function metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+  const parsed = yield* decodeJson(body).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidFunctionDownloadResponseError({
+          message: `failed to get function metadata: ${error.message}`,
+        }),
+    ),
+  );
+  const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
+  return typeof entrypointPath === "string" && entrypointPath.length > 0
+    ? { entrypoint_path: entrypointPath }
+    : { entrypoint_path: legacyEntrypointPath };
 });
 
 const downloadBody = Effect.fnUntraced(function* (
@@ -788,13 +806,11 @@ const downloadBody = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* Effect.fail(
-    new FunctionsApiStatusError({
-      status: response.status,
-      message: `Error status ${response.status}: ${body}`,
-      notFoundIsInvalidInput: true,
-    }),
-  );
+  return yield* new FunctionsApiStatusError({
+    status: response.status,
+    message: `Error status ${response.status}: ${body}`,
+    notFoundIsInvalidInput: true,
+  });
 });
 
 // Overrides `Accept: */*` so `executeRaw` doesn't default to
@@ -820,16 +836,18 @@ const downloadEszipBody = Effect.fnUntraced(function* (
 
   if (response.status !== 200) {
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(new Error(`Error status ${response.status}: ${body}`));
+    return yield* new FunctionEszipDownloadError({
+      message: `Error status ${response.status}: ${body}`,
+    });
   }
 
   return new Uint8Array(
     yield* response.arrayBuffer.pipe(
       Effect.mapError(
         (cause) =>
-          new Error(
-            `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-          ),
+          new FunctionEszipDownloadError({
+            message: `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
       ),
     ),
   );
@@ -943,21 +961,28 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
 
   const eszip = yield* downloadEszipBody(dependencies.api, projectRef, slug);
 
-  const tempDir = join(dependencies.projectRoot, "supabase", ".temp");
-  yield* Effect.tryPromise({
-    try: () => mkdir(tempDir, { recursive: true }),
-    catch: (cause) =>
-      new Error(`failed to mkdir: ${cause instanceof Error ? cause.message : String(cause)}`),
-  });
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
+  const tempDir = path.join(dependencies.projectRoot, "supabase", ".temp");
+  yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionEszipDownloadError({
+          message: `failed to mkdir: ${hostErrorMessage(error, tempDir)}`,
+        }),
+    ),
+  );
   const eszipFileName = `output_${slug}.eszip`;
-  const eszipPath = join(tempDir, eszipFileName);
-  yield* Effect.tryPromise({
-    try: () => writeFile(eszipPath, eszip),
-    catch: (cause) =>
-      new Error(
-        `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  });
+  const eszipPath = path.join(tempDir, eszipFileName);
+  yield* fs.writeFile(eszipPath, eszip).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionEszipDownloadError({
+          message: `failed to download file: ${hostErrorMessage(error, eszipPath)}`,
+        }),
+    ),
+  );
 
   // `Effect.ensuring` below wraps every step from here on so a failure
   // resolving the network/volume, spawning Docker, or a non-zero container
@@ -969,17 +994,18 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
     ? Effect.void
-    : Effect.tryPromise({
-        try: () => rm(eszipPath, { force: true }),
-        catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-      }).pipe(Effect.catch((message) => output.raw(`${message}\n`, "stderr")));
+    : fs
+        .remove(eszipPath, { force: true })
+        .pipe(
+          Effect.catch((error) => output.raw(`${hostErrorMessage(error, eszipPath)}\n`, "stderr")),
+        );
 
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
-  const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
-  const hostEszipPath = resolve(eszipPath);
+  const functionsDir = path.resolve(dependencies.projectRoot, "supabase", "functions");
+  const hostEszipPath = path.resolve(eszipPath);
   const cacheVolume = edgeRuntimeCacheVolume(projectId);
-  const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
-  const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
+  const dockerEszipPath = posixPath.join(DOCKER_ESZIP_DIR, eszipFileName);
+  const dockerOutputPath = posixPath.join(DOCKER_DENO_DIR, slug);
   const hasBitbucketCloneDir = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
 
   // `--network-id` is a persistent root flag, not registered on `functions
@@ -1070,6 +1096,8 @@ const downloadSingle = Effect.fn("functions.download.single")(function* (
   slug: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const posixPath = yield* Effect.provide(Path.Path, BunPath.layerPosix);
   const output = yield* Output;
 
   if (output.format === "text") {
@@ -1083,8 +1111,8 @@ const downloadSingle = Effect.fn("functions.download.single")(function* (
     : yield* getRemoteFunction(dependencies.api, projectRef, slug);
   const entrypointPath = resolveEntrypointPath(metadata, remoteFunction);
   const projectRoot = dependencies.projectRoot;
-  const functionsRoot = join(projectRoot, "supabase", "functions");
-  const functionDir = join(functionsRoot, slug);
+  const functionsRoot = path.join(projectRoot, "supabase", "functions");
+  const functionDir = path.join(functionsRoot, slug);
   const realProjectRoot = yield* fs.realPath(projectRoot);
   const makeContainedDirectory = Effect.fnUntraced(function* (
     root: string,
@@ -1093,13 +1121,13 @@ const downloadSingle = Effect.fn("functions.download.single")(function* (
   ) {
     let existingParent = directory;
     while (!(yield* fs.exists(existingParent))) {
-      existingParent = dirname(existingParent);
+      existingParent = path.dirname(existingParent);
     }
     const realExistingParent = yield* fs.realPath(existingParent);
-    yield* ensureContainedPath(root, realExistingParent, sourcePath);
+    yield* ensureContainedPath(path, root, realExistingParent, sourcePath);
     yield* fs.makeDirectory(directory, { recursive: true });
     const realDirectory = yield* fs.realPath(directory);
-    yield* ensureContainedPath(root, realDirectory, sourcePath);
+    yield* ensureContainedPath(path, root, realDirectory, sourcePath);
   });
 
   yield* makeContainedDirectory(realProjectRoot, functionsRoot, functionsRoot);
@@ -1111,15 +1139,16 @@ const downloadSingle = Effect.fn("functions.download.single")(function* (
     }
 
     const destination = yield* resolveDownloadDestination(
+      { path, posixPath },
       functionsRoot,
       functionDir,
       entrypointPath,
       file.path,
     );
-    const parent = dirname(destination);
+    const parent = path.dirname(destination);
     yield* makeContainedDirectory(realFunctionsRoot, parent, file.path);
     yield* writeFileWithoutFollowingSymlinks(destination, file.body, file.path);
-    yield* ensureContainedPath(realFunctionsRoot, yield* fs.realPath(destination), file.path);
+    yield* ensureContainedPath(path, realFunctionsRoot, yield* fs.realPath(destination), file.path);
     if (output.format === "text") {
       yield* output.raw(`Extracting file: ${destination}\n`, "stderr");
     }
@@ -1151,7 +1180,12 @@ function attachDownloadWrittenSoFar<E extends object>(
     : Object.assign(error, { writtenSoFar: [...downloadedSoFar] });
 }
 
-export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError, ProxyRequirements>(
+export const downloadFunctions = Effect.fn("functions.download")(function* <
+  ResolveError,
+  ResolveRequirements,
+  ProxyError,
+  ProxyRequirements,
+>(
   flags: DownloadFunctionsOptions,
   dependencies: DownloadFunctionsDependencies<
     ResolveError,
@@ -1160,149 +1194,143 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     ProxyRequirements
   >,
 ) {
-  return Effect.gen(function* () {
-    const output = yield* Output;
+  const output = yield* Output;
+  const path = yield* Path.Path;
 
-    yield* validateDownloadFlags(dependencies.rawArgs);
+  yield* validateDownloadFlags(dependencies.rawArgs);
 
-    if (Option.isSome(flags.functionName)) {
-      yield* validateSlug(flags.functionName.value);
-    }
+  if (Option.isSome(flags.functionName)) {
+    yield* validateSlug(flags.functionName.value);
+  }
 
-    // `--legacy-bundle` still delegates to the Go binary: it requires
-    // installing/upgrading a Deno binary on the host and shelling out to an
-    // embedded Deno script, with no other precedent in this codebase.
-    // `--use-docker` (default `true`) runs natively below and falls through
-    // to the same server-side downloader when Docker isn't running.
-    if (flags.legacyBundle) {
-      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-
-      if (output.format === "text") {
-        yield* dependencies.proxyDownload(flags, projectRef, false);
-        // The slug list is never resolved in text mode here, so this result
-        // is not meaningful — callers never read it (the orchestrator never
-        // sets `legacyBundle: true`).
-        return { projectRef, slugs: [], empty: false };
-      }
-
-      // Resolved before delegating: this list is purely for the JSON
-      // payload (the delegated child's own stdout is captured/discarded, not
-      // inherited, since it never emits the `Output` envelope). Resolving it
-      // first means a transient listing failure is reported before any
-      // download side effect, rather than masking an already-successful
-      // delegated download with an unrelated listing failure after the fact.
-      const slugs = Option.isSome(flags.functionName)
-        ? [flags.functionName.value]
-        : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
-
-      // Mirrors the native path's empty-project short-circuit below: an
-      // empty project has nothing to delegate, so this reports "No functions
-      // found." instead of invoking the Go child unnecessarily.
-      if (slugs.length === 0) {
-        yield* output.success("No functions found.", {
-          function_slugs: [],
-          project_ref: projectRef,
-        });
-        return { projectRef, slugs: [], empty: true };
-      }
-
-      yield* dependencies.proxyDownload(flags, projectRef, true);
-
-      yield* output.success("Downloaded Edge Function source.", {
-        function_slugs: slugs,
-        project_ref: projectRef,
-      });
-      return { projectRef, slugs, empty: false };
-    }
-
+  // `--legacy-bundle` still delegates to the Go binary: it requires
+  // installing/upgrading a Deno binary on the host and shelling out to an
+  // embedded Deno script, with no other precedent in this codebase.
+  // `--use-docker` (default `true`) runs natively below and falls through
+  // to the same server-side downloader when Docker isn't running.
+  if (flags.legacyBundle) {
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
 
-    // Resolved unconditionally here, before checking `useDocker` or whether
-    // Docker is running: an invalid `supabase/config.toml` (e.g. a bad
-    // `edge_runtime.deno_version`) must fail up front regardless of
-    // `--use-api`/`--use-docker`/Docker's state, not only on the Docker path.
-    const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
+    if (output.format === "text") {
+      yield* dependencies.proxyDownload(flags, projectRef, false);
+      // The slug list is never resolved in text mode here, so this result
+      // is not meaningful — callers never read it (the orchestrator never
+      // sets `legacyBundle: true`).
+      return { projectRef, slugs: [], empty: false };
+    }
 
-    // Resolved once for the entire invocation, before any per-function work,
-    // so the "Docker is not running" warning can print even for a project
-    // with zero functions. `edgeRuntimeImage === undefined` is the single
-    // source of truth for "use the server-side path" instead of a separate
-    // boolean that could silently disagree with whether an image resolved.
-    const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-    const edgeRuntimeImage: EdgeRuntimeImage | undefined =
-      !flags.useApi && flags.useDocker
-        ? (yield* isDockerRunning())
-          ? resolvedEdgeRuntimeImage
-          : yield* output
-              .raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr")
-              .pipe(Effect.as(undefined))
-        : undefined;
-
+    // Resolved before delegating: this list is purely for the JSON
+    // payload (the delegated child's own stdout is captured/discarded, not
+    // inherited, since it never emits the `Output` envelope). Resolving it
+    // first means a transient listing failure is reported before any
+    // download side effect, rather than masking an already-successful
+    // delegated download with an unrelated listing failure after the fact.
     const slugs = Option.isSome(flags.functionName)
       ? [flags.functionName.value]
       : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
-    // The standalone `functionsDownload` handler emits the final summary;
-    // this only computes and returns the result.
+    // Mirrors the native path's empty-project short-circuit below: an
+    // empty project has nothing to delegate, so this reports "No functions
+    // found." instead of invoking the Go child unnecessarily.
     if (slugs.length === 0) {
+      yield* output.success("No functions found.", {
+        function_slugs: [],
+        project_ref: projectRef,
+      });
       return { projectRef, slugs: [], empty: true };
     }
 
-    if (output.format === "text" && Option.isNone(flags.functionName)) {
-      yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
-    }
-    yield* Effect.annotateCurrentSpan({ "function.count": slugs.length });
+    yield* dependencies.proxyDownload(flags, projectRef, true);
 
-    // Resolved once for the whole invocation, not once per slug — see
-    // `PulledEdgeRuntimeImage`'s own doc comment. The `--legacy-bundle`
-    // suggestion on a resolve failure uses the first slug as a
-    // representative example, since none is "the" one being processed yet.
-    const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
-    const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
-      edgeRuntimeImage === undefined
-        ? undefined
-        : {
-            ...edgeRuntimeImage,
-            image: yield* resolveFunctionsDockerImage(
-              edgeRuntimeImage.rawImage,
-              edgeRuntimeImage.projectEnvValues,
-            ).pipe(Effect.mapError(withLegacyBundleSuggestion(slugs[0] ?? "", styleAqua))),
-          };
+    yield* output.success("Downloaded Edge Function source.", {
+      function_slugs: slugs,
+      project_ref: projectRef,
+    });
+    return { projectRef, slugs, empty: false };
+  }
 
-    const downloaded: string[] = [];
-    // Absolute directory path per fully-downloaded slug, separate from
-    // `downloaded` (bare slugs): a caller upstream (`pull.aggregate.ts`'s
-    // `hasWrittenSoFar`) needs an on-disk path.
-    const downloadedPaths: string[] = [];
-    for (const slug of slugs) {
-      yield* Effect.gen(function* () {
-        // A user-supplied slug is already validated above; this covers
-        // slugs sourced from the Management API's function list, which is
-        // untrusted (a malicious/compromised response, or a MITM).
-        if (Option.isNone(flags.functionName)) {
-          yield* validateRemoteSlug(slug, styleAqua);
-        }
-        if (pulledEdgeRuntimeImage !== undefined) {
-          downloaded.push(
-            yield* downloadWithDockerUnbundle(
-              dependencies,
-              pulledEdgeRuntimeImage,
-              projectRef,
-              slug,
-            ),
-          );
-        } else {
-          downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
-        }
-        downloadedPaths.push(resolve(dependencies.projectRoot, "supabase", "functions", slug));
-      }).pipe(
-        Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)),
-        Effect.withSpan("functions.download.function"),
-      );
-    }
+  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
 
-    // The standalone `functionsDownload` handler emits the final summary;
-    // this only computes and returns the result.
-    return { projectRef, slugs: downloaded, empty: false };
-  }).pipe(Effect.withSpan("functions.download"));
-}
+  // Resolved unconditionally here, before checking `useDocker` or whether
+  // Docker is running: an invalid `supabase/config.toml` (e.g. a bad
+  // `edge_runtime.deno_version`) must fail up front regardless of
+  // `--use-api`/`--use-docker`/Docker's state, not only on the Docker path.
+  const resolvedEdgeRuntimeImage = yield* resolveEdgeRuntimeImage(dependencies, projectRef);
+
+  // Resolved once for the entire invocation, before any per-function work,
+  // so the "Docker is not running" warning can print even for a project
+  // with zero functions. `edgeRuntimeImage === undefined` is the single
+  // source of truth for "use the server-side path" instead of a separate
+  // boolean that could silently disagree with whether an image resolved.
+  const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
+  const edgeRuntimeImage: EdgeRuntimeImage | undefined =
+    !flags.useApi && flags.useDocker
+      ? (yield* isDockerRunning())
+        ? resolvedEdgeRuntimeImage
+        : yield* output
+            .raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr")
+            .pipe(Effect.as(undefined))
+      : undefined;
+
+  const slugs = Option.isSome(flags.functionName)
+    ? [flags.functionName.value]
+    : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
+
+  // The standalone `functionsDownload` handler emits the final summary;
+  // this only computes and returns the result.
+  if (slugs.length === 0) {
+    return { projectRef, slugs: [], empty: true };
+  }
+
+  if (output.format === "text" && Option.isNone(flags.functionName)) {
+    yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
+  }
+  yield* Effect.annotateCurrentSpan({ "function.count": slugs.length });
+
+  // Resolved once for the whole invocation, not once per slug — see
+  // `PulledEdgeRuntimeImage`'s own doc comment. The `--legacy-bundle`
+  // suggestion on a resolve failure uses the first slug as a
+  // representative example, since none is "the" one being processed yet.
+  const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
+  const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
+    edgeRuntimeImage === undefined
+      ? undefined
+      : {
+          ...edgeRuntimeImage,
+          image: yield* resolveFunctionsDockerImage(
+            edgeRuntimeImage.rawImage,
+            edgeRuntimeImage.projectEnvValues,
+          ).pipe(Effect.mapError(withLegacyBundleSuggestion(slugs[0] ?? "", styleAqua))),
+        };
+
+  const downloaded: string[] = [];
+  // Absolute directory path per fully-downloaded slug, separate from
+  // `downloaded` (bare slugs): a caller upstream (`pull.aggregate.ts`'s
+  // `hasWrittenSoFar`) needs an on-disk path.
+  const downloadedPaths: string[] = [];
+  for (const slug of slugs) {
+    yield* Effect.gen(function* () {
+      // A user-supplied slug is already validated above; this covers
+      // slugs sourced from the Management API's function list, which is
+      // untrusted (a malicious/compromised response, or a MITM).
+      if (Option.isNone(flags.functionName)) {
+        yield* validateRemoteSlug(slug, styleAqua);
+      }
+      if (pulledEdgeRuntimeImage !== undefined) {
+        downloaded.push(
+          yield* downloadWithDockerUnbundle(dependencies, pulledEdgeRuntimeImage, projectRef, slug),
+        );
+      } else {
+        downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
+      }
+      downloadedPaths.push(path.resolve(dependencies.projectRoot, "supabase", "functions", slug));
+    }).pipe(
+      Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)),
+      Effect.withSpan("functions.download.function"),
+    );
+  }
+
+  // The standalone `functionsDownload` handler emits the final summary;
+  // this only computes and returns the result.
+  return { projectRef, slugs: downloaded, empty: false };
+});
