@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Crypto,
@@ -19,6 +20,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
@@ -92,6 +94,11 @@ const errorFor = (operation: string, cause: unknown) =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+
+/** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
+const testRunLabelArgs = readTestRunLabelArgs.pipe(
+  Effect.mapError((cause) => errorFor("config", cause)),
+);
 
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
@@ -289,6 +296,11 @@ export const makeContainerRuntime = (options: {
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
     ) {
+      yield* Effect.annotateCurrentSpan({
+        "process.executable.name": options.engine,
+        "process.arg_count": args.length,
+        "container.command": args[0] ?? "",
+      });
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));
@@ -304,6 +316,7 @@ export const makeContainerRuntime = (options: {
             [tail(child.stdout), tail(child.stderr), child.exitCode],
             { concurrency: "unbounded" },
           );
+          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
           if (Number(code) !== 0)
             return yield* errorFor(
               args[0] ?? "command",
@@ -389,26 +402,32 @@ export const makeContainerRuntime = (options: {
     const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
     /** Reads `/etc/hosts` from a throwaway container of an already present image. */
     const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
-      run(
-        [
-          "run",
-          "--rm",
-          "--pull",
-          "never",
-          ...addHost,
-          // No instance label: `--rm` removal is asynchronous and must not count as an
-          // instance container; the stack labels keep it sweepable.
-          "--label",
-          `com.supabase.stack=${spec.stackId}`,
-          "--label",
-          `com.supabase.stack-root=${stackRoot}`,
-          "--entrypoint",
-          "cat",
-          image,
-          "/etc/hosts",
-        ],
-        { timeout: undefined },
-      ).pipe(Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT));
+      testRunLabelArgs.pipe(
+        Effect.flatMap((testRunLabel) =>
+          run(
+            [
+              "run",
+              "--rm",
+              "--pull",
+              "never",
+              ...addHost,
+              // No instance label: `--rm` removal is asynchronous and must not count as an
+              // instance container; the stack labels keep it sweepable.
+              "--label",
+              `com.supabase.stack=${spec.stackId}`,
+              "--label",
+              `com.supabase.stack-root=${stackRoot}`,
+              ...testRunLabel,
+              "--entrypoint",
+              "cat",
+              image,
+              "/etc/hosts",
+            ],
+            { timeout: undefined },
+          ),
+        ),
+        Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT),
+      );
     /** Resolves the IPv4 host address the engine writes itself, since it rejects `host-gateway`. */
     const engineHostProbe = (image: string, spec: ContainerSpec, rejection: ContainerError) =>
       readProbeHosts(image, spec, []).pipe(
@@ -458,6 +477,11 @@ export const makeContainerRuntime = (options: {
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
+      yield* Effect.annotateCurrentSpan({
+        "image.name": image,
+        ...(spec.service === undefined ? {} : { "container.service": spec.service }),
+        "container.ports": spec.ports ?? [],
+      });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
@@ -489,6 +513,7 @@ export const makeContainerRuntime = (options: {
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
       const hostAlias =
         options.engine === "docker" ? yield* hostAliasTarget(image, spec) : undefined;
+      const testRunLabel = yield* testRunLabelArgs;
       const createArgs = (target: string | undefined) => [
         "create",
         "--pull",
@@ -512,6 +537,7 @@ export const makeContainerRuntime = (options: {
         "--label",
         `com.supabase.stack-root=${stackRoot}`,
         ...(spec.service === undefined ? [] : ["--label", `com.supabase.service=${spec.service}`]),
+        ...testRunLabel,
         "--label",
         `com.docker.compose.project=${composeProject}`,
         "--label",
@@ -590,30 +616,36 @@ export const makeContainerRuntime = (options: {
           const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (
             failure: ContainerError,
           ) {
-            const probe = run(
-              [
-                "ps",
-                "--all",
-                "--no-trunc",
-                "--filter",
-                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
-                `name=^/?${name.replaceAll(".", "\\.")}$`,
-                "--format",
-                "{{.State}}",
-              ],
-              { timeout: "5 seconds" },
-            ).pipe(
-              Effect.map((output) =>
-                output === ""
-                  ? ("absent" as const)
-                  : output === "removing"
-                    ? "removing"
-                    : "present",
+            const probe = withAttemptCount(
+              run(
+                [
+                  "ps",
+                  "--all",
+                  "--no-trunc",
+                  "--filter",
+                  // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                  `name=^/?${name.replaceAll(".", "\\.")}$`,
+                  "--format",
+                  "{{.State}}",
+                ],
+                { timeout: "5 seconds" },
+              ).pipe(
+                Effect.map((output) =>
+                  output === ""
+                    ? ("absent" as const)
+                    : output === "removing"
+                      ? "removing"
+                      : "present",
+                ),
               ),
-              Effect.repeat({
-                schedule: Schedule.spaced("250 millis"),
-                while: (state) => state === "removing",
-              }),
+              (counted) =>
+                counted.pipe(
+                  Effect.repeat({
+                    schedule: Schedule.spaced("250 millis"),
+                    while: (state) => state === "removing",
+                  }),
+                ),
+            ).pipe(
               Effect.timeout("10 seconds"),
               Effect.mapError((error) =>
                 error instanceof ContainerError ? error : errorFor("cleanup", error),

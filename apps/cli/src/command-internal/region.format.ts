@@ -19,6 +19,7 @@ const REGION_NAMES: Readonly<Record<string, string>> = {
   "us-west-2": "West US (Oregon)",
 };
 
-export function formatRegion(region: string): string {
+/** Renders a known region code as its display name; unknown codes pass through. */
+export function formatRegion(region: string) {
   return REGION_NAMES[region] ?? region;
 }

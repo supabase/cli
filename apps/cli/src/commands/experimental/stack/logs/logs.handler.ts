@@ -145,6 +145,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
           "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
       });
     const selected = yield* select(target.definition, flags.service);
+    yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
     const stackId = target.id;
     const locations = {
       stateRoot: path.join(settings.supabaseHome, "stacks"),

@@ -1,3 +1,4 @@
+import { withAttemptCount } from "./internal/attempts.ts";
 import { NodeStream } from "@effect/platform-node";
 import {
   Crypto,
@@ -262,10 +263,11 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
   HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const stack = yield* registered(state, stackId);
-  const access = yield* Effect.gen(function* () {
-    if (!(yield* state.leased(stackId)))
+  // Lease and holder reads repeat every poll and stay untraced; the identity request is traced.
+  const lookup = Effect.gen(function* () {
+    if (!(yield* state.leased(stackId).pipe(Effect.withTracerEnabled(false))))
       return yield* error("connect", "Stack owner is not running", "not-running");
-    const holder = yield* state.readHolder(stackId);
+    const holder = yield* state.readHolder(stackId).pipe(Effect.withTracerEnabled(false));
     if (holder === undefined)
       return yield* error(
         "connect",
@@ -275,11 +277,18 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
     if (holder.role === "sweeper")
       return yield* error("connect", "Another owner is sweeping this stack", "sweeping");
     return yield* identityOf(stack, holder);
-  }).pipe(
-    Effect.retry({
-      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
-      while: hasReason("owner-starting"),
-    }),
+  });
+  const access = yield* withAttemptCount(
+    lookup,
+    (counted) =>
+      counted.pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
+          while: hasReason("owner-starting"),
+        }),
+      ),
+    { traced: true },
+  ).pipe(
     Effect.mapError((failure) =>
       hasReason("owner-starting")(failure)
         ? error(
@@ -560,13 +569,18 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
     return spawned._tag === "Ready" ? spawned.access : yield* connectHost(state, options.stackId);
   });
   // A sweeper holds a dead stack's lease for a bounded time; a displaced spawn waits it out.
-  return yield* attempt.pipe(
-    Effect.retry({
-      schedule: Schedule.spaced("100 millis").pipe(
-        Schedule.upTo({ duration: Duration.sum(sweepTimeout, Duration.seconds(10)) }),
+  return yield* withAttemptCount(
+    attempt,
+    (counted) =>
+      counted.pipe(
+        Effect.retry({
+          schedule: Schedule.spaced("100 millis").pipe(
+            Schedule.upTo({ duration: Duration.sum(sweepTimeout, Duration.seconds(10)) }),
+          ),
+          while: hasReason("not-running", "sweeping"),
+        }),
       ),
-      while: hasReason("not-running", "sweeping"),
-    }),
+    { traced: true },
   );
 });
 
@@ -664,12 +678,15 @@ export const waitForOwnerExit = Effect.fn("HostProcess.waitForOwnerExit")(functi
       }
     }),
   );
-  return yield* check.pipe(
-    Effect.retry({
-      schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "5 seconds" })),
-      while: (failure) =>
-        failure.reason === "owner-exit-pending" || failure.reason === "owner-exit-zombie",
-    }),
+  return yield* withAttemptCount(check, (counted) =>
+    counted.pipe(
+      Effect.retry({
+        schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "5 seconds" })),
+        while: (failure) =>
+          failure.reason === "owner-exit-pending" || failure.reason === "owner-exit-zombie",
+      }),
+    ),
+  ).pipe(
     Effect.catchIf(
       (failure) => failure.reason === "owner-exit-zombie",
       () => Effect.void,

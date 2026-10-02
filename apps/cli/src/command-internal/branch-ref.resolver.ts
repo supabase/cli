@@ -40,22 +40,28 @@ export function resolveBranchProjectRef<EGet, EFind, EParent = never, RParent = 
 ) {
   return Effect.gen(function* () {
     if (BRANCH_PROJECT_REF_PATTERN.test(input)) {
+      yield* Effect.annotateCurrentSpan("branch_ref.input_kind", "project_ref");
       return input;
     }
 
     const api = yield* CommandPlatformApi;
 
     if (BRANCH_UUID_PATTERN.test(input)) {
+      yield* Effect.annotateCurrentSpan("branch_ref.input_kind", "branch_id");
       const detail = yield* api.v1
         .getABranchConfig({ branch_id_or_ref: input })
         .pipe(Effect.catch(mappers.mapGetError));
       return detail.ref;
     }
 
+    yield* Effect.annotateCurrentSpan("branch_ref.input_kind", "branch_name");
     const parentRef = typeof projectRef === "string" ? projectRef : yield* projectRef;
     const branch = yield* api.v1
       .getABranch({ ref: parentRef, name: input })
       .pipe(Effect.catch(mappers.mapFindError));
     return branch.project_ref;
-  });
+  }).pipe(
+    Effect.tap((ref) => Effect.annotateCurrentSpan("project.ref", ref)),
+    Effect.withSpan("BranchRef.resolve"),
+  );
 }

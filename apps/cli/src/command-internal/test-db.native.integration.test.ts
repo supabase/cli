@@ -13,7 +13,7 @@ import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
 import { BundledPostgresClient } from "./bundled-postgres-client.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { DbConnection } from "./db-connection.service.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DebugFlag, DnsResolverFlag, NetworkIdFlag } from "./global-flags.ts";

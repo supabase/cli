@@ -6,7 +6,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { bold } from "../../../output/bold.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -125,24 +124,33 @@ const runInspectReport = Effect.fnUntraced(function* (
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       if (isText) yield* output.raw("Running queries...\n", "stderr");
       for (const { fileName, sql } of REPORT_QUERIES) {
-        const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
-        const filePath = path.join(outDir, `${fileName}.csv`);
-        yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
-          Effect.mapError(
-            (error) =>
-              new InspectReportWriteError({
-                message: `failed to create output file: ${error}`,
-              }),
-          ),
+        yield* Effect.gen(function* () {
+          const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
+          yield* Effect.annotateCurrentSpan({ "csv.bytes": bytes.length });
+          const filePath = path.join(outDir, `${fileName}.csv`);
+          yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
+            Effect.mapError(
+              (error) =>
+                new InspectReportWriteError({
+                  message: `failed to create output file: ${error}`,
+                }),
+            ),
+          );
+          csvByFile.set(`${fileName}.csv`, bytes);
+          files.push({ name: fileName, path: filePath });
+        }).pipe(
+          Effect.withSpan("inspect.report.runQuery", {
+            attributes: { "inspect.query.name": fileName },
+          }),
         );
-        csvByFile.set(`${fileName}.csv`, bytes);
-        files.push({ name: fileName, path: filePath });
       }
     }),
   );
 
   if (isText) {
-    yield* output.raw(`Reports saved to ${bold(outDir, tty.stdoutIsTty)}\n`, "stderr");
+    // Bolding is keyed off stdout's TTY state even though this line goes to stderr.
+    const savedTo = tty.stdoutIsTty ? `\x1b[1m${outDir}\x1b[0m` : outDir;
+    yield* output.raw(`Reports saved to ${savedTo}\n`, "stderr");
   }
 
   // Custom rules (validated above) replace the defaults when present.

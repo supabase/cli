@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Clock,
@@ -392,14 +393,15 @@ const collectNativeOutput = Effect.fn("ProcessRecipe.collectNativeOutput")(funct
   return { bindReady, bindError, stdout, stderr, drained };
 });
 
-const readiness = Effect.fn("ProcessRecipe.readiness")(
-  (
-    client: HttpClient.HttpClient,
-    endpoint: ServiceEndpoint,
-    path: string,
-    timeout: Duration.Input = "60 seconds",
-  ): Effect.Effect<void, ServiceError> =>
-    client.execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`)).pipe(
+const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
+  client: HttpClient.HttpClient,
+  endpoint: ServiceEndpoint,
+  path: string,
+  timeout: Duration.Input = "60 seconds",
+) {
+  const attempt = client
+    .execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`))
+    .pipe(
       Effect.flatMap((response) =>
         (response.status >= 200 && response.status < 300) || response.status === 401
           ? Effect.void
@@ -407,12 +409,16 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(
               new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
             ),
       ),
+    );
+  return yield* withAttemptCount(attempt, (counted) =>
+    counted.pipe(
       Effect.retry({ schedule: Schedule.spaced("250 millis") }),
       Effect.timeout(timeout),
       Effect.mapError((cause) => serviceError("health", cause)),
       Effect.asVoid,
     ),
-);
+  );
+});
 
 export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>>(
   options: CatalogOptions,

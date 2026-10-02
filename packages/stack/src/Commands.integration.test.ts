@@ -24,6 +24,7 @@ import type { PgProveOptions, PostgresCommand } from "./Commands.ts";
 import { makeDatabase } from "./services/Database.ts";
 import { makeService } from "./Service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
+import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -77,8 +78,11 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const stackId = `tools-integration-${randomUUID()}`;
+          const root =
+            runtime === "docker"
+              ? yield* makeDockerDatabaseRoot("stack-tools-", stackId)
+              : yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const database = yield* makeDatabase({
             root,
             cacheRoot,
@@ -224,8 +228,11 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
         Effect.scoped(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
-            const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const stackId = `tools-pgprove-${runtime}-${major}-${randomUUID()}`;
+            const root =
+              runtime === "docker"
+                ? yield* makeDockerDatabaseRoot(`stack-pgprove-${major}-`, stackId)
+                : yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const database = yield* makeDatabase({
               root,
               cacheRoot,

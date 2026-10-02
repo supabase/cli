@@ -138,6 +138,7 @@ export const stackPrepare = Effect.fn("experimental.stack.prepare")(function* (
         : creations.filter(({ service }) =>
             selectedServices.has(stackCapabilityForService(service)),
           );
+    yield* Effect.annotateCurrentSpan({ "stack.capability_count": requested.length });
     const task = yield* output.task("Preparing local Supabase stack...");
     const capabilities = yield* Effect.forEach(requested, (creation) =>
       Effect.acquireUseRelease(

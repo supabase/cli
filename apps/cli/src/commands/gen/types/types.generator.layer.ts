@@ -16,6 +16,7 @@ import { DbConnection } from "../../../command-internal/db-connection.service.ts
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
   type GenTypesGenerateError,
+  type GenTypesGenerateInput,
   GenTypesGenerationError,
   GenTypesGenerator,
   GenTypesToolFailedError,
@@ -73,52 +74,66 @@ export const genTypesGeneratorLayer = Layer.effect(
       ComSpec: yield* optionalEnv("ComSpec"),
     };
     return GenTypesGenerator.of({
-      generate: (input) =>
-        Effect.gen(function* () {
-          const language = findLanguage(input.lang);
-          if (language === undefined) {
-            return yield* new GenTypesGenerationError({
-              message: `failed to generate ${input.lang} types: unknown language`,
+      generate: Effect.fn("GenTypes.generate")(function* (input: GenTypesGenerateInput) {
+        yield* Effect.annotateCurrentSpan({
+          "typegen.lang": input.lang,
+          "typegen.schema_count": input.includedSchemas.length,
+          "db.is_local": input.isLocal,
+        });
+        const language = findLanguage(input.lang);
+        if (language === undefined) {
+          return yield* new GenTypesGenerationError({
+            message: `failed to generate ${input.lang} types: unknown language`,
+          });
+        }
+        // Each Promise bridge runs through its phase's fiber context (rather than a bare detached
+        // `Effect.runPromise`) so it stays anchored to this generator effect instead of a
+        // disconnected top-level runtime.
+        const toGenerationError = (cause: unknown) => generationError(input.lang, cause);
+        // The session closes before an out-of-process tool starts, so no connection idles
+        // while, say, `dart run` compiles.
+        const metadata = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+            const session = yield* dbConn.connect(input.conn, {
+              isLocal: input.isLocal,
+              dnsResolver: input.dnsResolver,
             });
-          }
-          // Both Promise bridges run through the current fiber's context (rather than a bare
-          // detached `Effect.runPromise`) so they stay anchored to this generator effect instead
-          // of a disconnected top-level runtime.
-          const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
-          const toGenerationError = (cause: unknown) => generationError(input.lang, cause);
-          // The session closes before an out-of-process tool starts, so no connection idles
-          // while, say, `dart run` compiles.
-          const metadata = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const session = yield* dbConn.connect(input.conn, {
-                isLocal: input.isLocal,
-                dnsResolver: input.dnsResolver,
-              });
-              return yield* Effect.tryPromise({
-                try: (signal) => {
-                  // `signal` aborts when this generate call is interrupted, so forwarding it to
-                  // every query stops an in-flight introspection query instead of leaving it
-                  // detached from the fiber that started it.
-                  const queryable: Queryable = {
-                    query: (sql) =>
-                      runPromise(session.query(sql), { signal }).then((rows) => ({
-                        rows: [...rows],
-                      })),
-                  };
-                  return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
-                },
-                catch: toGenerationError,
-              });
+            return yield* Effect.tryPromise({
+              try: (signal) => {
+                // `signal` aborts when this generate call is interrupted, so forwarding it to
+                // every query stops an in-flight introspection query instead of leaving it
+                // detached from the fiber that started it.
+                const queryable: Queryable = {
+                  query: (sql) =>
+                    runPromise(session.query(sql), { signal }).then((rows) => ({
+                      rows: [...rows],
+                    })),
+                };
+                return introspect(queryable, { includedSchemas: [...input.includedSchemas] });
+              },
+              catch: toGenerationError,
+            });
+          }),
+        ).pipe(
+          Effect.tap((metadata) =>
+            Effect.annotateCurrentSpan({
+              "typegen.table_count": metadata.tables.length,
+              "typegen.view_count": metadata.views.length,
+              "typegen.function_count": metadata.functions.length,
             }),
-          );
+          ),
+          Effect.withSpan("GenTypes.introspect"),
+        );
+        return yield* Effect.gen(function* () {
           const host = makeTypegenHost({
             cwd: runtime.cwd,
             env: lookupEnv,
             platform: runtime.platform,
             spawner,
-            runPromise,
+            runPromise: Effect.runPromiseWith(yield* Effect.context<never>()),
           });
-          return yield* Effect.tryPromise({
+          const source = yield* Effect.tryPromise({
             try: (signal) =>
               language.generate(metadata, declaredOptions(language, input.options), {
                 ...host,
@@ -126,7 +141,10 @@ export const genTypesGeneratorLayer = Layer.effect(
               }),
             catch: (cause) => mapRegistryError(input.lang, cause),
           });
-        }),
+          yield* Effect.annotateCurrentSpan("typegen.output_length", source.length);
+          return source;
+        }).pipe(Effect.withSpan("GenTypes.render"));
+      }),
     });
   }),
 );

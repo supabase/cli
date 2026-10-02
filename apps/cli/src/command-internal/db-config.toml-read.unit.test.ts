@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Option, Path, Ref } from "effect";
 
 import {
   checkDbToml,
@@ -12,6 +12,10 @@ import {
   resolveDeclarativeDir,
   resolveSeedSqlPath,
 } from "./db-config.toml-read.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../telemetry/command-telemetry-attributes.ts";
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
   const dir = mkdtempSync(join(tmpdir(), "db-toml-"));
@@ -3407,4 +3411,43 @@ describe("readDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.t
       );
     },
   );
+});
+
+describe("readDbToml OrioleDB telemetry", () => {
+  const recordedAfterRead = (workdir: string) =>
+    Effect.gen(function* () {
+      const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
+      yield* read(workdir).pipe(
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
+        }),
+      );
+      return yield* Ref.get(recorded);
+    });
+
+  it.effect.each([
+    {
+      name: "a configured version on 17",
+      toml: 'major_version = 17\norioledb_version = "17.0.0.1"',
+      env: undefined,
+      expected: true,
+    },
+    { name: "the env override", toml: "major_version = 15", env: "15.1.1.14", expected: true },
+    { name: "no version", toml: "major_version = 17", env: undefined, expected: false },
+  ])("records orioledb=$expected for $name", ({ toml, env, expected }) => {
+    const dir = withConfig(`[db]\n${toml}\n`);
+    const previous = process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+    if (env === undefined) delete process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+    else process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = env;
+    return recordedAfterRead(dir).pipe(
+      Effect.tap((recorded) => Effect.sync(() => expect(recorded.orioledb).toBe(expected))),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_ORIOLEDB_VERSION"];
+          else process.env["SUPABASE_DB_ORIOLEDB_VERSION"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });

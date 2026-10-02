@@ -36,9 +36,7 @@ function makeRuntime(opts: { isCi?: boolean; isFirstRun?: boolean; isTty?: boole
   const identity = makeTelemetryIdentity(undefined);
   const layer = Layer.succeed(TelemetryRuntime, {
     configDir: "/tmp",
-    tracesDir: "/tmp",
     consent: "granted",
-    showDebug: false,
     deviceId: "device-xyz",
     sessionId: "session-1",
     identity,

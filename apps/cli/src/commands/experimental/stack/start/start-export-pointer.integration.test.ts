@@ -241,10 +241,7 @@ const runStatusEnv = (input: {
           mockTty({ stdinIsTty: false, stdoutIsTty: false }),
           mockStdin(false),
           mockRuntimeInfo({ cwd: input.ambientCwd, homeDir: "/pointer-test/home" }),
-          mockTelemetryRuntime({
-            configDir: "/pointer-test/.supabase",
-            tracesDir: "/pointer-test/.supabase/traces",
-          }),
+          mockTelemetryRuntime({ configDir: "/pointer-test/.supabase" }),
         ),
       ),
     );

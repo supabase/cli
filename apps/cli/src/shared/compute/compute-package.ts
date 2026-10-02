@@ -187,7 +187,7 @@ const collectEntries = (
     return { entries, excludedCount } satisfies CollectedEntries;
   });
 
-export const packageComputeDirectory = Effect.fnUntraced(function* (
+export const packageComputeDirectory = Effect.fn("Compute.package")(function* (
   dir: string,
   exclude: ComputeExcludeMatcher = NO_COMPUTE_EXCLUSIONS,
 ) {
@@ -204,9 +204,16 @@ export const packageComputeDirectory = Effect.fnUntraced(function* (
       }),
   });
 
+  const fileCount = collected.entries.filter((entry) => !entry.path.endsWith("/")).length;
+  yield* Effect.annotateCurrentSpan({
+    "file.count": fileCount,
+    "file.excluded_count": collected.excludedCount,
+    "archive.bytes": archive.byteLength,
+  });
+
   return {
     archive: new Uint8Array(archive),
-    fileCount: collected.entries.filter((entry) => !entry.path.endsWith("/")).length,
+    fileCount,
     excludedCount: collected.excludedCount,
   } satisfies PackagedCompute;
 });

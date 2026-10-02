@@ -40,7 +40,6 @@ function setup(args: ReadonlyArray<string>) {
     mockAnalytics().layer,
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer };

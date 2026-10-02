@@ -10,7 +10,7 @@ import {
 import { parseConnectionString } from "./db-config.parse.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import {
   applyDatabaseOverlay,
   type ApplyDatabaseOverlayInput,
@@ -116,6 +116,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
   const dbConn = yield* DbConnection;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  yield* Effect.annotateCurrentSpan("service.count", input.target.databaseServices.length);
   const runtimeCredentials = yield* input.target.database
     .credentials({ from: "runtime" })
     .pipe(Effect.mapError(catalogError));
@@ -167,7 +168,7 @@ const applyCatalog = Effect.fn("StackCatalogSetup.apply")(function* (
         vault: input.overlay.vault,
         webhooks: input.overlay.webhooks,
         announceRoles: input.overlay.announceRoles,
-      });
+      }).pipe(Effect.withSpan("StackCatalogSetup.applyOverlay"));
     }),
   );
 });

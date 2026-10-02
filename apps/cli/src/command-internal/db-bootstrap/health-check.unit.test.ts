@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Sink, Stream, Tracer } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -654,6 +654,36 @@ describe("waitForHealthyServices", () => {
         expect(error.unhealthy).toEqual([
           { containerId: "supabase_rest_proj", reason: "unexpected status 503" },
         ]);
+      }),
+    );
+
+    it.effect("records the probe count on the wait span instead of a span per HTTP probe", () =>
+      Effect.gen(function* () {
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+        const mock = mockHealthSpawner(() => runningHealthy);
+
+        const fiber = yield* waitForHealthyServices(mock.spawner, ["supabase_rest_proj"], {
+          timeoutSeconds: 1,
+          postgrest: postgrestGateway("sb_secret_local"),
+        }).pipe(
+          Effect.provide(httpLayer(503, () => {})),
+          Effect.withTracer(tracer),
+          Effect.withTracerEnabled(true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 seconds");
+        yield* Fiber.await(fiber);
+
+        const wait = spans.find((span) => span.name === "HealthCheck.waitHealthyServices");
+        expect(spans.map((span) => span.name)).not.toContain("http.client HEAD");
+        expect(wait?.attributes.get("retry.attempt_count")).toBe(2);
       }),
     );
   });

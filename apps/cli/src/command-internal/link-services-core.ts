@@ -38,7 +38,13 @@ type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, 
  * the linked-project cache, or fire `cli_project_linked`; the `link` command
  * owns those, and `bootstrap` calls this directly to skip them.
  */
-export const linkServicesCore = Effect.fnUntraced(function* (input: LinkServicesInput) {
+export const linkServicesCore = Effect.fn("LinkServices.write")(function* (
+  input: LinkServicesInput,
+) {
+  yield* Effect.annotateCurrentSpan({
+    "project.ref": input.ref,
+    "link.skip_pooler": input.skipPooler,
+  });
   const api = yield* CommandPlatformApi;
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;

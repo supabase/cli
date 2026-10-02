@@ -5,7 +5,7 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { stdinLayer } from "../../shared/runtime/stdin.layer.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { dbConfigLayer } from "../../command-internal/db-config.layer.ts";
-import { dbConnectionLayer } from "../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../command-internal/db-connection.sql-pg.layer.ts";
 import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { dockerRunLayer } from "../../command-internal/docker-run.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";

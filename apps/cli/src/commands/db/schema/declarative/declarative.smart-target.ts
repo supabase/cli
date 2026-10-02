@@ -114,7 +114,7 @@ export const resolveRemoteEndpoint = Effect.fnUntraced(function* (flags: SmartTa
  * mode) and `sync` (no-declarative-files bootstrap) so both offer the same local/linked/custom
  * choice and local-reset prompt.
  */
-export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
+export const resolveSmartTargetEndpoint = Effect.fn("DeclarativeSchema.smartTarget")(function* (
   flags: SmartTargetFlags,
   local: LocalConn,
   hasMigrations: boolean,
@@ -125,6 +125,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   beforeLocalTarget: Effect.Effect<void, DeclarativeShadowDbError> = Effect.void,
 ) {
   if (!hasMigrations) {
+    yield* Effect.annotateCurrentSpan("declarative.target", "local");
     // No migrations: generate from local, starting a stopped stack first.
     yield* beforeLocalTarget;
     yield* (yield* DeclarativeSeam).ensureLocalDatabaseStarted;
@@ -152,6 +153,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       : []),
     { value: "custom", label: "Custom database URL", hint: "enter a connection string" },
   ]);
+  yield* Effect.annotateCurrentSpan("declarative.target", choice);
 
   if (choice === "linked") {
     // Same path as an explicit `--linked`: login-role mint + pooler fallback, then the resolved URL.
@@ -195,6 +197,7 @@ export const resolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       false,
     );
   }
+  yield* Effect.annotateCurrentSpan("declarative.local_reset", shouldReset);
   if (shouldReset) {
     // `resetLocalDatabase` runs in-process, sharing this command's own context: it resolves
     // `NetworkIdFlag` itself, so no argv-forwarding is needed to stay on a custom Docker network,

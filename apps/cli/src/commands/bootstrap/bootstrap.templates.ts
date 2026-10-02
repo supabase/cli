@@ -136,8 +136,10 @@ export const templateServiceLayer = Layer.effect(
         ),
       );
       const samples = (parsed as { samples?: ReadonlyArray<unknown> }).samples ?? [];
-      return samples.filter(isStarterTemplate);
-    });
+      const templates = samples.filter(isStarterTemplate);
+      yield* Effect.annotateCurrentSpan("template.count", templates.length);
+      return templates;
+    }).pipe(Effect.withSpan("TemplateService.listSamples"));
 
     const downloadFile = (localPath: string, remoteUrl: string) =>
       Effect.gen(function* () {
@@ -152,85 +154,84 @@ export const templateServiceLayer = Layer.effect(
         yield* fs.writeFile(localPath, bytes);
       }).pipe(Effect.catch(mapDownloadError));
 
-    const download = (templateUrl: string, targetDir: string) =>
-      Effect.gen(function* () {
-        // e.g. https://github.com/supabase/supabase/tree/master/examples/user-management
-        const parsed = new URL(templateUrl);
-        const parts = parsed.pathname.split("/");
-        const owner = parts[1] ?? "";
-        const repo = parts[2] ?? "";
-        const ref = parts[4] ?? "";
-        const root = parts.slice(5).join("/");
+    const download = Effect.fn("TemplateService.download")(function* (
+      templateUrl: string,
+      targetDir: string,
+    ) {
+      // e.g. https://github.com/supabase/supabase/tree/master/examples/user-management
+      const parsed = new URL(templateUrl);
+      const parts = parsed.pathname.split("/");
+      const owner = parts[1] ?? "";
+      const repo = parts[2] ?? "";
+      const ref = parts[4] ?? "";
+      const root = parts.slice(5).join("/");
 
-        const downloads: Array<{ readonly localPath: string; readonly remoteUrl: string }> = [];
-        const queue: Array<string> = [root];
-        while (queue.length > 0) {
-          const contentPath = queue.shift() ?? "";
-          const response = yield* httpClient.execute(
-            contentsRequest(owner, repo, contentPath, ref),
-          );
-          if (response.status !== 200) {
-            const body = sanitizeErrorBody(
-              yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-            );
-            return yield* new BootstrapTemplateDownloadError({
-              message: `failed to download template: status ${response.status}: ${body}`,
-            });
-          }
-          const payload = yield* response.json;
-          if (!Array.isArray(payload)) {
-            return yield* new BootstrapTemplateDownloadError({
-              message: `failed to download template: expected a directory listing for ${contentPath}`,
-            });
-          }
-          const listing = payload as ReadonlyArray<GithubContentEntry>;
-          for (const entry of listing) {
-            const entryPath = entry.path ?? "";
-            if (entry.type === "file") {
-              // Strip `<root>` on a path-segment boundary so a sibling directory that merely
-              // shares the prefix (e.g. `examples/app-2` under `root="examples/app"`) is never
-              // mis-sliced.
-              const relative =
-                root === ""
-                  ? entryPath
-                  : entryPath === root
-                    ? ""
-                    : entryPath.startsWith(`${root}/`)
-                      ? entryPath.slice(root.length + 1)
-                      : entryPath;
-              const localPath = path.join(targetDir, ...relative.split("/").filter(Boolean));
-              // Defence-in-depth: reject a malicious `path` (e.g. `../../etc/x`)
-              // that would escape the target directory.
-              const resolvedTarget = path.resolve(targetDir);
-              const resolvedLocal = path.resolve(localPath);
-              if (
-                resolvedLocal !== resolvedTarget &&
-                !resolvedLocal.startsWith(resolvedTarget + path.sep)
-              ) {
-                return yield* new BootstrapTemplateDownloadError({
-                  message: `failed to download template: entry escapes target directory: ${entryPath}`,
-                });
-              }
-              // GitHub returns a null `download_url` for files over 1 MB and submodules; without
-              // this guard, the `?? ""` fallback would issue `GET ""` with a confusing error.
-              if (entry.download_url == null || entry.download_url.length === 0) {
-                return yield* new BootstrapTemplateDownloadError({
-                  message: `failed to download template: unsupported entry (no download URL): ${entryPath}`,
-                });
-              }
-              downloads.push({ localPath, remoteUrl: entry.download_url });
-            } else if (entry.type === "dir") {
-              queue.push(entryPath);
-            } else {
-              yield* output.raw(`Ignoring ${entry.type}: ${entryPath}\n`, "stderr");
+      const downloads: Array<{ readonly localPath: string; readonly remoteUrl: string }> = [];
+      const queue: Array<string> = [root];
+      while (queue.length > 0) {
+        const contentPath = queue.shift() ?? "";
+        const response = yield* httpClient.execute(contentsRequest(owner, repo, contentPath, ref));
+        if (response.status !== 200) {
+          const body = sanitizeErrorBody(yield* response.text.pipe(Effect.orElseSucceed(() => "")));
+          return yield* new BootstrapTemplateDownloadError({
+            message: `failed to download template: status ${response.status}: ${body}`,
+          });
+        }
+        const payload = yield* response.json;
+        if (!Array.isArray(payload)) {
+          return yield* new BootstrapTemplateDownloadError({
+            message: `failed to download template: expected a directory listing for ${contentPath}`,
+          });
+        }
+        const listing = payload as ReadonlyArray<GithubContentEntry>;
+        for (const entry of listing) {
+          const entryPath = entry.path ?? "";
+          if (entry.type === "file") {
+            // Strip `<root>` on a path-segment boundary so a sibling directory that merely
+            // shares the prefix (e.g. `examples/app-2` under `root="examples/app"`) is never
+            // mis-sliced.
+            const relative =
+              root === ""
+                ? entryPath
+                : entryPath === root
+                  ? ""
+                  : entryPath.startsWith(`${root}/`)
+                    ? entryPath.slice(root.length + 1)
+                    : entryPath;
+            const localPath = path.join(targetDir, ...relative.split("/").filter(Boolean));
+            // Defence-in-depth: reject a malicious `path` (e.g. `../../etc/x`)
+            // that would escape the target directory.
+            const resolvedTarget = path.resolve(targetDir);
+            const resolvedLocal = path.resolve(localPath);
+            if (
+              resolvedLocal !== resolvedTarget &&
+              !resolvedLocal.startsWith(resolvedTarget + path.sep)
+            ) {
+              return yield* new BootstrapTemplateDownloadError({
+                message: `failed to download template: entry escapes target directory: ${entryPath}`,
+              });
             }
+            // GitHub returns a null `download_url` for files over 1 MB and submodules; without
+            // this guard, the `?? ""` fallback would issue `GET ""` with a confusing error.
+            if (entry.download_url == null || entry.download_url.length === 0) {
+              return yield* new BootstrapTemplateDownloadError({
+                message: `failed to download template: unsupported entry (no download URL): ${entryPath}`,
+              });
+            }
+            downloads.push({ localPath, remoteUrl: entry.download_url });
+          } else if (entry.type === "dir") {
+            queue.push(entryPath);
+          } else {
+            yield* output.raw(`Ignoring ${entry.type}: ${entryPath}\n`, "stderr");
           }
         }
+      }
 
-        yield* Effect.forEach(downloads, (job) => downloadFile(job.localPath, job.remoteUrl), {
-          concurrency: DOWNLOAD_CONCURRENCY,
-        });
-      }).pipe(Effect.catch(mapDownloadError));
+      yield* Effect.annotateCurrentSpan("file.count", downloads.length);
+      yield* Effect.forEach(downloads, (job) => downloadFile(job.localPath, job.remoteUrl), {
+        concurrency: DOWNLOAD_CONCURRENCY,
+      });
+    }, Effect.catch(mapDownloadError));
 
     return { listSamples, download };
   }),

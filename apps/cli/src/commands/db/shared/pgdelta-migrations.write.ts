@@ -64,6 +64,7 @@ export const writePgDeltaMigrations = (
 ): Effect.Effect<Array<WrittenMigration>, PgDeltaMigrationWriteError> =>
   Effect.gen(function* () {
     const { workdir, name, files } = opts;
+    yield* Effect.annotateCurrentSpan({ "file.count": files.length });
     for (const file of files) {
       if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
         return yield* new PgDeltaMigrationWriteError({
@@ -176,4 +177,4 @@ export const writePgDeltaMigrations = (
         Effect.forEach(written, (w) => fs.remove(w.path).pipe(Effect.ignore), { discard: true }),
       ),
     );
-  });
+  }).pipe(Effect.withSpan("PgDeltaMigrations.write"));

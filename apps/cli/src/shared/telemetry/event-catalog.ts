@@ -37,6 +37,12 @@ export const PropErrorFingerprint = "error_fingerprint";
 export const PropHasSuggestion = "has_suggestion";
 export const PropSuggestionType = "suggestion_type";
 export const PropSuggestedCommand = "suggested_command";
+// Set only for commands routed by `experimental.stack`.
+export const PropStackBackend = "stack_backend";
+// Set only once a command resolves local database config.
+export const PropOrioleDb = "orioledb";
+// Set only once a stack-backend command resolves its stack's runtime.
+export const PropStackRuntime = "stack_runtime";
 // Reserved for a closed workflow label; nothing emits it until a closed
 // vocabulary is agreed (tests assert its absence on failure events).
 export const PropWorkflow = "workflow";

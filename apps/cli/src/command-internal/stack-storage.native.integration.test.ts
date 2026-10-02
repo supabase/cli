@@ -4,7 +4,7 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { stackCatalogSetupLayer } from "./stack-catalog-setup.ts";
 import {
   classifyStorageCapability,

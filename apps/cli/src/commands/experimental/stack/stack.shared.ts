@@ -16,7 +16,10 @@ import {
   StackApi,
   stackApiLayer,
 } from "../../../command-internal/stack-api.ts";
-import type { StackRuntime } from "../../../command-internal/stack-runtime.ts";
+import {
+  recordStackRuntimeTelemetry,
+  type StackRuntime,
+} from "../../../command-internal/stack-runtime.ts";
 
 export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
 
@@ -151,6 +154,7 @@ export const stackTargetResolverLayer = Layer.effect(
           reason: "flags",
         });
       const runtime = found?.definition.runtime ?? requestedRuntime;
+      if (runtime !== undefined) yield* recordStackRuntimeTelemetry(runtime);
       // A new stack saves paths under the canonical root its identity derives from.
       const projectRoot =
         found?.definition.identity.projectRoot ??

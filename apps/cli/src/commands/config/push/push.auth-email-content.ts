@@ -85,7 +85,10 @@ const resolveContentPath = (
  *   nothing was configured or all `content_path` values were empty. Fails when a configured
  *   `content_path` points to a missing or unreadable file.
  */
-export const loadAuthEmailContent = Effect.fnUntraced(function* (cwd: string, email: AuthEmail) {
+export const loadAuthEmailContent = Effect.fn("config.push.loadAuthEmailContent")(function* (
+  cwd: string,
+  email: AuthEmail,
+) {
   const template: Record<string, string> = {};
   const notification: Record<string, string> = {};
 
@@ -130,7 +133,9 @@ export const loadAuthEmailContent = Effect.fnUntraced(function* (cwd: string, em
     notification[name] = yield* readTemplateContent("notification", name, resolved);
   }
 
-  if (Object.keys(template).length === 0 && Object.keys(notification).length === 0) {
+  const fileCount = Object.keys(template).length + Object.keys(notification).length;
+  yield* Effect.annotateCurrentSpan("file.count", fileCount);
+  if (fileCount === 0) {
     return EMPTY_AUTH_EMAIL_CONTENT;
   }
 

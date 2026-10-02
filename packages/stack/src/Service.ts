@@ -300,6 +300,7 @@ export const makeService = <Config>(
       retainWake = false,
       discard = false,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       yield* Effect.gen(function* () {
         const record = yield* Ref.get(current);
         if (expected !== undefined && record !== expected) return;
@@ -354,6 +355,7 @@ export const makeService = <Config>(
     const launchNow = Effect.fn("Service.launchNow")(function* (
       guard: Effect.Effect<void, ServiceError>,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       yield* Effect.gen(function* () {
         let observation = yield* SubscriptionRef.get(observations);
         if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
@@ -554,6 +556,7 @@ export const makeService = <Config>(
       expectedRevision: number,
       guard: Effect.Effect<void, ServiceError> = Effect.void,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       yield* run(
         Effect.gen(function* () {
           if (!(yield* SubscriptionRef.get(observations)).registered)
@@ -585,6 +588,7 @@ export const makeService = <Config>(
     });
 
     const stop = Effect.fn("Service.stop")(function* () {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
@@ -601,6 +605,7 @@ export const makeService = <Config>(
       requestedRevision?: number,
       guard: Effect.Effect<void, ServiceError> = Effect.void,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       const expectedRevision = requestedRevision ?? (yield* Ref.get(revision));
       const nextConfig = candidate ?? (yield* Ref.get(config));
       if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
@@ -699,6 +704,7 @@ export const makeService = <Config>(
     const storage = Effect.fn("Service.storage")(function* <A>(
       operation: Effect.Effect<A, ServiceError>,
     ) {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       return yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
@@ -717,6 +723,7 @@ export const makeService = <Config>(
     });
 
     const destroy = Effect.fn("Service.destroy")(function* () {
+      yield* Effect.annotateCurrentSpan({ member_id: options.id });
       yield* run(
         Effect.gen(function* () {
           const observation = yield* SubscriptionRef.get(observations);
