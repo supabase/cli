@@ -1,6 +1,8 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { machineErrorContextLayer } from "../../../../shared/output/machine-error-context.layer.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stringSliceFlag } from "../../../../command-internal/string-slice-flag.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
@@ -66,5 +68,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   ),
   // `stackStart`'s bucket-seeding path satisfies `promptYesNo`'s `Stdin` requirement here even
   // though it always passes `yes: true`/`interactive: false` and never reaches the prompt.
-  Command.provide(stdinLayer),
+  // `machineErrorContextLayer` carries the structured incompatible-change payload onto the
+  // JSON/stream-json error envelope.
+  Command.provide(Layer.mergeAll(stdinLayer, machineErrorContextLayer)),
 );
