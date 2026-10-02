@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
+import { Effect, Option, Tracer } from "effect";
 
 import {
   type UpgradeNoticeDeps,
@@ -640,13 +640,21 @@ describe("runUpgradeNotice", () => {
  * to one command would break the moment it's ported.
  */
 describe("upgradeNoticeHook", () => {
-  async function stderrFromHook(delegatedToGo: boolean): Promise<string> {
+  async function runHook(opts: { readonly delegatedToGo?: boolean; readonly cached?: boolean }) {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-hook-"));
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    // Fresh cache: the hook reads it instead of fetching, so this never touches
-    // the network.
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+    if (opts.cached !== false) {
+      writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+    }
+    const spans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        spans.push(span);
+        return span;
+      },
+    });
 
     const written: Array<string> = [];
     const realWrite = process.stderr.write.bind(process.stderr);
@@ -659,12 +667,16 @@ describe("upgradeNoticeHook", () => {
 
     try {
       await Effect.runPromise(
-        upgradeNoticeHook(["db", "branch", "list"], {
-          cleanShowHelp: false,
-          delegatedToGo,
-          workingDirectory: workdir,
-          isValueTakingFlagToken: () => false,
-        }),
+        upgradeNoticeHook(
+          ["db", "branch", "list"],
+          {
+            cleanShowHelp: false,
+            delegatedToGo: opts.delegatedToGo === true,
+            workingDirectory: workdir,
+            isValueTakingFlagToken: () => false,
+          },
+          () => Promise.resolve("v99.99.99"),
+        ).pipe(Effect.withTracer(tracer), Effect.withTracerEnabled(true)),
       );
     } finally {
       process.stderr.write = realWrite;
@@ -672,16 +684,37 @@ describe("upgradeNoticeHook", () => {
       else process.env["SUPABASE_NO_UPDATE_NOTIFIER"] = realOptOut;
       rmSync(workdir, { recursive: true, force: true });
     }
-    return stripVTControlCharacters(written.join(""));
+    const span = (name: string) => spans.find((candidate) => candidate.name === name);
+    return { stderr: stripVTControlCharacters(written.join("")), span };
   }
 
   it("prints the notice for a natively handled command", async () => {
-    expect(await stderrFromHook(false)).toContain(
+    expect((await runHook({})).stderr).toContain(
       "A new version of Supabase CLI is available: v99.99.99",
     );
   });
 
   it("stays silent when the run delegated to Go, which printed its own notice", async () => {
-    expect(await stderrFromHook(true)).toBe("");
+    expect((await runHook({ delegatedToGo: true })).stderr).toBe("");
+  });
+
+  it("traces a cache hit on the check span without a fetch span", async () => {
+    const { span } = await runHook({});
+    expect(Object.fromEntries(span("UpgradeNotice.check")!.attributes)).toEqual({
+      "cache.location": "project",
+      "cache.hit": true,
+    });
+    expect(span("UpgradeNotice.fetch")).toBeUndefined();
+  });
+
+  it("traces a cache miss with the release fetch as a child of the check span", async () => {
+    const { span } = await runHook({ cached: false });
+    const check = span("UpgradeNotice.check")!;
+    expect(Object.fromEntries(check.attributes)).toEqual({
+      "cache.location": "project",
+      "cache.hit": false,
+    });
+    const parent = span("UpgradeNotice.fetch")!.parent;
+    expect(Option.isSome(parent) ? parent.value.spanId : undefined).toBe(check.spanId);
   });
 });

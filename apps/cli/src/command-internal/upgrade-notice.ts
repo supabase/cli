@@ -223,7 +223,16 @@ export interface UpgradeNoticeDeps {
   readonly writeStderr: (text: string) => void;
 }
 
-export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
+/** The release-tag cache a check used, recorded on its trace span. */
+export interface UpgradeCheckOutcome {
+  readonly cache: "project" | "user" | "disabled";
+  readonly cacheFresh: boolean;
+}
+
+/** Resolves to `undefined` when the notifier is opted out. */
+export async function runUpgradeNotice(
+  deps: UpgradeNoticeDeps,
+): Promise<UpgradeCheckOutcome | undefined> {
   if (updateNotifierDisabled(deps.env["SUPABASE_NO_UPDATE_NOTIFIER"])) return;
 
   // `--help`/`--version` and a bare group's clean ShowHelp resolve the cache
@@ -301,6 +310,7 @@ export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
   if (isNewerCliVersion(latestTag, deps.currentVersion)) {
     deps.writeStderr(`${formatUpgradeNotice(latestTag, deps.currentVersion)}\n`);
   }
+  return { cache: cachePathIsSafe ? (inProject ? "project" : "user") : "disabled", cacheFresh };
 }
 
 async function fetchLatestReleaseTag(): Promise<string> {
@@ -333,23 +343,39 @@ export const upgradeNoticeHook = (
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
+  fetchLatestTag: () => Promise<string> = fetchLatestReleaseTag,
 ): Effect.Effect<void> =>
   info.delegatedToGo
     ? Effect.void
-    : Effect.promise(() =>
-        runUpgradeNotice({
-          env: process.env,
-          args,
-          cleanShowHelp: info.cleanShowHelp,
-          isValueTakingFlagToken: info.isValueTakingFlagToken,
-          cwd: process.cwd(),
-          resolvedCwd: info.workingDirectory,
-          currentVersion: CLI_VERSION,
-          supabaseHome: resolveSupabaseHome({ join }, process.env, homedir()),
-          now: Date.now,
-          fetchLatestTag: fetchLatestReleaseTag,
-          writeStderr: (text) => {
-            process.stderr.write(text);
-          },
-        }),
-      ).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);
+    : Effect.gen(function* () {
+        const context = yield* Effect.context();
+        const outcome = yield* Effect.promise(() =>
+          runUpgradeNotice({
+            env: process.env,
+            args,
+            cleanShowHelp: info.cleanShowHelp,
+            isValueTakingFlagToken: info.isValueTakingFlagToken,
+            cwd: process.cwd(),
+            resolvedCwd: info.workingDirectory,
+            currentVersion: CLI_VERSION,
+            supabaseHome: resolveSupabaseHome({ join }, process.env, homedir()),
+            now: Date.now,
+            // Runs under the check span's context so the fetch is its child span.
+            fetchLatestTag: () =>
+              Effect.runPromiseWith(context)(
+                Effect.tryPromise({ try: fetchLatestTag, catch: (error) => error }).pipe(
+                  Effect.withSpan("UpgradeNotice.fetch"),
+                ),
+              ),
+            writeStderr: (text) => {
+              process.stderr.write(text);
+            },
+          }),
+        );
+        if (outcome !== undefined) {
+          yield* Effect.annotateCurrentSpan({
+            "cache.location": outcome.cache,
+            "cache.hit": outcome.cacheFresh,
+          });
+        }
+      }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);
