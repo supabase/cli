@@ -23,9 +23,10 @@ describe("functions bootstrap owner", () => {
       const path = yield* Path.Path;
       const { fs, root, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-");
       const target = yield* owner.write({ content: "export default 1" });
-      expect(target).toContain(
-        path.join(root, "functions-one", "runtime", "functions", "index.ts"),
+      expect(path.dirname(path.dirname(target))).toContain(
+        path.join(root, "functions-one", "runtime", "functions"),
       );
+      expect(path.basename(target)).toBe("index.ts");
       expect(((yield* fs.stat(path.dirname(target))).mode ?? 0) & 0o777).toBe(0o700);
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
       expect(yield* fs.readFileString(target)).toBe("export default 1");
@@ -100,9 +101,9 @@ describe("functions bootstrap owner", () => {
         "functions-one",
         "runtime",
         "functions",
-        "index.ts",
       );
-      expect(target).toBe(expected);
+      expect(path.dirname(path.dirname(target))).toBe(expected);
+      expect(path.basename(target)).toBe("index.ts");
       expect(yield* fs.readFileString(target)).toBe("export default 2");
       expect(((yield* fs.stat(target)).mode ?? 0) & 0o777).toBe(0o600);
 
@@ -110,6 +111,73 @@ describe("functions bootstrap owner", () => {
       expect(
         yield* fs.exists(path.join(canonicalRoot, "functions-one", "runtime", "functions")),
       ).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("prunes a stale generation while keeping the live one, through a symlinked root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-functions-bootstrap-prune-",
+      });
+      const canonicalRoot = path.join(root, "canonical");
+      const configuredRoot = path.join(root, "alias");
+      yield* fs.makeDirectory(canonicalRoot);
+      yield* fs.symlink(canonicalRoot, configuredRoot);
+      const owner = yield* makeFunctionsBootstrapOwner({
+        root: configuredRoot,
+        stackId: StackIdSchema.make("c".repeat(64)),
+        instanceId: "functions-one",
+      });
+      const targetA = yield* owner.write({ content: "export default A" });
+      const targetB = yield* owner.write({ content: "export default B" });
+
+      yield* owner.pruneOthers(path.dirname(targetB));
+
+      expect(yield* fs.exists(targetA)).toBe(false);
+      expect(yield* fs.exists(targetB)).toBe(true);
+      expect(yield* fs.readFileString(targetB)).toBe("export default B");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps the published file when identical content is written twice", () =>
+    Effect.gen(function* () {
+      const { fs, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-idempotent-");
+      const first = yield* owner.write({ content: "export default 1" });
+      const second = yield* owner.write({ content: "export default 1" });
+
+      expect(second).toBe(first);
+      expect(yield* fs.readFileString(first)).toBe("export default 1");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("publishes once when overlapping writers race with identical content", () =>
+    Effect.gen(function* () {
+      const { fs, owner } = yield* setupBootstrapOwner("stack-functions-bootstrap-race-");
+      const targets = yield* Effect.all(
+        Array.from({ length: 20 }, () => owner.write({ content: "export default race" })),
+        { concurrency: "unbounded" },
+      );
+
+      expect(new Set(targets).size).toBe(1);
+      expect(yield* fs.readFileString(targets[0]!)).toBe("export default race");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("never prunes an in-flight staging entry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { owner, root } = yield* setupBootstrapOwner("stack-functions-bootstrap-staging-");
+      const published = yield* owner.write({ content: "export default 1" });
+      const ownedRoot = path.join(root, "functions-one", "runtime", "functions");
+      const staging = path.join(ownedRoot, ".generation-in-flight.tmp");
+      yield* fs.makeDirectory(staging, { recursive: true });
+
+      yield* owner.pruneOthers(path.dirname(published));
+
+      expect(yield* fs.exists(staging)).toBe(true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

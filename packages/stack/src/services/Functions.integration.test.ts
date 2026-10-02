@@ -16,10 +16,12 @@ import {
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+import { makeProcessRecipe } from "./ProcessRecipe.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -536,7 +538,24 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           },
         },
       };
-      const recipe = yield* Functions.makeRecipe(
+      // A real bootstrap owner would join the Win32 stack root below with real fs calls, writing
+      // a garbled path on this POSIX test host; a fake owner keeps the test to what it exercises
+      // here, the Windows caller-path translation in `env`/`args`.
+      const fakeBootstrap: FunctionsBootstrapOwner = {
+        root: "/fake-bootstrap-root",
+        write: () => Effect.succeed("/fake-bootstrap-root/generation-fake/index.ts"),
+        pruneOthers: () => Effect.void,
+        cleanupAll: Effect.void,
+      };
+      const deps = {
+        fs: yield* FileSystem.FileSystem,
+        path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
+        crypto: yield* Crypto.Crypto,
+        client: yield* HttpClient.HttpClient,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        container,
+      };
+      const recipe = yield* makeProcessRecipe(
         creation,
         {
           stackId: "e".repeat(64),
@@ -545,14 +564,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           cacheRoot: "C:\\Users\\dev\\cache",
           runtime: "docker",
         },
-        {
-          fs: yield* FileSystem.FileSystem,
-          path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
-          crypto: yield* Crypto.Crypto,
-          client: yield* HttpClient.HttpClient,
-          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-          container,
-        },
+        deps,
+        Functions.makeSpec(fakeBootstrap, deps.path, deps.fs),
       );
       const scope = yield* Scope.make();
       yield* recipe.definition
@@ -564,7 +577,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         "/__supabase_project/supabase/functions",
       );
       expect(spec?.env.SUPABASE_INTERNAL_FUNCTIONS_FILES_ROOT).toBe("/__supabase_project");
-      expect(spec?.args).toContain("--main-service=/__supabase_functions");
+      expect(spec?.args).toContain("--main-service=/__supabase_bootstrap/generation-fake");
       const config = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Record(
