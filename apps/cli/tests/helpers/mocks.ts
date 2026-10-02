@@ -4,6 +4,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
+import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
@@ -573,7 +574,12 @@ export function processEnvLayer(
   return ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
-        const snapshot = applyProcessEnv(values);
+        const ambientTestRun = process.env[stackTestRunEnvVar];
+        const snapshot = applyProcessEnv(
+          stackTestRunEnvVar in values || ambientTestRun === undefined
+            ? values
+            : { [stackTestRunEnvVar]: ambientTestRun, ...values },
+        );
         return {
           provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           snapshot,
