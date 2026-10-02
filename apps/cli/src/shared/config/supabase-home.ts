@@ -9,7 +9,7 @@ import { Option, type Path } from "effect";
  * its own environment and home directory, keeping the contract in one place.
  */
 export const resolveSupabaseHomeValue = (
-  path: Path.Path,
+  path: Pick<Path.Path, "join">,
   value: Option.Option<string>,
   homeDir: string,
 ): string => {
@@ -20,7 +20,7 @@ export const resolveSupabaseHomeValue = (
 };
 
 export const resolveSupabaseHome = (
-  path: Path.Path,
+  path: Pick<Path.Path, "join">,
   env: Readonly<Record<string, string | undefined>>,
   homeDir: string,
 ): string =>

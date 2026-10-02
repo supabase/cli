@@ -50,6 +50,7 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
     if (Result.isFailure(resolved)) configError = resolved.failure;
     else databaseVersion = resolved.success;
   }
+  yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
   return yield* Effect.forEach(artifactServiceKinds(), (service) =>
     Effect.gen(function* () {
       const artifact = yield* resolveArtifact({

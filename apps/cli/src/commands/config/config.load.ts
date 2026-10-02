@@ -43,5 +43,8 @@ export function loadLocalConfig<E>(
           })
         : Effect.succeed(loaded),
     ),
+    Effect.tap((loaded) =>
+      Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined),
+    ),
   );
 }

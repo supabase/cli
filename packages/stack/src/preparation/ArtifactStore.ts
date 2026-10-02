@@ -944,7 +944,7 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
     const target = path.resolve(cacheRoot, request.key);
     if (!pathWithin(cacheRoot, target, path.sep))
       return yield* artifactError("Artifact key escapes cache root", { key: request.key });
-    return yield* makeArtifactOperation(
+    const prepared = yield* makeArtifactOperation(
       fs,
       path,
       crypto,
@@ -954,6 +954,8 @@ export const makeArtifactStore = Effect.fn("ArtifactStore.makeStore")(function* 
       request,
       onProgress,
     );
+    yield* Effect.annotateCurrentSpan({ "artifact.outcome": prepared.outcome });
+    return prepared;
   });
   return { prepare };
 });

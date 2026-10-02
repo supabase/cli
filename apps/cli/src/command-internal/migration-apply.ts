@@ -441,6 +441,11 @@ const execMigrationBatch = <E>(
       const matches = MIGRATE_FILE_PATTERN.exec(filename);
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
+      yield* Effect.annotateCurrentSpan({
+        "statement.count": statements.length,
+        "migration.transaction_mode": transactionMode,
+        ...(version !== "" ? { "migration.version": version } : {}),
+      });
 
       const restoreRole = session.restoreRoleSql;
 
@@ -592,7 +597,7 @@ const execMigrationBatch = <E>(
           : mapError(errorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
-  });
+  }).pipe(Effect.withSpan("MigrationApply.file"));
 
 /**
  * Clears any connection settings a prior statement on the same session may have changed (e.g.
@@ -660,7 +665,9 @@ export const applyMigrations = <E>(
       yield* resetConnectionState(session, mapError);
       yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
     }
-  });
+  }).pipe(
+    Effect.withSpan("MigrationApply.run", { attributes: { "migration.count": pending.length } }),
+  );
 
 /**
  * Applies custom-role/globals files: for each file, emits `Seeding globals from <name>...` to
@@ -680,7 +687,9 @@ export const seedGlobals = <E>(
       yield* output.raw(`Seeding globals from ${path.basename(globalPath)}...\n`, "stderr");
       yield* execMigrationBatch(session, fs, path, globalPath, mapError, true);
     }
-  });
+  }).pipe(
+    Effect.withSpan("MigrationApply.seedGlobals", { attributes: { "file.count": globals.length } }),
+  );
 
 /**
  * Runs one SQL file's statements transactionally, without `seedGlobals`'s per-file stderr
@@ -734,6 +743,7 @@ export const applySchemaFiles = <E>(
 ): Effect.Effect<void, E | DbConnectError> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* sqlFilesGlob(fs, path, schemaPaths, workdir);
+    yield* Effect.annotateCurrentSpan("file.count", files.length);
     if (files.length === 0) {
       // Succeeds when there were no patterns to glob at all; fails with the joined per-pattern
       // warnings otherwise.
@@ -760,4 +770,4 @@ export const applySchemaFiles = <E>(
         projectEnv,
       );
     }
-  });
+  }).pipe(Effect.withSpan("MigrationApply.schemaFiles"));

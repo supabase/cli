@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ConfigProvider,
   Crypto,
   Data,
   Deferred,
@@ -23,6 +24,7 @@ import { makeContainerRuntime } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
+import { removeTestRunVolumes } from "../../tests/docker-volume-run.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 const postgresImage = (version: string) =>
@@ -604,6 +606,62 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(yield* target.restoreSnapshot("17", "roundtrip")).toBe(true);
         yield* target.destroyData("17");
         yield* docker(["volume", "rm", sourceMarker.volume]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("labels its volume with the configured test run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-test-run-" });
+        const storageRoot = path.join(root, "state", "stack", "data");
+        const cacheRoot = path.join(root, "cache");
+        const instanceRoot = path.join(storageRoot, "database");
+        yield* fs.makeDirectory(instanceRoot, { recursive: true });
+        const container = yield* makeContainerRuntime({ engine: "docker", root });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stackId = `storage-test-run-${yield* crypto.randomUUIDv4}`;
+        const testRunId = `storage-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+        // This run id overrides the ambient one, so the shared run teardown never sees the volume.
+        yield* Effect.addFinalizer(() => removeTestRunVolumes(testRunId).pipe(Effect.orDie));
+        const storage = yield* makeDockerDatabaseStorage({
+          runtime: "docker",
+          stackId,
+          instanceId: "database",
+          instanceRoot,
+          root: storageRoot,
+          cacheRoot,
+          fs,
+          path,
+          crypto,
+          container,
+          spawner,
+        });
+        yield* storage
+          .prepare("17")
+          .pipe(
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnvRecord({ SUPABASE_STACK_TEST_RUN: testRunId }),
+              ),
+            ),
+          );
+        const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+          yield* fs.readFileString(path.join(instanceRoot, ".supabase-database-storage.json")),
+        );
+        if (marker.backend !== "docker" || marker.volume === undefined)
+          return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+        const labels = yield* docker([
+          "volume",
+          "inspect",
+          "--format",
+          '{{ index .Labels "com.supabase.stack-test-run" }}',
+          marker.volume,
+        ]);
+        expect(labels).toBe(testRunId);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

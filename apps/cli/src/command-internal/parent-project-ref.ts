@@ -126,20 +126,24 @@ export const resolveLinkedParentRef = Effect.fnUntraced(function* () {
  * always wins; otherwise it prefers `resolveLinkedParentRef`'s cached parent, falling back to
  * `resolver.resolve` unchanged when no parent is resolvable.
  */
-export const resolveParentScopedProjectRef = Effect.fnUntraced(function* (
+export const resolveParentScopedProjectRef = Effect.fn("ParentProjectRef.resolve")(function* (
   flagValue: Option.Option<string>,
 ) {
   const resolver = yield* ProjectRefResolver;
 
   if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+    yield* Effect.annotateCurrentSpan("parent_project_ref.source", "flag");
     return yield* resolver.resolve(flagValue);
   }
 
   const parent = yield* resolveLinkedParentRef();
+  yield* Effect.annotateCurrentSpan("parent_project_ref.linked_parent", parent.kind);
   if (parent.kind === "resolved") {
+    yield* Effect.annotateCurrentSpan("parent_project_ref.source", "linked_parent");
     return parent.ref;
   }
 
+  yield* Effect.annotateCurrentSpan("parent_project_ref.source", "resolver");
   return yield* resolver.resolve(Option.none());
 });
 

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Schedule, Schema, Stream } from "effect";
+import { Effect, FileSystem, Path, Ref, Schedule, Schema, Stream } from "effect";
 import { NodeStream } from "@effect/platform-node";
 import { HttpClient, HttpClientError } from "effect/unstable/http";
 import { createZstdDecompress } from "node:zlib";
@@ -57,17 +57,27 @@ export interface TarBoundary {
 /** The system tar boundary is argv-based so archive paths never enter a shell string. */
 const systemTarBoundary: TarBoundary = {
   list: Effect.fn("SlimServicesSource.tarList")(function* (archivePath) {
+    const args = ["-tf", archivePath];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* spawner
-      .string(ChildProcess.make("tar", ["-tf", archivePath]))
+      .string(ChildProcess.make("tar", args))
       .pipe(
         Effect.mapError((cause) => new PreparationError({ message: "tar listing failed", cause })),
       );
   }),
   links: Effect.fn("SlimServicesSource.tarLinks")(function* (archivePath) {
+    const args = ["-tvf", archivePath];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* spawner
-      .string(ChildProcess.make("tar", ["-tvf", archivePath]))
+      .string(ChildProcess.make("tar", args))
       .pipe(
         Effect.mapError(
           (cause) => new PreparationError({ message: "tar link listing failed", cause }),
@@ -75,14 +85,21 @@ const systemTarBoundary: TarBoundary = {
       );
   }),
   extract: Effect.fn("SlimServicesSource.tarExtract")(function* (archivePath, destination) {
+    const args = ["-xf", archivePath, "-C", destination];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": "tar",
+      "process.arg_count": args.length,
+    });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* spawner
-      .exitCode(ChildProcess.make("tar", ["-xf", archivePath, "-C", destination]))
+    const code = yield* spawner
+      .exitCode(ChildProcess.make("tar", args))
       .pipe(
         Effect.mapError(
           (cause) => new PreparationError({ message: "tar extraction failed", cause }),
         ),
       );
+    yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+    return code;
   }),
 };
 const responseFor = (url: string) =>
@@ -181,6 +198,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
   backoff: Schedule.Schedule<unknown>,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const bytesWritten = yield* Ref.make(0);
   // Each attempt reopens the sink in truncating mode, so a retry replaces any partial transfer.
   const transfer = Effect.gen(function* () {
     const response = yield* responseFor(url);
@@ -189,6 +207,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
       catch: (cause) =>
         new PreparationError({ message: "Unable to initialize archive digest", cause }),
     });
+    yield* Ref.set(bytesWritten, 0);
     yield* response.stream.pipe(
       Stream.tap((chunk) =>
         Effect.try({
@@ -196,7 +215,7 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
             hash.update(chunk);
           },
           catch: (cause) => new PreparationError({ message: "Unable to hash archive", cause }),
-        }),
+        }).pipe(Effect.andThen(Ref.update(bytesWritten, (total) => total + chunk.byteLength))),
       ),
       Stream.run(fs.sink(destination, { mode: 0o600 })),
     );
@@ -206,6 +225,8 @@ const downloadToFile = Effect.fn("SlimServicesSource.downloadToFile")(function* 
     });
   });
   const actual = yield* transfer.pipe(withTransferRetry(url, backoff));
+  const bytes = yield* Ref.get(bytesWritten);
+  yield* Effect.annotateCurrentSpan({ "artifact.bytes": bytes });
   if (actual !== expectedSha256.toLowerCase())
     return yield* new PreparationError({
       message: `expected ${expectedSha256}, got ${actual}`,

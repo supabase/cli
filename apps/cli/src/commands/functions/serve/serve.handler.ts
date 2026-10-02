@@ -10,6 +10,7 @@ import { functionsServeStack } from "./serve.stack.handler.ts";
 
 export const functionsServe = Effect.fn("functions.serve")(function* (flags: FunctionsServeFlags) {
   const backend = yield* currentStackBackend;
+  yield* Effect.annotateCurrentSpan("stack.backend", backend.kind);
   if (backend.kind === "stack") return yield* functionsServeStack(flags);
   const cliSettings = yield* CommandSettings;
   const runtimeInfo = yield* RuntimeInfo;

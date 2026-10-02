@@ -523,7 +523,9 @@ function mergeSelectedRemoteForValidation(
  * `.env`/`.env.local` under `options.path`'s project directory. `options.remoteName` lets a
  * caller validate the document as it would decode with one `[remotes.*]` block selected.
  */
-export const decodeCliConfigDocumentForValidationEffect = Effect.fnUntraced(function* (
+export const decodeCliConfigDocumentForValidationEffect = Effect.fn(
+  "CliConfig.decodeForValidation",
+)(function* (
   document: Record<string, unknown>,
   options: DecodeCliConfigDocumentForValidationEffectOptions,
 ) {
@@ -562,7 +564,7 @@ export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-export const loadCliConfigFile = Effect.fnUntraced(function* (
+export const loadCliConfigFile = Effect.fn("CliConfig.loadFile")(function* (
   filePath: string,
   options?: InternalLoadCliConfigOptions,
 ) {
@@ -710,7 +712,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   } satisfies LoadedCliConfig;
 });
 
-export const loadCliConfig = Effect.fnUntraced(function* (
+export const loadCliConfig = Effect.fn("CliConfig.load")(function* (
   cwd: string,
   options?: InternalLoadCliConfigOptions,
 ) {
@@ -788,7 +790,7 @@ const writeFileAtomic = Effect.fnUntraced(function* (filePath: string, content: 
   }).pipe(Effect.ensuring(fs.remove(tmpPath).pipe(Effect.ignore)));
 });
 
-export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfigOptions) {
+export const saveCliConfig = Effect.fn("CliConfig.save")(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const project = yield* findCliProjectPaths(options.cwd);
@@ -821,7 +823,7 @@ export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfig
 });
 
 /** Atomically replaces text while applying the target mode at creation to protect sensitive files. */
-export const writeCliConfigDocumentText = Effect.fnUntraced(function* (
+export const writeCliConfigDocumentText = Effect.fn("CliConfig.writeDocument")(function* (
   filePath: string,
   content: string,
 ) {

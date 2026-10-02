@@ -69,6 +69,6 @@ export const makeCommandPlatformApi = Effect.gen(function* () {
       transformClient,
     },
   );
-});
+}).pipe(Effect.withSpan("CommandPlatformApi.build"));
 
 export const commandPlatformApiLayer = Layer.effect(CommandPlatformApi, makeCommandPlatformApi);

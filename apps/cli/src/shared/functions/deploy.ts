@@ -1424,7 +1424,7 @@ interface BundleFunctionWithDockerOptions {
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-const bundleFunctionWithDocker = Effect.fnUntraced(function* (
+const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(function* (
   options: BundleFunctionWithDockerOptions,
 ) {
   const {
@@ -1547,6 +1547,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     );
     const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
     const hash = Buffer.from(sha256).toString("hex");
+    yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
     return {
       slug: config.slug,
       metadata: createBundledMetadata(config, hash),
@@ -1559,7 +1560,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   }
 });
 
-const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(function* (
+  api: ApiClient,
+  projectRef: string,
+) {
   let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* api
@@ -1668,7 +1672,7 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   }
 });
 
-const uploadFunctionSource = Effect.fnUntraced(function* (
+const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(function* (
   api: ApiClient,
   projectRef: string,
   sourceRoot: string,
@@ -1750,7 +1754,7 @@ function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): Bulk
   };
 }
 
-const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
+const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunctions")(function* (
   api: ApiClient,
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
@@ -1806,7 +1810,7 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
   return yield* Effect.fail(lastError ?? new Error("failed to bulk update"));
 });
 
-const upsertBundledFunction = Effect.fnUntraced(function* (
+const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(function* (
   api: ApiClient,
   projectRef: string,
   bundled: BundledFunction,
@@ -1889,7 +1893,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
   return yield* Effect.fail(lastError ?? new Error("failed to upsert function"));
 });
 
-const deleteRemoteFunction = Effect.fnUntraced(function* (
+const deleteRemoteFunction = Effect.fn("functions.deploy.deleteFunction")(function* (
   api: ApiClient,
   projectRef: string,
   slug: string,
@@ -1913,7 +1917,7 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
   );
 });
 
-export const discoverFunctionSlugs = Effect.fnUntraced(function* (
+export const discoverFunctionSlugs = Effect.fn("functions.deploy.discoverSlugs")(function* (
   projectRoot: string,
   configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
 ) {
@@ -1962,130 +1966,134 @@ const validateConfigFunctionSlugs = Effect.fnUntraced(function* (
   return configSlugs;
 });
 
-export const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
-  readonly slugs: ReadonlyArray<string>;
-  readonly cwd: string;
-  readonly projectRoot: string;
-  readonly supabaseDir: string;
-  readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-  readonly importMapOverride: Option.Option<string>;
-  readonly noVerifyJwtOverride: Option.Option<boolean>;
-}) {
-  const output = yield* Output;
-  const functionsDir = join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
-  const seenDeprecatedImportMap = new Set<string>();
-  const seenFallbackImportMap = new Set<string>();
-  const resolved: ResolvedDeployFunctionConfig[] = [];
+export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs")(
+  function* (input: {
+    readonly slugs: ReadonlyArray<string>;
+    readonly cwd: string;
+    readonly projectRoot: string;
+    readonly supabaseDir: string;
+    readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+    readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+    readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+    readonly importMapOverride: Option.Option<string>;
+    readonly noVerifyJwtOverride: Option.Option<boolean>;
+  }) {
+    const output = yield* Output;
+    const functionsDir = join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
+    const seenDeprecatedImportMap = new Set<string>();
+    const seenFallbackImportMap = new Set<string>();
+    const resolved: ResolvedDeployFunctionConfig[] = [];
 
-  const fallbackImportMapPath = join(functionsDir, "import_map.json");
-  const fallbackExists = yield* Effect.promise(() => isFile(fallbackImportMapPath));
+    const fallbackImportMapPath = join(functionsDir, "import_map.json");
+    const fallbackExists = yield* Effect.promise(() => isFile(fallbackImportMapPath));
 
-  const importMapOverride = Option.match(input.importMapOverride, {
-    onNone: () => "",
-    onSome: (pathname) => resolve(input.cwd, pathname),
-  });
-
-  for (const slug of input.slugs) {
-    const configured = input.configFunctions[slug] ?? defaultManifestFunctionConfig;
-    const override = input.configDeclaredFunctions[slug];
-    const enabled = configured.enabled;
-    const verifyJwt = Option.match(input.noVerifyJwtOverride, {
-      onNone: () =>
-        hasOwnKey(input.rawConfigFunctions[slug], "verify_jwt") ? configured.verify_jwt : undefined,
-      onSome: (noVerifyJwt) => !noVerifyJwt,
+    const importMapOverride = Option.match(input.importMapOverride, {
+      onNone: () => "",
+      onSome: (pathname) => resolve(input.cwd, pathname),
     });
 
-    const defaultEntrypoint = defaultFunctionEntrypoint(functionsDir, slug);
-    const entrypoint =
-      configured.entrypoint === undefined || configured.entrypoint.length === 0
-        ? defaultEntrypoint
-        : resolve(
-            configured.entrypoint.startsWith(".") || !isAbsolute(configured.entrypoint)
-              ? join(input.supabaseDir, configured.entrypoint)
-              : configured.entrypoint,
+    for (const slug of input.slugs) {
+      const configured = input.configFunctions[slug] ?? defaultManifestFunctionConfig;
+      const override = input.configDeclaredFunctions[slug];
+      const enabled = configured.enabled;
+      const verifyJwt = Option.match(input.noVerifyJwtOverride, {
+        onNone: () =>
+          hasOwnKey(input.rawConfigFunctions[slug], "verify_jwt")
+            ? configured.verify_jwt
+            : undefined,
+        onSome: (noVerifyJwt) => !noVerifyJwt,
+      });
+
+      const defaultEntrypoint = defaultFunctionEntrypoint(functionsDir, slug);
+      const entrypoint =
+        configured.entrypoint === undefined || configured.entrypoint.length === 0
+          ? defaultEntrypoint
+          : resolve(
+              configured.entrypoint.startsWith(".") || !isAbsolute(configured.entrypoint)
+                ? join(input.supabaseDir, configured.entrypoint)
+                : configured.entrypoint,
+            );
+
+      let importMap = importMapOverride;
+      if (importMap.length === 0) {
+        let configuredImportMap = "";
+        if (configured.import_map.length > 0) {
+          configuredImportMap = resolve(
+            configured.import_map.startsWith(".") || !isAbsolute(configured.import_map)
+              ? join(input.supabaseDir, configured.import_map)
+              : configured.import_map,
           );
+        }
 
-    let importMap = importMapOverride;
-    if (importMap.length === 0) {
-      let configuredImportMap = "";
-      if (configured.import_map.length > 0) {
-        configuredImportMap = resolve(
-          configured.import_map.startsWith(".") || !isAbsolute(configured.import_map)
-            ? join(input.supabaseDir, configured.import_map)
-            : configured.import_map,
-        );
-      }
+        if (
+          configuredImportMap.length > 0 &&
+          !(
+            (override === undefined || override.import_map.length === 0) &&
+            entrypoint !== defaultEntrypoint &&
+            configuredImportMap === defaultFunctionImportMap(functionsDir, slug)
+          )
+        ) {
+          importMap = configuredImportMap;
+        } else {
+          const functionDir = dirname(entrypoint);
+          const denoJson = join(functionDir, "deno.json");
+          const denoJsonc = join(functionDir, "deno.jsonc");
+          const deprecatedImportMap = join(functionDir, "import_map.json");
 
-      if (
-        configuredImportMap.length > 0 &&
-        !(
-          (override === undefined || override.import_map.length === 0) &&
-          entrypoint !== defaultEntrypoint &&
-          configuredImportMap === defaultFunctionImportMap(functionsDir, slug)
-        )
-      ) {
-        importMap = configuredImportMap;
-      } else {
-        const functionDir = dirname(entrypoint);
-        const denoJson = join(functionDir, "deno.json");
-        const denoJsonc = join(functionDir, "deno.jsonc");
-        const deprecatedImportMap = join(functionDir, "import_map.json");
-
-        if (yield* Effect.promise(() => isFile(denoJson))) {
-          importMap = denoJson;
-        } else if (yield* Effect.promise(() => isFile(denoJsonc))) {
-          importMap = denoJsonc;
-        } else if (yield* Effect.promise(() => isFile(deprecatedImportMap))) {
-          importMap = deprecatedImportMap;
-          seenDeprecatedImportMap.add(slug);
-        } else if (fallbackExists) {
-          if (fallbackExists) {
-            importMap = fallbackImportMapPath;
-            seenFallbackImportMap.add(slug);
+          if (yield* Effect.promise(() => isFile(denoJson))) {
+            importMap = denoJson;
+          } else if (yield* Effect.promise(() => isFile(denoJsonc))) {
+            importMap = denoJsonc;
+          } else if (yield* Effect.promise(() => isFile(deprecatedImportMap))) {
+            importMap = deprecatedImportMap;
+            seenDeprecatedImportMap.add(slug);
+          } else if (fallbackExists) {
+            if (fallbackExists) {
+              importMap = fallbackImportMapPath;
+              seenFallbackImportMap.add(slug);
+            }
           }
         }
       }
+
+      const staticFiles = configured.static_files.map((pathname) =>
+        isAbsolute(pathname) ? pathname : join(input.supabaseDir, pathname),
+      );
+
+      resolved.push({
+        slug,
+        enabled,
+        ...(verifyJwt === undefined ? {} : { verifyJwt }),
+        entrypoint,
+        importMap,
+        staticFiles,
+        env: configured.env,
+      });
     }
 
-    const staticFiles = configured.static_files.map((pathname) =>
-      isAbsolute(pathname) ? pathname : join(input.supabaseDir, pathname),
-    );
+    if (seenDeprecatedImportMap.size > 0) {
+      yield* output.raw(
+        `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
+        "stderr",
+      );
+    }
 
-    resolved.push({
-      slug,
-      enabled,
-      ...(verifyJwt === undefined ? {} : { verifyJwt }),
-      entrypoint,
-      importMap,
-      staticFiles,
-      env: configured.env,
-    });
-  }
+    if (seenFallbackImportMap.size > 0) {
+      yield* output.raw(
+        `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
+        "stderr",
+      );
+      yield* output.raw(
+        `Please use recommended per function dependency declaration  ${IMPORT_MAP_GUIDE_URL}\n`,
+        "stderr",
+      );
+    }
 
-  if (seenDeprecatedImportMap.size > 0) {
-    yield* output.raw(
-      `WARNING: Functions using deprecated import_map.json (please migrate to deno.json): ${[...seenDeprecatedImportMap].join(", ")}\n`,
-      "stderr",
-    );
-  }
+    return resolved;
+  },
+);
 
-  if (seenFallbackImportMap.size > 0) {
-    yield* output.raw(
-      `WARNING: Functions using fallback import map: ${[...seenFallbackImportMap].join(", ")}\n`,
-      "stderr",
-    );
-    yield* output.raw(
-      `Please use recommended per function dependency declaration  ${IMPORT_MAP_GUIDE_URL}\n`,
-      "stderr",
-    );
-  }
-
-  return resolved;
-});
-
-const deployViaApi = Effect.fnUntraced(function* (
+const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   projectRef: string,
   projectRoot: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
@@ -2093,6 +2101,8 @@ const deployViaApi = Effect.fnUntraced(function* (
   jobs: number,
 ) {
   const output = yield* Output;
+  yield* Effect.annotateCurrentSpan({ "function.count": configs.length, "deploy.jobs": jobs });
+
   // Uploaded file names and the server-recorded metadata paths are anchored at the workdir
   // (`projectRoot`), not at `sourceRoot`. The import-walk boundary (which files may be uploaded
   // at all) is intentionally wider, extending to the nearest git root, so files outside the
@@ -2197,7 +2207,9 @@ interface DeployViaDockerOptions {
   readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
-const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOptions) {
+const deployViaDocker = Effect.fn("functions.deploy.viaDocker")(function* (
+  options: DeployViaDockerOptions,
+) {
   const {
     projectId,
     projectRef,
@@ -2211,7 +2223,9 @@ const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOpt
     projectEnvValues,
   } = options;
   const output = yield* Output;
+  yield* Effect.annotateCurrentSpan({ "function.count": configs.length });
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
+
   const remoteBySlug = new Map(remoteFunctions.map((fn) => [fn.slug, fn]));
   const changed: BulkUpdateFunction[] = [];
 
@@ -2257,7 +2271,7 @@ const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOpt
   }
 });
 
-const pruneFunctions = Effect.fnUntraced(function* (
+const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,

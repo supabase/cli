@@ -20,6 +20,7 @@ import {
   resolveArtifact,
 } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
+import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import type { ContainerRuntime } from "../runtime/Container.ts";
 import { composeProjectFor } from "../runtime/ContainerName.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
@@ -113,8 +114,12 @@ const parseMajor = (version: string): number | undefined => {
 };
 
 /** Derives the shared Docker volume name from a state-root/daemon identity digest. */
-export const volumeNameFor = (stateDigest: string): string =>
-  `supabase-db-${stateDigest.slice(0, 32)}`;
+const volumeNameFor = (stateDigest: string): string => `supabase-db-${stateDigest.slice(0, 32)}`;
+
+/** Labels volumes and containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
+const testRunLabelArgs = Effect.fn("DockerDatabaseStorage.testRunLabelArgs")(function* () {
+  return yield* readTestRunLabelArgs.pipe(Effect.mapError((cause) => errorFor("config", cause)));
+});
 
 /** Owns the placement and lifecycle of one database's Docker data and snapshot namespaces. */
 export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")(
@@ -279,15 +284,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                       !validMarker.initialized &&
                       /(?:no such volume|not found)/iu.test(cause.message)
-                        ? engineCommand([
-                            "volume",
-                            "create",
-                            "--label",
-                            "com.supabase.stack-managed=true",
-                            "--label",
-                            `com.supabase.stack-state-root=${resolved.stateDigest}`,
-                            resolved.volume,
-                          ]).pipe(Effect.asVoid)
+                        ? testRunLabelArgs().pipe(
+                            Effect.flatMap((testRunLabel) =>
+                              engineCommand([
+                                "volume",
+                                "create",
+                                "--label",
+                                "com.supabase.stack-managed=true",
+                                "--label",
+                                `com.supabase.stack-state-root=${resolved.stateDigest}`,
+                                ...testRunLabel,
+                                resolved.volume,
+                              ]),
+                            ),
+                            Effect.asVoid,
+                          )
                         : Effect.fail(cause),
                     ),
                   );
@@ -325,15 +336,21 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* engineCommand(["volume", "inspect", resolved.volume]).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such volume|not found/iu.test(cause.message)
-                    ? engineCommand([
-                        "volume",
-                        "create",
-                        "--label",
-                        "com.supabase.stack-managed=true",
-                        "--label",
-                        `com.supabase.stack-state-root=${resolved.stateDigest}`,
-                        resolved.volume,
-                      ]).pipe(Effect.asVoid)
+                    ? testRunLabelArgs().pipe(
+                        Effect.flatMap((testRunLabel) =>
+                          engineCommand([
+                            "volume",
+                            "create",
+                            "--label",
+                            "com.supabase.stack-managed=true",
+                            "--label",
+                            `com.supabase.stack-state-root=${resolved.stateDigest}`,
+                            ...testRunLabel,
+                            resolved.volume,
+                          ]),
+                        ),
+                        Effect.asVoid,
+                      )
                     : Effect.fail(cause),
                 ),
                 Effect.asVoid,
@@ -353,6 +370,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
+              yield* Effect.annotateCurrentSpan({
+                "process.executable.name": options.runtime,
+                "process.arg_count": args.length,
+              });
               const child = yield* options.spawner
                 .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
                 .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
@@ -376,6 +397,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ],
                 { concurrency: "unbounded" },
               );
+              yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
               if (Number(code) !== 0)
                 return yield* errorFor(
                   "engine",
@@ -584,6 +606,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 Effect.mapError((cause) => errorFor("helper", cause)),
               );
               const name = `supabase-db-helper-${token}`;
+              const testRunLabel = yield* testRunLabelArgs();
               // Register the deterministic owned name before the remote create starts so an
               // interrupted docker run can still be removed by the same scope.
               yield* Ref.set(helperId, name);
@@ -602,6 +625,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "--label",
                 `com.supabase.stack-root=${options.path.resolve(options.root)}`,
                 ...composeHelperLabels,
+                ...testRunLabel,
                 ...mountArgs(mounts),
                 preparedImage,
                 "/bin/sh",
@@ -677,6 +701,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const preparedImage = yield* options.container
             .prepareImage(image)
             .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+          const testRunLabel = yield* testRunLabelArgs();
           return yield* Effect.uninterruptible(
             engineCommand([
               "run",
@@ -692,6 +717,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               "--label",
               `com.supabase.stack-root=${options.path.resolve(options.root)}`,
               ...composeHelperLabels,
+              ...testRunLabel,
               ...mountArgs(mounts),
               preparedImage,
               "/bin/sh",

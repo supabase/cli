@@ -37,6 +37,7 @@ import {
   mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
+  mockTelemetryRuntime,
 } from "../../tests/helpers/mocks.ts";
 
 const FAILURE_PROPERTY_NAMES = [
@@ -86,6 +87,44 @@ function interruptingAnalytics() {
 }
 
 describe("withCommandTelemetry", () => {
+  const commandSpanAttributes = (consent: "granted" | "denied") =>
+    Effect.currentSpan.pipe(
+      Effect.map((span) => Object.fromEntries(span.attributes)),
+      withCommandTelemetry(),
+      Effect.provide(mockContextualAnalytics().layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"]).pipe(Layer.provide(BunCrypto.layer))),
+      Effect.provide(
+        mockTelemetryRuntime({ consent, deviceId: "device-1", sessionId: "session-1" }),
+      ),
+    );
+
+  it.live("records persistent identifiers on the command span when consent is granted", () =>
+    Effect.gen(function* () {
+      const attributes = yield* commandSpanAttributes("granted");
+
+      expect(attributes).toMatchObject({
+        device_id: "device-1",
+        session_id: "session-1",
+        is_first_run: false,
+      });
+      expect(typeof attributes["command_run_id"]).toBe("string");
+    }),
+  );
+
+  it.live("keeps persistent identifiers off the command span without consent", () =>
+    Effect.gen(function* () {
+      const attributes = yield* commandSpanAttributes("denied");
+
+      expect(attributes).not.toHaveProperty("device_id");
+      expect(attributes).not.toHaveProperty("session_id");
+      expect(attributes).not.toHaveProperty("is_first_run");
+      expect(typeof attributes["command_run_id"]).toBe("string");
+    }),
+  );
+
   it.live("annotates the command span and emits cli_command_executed", () => {
     const analytics = mockContextualAnalytics();
 

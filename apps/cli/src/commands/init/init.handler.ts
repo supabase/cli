@@ -34,6 +34,12 @@ export const init = Effect.fn("init")(function* (flags: InitFlags) {
     withIntellijSettings: flags.withIntellijSettings,
     experimentalStack,
   });
+  yield* Effect.annotateCurrentSpan({
+    "init.created": result.created,
+    "init.force": flags.force,
+    "init.use_orioledb": flags.useOrioledb,
+    "init.experimental_stack": experimentalStack,
+  });
 
   if (!result.created) {
     // The path in this message is always the relative `supabase/config.toml`, regardless of

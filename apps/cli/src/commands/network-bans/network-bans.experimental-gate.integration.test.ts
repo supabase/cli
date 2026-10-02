@@ -46,7 +46,6 @@ function setup() {
     CliOutput.layer(textCliOutputFormatter()),
     mockTelemetryRuntime({
       configDir: `${tempRoot.current}/.supabase`,
-      tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
   );
   return { layer, api };

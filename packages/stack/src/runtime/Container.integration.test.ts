@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  ConfigProvider,
   Crypto,
   Data,
   Deferred,
@@ -568,6 +569,34 @@ describe("container process adapter", () => {
         expect(labels["com.supabase.service"]).toBe("auth");
         expect(labels["com.docker.compose.service"]).toBe("auth");
         expect(labels["com.docker.compose.oneoff"]).toBe("True");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("labels a created container with the configured test run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        yield* runtime.prepare(image);
+        const crypto = yield* Crypto.Crypto;
+        const testRunId = `container-test-run-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+        const process = yield* runtime
+          .launch({
+            image,
+            stackId: "container-test-run",
+            instanceId: "labels-test-run",
+            env: {},
+            args: ["-e", stoppableIdleScript],
+          })
+          .pipe(
+            Effect.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnvRecord({ SUPABASE_STACK_TEST_RUN: testRunId }),
+              ),
+            ),
+          );
+        const labels = yield* inspectLabels(process.id);
+        expect(labels["com.supabase.stack-test-run"]).toBe(testRunId);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -52,5 +52,10 @@ export const rollbackStart = (
         }),
       ),
     );
+    yield* Effect.annotateCurrentSpan("container.removed_count", removedContainers.length);
     yield* cleanupStartSecrets(removedContainers, workdir);
-  });
+  }).pipe(
+    Effect.withSpan("DbBootstrap.rollbackStart", {
+      attributes: { "rollback.delete_volumes": deleteVolumes },
+    }),
+  );

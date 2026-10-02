@@ -46,9 +46,7 @@ function setup(args: ReadonlyArray<string>) {
       TelemetryRuntime,
       TelemetryRuntime.of({
         configDir: "/tmp/supabase-storage-cp-jobs-test/.supabase",
-        tracesDir: "/tmp/supabase-storage-cp-jobs-test/.supabase/traces",
         consent: "granted",
-        showDebug: false,
         deviceId: "test-device-id",
         sessionId: "test-session-id",
         identity: makeTelemetryIdentity(undefined),
