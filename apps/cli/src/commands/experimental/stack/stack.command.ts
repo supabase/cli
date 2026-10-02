@@ -4,7 +4,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";
 import { telemetryStateLayer } from "../../../telemetry/telemetry-state.layer.ts";
-import { dbConnectionLayer } from "../../../command-internal/db-connection.layer.ts";
+import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
 import { stackCatalogSetupLayer } from "../../../command-internal/stack-catalog-setup.ts";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
 import { commandCredentialsLayer } from "../../../auth/command-credentials.layer.ts";

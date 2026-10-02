@@ -7,10 +7,6 @@ import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
 import {
-  CliProjectLocalServiceVersions,
-  type LocalServiceVersionsState,
-} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
-import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/shared/config/project-link-state.service.ts";
@@ -661,27 +657,12 @@ function mockProjectLinkState(
   );
 }
 
-function mockCliProjectLocalServiceVersions(
-  initialState?: LocalServiceVersionsState,
-): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
-  let state = initialState;
-  return Layer.succeed(
-    CliProjectLocalServiceVersions,
-    CliProjectLocalServiceVersions.of({
-      load: Effect.sync(() =>
-        state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
-      ),
-    }),
-  );
-}
-
 export function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer();
   const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
-  const cliProjectLocalServiceVersionsLayer = mockCliProjectLocalServiceVersions();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
@@ -689,7 +670,6 @@ export function emptyEnv() {
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
-    cliProjectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     mockTty(),

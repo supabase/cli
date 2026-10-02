@@ -10,7 +10,7 @@ import {
 import { parseConnectionString } from "./db-config.parse.ts";
 import type { DbConnectError } from "./db-connection.errors.ts";
 import { DbConnection } from "./db-connection.service.ts";
-import { dbConnectionLayer } from "./db-connection.layer.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import {
   applyDatabaseOverlay,
   type ApplyDatabaseOverlayInput,

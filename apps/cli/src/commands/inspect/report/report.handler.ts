@@ -6,7 +6,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
-import { bold } from "../../../output/bold.ts";
 import { renderGlamourTable } from "../../../output/glamour-table.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
@@ -142,7 +141,9 @@ const runInspectReport = Effect.fnUntraced(function* (
   );
 
   if (isText) {
-    yield* output.raw(`Reports saved to ${bold(outDir, tty.stdoutIsTty)}\n`, "stderr");
+    // Bolding is keyed off stdout's TTY state even though this line goes to stderr.
+    const savedTo = tty.stdoutIsTty ? `\x1b[1m${outDir}\x1b[0m` : outDir;
+    yield* output.raw(`Reports saved to ${savedTo}\n`, "stderr");
   }
 
   // Custom rules (validated above) replace the defaults when present.

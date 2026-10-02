@@ -5,7 +5,6 @@ import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
-import { Tracing } from "./tracing.service.ts";
 
 const EXPORT_DRAIN_TIMEOUT = Duration.millis(2_000);
 
@@ -29,7 +28,7 @@ class ExportableSpan extends Tracer.NativeSpan {
 }
 
 export const tracingLayer = Layer.effect(
-  Tracing,
+  Tracer.Tracer,
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     const telemetryRuntime = yield* TelemetryRuntime;

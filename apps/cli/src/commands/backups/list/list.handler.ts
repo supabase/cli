@@ -22,7 +22,7 @@ import {
 } from "../../../command-internal/go-struct-output.encoders.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { formatTimestamp } from "../../../command-internal/timestamp.format.ts";
-import { formatRegion } from "../backups.format.ts";
+import { formatRegion } from "../../../command-internal/region.format.ts";
 import type { BackupsListFlags } from "./list.command.ts";
 
 /** Struct shape for `-o yaml|toml` encoding of the backups response. */

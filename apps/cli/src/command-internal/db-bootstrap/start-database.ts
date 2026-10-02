@@ -46,13 +46,13 @@ import {
 import type { ImagePrepullError } from "./image-prepull.ts";
 import { waitForHealthyServices, type HealthCheckTimeoutError } from "./health-check.ts";
 import {
-  START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-  START_STARTING_DATABASE_MESSAGE,
-} from "./messages.ts";
-import {
   buildPostgresStartContainerSpec,
   type PostgresStartServiceInput,
 } from "./postgres.service.ts";
+
+const START_STARTING_DATABASE_MESSAGE = "Starting database...\n";
+// Printed when an existing volume is reused; unrelated to `--from-backup`.
+const START_STARTING_DATABASE_FROM_BACKUP_MESSAGE = "Starting database from backup...\n";
 
 type Spawner = ChildProcessSpawner["Service"];
 
