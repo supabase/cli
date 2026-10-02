@@ -1,12 +1,13 @@
 import { Duration, Effect, Predicate, Schedule } from "effect";
 
-/** The errno code a platform error carries on its cause, also when another error wraps it. */
+/** The errno code an error carries, itself or on a cause, also when other errors wrap it. */
 export const errorCode = (error: unknown): string | undefined => {
   let current = error;
-  for (let depth = 0; depth < 4 && Predicate.hasProperty(current, "cause"); depth++) {
-    current = current.cause;
+  for (let depth = 0; depth <= 4; depth++) {
     if (Predicate.hasProperty(current, "code") && typeof current.code === "string")
       return current.code;
+    if (!Predicate.hasProperty(current, "cause")) return undefined;
+    current = current.cause;
   }
   return undefined;
 };

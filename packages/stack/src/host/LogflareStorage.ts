@@ -130,6 +130,7 @@ export const make = Effect.fn("LogflareStorage.make")(function* <E>(
         yield* Effect.annotateCurrentSpan({ source, requested_count: ids.length });
         if (ids.length === 0) return new Set<string>();
         const table = yield* Cache.get(tables, source);
+        yield* Effect.annotateCurrentSpan({ table_found: Option.isSome(table) });
         const rows = Option.isNone(table)
           ? []
           : yield* withClient(

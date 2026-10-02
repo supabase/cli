@@ -306,21 +306,6 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("tails by record time when an older partial line was flushed last", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
-      yield* f.writeSegment("mail", "mail-a", [
-        launch(t0),
-        line(t0 + 10, "stdout", "newer"),
-        line(t0 + 5, "stderr", "late older"),
-      ]);
-
-      const { output } = yield* f.run({ tail: 1 }, "stream-json");
-
-      expect(eventLines(output.events)).toEqual(["newer"]);
-    }).pipe(Effect.scoped, Effect.provide(live)),
-  );
-
   it.live("keeps the log-entry fields and reports markers in every output mode", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });

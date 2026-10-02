@@ -510,7 +510,7 @@ describe("experimental Stack Functions serve", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("forwards Functions output written since serve started and drops markers", () =>
+  it.live("forwards Functions output written since serve started and reports lost output", () =>
     Effect.gen(function* () {
       const drained = yield* Deferred.make<void>();
       const records: ReadonlyArray<LogRecord> = [
@@ -518,7 +518,7 @@ describe("experimental Stack Functions serve", () => {
         { kind: "launch", timestamp: "2999-01-01T00:00:00.000Z", launchId: 2 },
         { kind: "stdout", timestamp: "2999-01-01T00:00:00.001Z", launchId: 2, text: "hello" },
         { kind: "stderr", timestamp: "2999-01-01T00:00:00.002Z", launchId: 2, text: "oops" },
-        { kind: "lost", timestamp: "2999-01-01T00:00:00.003Z", launchId: 2, count: 1 },
+        { kind: "lost", timestamp: "2999-01-01T00:00:00.003Z", stream: "stdout", count: 2 },
       ];
       // Honors `since` like the owner, so replaying earlier launches would surface "old".
       const state = yield* fixture({
@@ -546,6 +546,7 @@ describe("experimental Stack Functions serve", () => {
       expect(forwarded).toEqual([
         { text: "hello\n", stream: "stdout" },
         { text: "oops\n", stream: "stderr" },
+        { text: "--- 2 stdout chunks lost ---\n", stream: "stderr" },
       ]);
     }),
   );

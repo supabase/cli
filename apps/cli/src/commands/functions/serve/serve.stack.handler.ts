@@ -48,7 +48,23 @@ const follow = Effect.fn("functions.serve.follow")(function* (
   // keeps its first output.
   const since = DateTime.formatIso(yield* DateTime.now);
   const logs = yield* instance.readLogs({ follow: true, since }).pipe(
-    Stream.runForEach(({ kind, timestamp, text }) => {
+    Stream.runForEach(({ kind, timestamp, text, stream, count }) => {
+      if (kind === "lost" && count !== undefined)
+        return output.format === "stream-json"
+          ? output.event({
+              type: "log-marker",
+              timestamp,
+              source: "live",
+              service: "functions",
+              instance_id: instance.id,
+              kind,
+              ...(stream === undefined ? {} : { stream }),
+              count,
+            })
+          : output.raw(
+              `--- ${count} ${stream ?? "output"} ${count === 1 ? "chunk" : "chunks"} lost ---\n`,
+              "stderr",
+            );
       if (kind !== "stdout" && kind !== "stderr") return Effect.void;
       const line = text ?? "";
       return output.format === "stream-json"

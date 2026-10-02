@@ -660,6 +660,8 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
     /** Output not persisted, reported as `lost` by the next successful append. */
     const dropped = new Map<string, Extract<LogEntry, { kind: "lost" }>>();
     let broken: { readonly attempts: number; readonly retryAt: number } | undefined;
+    /** Launches whose dropped output was already reported in the owner log. */
+    const warnedLaunches = new Set<number>();
 
     const aborted = new LogStoreError({
       operation: "write",
@@ -687,35 +689,52 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
       });
     });
 
+    let retentionWarned = false;
+    /** Removes the oldest closed segments past the limits; a failed removal waits for the next rotation. */
     const enforceRetention = reader.segments(directory).pipe(
       Effect.flatMap((listed) =>
         Effect.gen(function* () {
           let total = listed.reduce((sum, segment) => sum + segment.size, 0);
           let count = listed.length;
+          let failure: unknown;
           // The newest closed segment holds the latest records before the open one.
           const newestClosed = listed
             .map(({ generation }) => generation)
             .filter((generation) => generation !== file?.generation)
             .at(-1);
           for (const segment of listed) {
-            if (total <= retainBytes && count <= retainSegments) return;
+            if (total <= retainBytes && count <= retainSegments) break;
             if (segment.generation === file?.generation || segment.generation === newestClosed)
-              return;
+              break;
             // A reader holding the file on Windows defers its deletion to the next rotation.
             const removed = yield* fs
               .remove(path.join(directory, segmentName(segment.generation)), { force: true })
               .pipe(
                 retryShared,
                 Effect.as(true),
-                Effect.orElseSucceed(() => false),
+                Effect.catch((error) =>
+                  Effect.sync(() => {
+                    failure ??= error;
+                    return false;
+                  }),
+                ),
               );
             if (!removed) continue;
             total -= segment.size;
             count -= 1;
           }
+          if (failure !== undefined) return yield* Effect.fail(failure);
+          retentionWarned = false;
         }),
       ),
-      Effect.ignore,
+      Effect.catch((error) => {
+        if (retentionWarned) return Effect.void;
+        retentionWarned = true;
+        return Effect.logWarning(
+          `Removing old logs of ${instance.service} instance ${instance.instanceId} failed; retrying at the next rotation`,
+          error,
+        );
+      }),
     );
 
     const openGeneration = Effect.gen(function* () {
@@ -837,6 +856,13 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         dropped.delete(dropKey(marker.launchId, marker.stream));
       if (Exit.isSuccess(written)) {
         broken = undefined;
+        for (const entry of entries)
+          if (entry.kind === "lost" && !warnedLaunches.has(entry.launchId)) {
+            warnedLaunches.add(entry.launchId);
+            yield* Effect.logWarning(
+              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream} chunks of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
+            );
+          }
         return;
       }
       dropRecords(entries.slice(entriesWritten.written));
