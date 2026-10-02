@@ -3,6 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { RuntimeInfo } from "./runtime-info.service.ts";
 import { Browser } from "./browser.service.ts";
+import { withChildTraceEnv, withProcessSpan } from "../telemetry/spans.ts";
 
 const makeBrowser = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -35,13 +36,23 @@ const makeBrowser = Effect.gen(function* () {
           args = [url];
         }
 
-        const cmd = ChildProcess.make(command, args, {
-          detached: true,
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        yield* spawner.exitCode(cmd);
+        const openCommand = command;
+        const openArgs = args;
+        yield* withProcessSpan(
+          "Browser.open",
+          { executable: openCommand, argCount: openArgs.length },
+          (traceEnv) =>
+            spawner.exitCode(
+              ChildProcess.make(
+                openCommand,
+                openArgs,
+                withChildTraceEnv(
+                  { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+                  traceEnv,
+                ),
+              ),
+            ),
+        );
       }).pipe(Effect.ignore),
   });
 });

@@ -18,6 +18,7 @@ import {
   slimWgetHealthcheck,
   slimWgetWaitCommand,
 } from "../../../command-internal/db-bootstrap/slim-runtime.ts";
+import { withChildTraceEnv, withProcessSpanScoped } from "../../../shared/telemetry/spans.ts";
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
 import { platformDefaultDockerHost } from "../../../command-internal/hostname.ts";
 import { renderStartVectorYaml } from "../lib/template-render.ts";
@@ -168,15 +169,19 @@ function collectText<E, R>(stream: Stream.Stream<Uint8Array, E, R>) {
 function inspectDockerContextHost(spawner: Spawner): Effect.Effect<string, string> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawner
-        .spawn(
-          ChildProcess.make(
-            "docker",
-            ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"],
-            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+      const args = ["context", "inspect", "--format", "{{ .Endpoints.docker.Host }}"];
+      const child = yield* withProcessSpanScoped(
+        "Vector.inspectDockerContext",
+        { executable: "docker", argCount: args.length },
+        (traceEnv) =>
+          spawner.spawn(
+            ChildProcess.make(
+              "docker",
+              args,
+              withChildTraceEnv({ stdin: "ignore", stdout: "pipe", stderr: "ignore" }, traceEnv),
+            ),
           ),
-        )
-        .pipe(Effect.mapError(() => "failed to spawn docker"));
+      ).pipe(Effect.mapError(() => "failed to spawn docker"));
       const [exitCode, stdout] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
         { concurrency: "unbounded" },

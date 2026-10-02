@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts";
 import { stackPrepare } from "./prepare.handler.ts";
-import { STACK_PREPARABLE_CAPABILITIES } from "./prepare.options.ts";
+import { STACK_PREPARABLE_CAPABILITIES } from "../start/start.options.ts";
 
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),

@@ -57,7 +57,9 @@ function hasFunctionConfigDeclaration(contents: string, slug: string): boolean {
   return pattern.test(contents);
 }
 
-const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) {
+const listExistingFunctionSlugs = Effect.fn("functions.new.listExistingSlugs")(function* (
+  workdir: string,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -85,10 +87,11 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
     }
   }
 
+  yield* Effect.annotateCurrentSpan("function.count", slugs.size);
   return slugs;
 });
 
-const resolveTemplateInputs = Effect.fnUntraced(function* (
+const resolveTemplateInputs = Effect.fn("functions.new.resolveTemplateInputs")(function* (
   cliSettings: { readonly workdir: string; readonly explicitWorkdir: boolean },
   slug: string,
 ) {
@@ -96,6 +99,7 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
     goViperCompat: true,
     search: shouldSearchAncestors(cliSettings),
   }).pipe(Effect.orElseSucceed(() => null));
+  yield* Effect.annotateCurrentSpan("config.found", loaded !== null);
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
   const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
   return {
@@ -106,7 +110,9 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (
 
 // Only invoked in text mode: json/stream-json runs stay payload-only and
 // never scaffold IDE settings as an undisclosed side effect.
-const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
+const promptForIdeSettings = Effect.fn("functions.new.promptIdeSettings")(function* (
+  workdir: string,
+) {
   const output = yield* Output;
   // Also honors `SUPABASE_YES`, not just the `--yes` flag.
   const yes = yield* resolveYes;

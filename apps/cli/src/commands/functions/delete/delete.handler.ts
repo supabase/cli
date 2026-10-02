@@ -36,7 +36,10 @@ export const functionsDelete = Effect.fn("functions.delete")(function* (
       Effect.suspend(() =>
         Option.match(resolvedProjectRef, {
           onNone: () => Effect.void,
-          onSome: (ref) => linkedProjectCache.cache(ref),
+          onSome: (ref) =>
+            Effect.annotateCurrentSpan("project.ref", ref).pipe(
+              Effect.andThen(linkedProjectCache.cache(ref)),
+            ),
         }),
       ),
     ),

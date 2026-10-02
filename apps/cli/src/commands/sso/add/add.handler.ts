@@ -193,6 +193,15 @@ export const ssoAdd = Effect.fn("sso.add")(function* (flags: SsoAddFlags) {
     // every auxiliary call alike.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
+    yield* Effect.annotateCurrentSpan({
+      "sso.metadata_source": Option.isSome(metadataFile)
+        ? "file"
+        : Option.isSome(metadataUrl)
+          ? "url"
+          : "none",
+      "sso.domain_count": domains.length,
+    });
+
     yield* Effect.gen(function* () {
       // Posted as raw JSON, not the generated schema, so unlisted
       // `attribute_mapping.keys.<x>` fields (e.g. `default`) survive.

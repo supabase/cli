@@ -41,7 +41,9 @@ export interface SquashDumpParams<E> {
  * with `WithSchema("auth","storage")`, and a third, unrestricted call for the final
  * full dump written straight to the target migration file.
  */
-export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDumpParams<E>) {
+export const squashDumpSchema = Effect.fn("MigrationSquash.dumpSchema")(function* <E>(
+  params: SquashDumpParams<E>,
+) {
   const opt: DumpOptions = {
     schema: params.schema,
     keepComments: false,
@@ -73,21 +75,23 @@ export const squashDumpSchema = Effect.fnUntraced(function* <E>(params: SquashDu
  * straight to the target migration file's own handle at constant memory
  * (`squash.handler.ts`'s `squashMigrations`).
  */
-export const squashDumpSchemaToString = Effect.fnUntraced(function* (params: {
-  readonly image: string;
-  readonly conn: PgConnInput;
-  readonly schema: ReadonlyArray<string>;
-  readonly projectEnvValues?: Readonly<Record<string, string>>;
-  readonly client?: PgDumpClient;
-}) {
-  const chunks: Array<Uint8Array> = [];
-  yield* squashDumpSchema({
-    image: params.image,
-    conn: params.conn,
-    schema: params.schema,
-    onStdout: (chunk) => Effect.sync(() => chunks.push(chunk)),
-    projectEnvValues: params.projectEnvValues,
-    client: params.client,
-  });
-  return new TextDecoder().decode(Buffer.concat(chunks));
-});
+export const squashDumpSchemaToString = Effect.fn("MigrationSquash.dumpSchemaToString")(
+  function* (params: {
+    readonly image: string;
+    readonly conn: PgConnInput;
+    readonly schema: ReadonlyArray<string>;
+    readonly projectEnvValues?: Readonly<Record<string, string>>;
+    readonly client?: PgDumpClient;
+  }) {
+    const chunks: Array<Uint8Array> = [];
+    yield* squashDumpSchema({
+      image: params.image,
+      conn: params.conn,
+      schema: params.schema,
+      onStdout: (chunk) => Effect.sync(() => chunks.push(chunk)),
+      projectEnvValues: params.projectEnvValues,
+      client: params.client,
+    });
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  },
+);

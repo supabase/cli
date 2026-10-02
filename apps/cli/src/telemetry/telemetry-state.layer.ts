@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../shared/telemetry/identity.ts";
-import { supabaseHome } from "../config/profile-file.ts";
+import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
 import { TelemetryState } from "./telemetry-state.service.ts";
 
 interface State {
@@ -26,7 +26,7 @@ const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
 function telemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  return pathSvc.join(supabaseHome(pathSvc, homedir(), env), "telemetry.json");
+  return pathSvc.join(resolveSupabaseHome(pathSvc, env, homedir()), "telemetry.json");
 }
 
 /**

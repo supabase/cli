@@ -40,6 +40,7 @@ export const bootstrapRetryNotify = () => {
       Effect.tapError((error) =>
         Effect.gen(function* () {
           failureCount += 1;
+          yield* Effect.annotateCurrentSpan("retry.failure_count", failureCount);
           // No notify on the final, exhausted attempt.
           if (failureCount > BOOTSTRAP_MAX_RETRIES) return;
           const toStderr = failureCount * 3 > BOOTSTRAP_MAX_RETRIES;

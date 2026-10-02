@@ -136,7 +136,7 @@ export function inspectBacktickStmt(value: unknown): string {
  * connect (printing "Connecting to <local|remote> database..." to stderr), run the query, then
  * render the table — or, in `json`/`stream-json` mode, emit the raw driver rows instead.
  */
-export const runInspectQuery = Effect.fnUntraced(function* (
+export const runInspectQuery = Effect.fn("Inspect.runQuery")(function* (
   spec: InspectQuerySpec,
   flags: InspectConnectionFlags,
   dnsResolver: "native" | "https",
@@ -188,6 +188,7 @@ export const runInspectQuery = Effect.fnUntraced(function* (
       return yield* session.query(spec.sql, spec.params(cfg));
     }),
   );
+  yield* Effect.annotateCurrentSpan({ "query.row_count": rows.length });
 
   if (output.format === "text") {
     const cells = rows.map((row) => spec.project(row, cfg));

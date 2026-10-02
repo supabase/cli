@@ -51,7 +51,6 @@ import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { vanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { whoamiCommand } from "../commands/whoami/whoami.command.ts";
-import { OutputFormatFlag } from "../shared/cli/global-flags.ts";
 import { CLI_VERSION, cliBuildChannel } from "../shared/cli/version.ts";
 import { outputLayerFor } from "../shared/output/output.layer.ts";
 import { quietProgressTextOutputLayer } from "../output/quiet-progress-text-output.layer.ts";
@@ -71,6 +70,7 @@ import {
   ExperimentalFlag,
   NetworkIdFlag,
   OutputFlag,
+  OutputFormatFlag,
   ProfileFlag,
   WorkdirFlag,
   YesFlag,
@@ -245,7 +245,9 @@ export const rootCommandForFeatures = (
             : outputLayerFor(outputFormat);
 
           return Layer.mergeAll(
-            stackBackendLayer(options.stackBackend ?? "legacy"),
+            options.stackBackend === undefined
+              ? Layer.empty
+              : stackBackendLayer(options.stackBackend),
             outputLayer,
             makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
           );

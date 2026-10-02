@@ -268,6 +268,8 @@ export const listRemoteMigrations = (session: DbSession) =>
         ? Effect.succeed<ReadonlyArray<string>>([])
         : Effect.fail(new MigrationsReadError({ message: error.message })),
     ),
+    Effect.tap((versions) => Effect.annotateCurrentSpan("migration.count", versions.length)),
+    Effect.withSpan("MigrationHistory.listRemote"),
   );
 
 /** Whether a query error is Postgres's `undefined_table` (42P01). */
@@ -428,6 +430,8 @@ export const readMigrationTable = (session: DbSession) =>
           message: `failed to read migration table: ${error.message}`,
         }),
     ),
+    Effect.tap((files) => Effect.annotateCurrentSpan("migration.count", files.length)),
+    Effect.withSpan("MigrationHistory.readTable"),
   );
 
 /**

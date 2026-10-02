@@ -56,7 +56,12 @@ export function ensureImagesCached(
 
   return Effect.gen(function* () {
     const results = yield* Effect.all(
-      uniqueImages.map((image) => resolveImage(image).pipe(Effect.result)),
+      uniqueImages.map((image) =>
+        resolveImage(image).pipe(
+          Effect.result,
+          Effect.withSpan("ImagePrepull.resolveImage", { attributes: { "image.name": image } }),
+        ),
+      ),
       { concurrency: "unbounded" },
     );
 
@@ -86,6 +91,7 @@ export function ensureImagesCached(
       resolved.set(image, result.success);
     }
 
+    yield* Effect.annotateCurrentSpan("image.failed_count", failures.length);
     if (failures.length > 0) {
       // The install hint is appended once after every resolve finishes, rather than emitted
       // from inside the resolver, to avoid duplicate hints from concurrent failures.
@@ -99,5 +105,9 @@ export function ensureImagesCached(
     }
 
     return resolved;
-  });
+  }).pipe(
+    Effect.withSpan("ImagePrepull.ensureImagesCached", {
+      attributes: { "image.count": uniqueImages.length },
+    }),
+  );
 }

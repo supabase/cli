@@ -89,7 +89,7 @@ export interface ConfigPullInput {
   readonly source: ConfigPullSource;
 }
 
-export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput) {
+export const runConfigPull = Effect.fn("config.pull.run")(function* (input: ConfigPullInput) {
   const output = yield* Output;
 
   const runPlan = yield* planConfigPullRun({
@@ -99,6 +99,12 @@ export const runConfigPull = Effect.fnUntraced(function* (input: ConfigPullInput
   });
   const { changeSet, scope, plan: finalPlan, context, configFilePath } = runPlan;
   const ref = context.projectRef;
+  yield* Effect.annotateCurrentSpan({
+    "project.ref": ref,
+    "config.dry_run": input.dryRun,
+    "change.count": changeSet.counts.total,
+    "config.write_count": finalPlan.writes.length,
+  });
 
   // The text one-line disposition drops the caveats (opts.withCaveats: false) since the
   // change-by-change body above already rendered the same Note: lines; the machine-mode message
@@ -250,6 +256,7 @@ export const configPull = Effect.fn("config.pull")(function* (flags: ConfigPullF
       mapBranchResolveError,
     );
     resolvedRef = ref;
+    yield* Effect.annotateCurrentSpan("config.target_is_branch", branch !== undefined);
 
     yield* runConfigPull({
       target: { ref, branch },

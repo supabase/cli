@@ -25,6 +25,10 @@ export const dbStart = Effect.fn("db.start")(function* (flags: DbStartFlags) {
   const body = Effect.gen(function* () {
     const backend = yield* currentStackBackend;
     const fromBackup = Option.getOrUndefined(flags.fromBackup);
+    yield* Effect.annotateCurrentSpan({
+      "stack.backend": backend.kind,
+      "db.start.from_backup": fromBackup !== undefined && fromBackup.length > 0,
+    });
     if (backend.kind === "stack") {
       if (fromBackup !== undefined && fromBackup.length > 0) {
         return yield* new DbStartFromBackupUnsupportedError({

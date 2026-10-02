@@ -17,9 +17,9 @@ import {
   Stdio,
 } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
-import { Credentials } from "../auth/credentials.service.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
 import type { CliSettings } from "../config/cli-settings.service.ts";
 import type { ProjectLinkState } from "../config/project-link-state.service.ts";
@@ -37,7 +37,6 @@ import {
 import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
-import { CliProjectLocalServiceVersions } from "../config/cli-project-local-service-versions.service.ts";
 import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
@@ -52,7 +51,11 @@ import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
-import { tracingLayer } from "../telemetry/tracing.layer.ts";
+import {
+  resolveTraceSettings,
+  withDebugConsole,
+  withTraceExport,
+} from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 import {
@@ -574,14 +577,6 @@ function cliProgramFor<
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
     // if a root-level invocation ever touches them.
-    Layer.succeed(Credentials, {
-      getAccessToken: Effect.die("unexpected root credentials access"),
-      saveAccessToken: () => Effect.die("unexpected root credentials write"),
-      deleteAccessToken: Effect.die("unexpected root credentials deletion"),
-    }),
-    Layer.succeed(CliProjectLocalServiceVersions, {
-      load: Effect.die("unexpected root project local service versions access"),
-    }),
     Layer.succeed(CliConfigStore, {
       load: () => Effect.die("unexpected root cli-config access"),
       loadFile: () => Effect.die("unexpected root cli-config file access"),
@@ -596,10 +591,10 @@ function cliProgramFor<
     ),
   );
   const commandProgram = options.beforeParse ?? Effect.void;
-  const cliProgramLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
+  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
     Layer.provideMerge(options.analyticsLayer),
-    Layer.provideMerge(tracingLayer),
-    Layer.provideMerge(telemetryRuntimeLayer),
+  );
+  const cliProgramLayer = telemetryRuntimeLayer.pipe(
     Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
     Layer.provideMerge(cliProjectContextLayerFor(runtimeLayer)),
@@ -617,7 +612,17 @@ function cliProgramFor<
       rootCommand,
       args,
     },
-  ).pipe(Effect.provide(cliProgramLayer));
+  ).pipe(Effect.provide(commandLayer), withDebugConsole, Effect.provide(cliProgramLayer));
+}
+
+/**
+ * Marks `cli.run` failed for a non-zero exit, after the outcome is already rendered and reported.
+ * It is recovered to the exit code right outside the span, so it is a span signal, not a CLI error.
+ */
+class CliNonZeroExit {
+  readonly _tag = "CliNonZeroExit";
+  readonly name = "CliNonZeroExit";
+  constructor(readonly code: number) {}
 }
 
 export const runCli = Effect.fnUntraced(function* <
@@ -631,6 +636,7 @@ export const runCli = Effect.fnUntraced(function* <
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
   options: RunCliOptions<BeforeParseError>,
 ) {
+  const bootMs = Math.round(performance.now());
   const args = yield* Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     return yield* stdio.args;
@@ -684,21 +690,22 @@ export const runCli = Effect.fnUntraced(function* <
   ).pipe(Effect.provide(processControlLayer));
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
-  const handledProgramLayer = outputLayerFor(outputFormat).pipe(
+  const runToExitCodeLayer = outputLayerFor(outputFormat).pipe(
     Layer.provideMerge(telemetryRuntimeLayer),
     Layer.provideMerge(cliProjectHomeLayerFor(handledRuntimeLayer)),
     Layer.provideMerge(cliSettingsLayerFor(handledRuntimeLayer)),
     Layer.provideMerge(cliProjectContextLayerFor(handledRuntimeLayer)),
-    Layer.provideMerge(processControlLayer),
-    Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(ttyLayer),
-    Layer.provideMerge(BunServices.layer),
     Layer.provideMerge(goProxyInvocationLayer),
     Layer.provideMerge(successTrailerLayer),
+  );
+  const handledProgramLayer = processControlLayer.pipe(
+    Layer.provideMerge(runtimeInfoLayer),
+    Layer.provideMerge(BunServices.layer),
     Layer.provideMerge(cliConfigProviderLayer),
   );
 
-  const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const goProxyInvocation = yield* GoProxyInvocation;
@@ -747,12 +754,37 @@ export const runCli = Effect.fnUntraced(function* <
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
         yield* afterSuccess(exitCode, true);
-        return yield* processControl.exit(exitCode);
+        return exitCode;
       }
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
-      return yield* processControl.exit(exitCode ?? 0);
-    }).pipe(Effect.provide(handledProgramLayer));
+      return exitCode ?? 0;
+    }).pipe(Effect.provide(runToExitCodeLayer));
+
+  // The exit code is resolved inside the traced scope so its flush completes before
+  // `processControl.exit`, which skips finalizers.
+  const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const exitCode = yield* resolveTraceSettings.pipe(
+        Effect.flatMap((settings) =>
+          withTraceExport(settings, { "process.boot_ms": bootMs })(
+            runToExitCode(program).pipe(
+              Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+              Effect.flatMap((code) =>
+                code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
+              ),
+            ),
+          ),
+        ),
+        Effect.catchTag("CliNonZeroExit", (failure) => Effect.succeed(failure.code)),
+      );
+      return yield* processControl.exit(exitCode);
+    }).pipe(
+      Effect.withTracerEnabled(false),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      Effect.provide(handledProgramLayer),
+    );
 
   if (useGlobalSignalInterrupt) {
     return yield* handledProgram(signalAwareProgram);

@@ -181,7 +181,7 @@ export interface InternalResolveCliConfigOptions {
   readonly goViperCompat?: boolean;
 }
 
-export const loadCliProjectEnvironment = Effect.fnUntraced(function* (
+export const loadCliProjectEnvironment = Effect.fn("ProjectEnvironment.load")(function* (
   options: LoadCliProjectEnvironmentOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
