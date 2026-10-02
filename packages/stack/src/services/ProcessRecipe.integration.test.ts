@@ -100,7 +100,7 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
     });
   });
 
-// No saved stacks to consult outside the claim-interaction test below.
+// No saved stacks to consult.
 const testReadPortClaims = Effect.succeed([]);
 const testReserveNativePort = (
   key: string,
@@ -996,79 +996,77 @@ describe("process recipe startup", () => {
     ).pipe(Effect.provide(platform)),
   );
 
-  it.live(
-    "reserves a native backend port from the below-ephemeral range, never an OS-assigned one",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const crypto = yield* Crypto.Crypto;
-          const client = yield* HttpClient.HttpClient;
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-range-" });
-          const cacheRoot = path.join(root, "cache");
-          yield* nativePoolerArtifact(cacheRoot);
-          const creation: Pooler.Creation = {
-            service: "pooler",
-            config: {
-              databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
-              jwtSecret: "pooler-port-range-test-secret-with-more-than-32-characters",
-              tenant: "port-range-test",
-              poolMode: "transaction",
-            },
-          };
-          // Pooler reserves "http" and "sql" concurrently; sharing one scan start forces both
-          // to contend for the same first candidate so the reservation has to skip one of them.
-          const sharedStart = Effect.succeed(yield* randomPortSpanStart(crypto));
-          const contendingReserveNativePort = (
-            key: string,
-            claims: ReadonlyArray<State.StackClaims>,
-            excluded: ReadonlySet<number>,
-          ) => reserveNativePort(claims, key, sharedStart, excluded);
-          const recipe = yield* makeProcessRecipe(
-            creation,
-            {
-              stackId: "process-recipe-port-range",
-              instanceId: "instance",
-              root,
-              cacheRoot,
-              runtime: "native",
-              platform: { os: process.platform, arch: process.arch },
-            },
-            {
-              fs,
-              path,
-              crypto,
-              client,
-              spawner,
-              container: undefined,
-              readPortClaims: testReadPortClaims,
-              reserveNativePort: contendingReserveNativePort,
-            },
-            Pooler.makeSpec(),
-          );
-          if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
-          const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-          const runtime = yield* recipe.definition.launch({
-            id: "pooler",
-            config: creation,
-            scope,
-          });
-          yield* runtime.health;
-          const endpoints = yield* Ref.get(recipe.endpoints);
-          const endpoint = endpoints.get("http");
-          // Below Linux's default ephemeral range, so the released probe port isn't handed to an
-          // outgoing connection there; a custom host dynamic range can still overlap (ADR 0017).
-          expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
-          expect(endpoint?.port).toBeLessThan(32768);
-          // Pooler reserves "http" and "sql" concurrently; they must never settle on the same port.
-          const sql = endpoints.get("sql");
-          expect(sql?.port).toBeDefined();
-          expect(sql?.port).not.toBe(endpoint?.port);
-          yield* runtime.stop;
-        }),
-      ).pipe(Effect.provide(platform)),
+  it.live("reserves a native backend port below the default ephemeral range", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const client = yield* HttpClient.HttpClient;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "process-recipe-port-range-" });
+        const cacheRoot = path.join(root, "cache");
+        yield* nativePoolerArtifact(cacheRoot);
+        const creation: Pooler.Creation = {
+          service: "pooler",
+          config: {
+            databaseUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+            jwtSecret: "pooler-port-range-test-secret-with-more-than-32-characters",
+            tenant: "port-range-test",
+            poolMode: "transaction",
+          },
+        };
+        // Pooler reserves "http" and "sql" concurrently; sharing one scan start forces both
+        // to contend for the same first candidate so the reservation has to skip one of them.
+        const sharedStart = Effect.succeed(yield* randomPortSpanStart(crypto));
+        const contendingReserveNativePort = (
+          key: string,
+          claims: ReadonlyArray<State.StackClaims>,
+          excluded: ReadonlySet<number>,
+        ) => reserveNativePort(claims, key, sharedStart, excluded);
+        const recipe = yield* makeProcessRecipe(
+          creation,
+          {
+            stackId: "process-recipe-port-range",
+            instanceId: "instance",
+            root,
+            cacheRoot,
+            runtime: "native",
+            platform: { os: process.platform, arch: process.arch },
+          },
+          {
+            fs,
+            path,
+            crypto,
+            client,
+            spawner,
+            container: undefined,
+            readPortClaims: testReadPortClaims,
+            reserveNativePort: contendingReserveNativePort,
+          },
+          Pooler.makeSpec(),
+        );
+        if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
+        const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          config: creation,
+          scope,
+        });
+        yield* runtime.health;
+        const endpoints = yield* Ref.get(recipe.endpoints);
+        const endpoint = endpoints.get("http");
+        // Below Linux's default ephemeral range, so the released probe port isn't handed to an
+        // outgoing connection there; a custom host dynamic range can still overlap (ADR 0017).
+        expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
+        expect(endpoint?.port).toBeLessThan(32768);
+        // Pooler reserves "http" and "sql" concurrently; they must never settle on the same port.
+        const sql = endpoints.get("sql");
+        expect(sql?.port).toBeDefined();
+        expect(sql?.port).not.toBe(endpoint?.port);
+        yield* runtime.stop;
+      }),
+    ).pipe(Effect.provide(platform)),
   );
 
   it.live("stops after three consecutive native Pooler port collisions", () =>

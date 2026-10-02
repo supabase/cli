@@ -132,7 +132,7 @@ const bindNativePort = (
 
 const emptyPortSet: ReadonlySet<number> = new Set();
 
-/** Backend ports aren't persisted, so a random start buys nothing by staying stable across reopens. */
+/** Random, so a reopened stack doesn't retry a backend port still in server-side `TIME_WAIT`. */
 export const randomPortSpanStart = (crypto: Crypto.Crypto): Effect.Effect<number> =>
   crypto.randomIntBetween(0, portSpan, { halfOpen: true });
 
