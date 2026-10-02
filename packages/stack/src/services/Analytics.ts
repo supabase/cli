@@ -5,6 +5,7 @@ import { databaseConnection, requiredInput } from "./ServiceConfig.ts";
 import { type ProcessRecipeSpec } from "./ProcessRecipe.ts";
 
 export const Config = Schema.Struct({
+  /** The Postgres server Logflare uses; its path is ignored, as Logflare always uses `_supabase`. */
   databaseUrl: Schema.optionalKey(Schema.String),
   backend: Schema.optionalKey(Schema.Literal("postgres")),
   apiKey: Schema.optionalKey(Schema.String),
@@ -33,9 +34,7 @@ interface BackendConnection {
 }
 
 /** Derives Logflare's backend database from Analytics' database URL and its credential defaults. */
-export const backendConnection = Effect.fn("Analytics.backendConnection")(function* (
-  databaseUrl: string,
-) {
+export const backendConnection = Effect.fnUntraced(function* (databaseUrl: string) {
   const db = yield* databaseConnection(databaseUrl);
   const connection = {
     host: db.host,

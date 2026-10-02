@@ -30,7 +30,7 @@ export interface AnalyticsDatabase {
  * Locates Logflare's backend database from Analytics' database URL. A bound database is reached at
  * its endpoint, because the bound URL addresses it from Analytics' runtime.
  */
-export const analyticsDatabase = Effect.fn("LogflareStorage.analyticsDatabase")(function* (
+export const analyticsDatabase = Effect.fnUntraced(function* (
   databaseUrl: string,
   bound: ServiceEndpoint | undefined,
 ) {
