@@ -23,17 +23,30 @@ export interface AnalyticsDatabase {
   readonly url: string;
 }
 
+/** Query parameters node-postgres reads to pick the host or TLS, which a bound endpoint replaces. */
+const addressParameters = /^(?:host|port|ssl.*)$/u;
+
 /**
  * Locates Logflare's backend database from Analytics' database URL. A bound database is reached at
- * its endpoint, because the bound URL addresses it from Analytics' runtime.
+ * its endpoint, because the bound URL addresses it from Analytics' runtime; the endpoint is a local
+ * port or socket, so TLS settings meant for the runtime's address are dropped.
  */
 export const analyticsDatabase = Effect.fnUntraced(function* (
   databaseUrl: string,
   bound: ServiceEndpoint | undefined,
 ) {
   const backend = yield* backendConnection(databaseUrl);
-  if (bound === undefined) return { url: backend.url } satisfies AnalyticsDatabase;
   const url = new URL(backend.url);
+  if (bound === undefined) {
+    // node-postgres otherwise reads `sslmode=require` as `verify-full` rather than as libpq does.
+    if ([...url.searchParams.keys()].some((name) => name.startsWith("ssl")))
+      url.searchParams.set("uselibpqcompat", "true");
+    return { url: url.toString() } satisfies AnalyticsDatabase;
+  }
+  const replaced = Array.from(url.searchParams.keys()).filter((name) =>
+    addressParameters.test(name),
+  );
+  for (const name of replaced) url.searchParams.delete(name);
   // A socket directory is passed as the `host` parameter, which takes precedence over the hostname.
   if (bound.kind === "unix" && bound.path !== undefined) url.searchParams.set("host", bound.path);
   else url.hostname = bound.host ?? "127.0.0.1";

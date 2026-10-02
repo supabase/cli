@@ -21,6 +21,18 @@ it("merges structured Auth lines into metadata and keeps the raw message", () =>
   });
 });
 
+it("ships an Auth JSON line nested too deep for metadata as its raw message", () => {
+  const depth = 16_000;
+  const line = `{"msg":"deep","detail":${"[".repeat(depth)}${"]".repeat(depth)}}`;
+  expect(logflareEvent("auth", received, line)).toEqual({
+    project: "default",
+    appname: "auth",
+    event_message: line,
+    timestamp: received,
+    metadata: {},
+  });
+});
+
 it("splits PostgREST's timestamp prefix from the message and converts its zone offset", () => {
   expect(
     logflareEvent("rest", received, "28/Sep/2026:12:30:15 +0200: Starting PostgREST 13.0.7..."),

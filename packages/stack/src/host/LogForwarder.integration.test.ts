@@ -407,12 +407,18 @@ describe("LogForwarder", () => {
           if (logLevel === "Warn") warnings.push(message);
         }),
       ]);
+      const manual = yield* makeManualClock;
       yield* database.log("after a failed read");
       yield* analytics.set(true);
 
-      yield* startForwarder(flaky, logflare, [analytics.instance, database.instance]).pipe(
-        Effect.provide(captured),
-      );
+      yield* startForwarder(
+        flaky,
+        logflare,
+        [analytics.instance, database.instance],
+        manual.clock,
+      ).pipe(Effect.provide(captured));
+      yield* manual.sleeping(retryMillis);
+      yield* manual.advance(retryMillis);
       const shipped = yield* logflare.next;
 
       expect(messages(shipped)).toEqual(["after a failed read"]);
@@ -972,6 +978,25 @@ describe("LogForwarder", () => {
 
       expect(messages(posted)).toEqual(["before � after", "next line"]);
       expect((yield* storedMessages(logflare)).slice(0, 2)).toEqual(messages(posted));
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("keeps shipping an instance's lines after a JSON line nested too deep for metadata", () =>
+    Effect.gen(function* () {
+      const { store, logflare, analytics } = yield* fixture();
+      const auth = yield* serviceSource(store, "auth");
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [analytics.instance, auth.instance]);
+      const depth = 16_000;
+      const deep = `{"detail":${"[".repeat(depth)}${"]".repeat(depth)}}`;
+
+      yield* auth.log(deep);
+      const posted = yield* logflare.next;
+      yield* auth.log("later line");
+      const later = yield* logflare.next;
+
+      expect(messages(posted)).toEqual([deep]);
+      expect(messages(later)).toEqual(["later line"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

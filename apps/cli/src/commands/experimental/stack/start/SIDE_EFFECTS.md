@@ -44,7 +44,8 @@ PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string 
 persisted and shipped to Analytics.
 When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
 members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
-under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep.
+under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
+migration that fails is logged as a warning and retried by the next owner start.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each

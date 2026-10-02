@@ -25,11 +25,20 @@ export interface LogflareEvent {
   readonly metadata: Record<string, unknown>;
 }
 
+/** Deeper JSON lines ship unparsed, since metadata is sanitized and serialized recursively. */
+const maxMetadataDepth = 32;
+
+const withinDepth = (value: unknown, depth: number): boolean =>
+  typeof value !== "object" ||
+  value === null ||
+  (depth < maxMetadataDepth &&
+    Object.values(value).every((child) => withinDepth(child, depth + 1)));
+
 const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
   if (!text.startsWith("{")) return undefined;
   try {
     const value: unknown = JSON.parse(text);
-    return Predicate.isObject(value) ? value : undefined;
+    return Predicate.isObject(value) && withinDepth(value, 0) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -170,22 +179,32 @@ const storableRecord = (record: object): Record<string, unknown> =>
     Object.entries(record).map(([key, value]) => [storableText(key), storableValue(value)]),
   );
 
-/** Builds the Logflare event for one service log line received at `timestamp`. */
+const storableEvent = (event: LogflareEvent): LogflareEvent => ({
+  ...event,
+  event_message: storableText(event.event_message),
+  metadata: storableRecord(event.metadata),
+});
+
+/**
+ * Builds the Logflare event for one service log line received at `timestamp`; a line its
+ * service's remap cannot convert ships as its raw message.
+ */
 export const logflareEvent = (
   service: ShippedService,
   timestamp: string,
   message: string,
 ): LogflareEvent => {
-  const event = remaps[service]({
+  const raw: LogflareEvent = {
     project: "default",
     event_message: message,
     appname: service,
     timestamp,
     metadata: {},
-  });
-  return {
-    ...event,
-    event_message: storableText(event.event_message),
-    metadata: storableRecord(event.metadata),
   };
+  // A throwing remap would otherwise end the instance's shipping session for good.
+  try {
+    return storableEvent(remaps[service](raw));
+  } catch {
+    return storableEvent(raw);
+  }
 };

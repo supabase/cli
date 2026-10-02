@@ -669,8 +669,9 @@ const makeState = (
       entry === "vector.rendered.yaml" ||
       entry.startsWith(".vector-write-");
     /**
-     * Instance data roots that still hold Vector recipe files. Found by layout rather than by
-     * saved ids, so a cleanup that failed is retried after the document no longer names Vector.
+     * Resolved instance data roots that still hold Vector recipe files. Found by layout rather than
+     * by saved ids, so a cleanup that failed is retried after the document no longer names Vector.
+     * A root whose config directory resolves elsewhere is skipped, so removal stays in the stack.
      */
     const vectorDataRoots = (id: string) =>
       Effect.gen(function* () {
@@ -682,13 +683,24 @@ const makeState = (
           ),
           retryTransientRead,
         );
+        if (entries.length === 0) return [];
+        const realDataRoot = path.join(
+          yield* fs.realPath(stackRoot(id)).pipe(retryTransientRead),
+          "data",
+        );
         const roots: Array<string> = [];
         for (const entry of entries.filter(Schema.is(SafeId))) {
-          const instanceRoot = path.join(dataRoot, entry);
+          const instanceRoot = path.join(realDataRoot, entry);
+          const configRoot = vectorConfigRoot(instanceRoot);
           // Another service's data directory may be unreadable to this process.
           const configEntries = yield* fs
-            .readDirectory(vectorConfigRoot(instanceRoot))
-            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+            .realPath(vectorConfigRoot(path.join(dataRoot, entry)))
+            .pipe(
+              Effect.flatMap((resolved) =>
+                resolved === configRoot ? fs.readDirectory(configRoot) : Effect.succeed([]),
+              ),
+              Effect.orElseSucceed((): ReadonlyArray<string> => []),
+            );
           if (configEntries.some(isVectorRecipe)) roots.push(instanceRoot);
         }
         return roots;
@@ -711,10 +723,10 @@ const makeState = (
           ),
         ),
       );
-    /** The saved document text when it still holds a Vector instance. */
-    const legacyVector = (target: string) =>
+    /** Whether the saved document still holds a Vector instance. */
+    const holdsVector = (target: string) =>
       Effect.gen(function* () {
-        if (!(yield* fs.exists(target).pipe(retryTransientRead))) return undefined;
+        if (!(yield* fs.exists(target).pipe(retryTransientRead))) return false;
         const text = yield* fs.readFileString(target).pipe(retryTransientRead);
         const { removed } = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
           text,
@@ -722,24 +734,33 @@ const makeState = (
           Effect.map(withoutVectorInstances),
           Effect.orElseSucceed(() => ({ removed: [] })),
         );
-        return removed.length === 0 ? undefined : text;
+        return removed.length > 0;
+      });
+    /** What a migration still has to do, or `undefined` when the stack no longer holds Vector. */
+    const vectorLeftovers = (id: string) =>
+      Effect.gen(function* () {
+        const legacy = yield* holdsVector(statePath(id));
+        const candidates = yield* vectorDataRoots(id);
+        if (!legacy && candidates.length === 0) return undefined;
+        const saved = yield* read(id);
+        // Vector files in a saved instance's root belong to that instance, e.g. a caller's config.
+        const live = new Set(saved?.instances.map((instance) => instance.id));
+        const roots = candidates.filter((root) => !live.has(path.basename(root)));
+        return legacy || roots.length > 0
+          ? { saved: legacy ? saved : undefined, roots }
+          : undefined;
       });
     const migrate = Effect.fn("State.migrate")(function* (id: string) {
       yield* checkId(id);
-      const target = statePath(id);
       // Only a stack that still holds Vector takes the registry lock, to migrate it.
-      if ((yield* legacyVector(target)) === undefined && (yield* vectorDataRoots(id)).length === 0)
-        return;
+      if ((yield* vectorLeftovers(id)) === undefined) return;
       yield* withLock(
         Effect.gen(function* () {
-          const text = yield* legacyVector(target);
-          const state = text === undefined ? undefined : yield* decodeState(text, id, target);
-          if (state !== undefined && state.id !== id)
-            return yield* stateError("identity", "State document identity does not match its path");
-          const roots = yield* vectorDataRoots(id);
-          yield* Effect.annotateCurrentSpan({ vector_data_roots: roots.length });
-          yield* Effect.forEach(roots, removeVectorData, { discard: true });
-          if (state !== undefined) yield* save(state);
+          const leftovers = yield* vectorLeftovers(id);
+          if (leftovers === undefined) return;
+          yield* Effect.annotateCurrentSpan({ vector_data_roots: leftovers.roots.length });
+          yield* Effect.forEach(leftovers.roots, removeVectorData, { discard: true });
+          if (leftovers.saved !== undefined) yield* save(leftovers.saved);
         }),
       );
     });
