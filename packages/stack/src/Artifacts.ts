@@ -150,6 +150,27 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
           },
         },
       },
+      "17.11.0.002-orioledb": {
+        upstreamVersion: "17.11.0.002-orioledb",
+        revision: 0,
+        image:
+          "ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:8bfda219b7748273a46c3f097df3562a73087df8170ca4be4316f8215bf6b765",
+        upstreamImage: "supabase/postgres:17.11.0.002-orioledb",
+        natives: {
+          "darwin-arm64": {
+            archive: "66670aca62cb96a5eb555bc6d0b39e1e2581247b664c75bb3325a44eac475843",
+            manifest: "2a0ac16cc7cfa78a44a3876cdacd8f77622a85c55458bd80fa465daaab76b478",
+          },
+          "linux-amd64": {
+            archive: "a2ea7fdd73f5f516db52ae05ca6ea52d8c94423177503f42ee8c9c2dd2474104",
+            manifest: "71d538e058c642b6cf7277f935074c3022b45a464079f9797ab0656d2edf2bdb",
+          },
+          "linux-arm64": {
+            archive: "981c0c74ca229bb1744675527599d1180a9adef85314d2d4c0e46406c5cfa0bd",
+            manifest: "3faab299bedc021f5e7208d761614f3ee8a3fe08439de901a94ba2889ede404f",
+          },
+        },
+      },
     },
   ),
   rest: definition(

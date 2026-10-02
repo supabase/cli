@@ -1507,35 +1507,31 @@ describe("against the real catalog", () => {
     expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
   });
 
-  test("adding the OrioleDB line keeps every stock postgres pin and plans it as its own line", async () => {
+  test("the OrioleDB line and stock 17 update independently", async () => {
     const catalog = await Bun.file(CATALOG_PATH).text();
-    const release = "17.11.0.002-orioledb-r0";
-    const digests = nativeDigests("real-oriole");
-    const added = await refreshCatalogPin({
-      catalog,
-      service: "postgres",
-      release,
-      io: {
-        listReleaseTags: async () => [`postgres-${release}`],
-        fetchChecksums: async () => checksumsFor("postgres", release, digests),
-        imageDigest: async () => digest("real-oriole"),
-        s3Sha256: matchingS3("postgres", release, digests),
-        fetchManifest: manifestWithUpstreamImage("supabase/postgres:17.11.0.002-orioledb"),
-        fetchProvenance: unusedFetchProvenance,
-      },
-    });
-    const formatted = await formatWithOxfmt(added.source);
-
-    for (const line of catalog.split("\n")) expect(formatted).toContain(line);
     expect(
-      planSlimUpdates(formatted, "postgres", ["postgres-17.11.0.002-orioledb-r1"]).updates,
+      planSlimUpdates(catalog, "postgres", [
+        "postgres-17.11.0.002-r0",
+        "postgres-17.11.0.003-r0",
+        "postgres-17.11.0.002-orioledb-r0",
+        "postgres-17.11.0.002-orioledb-r1",
+      ]).updates,
     ).toEqual([
+      {
+        kind: "upgrade",
+        line: "17",
+        branch: "slim-bump/postgres-17",
+        title: "chore(stack): bump postgres to 17.11.0.003-r0",
+        fromRelease: "17.11.0.002-r0",
+        toUpstream: "17.11.0.003",
+        toRelease: "17.11.0.003-r0",
+      },
       {
         kind: "hotfix",
         line: "17-orioledb",
         branch: "slim-hotfix/postgres-17-orioledb",
         title: "chore(stack): pin postgres 17.11.0.002-orioledb-r1",
-        fromRelease: release,
+        fromRelease: "17.11.0.002-orioledb-r0",
         toUpstream: "17.11.0.002-orioledb",
         toRelease: "17.11.0.002-orioledb-r1",
       },

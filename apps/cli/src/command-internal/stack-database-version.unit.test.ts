@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import { Result } from "effect";
 
 import { stackDatabaseVersion } from "./stack-database-version.ts";
@@ -17,6 +18,18 @@ describe("stackDatabaseVersion", () => {
     expect(
       stackDatabaseVersion({ major_version: 17, orioledb_version: "17.11.0.002" }, published),
     ).toEqual(Result.succeed("17.11.0.002-orioledb"));
+  });
+
+  it("routes every OrioleDB version the artifact catalog pins", () => {
+    const pinned = orioledbVersions();
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const version of pinned)
+      expect(
+        stackDatabaseVersion({
+          major_version: Number(postgresMajor(version)),
+          orioledb_version: version,
+        }),
+      ).toEqual(Result.succeed(`${version}-orioledb`));
   });
 
   it("rejects an OrioleDB version whose major differs from db.major_version", () => {
