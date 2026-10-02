@@ -15,6 +15,7 @@ import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
+import { withChildTraceEnv, withProcessSpan } from "../../../shared/telemetry/spans.ts";
 import {
   readSigningKeysFile,
   resolveSigningKeysConfigPaths,
@@ -185,21 +186,21 @@ const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: 
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relative = path.relative(gitRoot, filePath).replaceAll("\\", "/");
-  const command = ChildProcess.make(
-    "git",
-    // `--` terminates flag parsing so a path beginning with `-` is never read as a git option.
-    ["-C", gitRoot, "check-ignore", "--quiet", "--", relative],
-    {
-      detached: true,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    },
-  );
+  // `--` terminates flag parsing so a path beginning with `-` is never read as a git option.
+  const args = ["-C", gitRoot, "check-ignore", "--quiet", "--", relative];
+  const options: ChildProcess.CommandOptions = {
+    detached: true,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  };
 
-  return yield* spawner
-    .exitCode(command)
-    .pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
+  return yield* withProcessSpan(
+    "GenSigningKey.gitCheckIgnore",
+    { executable: "git", argCount: args.length },
+    (traceEnv) =>
+      spawner.exitCode(ChildProcess.make("git", args, withChildTraceEnv(options, traceEnv))),
+  ).pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
 });
 
 export const genSigningKey = Effect.fn("gen.signing-key")(function* (flags: GenSigningKeyFlags) {

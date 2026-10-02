@@ -266,6 +266,8 @@ function prepareClient(
       }
       return next;
     }),
+    // Trace context stays local; no API consumer reads it.
+    HttpClient.transformResponse(Effect.provideService(HttpClient.TracerPropagationEnabled, false)),
   );
 
   const retried = applySupabaseRetryPolicy(prefixed, options?.retry);
@@ -500,7 +502,7 @@ function executeRequest(
     const request = yield* buildRequest(definition, input);
     const response = yield* client.execute(request);
     return yield* HttpClientResponse.filterStatusOk(response);
-  });
+  }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } }));
 }
 
 function isJsonOperation<Id extends OperationId>(
@@ -597,7 +599,7 @@ export function makeSupabaseApiClient(
             ),
           );
           return yield* prepared.execute(request);
-        }),
+        }).pipe(Effect.withSpan(definition.id, { attributes: { "api.operation": definition.id } })),
     };
   });
 }

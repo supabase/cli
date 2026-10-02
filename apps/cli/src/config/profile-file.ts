@@ -14,20 +14,6 @@ import {
  * profile; `CommandSettings` reads it as the lowest-precedence profile source.
  */
 
-/**
- * Resolves the global Supabase home for the CLI. Delegates to the
- * shared `resolveSupabaseHome` contract (honors `SUPABASE_HOME`, else
- * `<homeDir>/.supabase`). The CLI reads ambient `process.env`
- * directly, so `env` defaults to it.
- */
-export function supabaseHome(
-  path: Path.Path,
-  homeDir: string,
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string {
-  return resolveSupabaseHome(path, env, homeDir);
-}
-
 /** Raised when persisting the profile name fails — fails `login` outright,
  * blocking subsequent CI commands that rely on the persisted profile. */
 export class ProfileSaveError extends Data.TaggedError("ProfileSaveError")<{
@@ -43,7 +29,7 @@ export function profileFilePath(
   homeDir: string,
   env?: Readonly<Record<string, string | undefined>>,
 ): string {
-  return path.join(supabaseHome(path, homeDir, env), "profile");
+  return path.join(resolveSupabaseHome(path, env ?? process.env, homeDir), "profile");
 }
 
 /** Writes the profile name to the resolved profile path. Fatal on failure. */

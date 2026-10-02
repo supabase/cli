@@ -4,12 +4,9 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Console, ConfigProvider, Deferred, Effect, Layer, Option, Stream } from "effect";
 import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
+import { testRunEnvVar as stackTestRunEnvVar } from "@supabase/stack/internal/test-run-label";
 import { cliSettingsLayer } from "../../src/shared/config/cli-settings.layer.ts";
 import { CliProjectHome } from "../../src/shared/config/cli-project-home.service.ts";
-import {
-  CliProjectLocalServiceVersions,
-  type LocalServiceVersionsState,
-} from "../../src/shared/config/cli-project-local-service-versions.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
@@ -521,9 +518,7 @@ export function mockAnalytics() {
 export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
-    tracesDir: string;
     consent: "granted" | "denied";
-    showDebug: boolean;
     deviceId: string;
     sessionId: string;
     distinctId: string | undefined;
@@ -539,9 +534,7 @@ export function mockTelemetryRuntime(
     TelemetryRuntime,
     TelemetryRuntime.of({
       configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
-      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
       consent: opts.consent ?? "granted",
-      showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
       identity: makeTelemetryIdentity(opts.distinctId),
@@ -577,7 +570,12 @@ export function processEnvLayer(
   return ConfigProvider.layer(
     Effect.acquireRelease(
       Effect.sync(() => {
-        const snapshot = applyProcessEnv(values);
+        const ambientTestRun = process.env[stackTestRunEnvVar];
+        const snapshot = applyProcessEnv(
+          stackTestRunEnvVar in values || ambientTestRun === undefined
+            ? values
+            : { [stackTestRunEnvVar]: ambientTestRun, ...values },
+        );
         return {
           provider: ConfigProvider.fromEnvRecord(process.env, { preserveEmptyStrings: true }),
           snapshot,
@@ -661,27 +659,12 @@ function mockProjectLinkState(
   );
 }
 
-function mockCliProjectLocalServiceVersions(
-  initialState?: LocalServiceVersionsState,
-): Layer.Layer<CliProjectLocalServiceVersions, never, never> {
-  let state = initialState;
-  return Layer.succeed(
-    CliProjectLocalServiceVersions,
-    CliProjectLocalServiceVersions.of({
-      load: Effect.sync(() =>
-        state === undefined ? Option.none<LocalServiceVersionsState>() : Option.some(state),
-      ),
-    }),
-  );
-}
-
 export function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
   const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer();
   const cliProjectHomeLayer = mockCliProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
-  const cliProjectLocalServiceVersionsLayer = mockCliProjectLocalServiceVersions();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
@@ -689,7 +672,6 @@ export function emptyEnv() {
     cliProjectContextLayer,
     cliProjectHomeLayer,
     projectLinkStateLayer,
-    cliProjectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     mockTty(),

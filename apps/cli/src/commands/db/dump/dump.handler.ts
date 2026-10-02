@@ -351,6 +351,12 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
         .pipe(Effect.mapError(toOpenFileError));
     }
 
+    yield* Effect.annotateCurrentSpan({
+      "db.dump.mode": mode.verb,
+      "db.is_local": isLocal,
+      "db.dump.dry_run": flags.dryRun,
+    });
+
     // 6. Diagnostic to stderr (printed for both real and dry-run paths).
     yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
 
@@ -430,6 +436,7 @@ export const dbDump = Effect.fn("db.dump")(function* (flags: DbDumpFlags) {
           reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
         }),
       ),
+      Effect.withSpan("db.dump.run"),
       Effect.catchIf(
         (error): error is DockerRunError =>
           Predicate.isTagged(error, "DockerRunError") &&

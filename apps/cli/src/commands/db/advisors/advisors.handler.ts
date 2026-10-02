@@ -41,7 +41,7 @@ import { splitLintsSql } from "./advisors.lints-sql.ts";
 const loginSuggestion = (): string => `Run ${aqua("supabase login")} first.`;
 
 /** Queries and scans the lints, minus the transaction the caller owns. */
-const queryLints = Effect.fnUntraced(function* (session: DbSession) {
+const queryLints = Effect.fn("DbAdvisors.queryLints")(function* (session: DbSession) {
   const [setupSql, querySql] = splitLintsSql();
   yield* session.exec(setupSql).pipe(
     Effect.mapError(
@@ -58,11 +58,12 @@ const queryLints = Effect.fnUntraced(function* (session: DbSession) {
         (cause) => new DbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
       ),
     );
+  yield* Effect.annotateCurrentSpan("advisor.count", rows.length);
   return rows.map(scanAdvisorLintRow);
 });
 
 /** Gathers lints from a local (or `--db-url`) database connection. */
-const runLocal = Effect.fnUntraced(function* (
+const runLocal = Effect.fn("db.advisors.runLocal")(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
@@ -108,7 +109,7 @@ const runLocal = Effect.fnUntraced(function* (
 });
 
 /** Gathers lints from the Management API for the linked project. */
-const runLinked = Effect.fnUntraced(function* (
+const runLinked = Effect.fn("db.advisors.runLinked")(function* (
   flags: DbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
@@ -233,6 +234,12 @@ const runAdvisors = Effect.fnUntraced(function* (
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
+  yield* Effect.annotateCurrentSpan({
+    "db.conn_type": target.connType ?? "local",
+    "advisor.type": advisorType,
+    "advisor.level": level,
+    "advisor.fail_on": failOn,
+  });
 
   // Branches on whether `--linked` was explicitly set: linked → Management
   // API; otherwise local / `--db-url`.
@@ -240,6 +247,7 @@ const runAdvisors = Effect.fnUntraced(function* (
     target.connType === "linked"
       ? yield* runLinked(flags, dnsResolver, advisorType, level)
       : yield* runLocal(flags, dnsResolver, advisorType, level, target);
+  yield* Effect.annotateCurrentSpan("advisor.reported_count", filtered.length);
 
   yield* outputAndCheck(filtered, failOn);
 });

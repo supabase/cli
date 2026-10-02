@@ -216,7 +216,7 @@ const downloadSingle = (
   );
 
 /** Recursively downloads a remote prefix: BFS walk, truncating existing files, creating parent dirs. */
-const downloadAll = (
+const downloadAll = Effect.fn("storage.cp.downloadAll")(function* (
   gateway: StorageGateway,
   output: typeof Output.Service,
   fs: FileSystem.FileSystem,
@@ -226,70 +226,71 @@ const downloadAll = (
   localPath0: string,
   jobs: number,
   summary: CpSummary,
-) =>
-  Effect.gen(function* () {
-    // If the destination is an existing directory, nest under base(remotePath).
-    const isDir = yield* fs.stat(localPath0).pipe(
-      Effect.map((i) => i.type === "Directory"),
-      Effect.orElseSucceed(() => false),
-    );
-    const localPath = isDir ? path.join(localPath0, posixPath.basename(remotePath)) : localPath0;
+) {
+  // If the destination is an existing directory, nest under base(remotePath).
+  const isDir = yield* fs.stat(localPath0).pipe(
+    Effect.map((i) => i.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
+  const localPath = isDir ? path.join(localPath0, posixPath.basename(remotePath)) : localPath0;
 
-    const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
-    // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
-    // mask a walk error, and a walk that errors partway must still run the already-queued
-    // downloads before the walk error surfaces — so this is checked after the download pass below.
-    const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
-      Effect.gen(function* () {
-        const relPath = objectPath.startsWith(remotePath)
-          ? objectPath.slice(remotePath.length)
-          : objectPath;
-        const dstPath = path.join(localPath, relPath);
-        yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
-        tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
-      }),
-    ).pipe(
-      Effect.as<StorageGatewayError | undefined>(undefined),
-      Effect.catch((error) => Effect.succeed(error)),
-    );
+  const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
+  // Captured as a value, not failed immediately: an "Object not found" (nothing visited) must
+  // mask a walk error, and a walk that errors partway must still run the already-queued
+  // downloads before the walk error surfaces — so this is checked after the download pass below.
+  const iterError = yield* iterateStoragePathsAll(gateway, output, remotePath, (objectPath) =>
+    Effect.gen(function* () {
+      const relPath = objectPath.startsWith(remotePath)
+        ? objectPath.slice(remotePath.length)
+        : objectPath;
+      const dstPath = path.join(localPath, relPath);
+      yield* output.raw(`Downloading: ${objectPath} => ${dstPath}\n`, "stderr");
+      tasks.push({ objectPath, dstPath, isDir: objectPath.endsWith("/") });
+    }),
+  ).pipe(
+    Effect.as<StorageGatewayError | undefined>(undefined),
+    Effect.catch((error) => Effect.succeed(error)),
+  );
 
-    if (tasks.length === 0) {
-      return yield* new StorageObjectNotFoundError(remotePath);
-    }
+  yield* Effect.annotateCurrentSpan({ "file.count": tasks.length });
 
-    yield* Effect.forEach(
-      tasks,
-      (task) =>
-        task.isDir
-          ? makeDirIfNotExist(fs, task.dstPath)
-          : Effect.gen(function* () {
-              yield* makeDirIfNotExist(fs, path.dirname(task.dstPath));
-              yield* Effect.scoped(
-                Effect.gen(function* () {
-                  const handle = yield* fs.open(task.dstPath, { flag: "w" }).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new StorageFileError({
-                          message: `failed to create file: ${String(cause.cause ?? cause)}`,
-                        }),
-                    ),
-                  );
-                  yield* gateway
-                    .downloadObject(task.objectPath)
-                    .pipe(Stream.runForEach((c) => writeChunk(handle, c)));
-                }),
-              );
-              summary.downloaded.push({ from: task.objectPath, to: task.dstPath });
-            }),
-      { concurrency: jobs },
-    );
+  if (tasks.length === 0) {
+    return yield* new StorageObjectNotFoundError(remotePath);
+  }
 
-    // Surfaced only after the queued downloads have run; a download failure propagates from the
-    // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
-    if (iterError !== undefined) {
-      return yield* iterError;
-    }
-  });
+  yield* Effect.forEach(
+    tasks,
+    (task) =>
+      task.isDir
+        ? makeDirIfNotExist(fs, task.dstPath)
+        : Effect.gen(function* () {
+            yield* makeDirIfNotExist(fs, path.dirname(task.dstPath));
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const handle = yield* fs.open(task.dstPath, { flag: "w" }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new StorageFileError({
+                        message: `failed to create file: ${String(cause.cause ?? cause)}`,
+                      }),
+                  ),
+                );
+                yield* gateway
+                  .downloadObject(task.objectPath)
+                  .pipe(Stream.runForEach((c) => writeChunk(handle, c)));
+              }),
+            );
+            summary.downloaded.push({ from: task.objectPath, to: task.dstPath });
+          }),
+    { concurrency: jobs },
+  );
+
+  // Surfaced only after the queued downloads have run; a download failure propagates from the
+  // pass above first, so a rare walk-error + download-error pair collapses to whichever fails first.
+  if (iterError !== undefined) {
+    return yield* iterError;
+  }
+});
 
 const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
   fs.makeDirectory(dir, { recursive: true }).pipe(
@@ -338,49 +339,55 @@ const uploadSingle = (ctx: UploadCtx, remoteDstPath: string, localPath: string) 
   });
 
 /** Recursively uploads a local directory: walks files, resolves each destination key, auto-creating the bucket if needed. */
-const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: number) =>
-  Effect.gen(function* () {
-    const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
+const uploadAll = Effect.fn("storage.cp.uploadAll")(function* (
+  ctx: UploadCtx,
+  remotePath: string,
+  localPath: string,
+  jobs: number,
+) {
+  const noSlash = remotePath.endsWith("/") ? remotePath.slice(0, -1) : remotePath;
 
-    // Detect whether base(noSlash) already exists remotely as a file or dir.
-    let dirExists = false;
-    let fileExists = false;
-    if (noSlash.length > 0) {
-      const base = ctx.posixPath.basename(noSlash);
-      yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
-        Effect.sync(() => {
-          if (objectName === base) fileExists = true;
-          if (objectName === `${base}/`) dirExists = true;
-        }),
-      );
-    }
-
-    const baseName = ctx.path.basename(localPath);
-    const files = yield* collectUploadFiles(ctx.fs, ctx.path, localPath);
-
-    const tasks: Array<{ filePath: string; dstPath: string }> = [];
-    for (const file of files) {
-      const dstPath = resolveUploadDstPath(ctx.posixPath, {
-        remotePath,
-        relPath: file.relPath,
-        fileName: ctx.path.basename(file.filePath),
-        baseName,
-        noSlash,
-        dirExists,
-        fileExists,
-      });
-      yield* ctx.output.raw(`Uploading: ${file.filePath} => ${dstPath}\n`, "stderr");
-      tasks.push({ filePath: file.filePath, dstPath });
-    }
-
-    yield* Effect.forEach(
-      tasks,
-      (task) => uploadOneWithAutoCreate(ctx, task.dstPath, task.filePath),
-      {
-        concurrency: jobs,
-      },
+  // Detect whether base(noSlash) already exists remotely as a file or dir.
+  let dirExists = false;
+  let fileExists = false;
+  if (noSlash.length > 0) {
+    const base = ctx.posixPath.basename(noSlash);
+    yield* iterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
+      Effect.sync(() => {
+        if (objectName === base) fileExists = true;
+        if (objectName === `${base}/`) dirExists = true;
+      }),
     );
-  });
+  }
+
+  const baseName = ctx.path.basename(localPath);
+  const files = yield* collectUploadFiles(ctx.fs, ctx.path, localPath);
+
+  const tasks: Array<{ filePath: string; dstPath: string }> = [];
+  for (const file of files) {
+    const dstPath = resolveUploadDstPath(ctx.posixPath, {
+      remotePath,
+      relPath: file.relPath,
+      fileName: ctx.path.basename(file.filePath),
+      baseName,
+      noSlash,
+      dirExists,
+      fileExists,
+    });
+    yield* ctx.output.raw(`Uploading: ${file.filePath} => ${dstPath}\n`, "stderr");
+    tasks.push({ filePath: file.filePath, dstPath });
+  }
+
+  yield* Effect.annotateCurrentSpan({ "file.count": tasks.length });
+
+  yield* Effect.forEach(
+    tasks,
+    (task) => uploadOneWithAutoCreate(ctx, task.dstPath, task.filePath),
+    {
+      concurrency: jobs,
+    },
+  );
+});
 
 /** One recursive upload (overwrite), retrying after bucket auto-create on 404. */
 const uploadOneWithAutoCreate = (ctx: UploadCtx, dstPath: string, filePath: string) =>

@@ -25,4 +25,7 @@ const makeCliProjectContext = Effect.gen(function* () {
   });
 });
 
-export const cliProjectContextLayer = Layer.effect(CliProjectContext, makeCliProjectContext);
+export const cliProjectContextLayer = Layer.effect(
+  CliProjectContext,
+  makeCliProjectContext.pipe(Effect.withSpan("CliProjectContext.load")),
+);

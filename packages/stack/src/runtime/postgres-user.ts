@@ -214,13 +214,19 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
     targets.push(getkey);
   }
   // -P never follows symlinks inside the tree, and directories change owner after their contents.
+  const chownArgs = ["-R", "-P", `${user.uid}:${user.gid}`, ...targets];
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": "chown",
+    "process.arg_count": chownArgs.length,
+  });
   const status = yield* spawner.exitCode(
-    ChildProcess.make("chown", ["-R", "-P", `${user.uid}:${user.gid}`, ...targets], {
+    ChildProcess.make("chown", chownArgs, {
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
     }),
   );
+  yield* Effect.annotateCurrentSpan("process.exit_code", Number(status));
   if (Number(status) !== 0)
     return yield* new ServiceError({
       operation: "launch",

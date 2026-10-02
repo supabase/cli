@@ -11,7 +11,8 @@
     "./commands": "./src/Commands.ts",
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/artifacts": "./src/internal/artifacts.ts",
-    "./internal/release": "./src/internal/release.ts"
+    "./internal/release": "./src/internal/release.ts",
+    "./internal/test-run-label": "./src/internal/test-run-label.ts"
   },
   "scripts": {
     "generate": "bun run scripts/generate-functions-bootstrap.ts",

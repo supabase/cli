@@ -25,8 +25,8 @@ src/commands/<command>/
   SIDE_EFFECTS.md        # required compatibility contract
 ```
 
-Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Tracing is
-local observability and span names follow `<command>.<sub>`. Read `src/shared/` and the
+Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
+phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under
 `src/config/`, `src/auth/`, `src/telemetry/`, `src/output/`, and `src/command-internal/` before
 adding an equivalent helper.
@@ -116,10 +116,10 @@ contracts remain unchanged. Update tests, generated schemas, and side-effect doc
 > [`src/shared/telemetry/error-tag-stability.unit.test.ts`](src/shared/telemetry/error-tag-stability.unit.test.ts)
 > compares every CLI and `@supabase/config` tag with the committed snapshot.
 
-Native commands use `withCommandTelemetry` from `telemetry/command-telemetry.ts`, not shared
-`withCommandInstrumentation`; pass the handler's `flags`, and pass its own `config` when it has
-choice flags. Preserve the established property shape (`flags`, `is_agent`, and `env_signals`),
-use canonical names and keys from the [event catalog](src/shared/telemetry/event-catalog.ts), and redact sensitive values.
+Native commands use `withCommandTelemetry` from `telemetry/command-telemetry.ts`; pass the
+handler's `flags`, and pass its own `config` when it has choice flags. Preserve the established
+property shape (`flags`, `is_agent`, and `env_signals`), use canonical names and keys from the
+[event catalog](src/shared/telemetry/event-catalog.ts), and redact sensitive values.
 
 `safeFlags` may include only values that carry no user data. Keep the established safe project,
 project-id, org-id, and version cases. When `--project-ref` also accepts branch names, whitelist

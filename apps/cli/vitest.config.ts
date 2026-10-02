@@ -68,6 +68,7 @@ export default defineConfig({
           // Integration workers start real service processes and containers.
           maxWorkers: 4,
           sequence: { groupOrder: 1 },
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
         },
       },
       {
@@ -77,6 +78,7 @@ export default defineConfig({
           fileParallelism: false,
           maxWorkers: 1,
           setupFiles: ["tests/e2e-setup.ts"],
+          globalSetup: ["../../packages/stack/tests/docker-volume-run.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

@@ -1054,4 +1054,5 @@ const connect = (
     return session;
   });
 
-export const dbConnectionSqlPgLayer = Layer.succeed(DbConnection, { connect });
+/** The active `DbConnection` layer, backed by `@effect/sql-pg`. */
+export const dbConnectionLayer = Layer.succeed(DbConnection, { connect });

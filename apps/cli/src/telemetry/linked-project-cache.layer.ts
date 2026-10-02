@@ -58,6 +58,7 @@ export const linkedProjectCacheLayer = Layer.effect(
           const resolvedWorkdir = workdir ?? cliSettings.workdir;
           const cachePath = tempPaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
+          yield* Effect.annotateCurrentSpan({ "cache.hit": exists });
           if (exists) return;
 
           // The cache must describe the linked workdir's own state, not whatever ref the calling
@@ -96,7 +97,9 @@ export const linkedProjectCacheLayer = Layer.effect(
           const response = yield* httpClient.execute(request);
           // Stitch identity from the response before the status gate, regardless of status.
           yield* stitch(response);
+          yield* Effect.annotateCurrentSpan({ "http.response.status_code": response.status });
           if (response.status !== 200) return;
+
           const body = yield* response.json;
 
           const linked = {
@@ -123,7 +126,7 @@ export const linkedProjectCacheLayer = Layer.effect(
               organization_slug: linked.organization_slug,
             });
           }
-        }).pipe(Effect.ignore),
+        }).pipe(Effect.withSpan("LinkedProjectCache.cache"), Effect.ignore),
     });
   }),
 );
