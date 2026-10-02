@@ -309,7 +309,7 @@ export const stackMajorVersionSetting: StackEndpointSetting = {
   envVar: "SUPABASE_DB_MAJOR_VERSION",
 };
 
-/** `db.orioledb_version`'s config key and `SUPABASE_DB_ORIOLEDB_VERSION` override, read in `createCreations`. */
+/** `db.orioledb_version`'s config key and `SUPABASE_DB_ORIOLEDB_VERSION` override. */
 export const stackOrioledbVersionSetting: StackEndpointSetting = {
   configPath: "db.orioledb_version",
   envVar: "SUPABASE_DB_ORIOLEDB_VERSION",

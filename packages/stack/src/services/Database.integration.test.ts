@@ -213,7 +213,7 @@ describe("database component", { timeout: 180_000 }, () => {
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
-  it.live("resumes a native first start interrupted before readiness on its recorded line", () =>
+  it.live("resumes an interrupted stock native first start and refuses it for OrioleDB", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
