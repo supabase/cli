@@ -119,6 +119,19 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live("destroys a stack addressed by the short ID that stack list shows", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+
+      yield* stackDestroy({ ...f.flags, stackId: Option.some(f.stack.id.slice(0, 8)) }).pipe(
+        Effect.provide(f.layer),
+      );
+
+      expect(yield* f.api.discover(f.locations)).toEqual([]);
+      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+    }).pipe(Effect.provide(live)),
+  );
+
   it.live(
     "destroys a live namespace and standalone services while preserving caller-owned uploads",
     () =>

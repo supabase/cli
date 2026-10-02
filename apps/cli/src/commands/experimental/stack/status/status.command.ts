@@ -8,7 +8,7 @@ import { stackStatus } from "./status.handler.ts";
 const config = {
   stack: Flag.string("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
   stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Inspect an existing stack by id."),
+    Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
   env: Flag.boolean("env").pipe(
