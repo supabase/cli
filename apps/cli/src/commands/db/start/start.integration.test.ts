@@ -23,6 +23,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
@@ -1733,7 +1734,7 @@ describe("db start stack backend", () => {
       },
       stop: Effect.void,
       destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
-      gateway: { readLogs: () => Stream.die("unused") },
+      gateway: unusedGateway,
       commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };

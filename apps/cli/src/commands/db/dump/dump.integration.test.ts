@@ -16,6 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   VALID_REF,
   mockCommandSettings,
@@ -153,7 +154,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
     },
     stop: Effect.void,
     destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
-    gateway: { readLogs: () => Stream.die("unused") },
+    gateway: unusedGateway,
     commands: { run: runCommand },
   } satisfies Stack;
   return Layer.succeed(StackApi, {

@@ -1135,6 +1135,12 @@ it.live(
           expect.objectContaining({ target: "/elsewhere", status: 404, bytes: 9 }),
           expect.objectContaining({ target: "/down/thing", status: 502, bytes: 11 }),
         ]);
+
+        // A later sentinel request proves none of the four requests above recorded twice.
+        const sentinelStatus = yield* get("/api/ok?select=sentinel");
+        const sentinel = yield* Queue.take(accesses);
+        expect(sentinelStatus).toBe(200);
+        expect(sentinel).toMatchObject({ target: "/api/ok?select=sentinel" });
         expect(yield* Queue.size(accesses)).toBe(0);
       }),
     ).pipe(

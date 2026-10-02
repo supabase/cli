@@ -9,6 +9,7 @@ import {
   StackError,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -176,7 +177,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
-  gateway: { readLogs: () => Stream.die("unused") },
+  gateway: unusedGateway,
   commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },

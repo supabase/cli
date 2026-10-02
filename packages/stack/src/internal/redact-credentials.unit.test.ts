@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { redactCredentials } from "./HttpProxy.ts";
+import { redactCredentials } from "./redact-credentials.ts";
 
 describe("redactCredentials", () => {
   it.each([

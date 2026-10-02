@@ -14,6 +14,7 @@ import {
 } from "effect";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
+import { unusedGateway } from "../../../../../../tests/helpers/unused-stack.ts";
 import {
   alwaysReadyHttpClientLayer,
   defaultLocalResetRoute,
@@ -166,7 +167,7 @@ function syncStackApi(workdir: string, port: number) {
     },
     stop: unusedSync,
     destroy: unusedSync,
-    gateway: { readLogs: () => Stream.die("unused") },
+    gateway: unusedGateway,
     commands: { run: unusedSyncFn },
   };
   const identity = { projectRoot: workdir, branchContext: "main", stackName: "default" };
