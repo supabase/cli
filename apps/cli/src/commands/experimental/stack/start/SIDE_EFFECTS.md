@@ -87,10 +87,35 @@ verification, replace the saved configuration of the existing instances; their i
 and ports are retained. Changed exclusions reuse existing service identities, data, and ports.
 Removed services remain saved and stopped so including them again can reuse them; a saved stopped
 instance of a newly included service is reused when its endpoints and versions still match. The
-project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
-version fails before modifying the stopped composition, naming the `config.toml` key or
-`SUPABASE_*` env var behind the change with its saved and requested values, and suggesting either
-reverting it or running the stack's exact `supabase stack destroy` command to recreate it.
+project configuration file is unchanged. The requested creations travel into the stack package's own
+owner startup: when every incompatible path across the whole composition is a changed endpoint, each
+is re-planned there while the new owner alone holds the stack's lease, before it registers endpoint
+namespaces from the saved state: as late as practical, just before its own normal endpoint binding
+claims the newly requested port, or a freshly chosen automatic one, it saves the updated endpoint
+intent with the old port claim dropped, reusing every check a live composition bind already applies.
+The rollback covers only this save-and-claim commit, which finishes before the owner serves RPC or
+publishes its holder: a failure or interruption there, not only a claim conflict, restores the saved
+state and claims as they read before the re-plan, except a claim whose old port another stack took in
+the meantime, which is left unclaimed so the next start reports it as a normal port conflict instead
+of overlapping that stack's claim; a hard process death in this window is an accepted limitation, and
+the next successful start converges the saved state again. A later startup failure, once that commit
+succeeds, keeps the committed (consistent) state instead of rolling it back, since an attached client
+may already have persisted its own change by then; the next start reuses it. This includes a failure
+during the CLI's own database preparation (see First startup and retries below). A concurrent start
+attaches to whichever owner wins that race instead of re-planning again. If the
+saved stack's owner exits between this command's liveness check and the moment it opens the stack,
+the freshly spawned replacement owner boots without the requested creations and this start falls
+back to today's rejection; every later start now sees that replacement owner as running and skips
+the re-plan too. Recovering means: stop the stack, then start it again. Text
+output prints one line per changed endpoint naming its old and new port; JSON and stream-json output
+add the same changes to the success payload. Any other incompatible path blocks the re-plan for the
+whole composition, even for a member whose own change is purely a changed endpoint: a changed
+`config.toml`-backed or env-var-backed setting (such as a changed PostgreSQL major version) still
+fails before modifying the stopped composition, naming the key or env var behind the change with its
+saved and requested values and suggesting reverting it; a changed catalog-pinned artifact version or
+a same-major PostgreSQL build mismatch, which no `config.toml` key or env var controls, instead uses
+a plain label with no revert advice. Either way the failure suggests running the stack's exact
+`supabase stack destroy` command to recreate it.
 
 ## First startup and retries
 
@@ -134,10 +159,11 @@ and warnings written while the spinner is shown appear on their own rows.
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint
 name (protocol, address, port, and URL, matching `stack status`, with no synthetic entries),
 `lazy_services` listing members that start on their first request (empty with `--eager`), `env`
-(the same connection map `stack status --env` exports, present on every success path), and an
-empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
-example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
-after success or failure.
+(the same connection map `stack status --env` exports, present on every success path), an
+`endpoint_changes` array naming each re-planned endpoint with its old and new port when the start
+applied any, and an empty message. See
+[`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an example. Failures retain
+typed command errors and package diagnostics. Telemetry state is flushed after success or failure.
 
 A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
 envelope: one entry per affected service (a shared setting such as the API port appears once per

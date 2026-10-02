@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
-import { closeSync, writeSync } from "node:fs";
-import { SavedStack } from "../State.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor, and the startup payload file predates any service layer.
+import { closeSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { HostStartupPayload } from "../HostProcess.ts";
 import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
 
 const writeLine = (value: unknown) =>
@@ -34,7 +34,7 @@ const options = (
   report: (value: unknown) => Effect.Effect<void, StackHostError>,
 ): Effect.Effect<StackHostOptions, StackHostError> =>
   Effect.gen(function* () {
-    const [stateRoot, cacheRoot, stackId, register, ...rest] = args;
+    const [stateRoot, cacheRoot, stackId, payloadFile, ...rest] = args;
     if (
       stateRoot === undefined ||
       cacheRoot === undefined ||
@@ -43,21 +43,44 @@ const options = (
     )
       return yield* new StackHostError({
         operation: "startup",
-        message: "Expected stateRoot, cacheRoot, stackId and an optional stack to register",
+        message: "Expected stateRoot, cacheRoot, stackId and an optional startup payload file",
       });
-    const registered =
-      register === undefined
+    // The launcher writes this file once, under the owner's own state directory with owner-only
+    // permissions; reading and deleting it here, before anything else, keeps its secrets off argv
+    // and off this process's whole lifetime in a live process list.
+    const payload: HostStartupPayload | undefined =
+      payloadFile === undefined || payloadFile === ""
         ? undefined
-        : yield* Schema.decodeEffect(Schema.fromJsonString(SavedStack))(register).pipe(
-            Effect.mapError(
-              (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+        : yield* Effect.gen(function* () {
+            const text = yield* Effect.try({
+              try: () => readFileSync(payloadFile, "utf8"),
+              catch: (cause) =>
+                new StackHostError({ operation: "startup", message: String(cause) }),
+            });
+            return yield* Schema.decodeEffect(Schema.fromJsonString(HostStartupPayload))(text).pipe(
+              Effect.mapError(
+                (cause) => new StackHostError({ operation: "startup", message: cause.message }),
+              ),
+            );
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                try {
+                  unlinkSync(payloadFile);
+                } catch {
+                  // Already removed, or the parent is cleaning up; the secret is gone either way.
+                }
+              }),
             ),
           );
     return {
       stateRoot,
       cacheRoot,
       stackId,
-      ...(registered === undefined ? {} : { register: registered }),
+      ...(payload?.register === undefined ? {} : { register: payload.register }),
+      ...(payload?.requestedCreations === undefined
+        ? {}
+        : { requestedCreations: payload.requestedCreations }),
       onReady: ({ endpoint, secret }) => report({ type: "ready", endpoint, secret }),
     };
   });

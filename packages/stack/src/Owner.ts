@@ -116,6 +116,15 @@ export interface Interface {
   };
   readonly setDraining: (draining: boolean) => Effect.Effect<void>;
   readonly getServing: Effect.Effect<boolean>;
+  /**
+   * Binds each instance's configured endpoints, claiming any not yet bound through the same
+   * `Ports.acquire` path and checks a normal composition bind uses; already-bound endpoints are
+   * untouched. Lets a re-planned endpoint's new port claim happen at owner startup, before the
+   * saved definition's endpoint namespaces otherwise bind only when the composition starts.
+   */
+  readonly claimEndpoints: (
+    ids: ReadonlyArray<string>,
+  ) => Effect.Effect<void, Orchestrator.OrchestratorError | ServiceError>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
@@ -706,6 +715,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     },
     setDraining: (value) => Ref.set(draining, value),
     getServing: Ref.get(draining).pipe(Effect.map((isDraining) => !isDraining)),
+    claimEndpoints: (ids) =>
+      Effect.forEach(
+        ids,
+        (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
+        {
+          discard: true,
+        },
+      ).pipe(Effect.withSpan("Owner.claimEndpoints")),
   } satisfies Interface;
 });
 

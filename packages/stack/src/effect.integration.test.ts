@@ -22,7 +22,9 @@ import {
   find,
   open,
   type DatabaseInstance,
+  type ServiceCreationInput,
   type ServiceInstance,
+  type StackError,
 } from "./effect.ts";
 import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
@@ -1064,4 +1066,476 @@ it.live("plans a project's own URL for an input whose supplying member is absent
       destroyTestStack(stack),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+const replanDatabase = (tag: string) =>
+  ({
+    service: "database",
+    config: {
+      version: "17",
+      databasePassword: Redacted.make(`${tag}-password`),
+      jwtSecret: Redacted.make(`${tag}-jwt-secret-at-least-32-characters-long`),
+      jwtExpiry: 3600,
+    },
+    endpoints: { sql: { port: "auto" } },
+  }) as const;
+
+const restPort = (status: { readonly endpoints: ReadonlyArray<{ name: string; port: number }> }) =>
+  status.endpoints.find(({ name }) => name === "http")?.port;
+
+/** Stops the owner, then opens a fresh one that re-plans `requestedCreations` against the saved state. */
+const restartWithReplan = (
+  stack: { readonly id: string; readonly stop: Effect.Effect<void, StackError> },
+  stateRoot: string,
+  cacheRoot: string,
+  requestedCreations: ReadonlyArray<ServiceCreationInput>,
+) =>
+  stack.stop.pipe(
+    Effect.andThen(
+      open({ id: stack.id, stateRoot, cacheRoot, startOwner: true, requestedCreations }),
+    ),
+  );
+
+it.live(
+  "re-plans a stopped stack's fixed endpoint to automatic, keeping data and other saved ports",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-auto-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-auto");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+          const sqlPortBefore = (yield* (yield* stack.services.get(databaseId))
+            .status).endpoints.find(({ name }) => name === "sql")?.port;
+
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          expect(changes).toHaveLength(1);
+          const change = changes[0];
+          expect(change?.service).toBe("rest");
+          expect(change?.endpoint).toBe("http");
+          expect(change?.from).toBe(FIXED_API_PORT);
+          // Automatic selection can legitimately land back on the old number; what matters is
+          // that it claimed some port and the live bind agrees with that claim, checked below.
+          expect(change?.to).toEqual(expect.any(Number));
+
+          expect(yield* reopened.composition.plan([database, requestedAuto])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          yield* reopened.composition.supabase([database, requestedAuto], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* reopened.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(change?.to);
+          const sqlPortAfter = (yield* (yield* reopened.services.get(databaseId))
+            .status).endpoints.find(({ name }) => name === "sql")?.port;
+          expect(sqlPortAfter).toBe(sqlPortBefore);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "re-plans a stopped stack's automatic endpoint to a fixed port, and a fixed port to a different one",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-fixed-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-fixed");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: "auto" } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const requestedFixed = {
+            ...rest,
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const toFixed = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedFixed,
+          ]);
+          expect(yield* toFixed.startupEndpointChanges).toEqual([
+            { service: "rest", endpoint: "http", from: expect.any(Number), to: FIXED_API_PORT },
+          ]);
+          expect(yield* toFixed.composition.plan([database, requestedFixed])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          const requestedOtherFixed = {
+            ...rest,
+            endpoints: { http: { port: FIXED_API_PORT + 1 } },
+          } as const;
+          const toOtherFixed = yield* restartWithReplan(toFixed, stateRoot, cacheRoot, [
+            database,
+            requestedOtherFixed,
+          ]);
+          expect(yield* toOtherFixed.startupEndpointChanges).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: FIXED_API_PORT + 1 },
+          ]);
+          expect(yield* toOtherFixed.composition.plan([database, requestedOtherFixed])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+/** Binds an ephemeral port picked by the OS, so the conflict never collides with another test. */
+const holdPort = Effect.acquireRelease(
+  Effect.callback<Net.Server, Error>((resume) => {
+    const server = Net.createServer();
+    server.once("error", (cause) => resume(Effect.fail(cause)));
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+  }),
+  (server) =>
+    Effect.callback<void>((resume) => {
+      if (!server.listening) return resume(Effect.void);
+      server.close(() => resume(Effect.void));
+    }),
+);
+
+it.live(
+  "fails to claim a conflicting requested port on a stopped stack, leaving its saved state unchanged",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-conflict-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-conflict");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          yield* stack.stop;
+
+          const holder = yield* holdPort;
+          const address = holder.address();
+          const conflictingPort =
+            typeof address === "object" && address !== null ? address.port : 0;
+          expect(conflictingPort).toBeGreaterThan(0);
+
+          const requestedConflicting = {
+            ...rest,
+            endpoints: { http: { port: conflictingPort } },
+          } as const;
+          const failure = yield* open({
+            id: stack.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            requestedCreations: [database, requestedConflicting],
+          }).pipe(Effect.flip);
+          // Linux rejects the overlapping bind itself; other platforms fail the occupancy pre-check.
+          expect(failure.message).toMatch(new RegExp(`\\b${conflictingPort}\\b.*\\bin use\\b`));
+          expect(holder.listening).toBe(true);
+
+          const reopened = yield* open({ id: stack.id, stateRoot, cacheRoot });
+          expect(yield* reopened.composition.plan([database, requestedConflicting])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            {
+              id: restId,
+              service: "rest",
+              member: true,
+              change: "incompatible",
+              paths: ["endpoints.http.port"],
+            },
+          ]);
+          expect(yield* reopened.composition.plan([database, rest])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          // The restored claim is not just reported as unchanged: a start with the old config
+          // actually succeeds, re-plans nothing, and binds REST at its original fixed port.
+          const restarted = yield* restartWithReplan(reopened, stateRoot, cacheRoot, [
+            database,
+            rest,
+          ]);
+          expect(yield* restarted.startupEndpointChanges).toEqual([]);
+          yield* restarted.composition.supabase([database, rest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* restarted.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(FIXED_API_PORT);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "fails to claim two endpoints re-planned onto the same free port, leaving saved state unchanged",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-collide-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-collide");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          yield* stack.stop;
+
+          // Database's sql endpoint and REST's http endpoint use distinct claim keys, so
+          // requesting the same literal port for both is a same-stack collision, not a
+          // same-key no-op.
+          const collidingPort = FIXED_API_PORT + 11;
+          const requestedDatabase = {
+            ...database,
+            endpoints: { sql: { port: collidingPort } },
+          } as const;
+          const requestedRest = { ...rest, endpoints: { http: { port: collidingPort } } } as const;
+          const failure = yield* open({
+            id: stack.id,
+            stateRoot,
+            cacheRoot,
+            startOwner: true,
+            requestedCreations: [requestedDatabase, requestedRest],
+          }).pipe(Effect.flip);
+          expect(failure.message).toContain("claimed by another listener of this stack");
+
+          const reopened = yield* open({ id: stack.id, stateRoot, cacheRoot });
+          expect(yield* reopened.composition.plan([database, rest])).toEqual([
+            { id: databaseId, service: "database", member: true, change: "unchanged" },
+            { id: restId, service: "rest", member: true, change: "unchanged" },
+          ]);
+
+          const restarted = yield* restartWithReplan(reopened, stateRoot, cacheRoot, [
+            database,
+            rest,
+          ]);
+          expect(yield* restarted.startupEndpointChanges).toEqual([]);
+          yield* restarted.composition.supabase([database, rest], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* restarted.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(FIXED_API_PORT);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "leaves a changed Postgres major version incompatible without re-planning any endpoint",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-version-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-version");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest], { eager: true });
+          const databaseId = members.find(({ service }) => service === "database")?.id;
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (databaseId === undefined || restId === undefined)
+            return yield* Effect.die("Composition is missing a member");
+
+          const olderVersion = { ...database, config: { ...database.config, version: "15" } };
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            olderVersion,
+            requestedAuto,
+          ]);
+          expect(yield* reopened.startupEndpointChanges).toEqual([]);
+          expect(yield* reopened.composition.plan([olderVersion, requestedAuto])).toEqual([
+            {
+              id: databaseId,
+              service: "database",
+              member: true,
+              change: "incompatible",
+              paths: ["config.version"],
+            },
+            {
+              id: restId,
+              service: "rest",
+              member: true,
+              change: "incompatible",
+              paths: ["endpoints.http.port"],
+            },
+          ]);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "does not let an excluded sibling's stale fixed port mask a shared endpoint moving to automatic",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-excluded-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-excluded");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const auth = {
+            service: "auth",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          const members = yield* stack.composition.supabase([database, rest, auth], {
+            eager: true,
+          });
+          const restId = members.find(({ service }) => service === "rest")?.id;
+          if (restId === undefined) return yield* Effect.die("Composition is missing REST");
+
+          // The config now omits [api] port and excludes auth, so only REST is requested.
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          const reopened = yield* restartWithReplan(stack, stateRoot, cacheRoot, [
+            database,
+            requestedAuto,
+          ]);
+          const changes = yield* reopened.startupEndpointChanges;
+          // Automatic selection can legitimately land back on the old number; what matters is
+          // that it claimed some port and the live bind agrees with that claim, checked below.
+          expect(changes).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: expect.any(Number) },
+          ]);
+
+          const databaseId = (yield* reopened.services.list).find(
+            ({ service }) => service === "database",
+          )?.id;
+          if (databaseId === undefined) return yield* Effect.die("Composition is missing database");
+          yield* reopened.composition.supabase([database, requestedAuto], {
+            reuseIds: [databaseId, restId],
+            eager: true,
+          });
+          const restStatus = yield* (yield* reopened.services.get(restId)).status;
+          expect(restPort(restStatus)).toBe(changes[0]?.to);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "lets only one of several concurrent starts of a stopped stack re-plan its changed endpoint",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-replan-concurrent-" });
+      const stateRoot = `${root}/state`;
+      const cacheRoot = `${root}/cache`;
+      const stack = yield* create({ projectRoot: root, stateRoot, cacheRoot, runtime: "native" });
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const database = replanDatabase("replan-concurrent");
+          const rest = {
+            service: "rest",
+            config: {},
+            endpoints: { http: { port: FIXED_API_PORT } },
+          } as const;
+          yield* stack.composition.supabase([database, rest], { eager: true });
+          yield* stack.stop;
+
+          const requestedAuto = { ...rest, endpoints: { http: { port: "auto" } } } as const;
+          // Several concurrent starts race on the same lease; only its winner re-plans, and the
+          // others attach to it instead, so every caller observes the identical applied change.
+          const opened = yield* Effect.all(
+            [1, 2, 3].map(() =>
+              open({
+                id: stack.id,
+                stateRoot,
+                cacheRoot,
+                startOwner: true,
+                requestedCreations: [database, requestedAuto],
+              }),
+            ),
+            { concurrency: "unbounded" },
+          );
+          const changeSets = yield* Effect.forEach(
+            opened,
+            (handle) => handle.startupEndpointChanges,
+          );
+          for (const changes of changeSets) expect(changes).toEqual(changeSets[0]);
+          expect(changeSets[0]).toEqual([
+            { service: "rest", endpoint: "http", from: FIXED_API_PORT, to: expect.any(Number) },
+          ]);
+
+          const entries = yield* discover({ stateRoot });
+          const entry = entries.find(({ definition }) => definition.id === stack.id);
+          expect(entry?.definition.ports.filter(({ key }) => key === "api")).toHaveLength(1);
+          expect(new Set(opened.map((handle) => handle.id)).size).toBe(1);
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
 );

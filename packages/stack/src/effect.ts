@@ -36,6 +36,7 @@ import {
 import {
   planSupabaseComposition,
   type PlannedInstance,
+  type PlanOptions,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 import { removeStackContainersCommand } from "./runtime/Container.ts";
@@ -44,7 +45,7 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
-import { StackError, type Definition, type Observation } from "./Rpc.ts";
+import { StackError, type Definition, type EndpointPortChange, type Observation } from "./Rpc.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
@@ -71,12 +72,13 @@ export type { CompositionConfig } from "./Orchestrator.ts";
 export type {
   CreationChange,
   PlannedInstance,
+  PlanOptions,
   SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./State.ts";
 export type { StackCredentials, StackKeysInput };
-export type { Observation } from "./Rpc.ts";
+export type { EndpointPortChange, Observation } from "./Rpc.ts";
 export type {
   Command,
   InitializationCommand,
@@ -111,6 +113,12 @@ export interface CreateOptions extends StackLocations {
 export interface OpenOptions extends StackLocations {
   readonly id: string;
   readonly startOwner?: boolean;
+  /**
+   * Endpoint intents a spawned owner re-plans against the saved state before it registers
+   * endpoint namespaces from it, applying a changed endpoint's port instead of keeping the saved
+   * one. Only a freshly spawned owner acts on this; an already-running owner is unaffected.
+   */
+  readonly requestedCreations?: ReadonlyArray<CatalogServiceCreationInput>;
 }
 
 /** No owner serves the stack: nothing holds its lease, or a sweeper is cleaning it up. */
@@ -252,10 +260,15 @@ export interface Stack {
     ) => Effect.Effect<ReadonlyArray<AnyInstance>, StackError>;
     /**
      * Compares the requested creations with every saved instance of the same kinds, ignoring
-     * inputs the composition supplies, without changing state or contacting the owner.
+     * inputs the composition supplies, without changing state or contacting the owner. A
+     * `complete` request (the default caller's whole desired composition) never falls back to a
+     * saved sibling's port for a shared endpoint kind the request leaves out; a `partial` request
+     * (comparing only the kinds it names) does, so an incremental check keeps matching an
+     * unrelated sibling's still-current port.
      */
     readonly plan: (
       services: ReadonlyArray<ServiceCreationInput>,
+      options?: PlanOptions,
     ) => Effect.Effect<ReadonlyArray<PlannedInstance>, StackError>;
     readonly configure: (config: Orchestrator.CompositionConfig) => Effect.Effect<void, StackError>;
     readonly describe: Effect.Effect<Orchestrator.CompositionConfig, StackError>;
@@ -263,6 +276,14 @@ export interface Stack {
     readonly stop: Effect.Effect<ReadonlyArray<Observation>, StackError>;
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
   };
+  /**
+   * The endpoint port changes the owner this handle reaches applied at its own last startup,
+   * re-planned from `OpenOptions.requestedCreations`. An owner that was already running when this
+   * handle reached it reports whatever its own last startup applied (possibly none), the same as
+   * every other caller reaching that owner; it does not re-plan again for this call. Empty when
+   * that startup re-planned nothing at all.
+   */
+  readonly startupEndpointChanges: Effect.Effect<ReadonlyArray<EndpointPortChange>, StackError>;
   readonly stop: Effect.Effect<void, StackError>;
   readonly destroy: Effect.Effect<DestroyResult, StackError>;
   readonly commands: {
@@ -874,14 +895,14 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             ...(options?.eager === undefined ? {} : { eager: options.eager }),
           }),
         ).pipe(Effect.map((definitions) => definitions.map(instance))),
-      plan: (services: ReadonlyArray<ServiceCreationInput>) =>
+      plan: (services: ReadonlyArray<ServiceCreationInput>, options?: PlanOptions) =>
         Effect.forEach(services, (service) =>
           Schema.decodeEffect(ServiceCreationInputSchema)(service),
         ).pipe(
           Effect.mapError((cause) => failure("plan", cause)),
           Effect.flatMap((requested) =>
             savedDefinition.pipe(
-              Effect.map((current) => planSupabaseComposition(current, requested)),
+              Effect.map((current) => planSupabaseComposition(current, requested, options)),
             ),
           ),
         ),
@@ -892,6 +913,11 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: whileRunning("stopComposition", (rpc) => rpc.stopComposition(), []),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
+    startupEndpointChanges: call(
+      "startupEndpointChanges",
+      (rpc) => rpc.startupEndpointChanges(),
+      "attach",
+    ),
     stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     commands: { run },
@@ -963,7 +989,13 @@ export const open = Effect.fn("Stack.open")(
       ? undefined
       : saved.lifetime === "session"
         ? yield* connectHost(state, saved.id)
-        : yield* launchHost(state, { ...locations, stackId: saved.id });
+        : yield* launchHost(state, {
+            ...locations,
+            stackId: saved.id,
+            ...(options.requestedCreations === undefined
+              ? {}
+              : { requestedCreations: options.requestedCreations }),
+          });
     return yield* makeHandle(state, saved, locations, { access });
   },
   Effect.mapError((cause) => failure("open", cause)),

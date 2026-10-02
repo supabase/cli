@@ -52,7 +52,12 @@ const loopbackOccupied = (port: number) =>
     concurrency: "unbounded",
   }).pipe(Effect.map((answers) => answers.some(Boolean)));
 
-const claimantOf = (stacks: ReadonlyArray<State.StackClaims>, stackId: string, port: number) =>
+/** The other stack, if any, whose registry claim already covers this port. */
+export const claimantOf = (
+  stacks: ReadonlyArray<State.StackClaims>,
+  stackId: string,
+  port: number,
+) =>
   stacks.find((other) => other.id !== stackId && other.ports.some((claim) => claim.port === port))
     ?.id;
 

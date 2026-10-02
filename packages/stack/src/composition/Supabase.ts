@@ -324,23 +324,51 @@ const compareCreation = (
       : { change: "unchanged" };
 };
 
+/**
+ * A `partial` request compares only the kinds it names, so an absent kind falls back to its saved
+ * sibling's port; a `complete` request replaces the whole composition, so an absent kind (for
+ * example one dropped with `--exclude`) must not constrain the shared port it would otherwise
+ * contribute.
+ */
+export interface PlanOptions {
+  readonly requestKind?: "partial" | "complete";
+}
+
+/**
+ * The fixed shared API port the request agrees on. A `partial` request falls back to a saved
+ * sibling's port for a member kind it leaves out; a `complete` request never does, so a request
+ * that moves every sharing member it carries to automatic is not masked by that kind's own stale
+ * saved intent, whether that kind is simply absent or deliberately excluded.
+ */
+const sharedApiPortFor = (
+  saved: Pick<SavedStack, "instances" | "composition">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  options: PlanOptions = {},
+): number | undefined => {
+  const members = new Set(saved.composition.members.map(({ id }) => id));
+  const requestedKinds = new Set(requested.map(({ service }) => service));
+  const ports = fixedApiPorts([
+    ...requested,
+    ...(options.requestKind === "complete"
+      ? []
+      : saved.instances
+          .filter(({ id, creation }) => members.has(id) && !requestedKinds.has(creation.service))
+          .map(({ creation }) => creation)),
+  ]);
+  return ports.size === 1 ? [...ports][0] : undefined;
+};
+
 /** Compares each saved instance of a requested kind with its request, without changing state. */
 export const planSupabaseComposition = (
   saved: Pick<SavedStack, "instances" | "composition">,
   requested: ReadonlyArray<ServiceCreationInput>,
+  options: PlanOptions = {},
 ): ReadonlyArray<PlannedInstance> => {
   const members = new Set(saved.composition.members.map(({ id }) => id));
   const memberKinds = new Set(
     saved.instances.filter(({ id }) => members.has(id)).map(({ creation }) => creation.service),
   );
-  const requestedKinds = new Set(requested.map(({ service }) => service));
-  const ports = fixedApiPorts([
-    ...requested,
-    ...saved.instances
-      .filter(({ id, creation }) => members.has(id) && requestedKinds.has(creation.service))
-      .map(({ creation }) => creation),
-  ]);
-  const sharedPort = ports.size === 1 ? [...ports][0] : undefined;
+  const sharedPort = sharedApiPortFor(saved, requested, options);
   return saved.instances.flatMap(({ id, creation }) => {
     const request = requested.find(({ service }) => service === creation.service);
     return request === undefined
@@ -354,6 +382,97 @@ export const planSupabaseComposition = (
           },
         ];
   });
+};
+
+/** The claim key an endpoint binds under: one shared "api" key, or a dedicated one per instance. */
+const endpointKey = (id: string, service: ServiceCreation["service"], name: string): string =>
+  name === "http" && apiRoute(service) !== undefined ? "api" : `${id}:${name}`;
+
+/** A named endpoint whose port a stopped stack's start can migrate to the requested value. */
+interface EndpointPortChange {
+  readonly id: string;
+  readonly service: ServiceCreation["service"];
+  readonly endpoint: string;
+  readonly key: string;
+  /** The port to request from the port registry: a specific number, or `"auto"`. */
+  readonly port: number | "auto";
+  /** The endpoint's last bound port, when the registry has a claim for its key. */
+  readonly previousPort: number | undefined;
+}
+
+interface EndpointReplan {
+  readonly changes: ReadonlyArray<EndpointPortChange>;
+  /** Each changed member's endpoint intents to persist once every change claims successfully. */
+  readonly endpointsByInstance: ReadonlyMap<string, unknown>;
+}
+
+/**
+ * Plans the endpoint port changes a stopped stack's start can apply instead of failing.
+ * Returns `undefined` when a member is incompatible for a reason besides a pure endpoint port
+ * reassignment (an artifact or database version change, or an added or removed endpoint), so the
+ * caller leaves that case to the existing incompatible-change rejection.
+ */
+export const planEndpointReplan = (
+  saved: Pick<SavedStack, "instances" | "composition" | "ports">,
+  requested: ReadonlyArray<ServiceCreationInput>,
+): EndpointReplan | undefined => {
+  // The start re-plan always replaces the whole composition, so an excluded sibling's stale
+  // saved port must not anchor the shared port this request would otherwise move to automatic.
+  const planOptions: PlanOptions = { requestKind: "complete" };
+  const planned = planSupabaseComposition(saved, requested, planOptions);
+  const incompatibleCount = planned.filter(
+    (entry) => entry.member && entry.change === "incompatible",
+  ).length;
+  if (incompatibleCount === 0) return undefined;
+
+  const sharedPort = sharedApiPortFor(saved, requested, planOptions);
+  const changes: Array<EndpointPortChange> = [];
+  const endpointsByInstance = new Map<string, unknown>();
+
+  for (const entry of planned) {
+    if (!entry.member || entry.change !== "incompatible") continue;
+    const savedInstance = saved.instances.find(({ id }) => id === entry.id);
+    const request = requested.find(({ service }) => service === entry.service);
+    if (savedInstance === undefined || request === undefined) return undefined;
+    const nonEndpointPaths = entry.paths.filter(
+      (path) => path !== "endpoints" && !path.startsWith("endpoints."),
+    );
+    if (nonEndpointPaths.length > 0) return undefined;
+
+    const requestedEndpoints = withSharedApiPort(request, sharedPort);
+    const requestedIntents = { service: request.service, endpoints: requestedEndpoints };
+    const savedNames = endpointNames(savedInstance.creation);
+    const requestedNames = endpointNames(requestedIntents);
+    if (
+      savedNames.length !== requestedNames.length ||
+      !savedNames.every((name) => requestedNames.includes(name))
+    )
+      return undefined;
+
+    for (const name of savedNames) {
+      const previous = endpointPort(savedInstance.creation, name);
+      const next = endpointPort(requestedIntents, name);
+      if (previous === next) continue;
+      const key = endpointKey(entry.id, request.service, name);
+      changes.push({
+        id: entry.id,
+        service: entry.service,
+        endpoint: name,
+        key,
+        port: next,
+        previousPort: saved.ports.find((claim) => claim.key === key)?.port,
+      });
+    }
+    endpointsByInstance.set(entry.id, requestedEndpoints);
+  }
+
+  const seenKeys = new Set<string>();
+  const uniqueChanges = changes.filter((change) => {
+    if (seenKeys.has(change.key)) return false;
+    seenKeys.add(change.key);
+    return true;
+  });
+  return { changes: uniqueChanges, endpointsByInstance };
 };
 
 const compositionError = (message: string, cause?: unknown) =>

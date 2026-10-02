@@ -106,7 +106,24 @@ Fresh automatic claims draw from
 `20000..32767` with a start derived from the stack's project root, identifier, and
 listener key, and stride `257`, making up to 64 bounded
 `EADDRINUSE`/`EACCES` attempts per newly selected binding while skipping
-durable sibling claims. Sticky values do not migrate. Failed acquisition
+durable sibling claims. Sticky values are stable: they do not migrate on their
+own, but a stopped stack's own owner startup re-plans an endpoint whose saved
+port differs from the current configuration while it alone holds the stack's
+lease, before it registers endpoint namespaces from the saved state: as late
+as practical, just before its own normal endpoint binding claims the new one,
+reusing every check a live composition bind already applies, it saves the
+updated endpoint intent with the changed endpoint's old claim dropped. The
+rollback covers only this save-and-claim commit, which finishes before the
+owner serves RPC or publishes its holder: a failure or interruption there
+restores the exact document read before the re-plan, except a claim whose old
+port another stack claimed in the meantime, which stays unclaimed so the next
+start reports a normal port conflict instead of overlapping that stack's
+claim; a hard process death in this window is an accepted limitation, left
+for the next successful start to converge. A later startup failure, once that
+commit succeeds, keeps the committed (consistent) state instead of rolling it
+back, since an attached client may already have persisted its own change by
+then; the next start reuses it. A concurrent start attaches to whichever
+owner wins the lease instead of re-planning again. Failed acquisition
 preserves the
 previous successful arrays, including claims removed or reconfigured by the
 new definition, and releases attempted sockets; those arrays change only after

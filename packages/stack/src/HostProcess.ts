@@ -31,6 +31,7 @@ import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dis
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
 import { StackRpc } from "./Rpc.ts";
+import { ServiceCreationInput } from "./services/Catalog.ts";
 import { SavedStack, type Interface as StateInterface, type StateError } from "./State.ts";
 
 declare const SUPABASE_STACK_BUILD_ID: string | undefined;
@@ -337,6 +338,20 @@ export const shutdownHost = Effect.fn("HostProcess.shutdownHost")(function* (
   );
 });
 
+/**
+ * A spawned owner's registration and requested creations carry database, JWT, and root-key
+ * secrets, and Functions env values. They travel through a private, owner-only file instead of
+ * argv, which a live process list (`ps`) exposes to any local user for the owner's whole
+ * lifetime: the launcher writes this payload once, under the owner's own state directory with
+ * owner-only permissions, and the spawned child reads and deletes it immediately, before it does
+ * anything else.
+ */
+export const HostStartupPayload = Schema.Struct({
+  register: Schema.optionalKey(SavedStack),
+  requestedCreations: Schema.optionalKey(Schema.Array(Schema.toCodecJson(ServiceCreationInput))),
+});
+export interface HostStartupPayload extends Schema.Schema.Type<typeof HostStartupPayload> {}
+
 export interface LaunchOptions {
   readonly stateRoot: string;
   readonly cacheRoot: string;
@@ -344,6 +359,13 @@ export interface LaunchOptions {
   readonly entrypoint?: string;
   /** Registers this definition once the spawned owner holds the lease. */
   readonly register?: SavedStack;
+  /**
+   * Re-plans changed endpoint ports against the saved state once a spawned owner holds the lease,
+   * before it registers endpoint namespaces from that state. Only a spawned owner acts on this; a
+   * launcher that attaches to an already-running owner leaves its endpoints as that owner bound
+   * them at its own startup.
+   */
+  readonly requestedCreations?: ReadonlyArray<ServiceCreationInput>;
   /** Ties a spawned owner to the enclosing scope, whose closure destroys the stack. */
   readonly lifeline?: boolean;
 }
@@ -423,127 +445,175 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
   state: StateInterface,
   options: LaunchOptions,
   entrypoint: string,
-): Effect.fn.Return<Spawned, HostProcessError, Scope.Scope | FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  Spawned,
+  HostProcessError,
+  Scope.Scope | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const log = state.ownerLog(options.stackId);
+  const ownerDir = path.dirname(log);
   yield* fs
-    .makeDirectory(path.dirname(log), { recursive: true, mode: 0o700 })
+    .makeDirectory(ownerDir, { recursive: true, mode: 0o700 })
     .pipe(Effect.mapError((cause) => error("startup", cause)));
-  const register =
-    options.register === undefined
-      ? []
-      : [
-          yield* Schema.encodeEffect(Schema.fromJsonString(SavedStack))(options.register).pipe(
-            Effect.mapError((cause) => error("startup", cause)),
-          ),
-        ];
+  const payload: HostStartupPayload = {
+    ...(options.register === undefined ? {} : { register: options.register }),
+    ...(options.requestedCreations === undefined
+      ? {}
+      : { requestedCreations: options.requestedCreations }),
+  };
+  // A secret-bearing payload travels through a private, owner-only file instead of argv, which a
+  // live process list exposes to any local user for the owner's whole lifetime. The child reads
+  // and deletes this file immediately, before doing anything else; this file's own lifetime spans
+  // the write below and the whole handshake that follows, so a log-open failure, a spawn failure,
+  // or this launcher's own cancellation also deletes it, idempotently alongside a child that
+  // already did. Only the path is computed in the acquire step below, so a write that creates the
+  // file and then fails still reaches the release.
   return yield* Effect.acquireUseRelease(
-    Effect.try({
-      try: () => openSync(log, "a+", 0o600),
-      catch: (cause) => error("startup", `Cannot open the owner log ${log}: ${String(cause)}`),
-    }),
-    (descriptor) =>
+    Object.keys(payload).length === 0
+      ? Effect.void
+      : Effect.gen(function* () {
+          const name = Array.from(yield* crypto.randomBytes(16), (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("");
+          return path.join(ownerDir, `startup-${name}.json`);
+        }).pipe(Effect.mapError((cause) => error("startup", cause))),
+    (payloadFile) =>
       Effect.gen(function* () {
-        const failure = (cause: unknown, reason?: HostFailureReason) => {
-          const tail = logTail(descriptor);
-          return error(
-            "startup",
-            `Stack owner failed to start: ${error("startup", cause).message} (owner log: ${log})${tail.length === 0 ? "" : `\n${tail}`}`,
-            reason,
-          );
-        };
-        const spawnFailed = yield* Deferred.make<never, HostProcessError>();
+        if (payloadFile !== undefined) {
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(HostStartupPayload))(
+            payload,
+          ).pipe(Effect.mapError((cause) => error("startup", cause)));
+          yield* fs
+            .writeFileString(payloadFile, encoded, { mode: 0o600 })
+            .pipe(Effect.mapError((cause) => error("startup", cause)));
+        }
+        const extraArgs = payloadFile === undefined ? [] : [payloadFile];
         return yield* Effect.acquireUseRelease(
           Effect.try({
-            try: () => {
-              const started = spawn(
-                process.execPath,
-                [entrypoint, options.stateRoot, options.cacheRoot, options.stackId, ...register],
-                {
-                  cwd: process.cwd(),
-                  detached: true,
-                  windowsHide: true,
-                  stdio: [
-                    options.lifeline === true ? "pipe" : "ignore",
-                    descriptor,
-                    descriptor,
-                    "pipe",
-                  ],
-                },
-              );
-              started.on("error", (cause) => {
-                Deferred.doneUnsafe(spawnFailed, Exit.fail(failure(cause)));
-              });
-              return started;
-            },
-            catch: failure,
+            try: () => openSync(log, "a+", 0o600),
+            catch: (cause) =>
+              error("startup", `Cannot open the owner log ${log}: ${String(cause)}`),
           }),
-          (child) =>
+          (descriptor) =>
             Effect.gen(function* () {
-              const readiness = child.stdio[3];
-              const line = yield* (
-                readiness === null || readiness === undefined || !("read" in readiness)
-                  ? Effect.fail(failure("Owner readiness descriptor is unavailable"))
-                  : NodeStream.fromReadable({ evaluate: () => readiness, onError: failure }).pipe(
-                      Stream.decodeText,
-                      Stream.splitLines,
-                      Stream.runHead,
-                      Effect.flatMap(
-                        Option.match({
-                          onNone: () =>
-                            Effect.fail(failure("Owner exited before reporting readiness")),
-                          onSome: Effect.succeed,
-                        }),
-                      ),
-                      Effect.timeoutOrElse({
-                        duration: "30 seconds",
-                        orElse: () => Effect.fail(failure("Timed out waiting for owner readiness")),
-                      }),
-                    )
-              ).pipe(
-                Effect.raceFirst(Deferred.await(spawnFailed)),
-                Effect.flatMap((text) =>
-                  Schema.decodeEffect(Schema.fromJsonString(readyLine))(text).pipe(
-                    Effect.mapError(failure),
-                  ),
-                ),
-                Effect.ensuring(Effect.sync(() => readiness?.destroy())),
-              );
-              if (line.type === "error") {
-                yield* awaitExit(child).pipe(Effect.timeout("5 seconds"), Effect.ignore);
-                if (line.reason === "lease-held" && options.register === undefined)
-                  return { _tag: "LeaseHeld" } as const;
-                return yield* line.reason === "lease-held" || line.reason === "exists"
-                  ? error("startup", "Stack already exists; use open")
-                  : failure(line.message, line.reason);
-              }
-              if (line.endpoint.stackId !== options.stackId)
-                return yield* failure(
-                  "Owner readiness identity does not match the requested stack",
+              const failure = (cause: unknown, reason?: HostFailureReason) => {
+                const tail = logTail(descriptor);
+                return error(
+                  "startup",
+                  `Stack owner failed to start: ${error("startup", cause).message} (owner log: ${log})${tail.length === 0 ? "" : `\n${tail}`}`,
+                  reason,
                 );
-              child.unref();
-              if (options.lifeline === true) {
-                const stdin = child.stdin;
-                // Ending the lifeline of an owner that already exited reports EPIPE, which changes nothing.
-                stdin?.on("error", () => undefined);
-                if (
-                  stdin !== null &&
-                  Predicate.hasProperty(stdin, "unref") &&
-                  typeof stdin.unref === "function"
-                )
-                  stdin.unref();
-                yield* Effect.addFinalizer(() => closeLifeline(child));
-              }
-              return {
-                _tag: "Ready",
-                access: { endpoint: line.endpoint, secret: line.secret },
-              } as const;
+              };
+              const spawnFailed = yield* Deferred.make<never, HostProcessError>();
+              return yield* Effect.acquireUseRelease(
+                Effect.try({
+                  try: () => {
+                    const started = spawn(
+                      process.execPath,
+                      [
+                        entrypoint,
+                        options.stateRoot,
+                        options.cacheRoot,
+                        options.stackId,
+                        ...extraArgs,
+                      ],
+                      {
+                        cwd: process.cwd(),
+                        detached: true,
+                        windowsHide: true,
+                        stdio: [
+                          options.lifeline === true ? "pipe" : "ignore",
+                          descriptor,
+                          descriptor,
+                          "pipe",
+                        ],
+                      },
+                    );
+                    started.on("error", (cause) => {
+                      Deferred.doneUnsafe(spawnFailed, Exit.fail(failure(cause)));
+                    });
+                    return started;
+                  },
+                  catch: failure,
+                }),
+                (child) =>
+                  Effect.gen(function* () {
+                    const readiness = child.stdio[3];
+                    const line = yield* (
+                      readiness === null || readiness === undefined || !("read" in readiness)
+                        ? Effect.fail(failure("Owner readiness descriptor is unavailable"))
+                        : NodeStream.fromReadable({
+                            evaluate: () => readiness,
+                            onError: failure,
+                          }).pipe(
+                            Stream.decodeText,
+                            Stream.splitLines,
+                            Stream.runHead,
+                            Effect.flatMap(
+                              Option.match({
+                                onNone: () =>
+                                  Effect.fail(failure("Owner exited before reporting readiness")),
+                                onSome: Effect.succeed,
+                              }),
+                            ),
+                            Effect.timeoutOrElse({
+                              duration: "30 seconds",
+                              orElse: () =>
+                                Effect.fail(failure("Timed out waiting for owner readiness")),
+                            }),
+                          )
+                    ).pipe(
+                      Effect.raceFirst(Deferred.await(spawnFailed)),
+                      Effect.flatMap((text) =>
+                        Schema.decodeEffect(Schema.fromJsonString(readyLine))(text).pipe(
+                          Effect.mapError(failure),
+                        ),
+                      ),
+                      Effect.ensuring(Effect.sync(() => readiness?.destroy())),
+                    );
+                    if (line.type === "error") {
+                      yield* awaitExit(child).pipe(Effect.timeout("5 seconds"), Effect.ignore);
+                      if (line.reason === "lease-held" && options.register === undefined)
+                        return { _tag: "LeaseHeld" } as const;
+                      return yield* line.reason === "lease-held" || line.reason === "exists"
+                        ? error("startup", "Stack already exists; use open")
+                        : failure(line.message, line.reason);
+                    }
+                    if (line.endpoint.stackId !== options.stackId)
+                      return yield* failure(
+                        "Owner readiness identity does not match the requested stack",
+                      );
+                    child.unref();
+                    if (options.lifeline === true) {
+                      const stdin = child.stdin;
+                      // Ending the lifeline of an owner that already exited reports EPIPE, which changes nothing.
+                      stdin?.on("error", () => undefined);
+                      if (
+                        stdin !== null &&
+                        Predicate.hasProperty(stdin, "unref") &&
+                        typeof stdin.unref === "function"
+                      )
+                        stdin.unref();
+                      yield* Effect.addFinalizer(() => closeLifeline(child));
+                    }
+                    return {
+                      _tag: "Ready",
+                      access: { endpoint: line.endpoint, secret: line.secret },
+                    } as const;
+                  }),
+                (child, exit) => (Exit.isSuccess(exit) ? Effect.void : terminate(child)),
+              );
             }),
-          (child, exit) => (Exit.isSuccess(exit) ? Effect.void : terminate(child)),
+          (descriptor) => Effect.sync(() => closeSync(descriptor)),
         );
       }),
-    (descriptor) => Effect.sync(() => closeSync(descriptor)),
+    (payloadFile) =>
+      payloadFile === undefined
+        ? Effect.void
+        : fs.remove(payloadFile, { force: true }).pipe(Effect.ignore),
   );
 });
 

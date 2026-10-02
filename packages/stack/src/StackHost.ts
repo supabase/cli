@@ -40,12 +40,24 @@ import {
 } from "./HostProcess.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
-import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
+import {
+  StackError,
+  stackError,
+  StackRpc,
+  type EndpointPortChange,
+  type RunCommandPayload,
+} from "./Rpc.ts";
 import { makeHostGateway } from "./runtime/Container.ts";
 import * as State from "./State.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import {
+  prepareEndpointReplan,
+  reportedEndpointChanges,
+  restoreFailedEndpointReplan,
+} from "./composition/EndpointReplan.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -53,6 +65,12 @@ export interface StackHostOptions {
   readonly stackId: string;
   /** Registers this definition once the owner holds the lease; the stack must not exist. */
   readonly register?: State.SavedStack;
+  /**
+   * Re-plans changed endpoint ports against the saved state before the owner registers endpoint
+   * namespaces from it, while this process alone holds the lease; the owner's own normal endpoint
+   * binding then claims them.
+   */
+  readonly requestedCreations?: ReadonlyArray<ServiceCreationInput>;
   readonly release?: string;
   readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
@@ -166,6 +184,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
     access: HostAccess,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
+    startupEndpointChanges: ReadonlyArray<EndpointPortChange> = [],
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
@@ -336,6 +355,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           readonly attachmentId: string;
           readonly bytes: Uint8Array | null;
         }) => attachments.input(attachmentId, bytes),
+        startupEndpointChanges: () => Effect.succeed(startupEndpointChanges),
       });
       const rpc = yield* RpcServer.toHttpEffect(StackRpc, { streamBufferSize: 16 }).pipe(
         Effect.provide(Layer.merge(StackRpc.toLayer(handlers), RpcSerialization.layerNdjson)),
@@ -381,6 +401,41 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
 
 type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
 
+/**
+ * Runs `commit` interruptibly; on any unsuccessful exit, including interruption, restores the
+ * saved endpoint state uninterruptibly before re-failing, so an external interrupt reaching this
+ * window still leaves the saved document consistent instead of holding new intents with missing
+ * or partial claims. If that restore itself fails, logs it and, only for a genuine typed failure
+ * (never for an interruption, which carries no message to extend), fails with that failure's
+ * message extended with recovery guidance, instead of letting the restore failure mask it.
+ */
+export const commitOrRestoreEndpointReplan = <A>(
+  state: State.Interface,
+  registered: State.SavedStack,
+  changedKeys: ReadonlyArray<{ readonly key: string }>,
+  commit: Effect.Effect<A, StackHostError>,
+): Effect.Effect<A, StackHostError> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const exit = yield* restore(commit).pipe(Effect.exit);
+      if (Exit.isSuccess(exit)) return exit.value;
+      const restoreExit = yield* restoreFailedEndpointReplan(state, registered, changedKeys).pipe(
+        Effect.exit,
+      );
+      if (Exit.isSuccess(restoreExit)) return yield* Effect.failCause(exit.cause);
+      yield* Effect.logError(
+        "Restoring the saved endpoint state failed after a failed re-plan",
+        restoreExit.cause,
+      );
+      const failure = Cause.findErrorOption(exit.cause);
+      if (Option.isNone(failure)) return yield* Effect.failCause(exit.cause);
+      return yield* new StackHostError({
+        ...failure.value,
+        message: `${failure.value.message} The saved endpoint state could not be restored either: stop the stack, then start it again, or destroy it to recreate it.`,
+      });
+    }),
+  );
+
 export const runStackHost = Effect.fn("StackHost.run")(
   (options: StackHostOptions): Effect.Effect<void, StackHostError, never> =>
     Effect.scoped(
@@ -421,8 +476,23 @@ export const runStackHost = Effect.fn("StackHost.run")(
             }),
           );
         const started = yield* Effect.gen(function* () {
-          const saved = yield* state.read(id);
-          if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
+          const registered = yield* state.read(id);
+          if (registered === undefined)
+            return yield* hostError("startup", "Stack is not registered");
+          // Re-plans a changed endpoint's port against the saved state while this process alone
+          // holds the lease, before any owner registers its endpoint namespaces from it; a
+          // concurrent launcher that loses the lease race never reaches here and simply attaches
+          // to whichever owner wins. `saved` already has the changed endpoints' old claims
+          // dropped; the document commits this below, as late as practical, and the owner's own
+          // normal endpoint binding claims the new ones through the same `Ports.acquire` path and
+          // checks a live composition bind already applies.
+          const preparation =
+            options.requestedCreations === undefined
+              ? undefined
+              : yield* prepareEndpointReplan(registered, options.requestedCreations).pipe(
+                  Effect.mapError((cause) => hostError("startup", cause)),
+                );
+          const saved = preparation?.saved ?? registered;
           const control = yield* bindControl();
           const dataRootPath = path.join(options.stateRoot, saved.id, "data");
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
@@ -457,6 +527,42 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
+          // The document is saved here, as late as practical, because the owner's own endpoint
+          // binding below reads it back through the same `Ports.acquire` path a live composition
+          // bind uses. This commits before the owner serves RPC or publishes its holder below, so
+          // no attached client can race it: a failure here restores the exact document read before
+          // the re-plan, while this process still alone holds the lease; a hard process death in
+          // this window is an accepted limitation, and the next successful start converges the
+          // saved state again. A failure after this point must not trigger that restore, since by
+          // then a client may already have attached and persisted its own acknowledged change.
+          const commitReplan: Effect.Effect<
+            ReadonlyArray<EndpointPortChange>,
+            StackHostError
+          > = Effect.gen(function* () {
+            if (preparation !== undefined)
+              yield* state
+                .withLock(state.save(saved))
+                .pipe(Effect.mapError((cause) => hostError("startup", cause)));
+            if (preparation === undefined) return [];
+            return yield* owner.claimEndpoints(preparation.changedInstanceIds).pipe(
+              Effect.mapError((cause) => hostError("startup", cause)),
+              Effect.andThen(
+                state.read(saved.id).pipe(
+                  Effect.mapError((cause) => hostError("startup", cause)),
+                  Effect.map((after) => reportedEndpointChanges(preparation.changedKeys, after)),
+                ),
+              ),
+            );
+          });
+          const startupEndpointChanges: ReadonlyArray<EndpointPortChange> =
+            preparation === undefined
+              ? yield* commitReplan
+              : yield* commitOrRestoreEndpointReplan(
+                  state,
+                  registered,
+                  preparation.changedKeys,
+                  commitReplan,
+                );
           const endpoint: HostEndpoint = {
             stackId: saved.id,
             identity: saved.identity,
@@ -474,6 +580,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             access,
             control.server,
             control.closeConnections,
+            startupEndpointChanges,
           ).pipe(
             Effect.provideService(
               CommandRunner.Service,
