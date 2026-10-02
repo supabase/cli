@@ -1,10 +1,10 @@
-import { Cause, Data, Effect, Exit, Hash, Option, Scope } from "effect";
+import { Cause, Crypto, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import * as Net from "node:net";
 import type * as State from "./State.ts";
 
-const portBase = 20000;
+export const portBase = 20000;
 /** Stays below the Linux ephemeral range, per the [architecture ADR](../../../docs/adr/0017-simplified-managed-stack-architecture.md). */
-const portSpan = 12768;
+export const portSpan = 12768;
 /** Co-prime with the span, so the scan visits every port once and steps past reserved ranges. */
 const portStride = 257;
 
@@ -87,6 +87,100 @@ const resolveRequest = (
     );
   return Effect.succeed({ saved, requested });
 };
+
+export interface NativePortReservation {
+  readonly port: number;
+  readonly server: Net.Server;
+}
+
+const closeNativePort = (server: Net.Server): Effect.Effect<void> =>
+  Effect.callback<void, never>((resume) => {
+    if (!server.listening) {
+      resume(Effect.void);
+      return Effect.void;
+    }
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+const bindNativePort = (
+  key: string,
+  port: number,
+): Effect.Effect<NativePortReservation, PortError> =>
+  Effect.callback<NativePortReservation, PortError>((resume) => {
+    const server = Net.createServer((socket) => socket.destroy());
+    const onError = (cause: Error) =>
+      resume(
+        Effect.fail(
+          new PortError({ key, message: "Unable to reserve native service port", cause }),
+        ),
+      );
+    server.once("error", onError);
+    server.listen({ host: "127.0.0.1", port }, () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        onError(new Error("Native service port reservation returned no address"));
+      } else {
+        resume(Effect.succeed({ port: address.port, server }));
+      }
+    });
+    return Effect.sync(() => {
+      server.off("error", onError);
+      if (server.listening) server.close();
+    });
+  });
+
+const emptyPortSet: ReadonlySet<number> = new Set();
+
+/** Random, so a reopened stack doesn't retry a backend port still in server-side `TIME_WAIT`. */
+export const randomPortSpanStart = (crypto: Crypto.Crypto): Effect.Effect<number> =>
+  crypto.randomIntBetween(0, portSpan, { halfOpen: true });
+
+/**
+ * Scans the below-ephemeral span for a backend port, skipping claimed and excluded ports; reuses
+ * `loopbackOccupied` so a wildcard listener a loopback-only bind would miss on macOS, BSD or
+ * Windows still rules out the candidate. Never persists one of its own.
+ */
+export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
+  (
+    claims: ReadonlyArray<State.StackClaims>,
+    key: string,
+    randomStart: Effect.Effect<number>,
+    excluded: ReadonlySet<number> = emptyPortSet,
+  ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        const claimed = new Set(claims.flatMap((stack) => stack.ports.map((claim) => claim.port)));
+        const start = yield* randomStart;
+        let failures = 0;
+        let lastFailure: PortError | undefined;
+        for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
+          const port = portBase + ((start + attempt * portStride) % portSpan);
+          if (claimed.has(port) || excluded.has(port)) continue;
+          if (yield* loopbackOccupied(port)) {
+            failures++;
+            lastFailure = new PortError({ key, message: `Port ${port} is already in use` });
+            continue;
+          }
+          const result = yield* Effect.exit(bindNativePort(key, port));
+          if (Exit.isSuccess(result)) return result.value;
+          const error = Cause.findErrorOption(result.cause);
+          if (Option.isNone(error)) return yield* Effect.failCause(result.cause);
+          failures++;
+          lastFailure = error.value;
+        }
+        return yield* new PortError({
+          key,
+          message:
+            lastFailure === undefined
+              ? "No native service port is available"
+              : `No native service port is available: ${lastFailure.message}`,
+          cause: lastFailure,
+        });
+      }),
+      ({ server }) => closeNativePort(server),
+    ),
+);
 
 /** Claims steer auto allocation away from saved stacks; live listeners and binds decide conflicts for fixed ports. */
 export const makePorts = (state: State.Interface, platform: NodeJS.Platform = process.platform) =>
@@ -174,6 +268,14 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
                 ? portBase + ((start + attempt * portStride) % portSpan)
                 : requested;
             if (requested === "auto" && claimed.has(port)) continue;
+            if (requested === "auto" && (yield* loopbackOccupied(port))) {
+              failures++;
+              lastFailure = new PortError({
+                key: request.key,
+                message: `Port ${port} is already in use`,
+              });
+              continue;
+            }
             const result = yield* Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
                 const scope = yield* Scope.fork(owner, "sequential");

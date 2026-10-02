@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -17,9 +17,22 @@ import {
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
+import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { makeService } from "../Service.ts";
+import type * as State from "../State.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+
+// No saved stacks to consult; this test never launches the native backend it configures.
+const testReadPortClaims = Effect.succeed([]);
+const testReserveNativePort = (
+  key: string,
+  claims: ReadonlyArray<State.StackClaims>,
+  excluded: ReadonlySet<number>,
+) =>
+  Effect.flatMap(Crypto.Crypto, (crypto) =>
+    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+  ).pipe(Effect.provide(NodeCrypto.layer));
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -92,6 +105,7 @@ describe("service catalog", () => {
               },
             },
             { ...dockerOptions(root), stackId, instanceId },
+            Effect.succeed([]),
           );
           const instance = yield* makeService(recipe.definition, {
             id: instanceId,
@@ -193,6 +207,7 @@ describe("service catalog", () => {
                 instanceId: "ancestor",
                 cacheRoot: "/tmp/supabase-stack-artifacts",
               },
+              Effect.succeed([]),
             );
             const logs = yield* Ref.make("");
             yield* Stream.fromSubscription(yield* recipe.logs).pipe(
@@ -261,6 +276,7 @@ describe("service catalog", () => {
               instanceId: "deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           yield* Stream.fromSubscription(yield* recipe.logs).pipe(
@@ -332,6 +348,7 @@ describe("service catalog", () => {
               instanceId: "plain-deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           const warned = yield* Deferred.make<void>();
@@ -442,6 +459,7 @@ for (const runtime of ["native", "docker"] as const) {
               runtime,
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
+            Effect.succeed([]),
           );
           const logs = yield* Ref.make("");
           yield* Stream.fromSubscription(yield* recipe.logs).pipe(
@@ -551,6 +569,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           client: yield* HttpClient.HttpClient,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           container,
+          readPortClaims: testReadPortClaims,
+          reserveNativePort: testReserveNativePort,
         },
       );
       const scope = yield* Scope.make();
