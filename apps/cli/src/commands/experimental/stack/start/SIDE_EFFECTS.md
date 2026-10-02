@@ -138,3 +138,12 @@ name (protocol, address, port, and URL, matching `stack status`, with no synthet
 empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
 example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
 after success or failure.
+
+A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
+envelope: one entry per affected service (a shared setting such as the API port appears once per
+API-backed service, unlike the deduplicated text message), each with `service`, `path` (the
+composition planner's dotted path, e.g. `endpoints.http.port`, not a `config.toml` key), `key`,
+`saved`, `requested`, and `editable`. `recreate_command` is the exact `supabase stack destroy
+--stack-id <id>` invocation, without `--yes`, since destroy deletes local database data; running it
+non-interactively or with `--output-format json`/`--output-format stream-json` requires passing
+`--yes` explicitly.

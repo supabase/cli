@@ -203,9 +203,10 @@ const settingKeyLabel = (
     : formatConfigPath(setting.configPath);
 
 /**
- * One incompatible path. `editable` marks whether `key` is a `config.toml` key or env var the
- * user can revert; when it isn't (a catalog-pinned artifact or Postgres build), `key` is plain
- * wording instead and the suggestion drops the revert advice for it.
+ * One incompatible path, reported as the JSON/stream-json error envelope's `stack_changes`
+ * entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
+ * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
+ * artifact or Postgres build.
  */
 interface StructuredSettingChange {
   readonly service: string;
@@ -318,7 +319,8 @@ const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new
 /**
  * The exact `supabase stack destroy` invocation that recreates this stack. Always targets
  * `--stack-id`: a `--stack <name>` destroy re-resolves the name against the caller's current
- * `--workdir`, which can point at a different project's stack of the same name.
+ * `--workdir`, which can point at a different project's stack of the same name. Omits `--yes` on
+ * purpose, since destroying deletes local database data (details in `SIDE_EFFECTS.md`).
  */
 const destroyCommandFor = (id: string): string => `supabase stack destroy --stack-id ${id}`;
 
@@ -354,8 +356,9 @@ const incompatibleChange = (
   );
   const nonEditable = dedupe(changes.filter((change) => !change.editable).map(({ key }) => key));
   const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
+  // A non-editable change blocks start whatever else changed, so destroy is the only way out.
   const suggestion =
-    revert === undefined
+    nonEditable.length > 0 || revert === undefined
       ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
       : `${revert} to keep the stack and its data, or run ${destroyClause}`;
   return {
@@ -363,7 +366,7 @@ const incompatibleChange = (
     command,
     error: new StackCommandStartError({
       reason: "invalid-config",
-      message: lines.join("; "),
+      message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
       suggestion,
     }),
   };
