@@ -30,12 +30,24 @@ export interface FakeLogflareOptions {
   readonly batchEvents?: number;
   /** Stores queued events this long after they arrive; without it only `apply` stores them. */
   readonly flushMillis?: number;
+  /** Events whose batch fails to store, besides those holding text Postgres jsonb rejects. */
+  readonly unstorable?: (event: FakeEvent) => boolean;
 }
+
+/** Postgres jsonb rejects NUL and unpaired surrogates anywhere in a document. */
+const jsonbStorable = (value: unknown): boolean => {
+  if (typeof value === "string") return !value.includes("\u0000") && value.isWellFormed();
+  if (Array.isArray(value)) return value.every(jsonbStorable);
+  return typeof value === "object" && value !== null
+    ? Object.entries(value).every(([key, item]) => jsonbStorable(key) && jsonbStorable(item))
+    : true;
+};
 
 /**
  * A Logflare stand-in with its asynchronous Postgres pipeline: an accepted post only queues its
  * events, and each per-source batch is stored atomically, or dropped whole when one of its ids is
- * already stored. Listeners share the storage, like an Analytics restarted on a new port.
+ * already stored or one of its events cannot be stored. Listeners share the storage, like an
+ * Analytics restarted on a new port.
  */
 export const makeFakeLogflare = (options: FakeLogflareOptions = {}) =>
   Effect.gen(function* () {
@@ -57,7 +69,15 @@ export const makeFakeLogflare = (options: FakeLogflareOptions = {}) =>
           const batch = events.splice(0, batchEvents);
           applied++;
           const ids = new Set(batch.map(({ id }) => id));
-          if (ids.size < batch.length || batch.some(({ id }) => table.has(id)))
+          if (
+            ids.size < batch.length ||
+            batch.some(
+              (event) =>
+                table.has(event.id) ||
+                !jsonbStorable(event) ||
+                options.unstorable?.(event) === true,
+            )
+          )
             counts.dropped += batch.length;
           else for (const event of batch) table.set(event.id, event);
         }
@@ -133,6 +153,8 @@ export const makeFakeLogflare = (options: FakeLogflareOptions = {}) =>
       /** Opens another ingest port sharing this fake's storage. */
       listen: (scope: Scope.Scope) => listen.pipe(Scope.provide(scope)),
       next: Queue.take(received),
+      /** How many received posts `next` has not taken yet. */
+      unread: Queue.size(received),
       /** The next posts answer with these statuses; only a 2xx queues its events. */
       respond: (...next: ReadonlyArray<number>) => Effect.sync(() => statuses.push(...next)),
       /** Holds the next post's response until the returned effect runs; it ends once the response does. */
@@ -149,7 +171,19 @@ export const makeFakeLogflare = (options: FakeLogflareOptions = {}) =>
       /** Loses every queued event, like Analytics stopping before its pipeline flushed. */
       discard: Effect.sync(() => queued.clear()),
       storedIds,
-      storedEvents: Effect.succeed({ storedIds } satisfies StoredEvents),
+      /** A stored-event view that interrupts its callers once its scope closed, like Logflare's. */
+      storedEvents: Effect.gen(function* () {
+        let closed = false;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            closed = true;
+          }),
+        );
+        return {
+          storedIds: (source, ids) =>
+            Effect.suspend(() => (closed ? Effect.interrupt : storedIds(source, ids))),
+        } satisfies StoredEvents;
+      }),
       stored: Effect.sync(() => [...stored.values()].flatMap((table) => [...table.values()])),
       dropped: Effect.sync(() => counts.dropped),
       aborted: Effect.sync(() => counts.aborted),

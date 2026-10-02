@@ -122,3 +122,16 @@ it("derives the Postgres severity from the last level marker and defaults to LOG
     error_severity: "LOG",
   });
 });
+
+it("replaces NUL and unpaired surrogates, which Postgres jsonb rejects, in the message and metadata", () => {
+  const line = String.raw`{"msg":"a\u0000b","detail":["\ud800"],"k\u0000":"\udc00 x"}`;
+  const event = logflareEvent("auth", received, line);
+
+  expect(logflareEvent("database", received, "a\u0000b").event_message).toBe("a�b");
+  expect(event.metadata).toMatchObject({
+    msg: "a�b",
+    detail: ["�"],
+    "k�": "� x",
+  });
+  expect(event.event_message).toBe(line);
+});

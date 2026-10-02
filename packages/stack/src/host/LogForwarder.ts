@@ -49,7 +49,7 @@ export class StoredEventsError extends Schema.TaggedError<StoredEventsError>()(
 
 /** Which shipped events an Analytics instance has stored. */
 export interface StoredEvents {
-  /** The subset of `ids` stored for `source`. */
+  /** The subset of `ids` stored for `source`; failures are retried and reported by the view. */
   readonly storedIds: (
     source: string,
     ids: ReadonlyArray<string>,
@@ -79,12 +79,17 @@ export interface LogForwarderOptions {
 interface Candidate {
   readonly instance: ForwardedInstance;
   readonly serving: boolean;
+  readonly launchId: number | undefined;
 }
 
 interface Target {
   readonly instance: ForwardedInstance;
   readonly epoch: number;
+  /** Names the Analytics launch; launches seen by different forwarders never share a name. */
+  readonly launch: string;
   readonly stored: StoredEvents;
+  /** One permit per session using `stored`; the view closes once a retired target has none. */
+  readonly users: Semaphore.Semaphore;
 }
 
 /** A shipped event; its id derives from the instance and record position. */
@@ -94,12 +99,21 @@ interface ShippedEvent extends LogflareEvent {
 
 class StaleTarget extends Data.TaggedError("StaleTarget")<{}> {}
 
-/** A body handed to Analytics whose events are not all confirmed stored yet. */
-const Pending = Schema.Struct({
+/** A body's end position, source and event ids. */
+const Shipment = Schema.Struct({
   ...LogPosition.fields,
   source: Schema.String,
-  sentAt: Schema.Finite,
   ids: Schema.Array(Schema.String),
+});
+interface Shipment extends Schema.Schema.Type<typeof Shipment> {}
+
+/** A shipment posted to Analytics whose events are not all confirmed stored yet. */
+const Pending = Schema.Struct({
+  ...Shipment.fields,
+  /** The Analytics launch the latest post went to. */
+  launch: Schema.String,
+  /** When the latest post ends at the latest, by its timeout. */
+  postEndsAt: Schema.Finite,
 });
 interface Pending extends Schema.Schema.Type<typeof Pending> {}
 
@@ -126,24 +140,29 @@ interface Session {
   readonly posting: Semaphore.Semaphore;
 }
 
-type Delivery = "sent" | "unsettled" | "refused" | "rejected";
+/** `unsettled` posts got no answer, so Analytics may have queued them; `failed` ones got a 5xx. */
+type Delivery = "sent" | "unsettled" | "failed" | "refused" | "rejected";
 
 const batchEvents = 256;
 export const batchBytes = 1024 * 1024;
-/**
- * How long after a post a missing event counts as dropped and is resent; Logflare flushes its
- * per-source batches within about a second.
- */
+/** How long after a post ended its events may still be stored by a launch that stopped. */
 export const flushWindowMillis = 5_000;
 /** How often stored ids are checked while a body is unconfirmed. */
 export const pollMillis = 250;
+/** The first delay of the shared retry backoff. */
+export const retryMillis = 500;
+/** The longest a post may take, so a pending body knows when its post ended at the latest. */
+export const postTimeoutMillis = 5_000;
+/** How long events may stay unstored in the launch that accepted them before they count as dropped. */
+export const stuckMillis = 60_000;
+/** More sessions than can share one target. */
+const targetUsers = 2 ** 30;
 const envelopeBytes = '{"batch":[]}'.length;
-const postTimeout = "5 seconds";
 const cursorFile = "cursor.json";
 const encoder = new TextEncoder();
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(Cursor));
 const encodeCursor = Schema.encodeEffect(Schema.fromJsonString(Cursor));
-const retrySchedule = Schedule.exponential("250 millis", 2).pipe(
+const retrySchedule = Schedule.exponential(Duration.millis(retryMillis), 2).pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(10))),
   ),
@@ -256,9 +275,13 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   const forwarderScope = yield* Effect.scope;
   const candidates = yield* Ref.make<ReadonlyMap<string, Candidate>>(new Map());
   const target = yield* SubscriptionRef.make<Target | undefined>(undefined);
-  const targetScope = yield* Ref.make<Scope.Closeable | undefined>(undefined);
+  const targetScope = yield* Ref.make<
+    { readonly scope: Scope.Closeable; readonly users: Semaphore.Semaphore } | undefined
+  >(undefined);
   const epochs = yield* Ref.make(0);
   const rebinding = yield* Semaphore.make(1);
+  const run = yield* crypto.randomUUIDv4;
+  const launchOf = (candidate: Candidate) => `${run}:${candidate.launchId ?? "unknown"}`;
 
   const rebind = Effect.gen(function* () {
     const members = new Set((yield* options.composition).members.map(({ id }) => id));
@@ -266,7 +289,11 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       (candidate) => candidate.serving && members.has(candidate.instance.id),
     );
     const previous = yield* SubscriptionRef.get(target);
-    if (serving?.instance === previous?.instance) return;
+    if (
+      serving?.instance === previous?.instance &&
+      (serving === undefined || launchOf(serving) === previous?.launch)
+    )
+      return;
     const epoch = yield* Ref.updateAndGet(epochs, (value) => value + 1);
     const scope = serving === undefined ? undefined : yield* Scope.fork(forwarderScope);
     const next =
@@ -275,11 +302,20 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         : {
             instance: serving.instance,
             epoch,
+            launch: launchOf(serving),
             stored: yield* options.storedEvents(serving.instance).pipe(Scope.provide(scope)),
+            users: yield* Semaphore.make(targetUsers),
           };
-    const retired = yield* Ref.getAndSet(targetScope, scope);
+    const retired = yield* Ref.getAndSet(
+      targetScope,
+      scope === undefined || next === undefined ? undefined : { scope, users: next.users },
+    );
     yield* SubscriptionRef.set(target, next);
-    if (retired !== undefined) yield* Scope.close(retired, Exit.void);
+    if (retired !== undefined)
+      yield* Effect.forkIn(
+        retired.users.take(targetUsers).pipe(Effect.andThen(Scope.close(retired.scope, Exit.void))),
+        forwarderScope,
+      );
   }).pipe(Semaphore.withPermits(rebinding, 1));
 
   const trackTarget = (instance: ForwardedInstance) =>
@@ -290,6 +326,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           new Map(current).set(instance.id, {
             instance,
             serving: observation.lifecycle === "running" && observation.health === "healthy",
+            launchId: observation.launchId,
           }),
         ).pipe(Effect.andThen(rebind)),
       ),
@@ -389,12 +426,14 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     current: Target,
     source: string,
     body: string,
+    deadline: number,
   ) {
     yield* requireCurrent(current);
     const creation = yield* current.instance.creation;
     const apiKey = creation.service === "analytics" ? creation.config.apiKey : undefined;
     if (apiKey === undefined) return yield* new StaleTarget();
     const endpoint = yield* current.instance.endpoint("http");
+    const remaining = deadline - (yield* Clock.currentTimeMillis);
     yield* client
       .execute(
         HttpClientRequest.post(
@@ -407,13 +446,19 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       )
       .pipe(
         Effect.flatMap((response) => response.text),
-        Effect.timeout(postTimeout),
+        Effect.timeout(Duration.millis(Math.max(remaining, 0))),
       );
   });
 
-  /** Posts one body once and classifies the answer. */
-  const deliver = (session: Session, source: string, body: string, warned: Ref.Ref<boolean>) =>
-    post(session.current, source, body).pipe(
+  /** Posts one body once, ending by `deadline`, and classifies the answer. */
+  const deliver = (
+    session: Session,
+    source: string,
+    body: string,
+    deadline: number,
+    warned: Ref.Ref<boolean>,
+  ) =>
+    post(session.current, source, body, deadline).pipe(
       session.posting.withPermits(1),
       Effect.as<Delivery>("sent"),
       Effect.catchIf(isTargetRejection, (error) =>
@@ -428,75 +473,132 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
             `Analytics rejected a ${source} log body; skipping it`,
             error,
           ).pipe(Effect.as<Delivery>("rejected"));
-        return warnOnce(warned, `Posting ${source} logs failed; retrying`, error).pipe(
-          Effect.as<Delivery>("unsettled"),
-        );
+        if ((rejectedStatus(error) ?? 0) >= 500)
+          return warnOnce(warned, `Posting ${source} logs failed; retrying`, error).pipe(
+            Effect.as<Delivery>("failed"),
+          );
+        return warnOnce(
+          warned,
+          `Posting ${source} logs got no answer; waiting until Analytics stores them`,
+          error,
+        ).pipe(Effect.as<Delivery>("unsettled"));
       }),
     );
 
   /**
-   * Advances past a pending body once Analytics stored all its events. Missing events are posted;
-   * after a post, those still missing once `flushWindowMillis` passes are posted again. A refused
-   * target clears the body and pauses; a rejected body is skipped.
+   * Advances past a shipment once Analytics stored all its events, posting only missing events.
+   * A post that got no 5xx may be queued in the launch that took it, so its missing events are
+   * posted again only once that launch ended and `flushWindowMillis` passed since the post ended.
+   * Events that launch leaves unstored for `stuckMillis` are posted one at a time, and one that
+   * still is not stored on its own is skipped. A refused target clears the pending body and
+   * pauses; a rejected body is skipped.
    */
-  const settle = Effect.fnUntraced(function* (
+  const settle = Effect.fn("LogForwarder.settle")(function* (
     session: Session,
-    initial: Pending,
+    shipment: Shipment,
     events: ReadonlyMap<string, ShippedEvent>,
-    alreadyPosted: boolean,
+    posted: Pending | undefined,
   ) {
-    const warned = yield* Ref.make(false);
-    let pending = initial;
-    let posted = alreadyPosted;
-    let due = posted ? pending.sentAt + flushWindowMillis : 0;
-    settling: while (true) {
-      const stored = yield* session.current.stored
-        .storedIds(pending.source, pending.ids)
-        .pipe(
-          retryWarningOnce(
-            `Checking which ${pending.source} logs Analytics stored failed; retrying`,
-          ),
-        );
-      const missing = pending.ids.filter((id) => !stored.has(id));
-      if (missing.length === 0) break;
-      const now = yield* Clock.currentTimeMillis;
-      if (now < due) {
-        yield* Effect.sleep(pollMillis);
-        continue;
-      }
-      const resend = missing.flatMap((id) => {
-        const event = events.get(id);
-        return event === undefined ? [] : [{ event }];
-      });
-      if (resend.length < missing.length) {
-        yield* Effect.logWarning(
-          `Logs of ${session.service} instance ${session.instanceId} were deleted before Analytics stored them; skipping ${missing.length - resend.length} lines`,
-        );
-        pending = { ...pending, ids: pending.ids.filter((id) => stored.has(id) || events.has(id)) };
-      }
-      if (resend.length === 0) break;
-      if (posted) {
-        pending = { ...pending, sentAt: now };
-        yield* persist(session, {
-          confirmed: (yield* Ref.get(session.progress)).confirmed,
-          pending,
+    const { source } = shipment;
+    yield* Effect.annotateCurrentSpan({ source, event_count: shipment.ids.length });
+    const postWarned = yield* Ref.make(false);
+    const counts = { checks: 0, posts: 0, skipped: 0 };
+    let remaining = shipment.ids;
+    let latest: { readonly queuedIn: string | undefined; readonly endedAt: number } | undefined =
+      posted === undefined ? undefined : { queuedIn: posted.launch, endedAt: posted.postEndsAt };
+
+    /** Posts `initial` until Analytics stored it, and returns the ids left unstored for `stuckMillis`. */
+    const deliverAll = Effect.fnUntraced(function* (initial: ReadonlyArray<string>) {
+      let wanted = initial;
+      delivering: while (true) {
+        // Only the first check is traced; the rest are counted on this span.
+        const stored = yield* session.current.stored
+          .storedIds(source, wanted)
+          .pipe(
+            Effect.retry(retrySchedule),
+            counts.checks++ === 0 ? (check) => check : Effect.withTracerEnabled(false),
+          );
+        const missing = wanted.filter((id) => !stored.has(id));
+        if (missing.length === 0) return [];
+        const now = yield* Clock.currentTimeMillis;
+        if (latest !== undefined) {
+          if (latest.queuedIn === session.current.launch) {
+            if (now >= latest.endedAt + stuckMillis) return missing;
+            yield* Effect.sleep(pollMillis);
+            continue;
+          }
+          if (now < latest.endedAt + flushWindowMillis) {
+            yield* Effect.sleep(pollMillis);
+            continue;
+          }
+        }
+        const deleted = new Set(missing.filter((id) => !events.has(id)));
+        if (deleted.size > 0) {
+          yield* Effect.logWarning(
+            `Logs of ${session.service} instance ${session.instanceId} were deleted before Analytics stored them; skipping ${deleted.size} lines`,
+          );
+          wanted = wanted.filter((id) => !deleted.has(id));
+          remaining = remaining.filter((id) => !deleted.has(id));
+        }
+        const resend = missing.flatMap((id) => {
+          const event = events.get(id);
+          return event === undefined ? [] : [{ event }];
         });
-      }
-      for (const { body } of bodies(resend)) {
-        const delivery = yield* deliver(session, pending.source, body, warned);
-        if (delivery === "refused") {
+        if (resend.length === 0) return [];
+        let queuedIn: string | undefined;
+        for (const { body } of bodies(resend)) {
+          const deadline = (yield* Clock.currentTimeMillis) + postTimeoutMillis;
           yield* persist(session, {
             confirmed: (yield* Ref.get(session.progress)).confirmed,
-            pending: undefined,
+            pending: {
+              ...positionOf(shipment),
+              source,
+              ids: remaining,
+              launch: session.current.launch,
+              postEndsAt: deadline,
+            },
           });
-          return yield* new StaleTarget();
+          // A slow cursor write leaves no time to post by the saved deadline.
+          if ((yield* Clock.currentTimeMillis) >= deadline) continue delivering;
+          counts.posts++;
+          const delivery = yield* deliver(session, source, body, deadline, postWarned);
+          if (delivery === "refused") {
+            yield* persist(session, {
+              confirmed: (yield* Ref.get(session.progress)).confirmed,
+              pending: undefined,
+            });
+            return yield* new StaleTarget();
+          }
+          if (delivery === "rejected") return "rejected";
+          if (delivery !== "failed") queuedIn = session.current.launch;
         }
-        if (delivery === "rejected") break settling;
+        latest = { queuedIn, endedAt: yield* Clock.currentTimeMillis };
       }
-      posted = true;
-      due = (yield* Clock.currentTimeMillis) + flushWindowMillis;
+    });
+
+    const stuck = yield* deliverAll(shipment.ids);
+    if (stuck !== "rejected" && stuck.length > 0) {
+      yield* Effect.logWarning(
+        `Analytics has not stored ${stuck.length} ${source} lines of ${session.instanceId} it accepted; posting them one at a time`,
+      );
+      for (const id of stuck) {
+        latest = undefined;
+        const alone = yield* deliverAll([id]);
+        if (alone !== "rejected" && alone.length === 0) continue;
+        if (alone !== "rejected")
+          yield* Effect.logWarning(
+            `Analytics did not store a ${source} line of ${session.instanceId} posted on its own; skipping it`,
+          );
+        remaining = remaining.filter((other) => other !== id);
+        counts.skipped++;
+      }
     }
-    yield* persist(session, { confirmed: positionOf(pending), pending: undefined });
+    yield* Effect.annotateCurrentSpan({
+      check_count: counts.checks,
+      post_count: counts.posts,
+      skipped_count: counts.skipped,
+    });
+    yield* persist(session, { confirmed: positionOf(shipment), pending: undefined });
   });
 
   /** Rebuilds a pending body from its retained records and settles it. */
@@ -526,7 +628,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         ),
       ),
     );
-    yield* settle(session, pending, events, true);
+    yield* settle(session, pending, events, pending);
   });
 
   /** Ships one instance's records from its cursor until the target changes. */
@@ -567,21 +669,11 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
                 if (shipped !== undefined) unshipped.push(shipped);
               }
               for (const { items, last } of bodies(unshipped)) {
-                const pending: Pending = {
-                  ...last.position,
-                  source,
-                  sentAt: yield* Clock.currentTimeMillis,
-                  ids: items.map(({ event }) => event.id),
-                };
-                yield* persist(shipping, {
-                  confirmed: (yield* Ref.get(progress)).confirmed,
-                  pending,
-                });
                 yield* settle(
                   shipping,
-                  pending,
+                  { ...last.position, source, ids: items.map(({ event }) => event.id) },
                   new Map(items.map(({ event }) => [event.id, event])),
-                  false,
+                  undefined,
                 );
                 yield* Ref.set(failing, false);
               }
@@ -589,7 +681,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           ),
         );
       }),
-    );
+    ).pipe(current.users.withPermits(1));
 
   const unregistered = (instance: ForwardedInstance) =>
     instance.observation.pipe(

@@ -668,7 +668,8 @@ stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database i
 direct backend (never the proxy, so shipping neither wakes it nor counts as activity), in bodies of
 at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
 position of its last confirmed record plus an optional pending body (its end position, source,
-send time and event ids): a missing cursor or unreadable cursor starts at the oldest retained
+event ids, the Analytics launch its latest post went to, and when that post ends at the latest):
+a missing cursor or unreadable cursor starts at the oldest retained
 segment, and a cursor in a deleted segment resumes at the next retained one. A failed log read
 restarts the instance from its cursor after a capped backoff, and attaching an instance removes
 temporary cursor writes a dead owner left behind.
@@ -677,18 +678,29 @@ Bodies of an instance are sequential, and event ids derive from the instance and
 Logflare answers a post once it queued the events and stores them later in per-source batches; a
 batch holding an id already stored is dropped whole. So delivery is confirmed in Analytics'
 Postgres database: the owner reads which ids `_analytics.log_events_<token>` holds, resolving the
-token from `_analytics.sources`, through the database Analytics is composed with. The pending body
-is written atomically before it is posted, and a failed write blocks posting. Only ids not yet
-stored are posted. After a success, timeout, 5xx or interruption the owner polls the stored ids;
-once all are stored the cursor advances and the pending body is cleared, and ids still missing 5
-seconds after a post are posted again. A start, restart or retarget reconciles a pending body
-before later records; pending records already deleted by retention are skipped with a warning. A
-401, 403 or 404 response clears the pending body and pauses the instance with its cursor until the
-target changes; any other 4xx except 408 and 429 skips the body. A retarget waits for a post in
-flight. The target is re-selected when the composition or Analytics' health changes. A batch that
-Analytics commits more than 5 seconds after its post can still conflict with a repost, and the
-check depends on Logflare's private table layout, which the owner's Analytics integration test
-pins.
+token from `_analytics.sources`. That database is the one Logflare keeps its sources and events in:
+`_supabase` on the host and port of Analytics' database URL (reached at the bound database's
+endpoint when the composition binds it), with `supabase_admin`/`postgres` for credentials the URL
+omits. A source Analytics does not know, or a failed query, leaves the stored state unknown: the
+check is retried and shipping waits, with one warning per outage. A known source without a table
+holds no events. The pending body is written atomically before each post, and a failed write
+blocks posting. Only ids not yet stored are posted. A post ends by its 5 second timeout, which the
+pending body records. Logflare can take many seconds to store what it accepted, so a post that
+succeeded, timed out or was interrupted is not repeated to the Analytics launch that took it
+while it may still store it: the owner polls the stored ids until all are stored, then advances
+the cursor and clears the pending body. Ids still missing are posted again once that launch ended
+(a new launch, or another owner) and 5 seconds passed since the post ended; a 5xx answer is posted
+again 5 seconds after it. Ids the accepting launch leaves unstored for 60 seconds count as a lost
+batch: each is posted on its own, and one that still is not stored alone is skipped with a
+warning, so one unstorable event cannot block an instance. Event text and metadata strings have
+NUL and unpaired surrogates replaced with U+FFFD before posting, because Postgres `jsonb` rejects
+them and drops the whole batch. A start, restart or retarget reconciles a pending body before
+later records; pending records already deleted by retention are skipped with a warning. A 401, 403
+or 404 response clears the pending body and pauses the instance with its cursor until the target
+changes; any other 4xx except 408 and 429 skips the body. A retarget waits for a post in flight,
+and a retired target's stored-event view stays open until its sessions end. The target is
+re-selected when the composition, Analytics' health or its launch changes. The check depends on
+Logflare's private table layout, which the owner's Analytics integration test pins.
 
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
 `<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
