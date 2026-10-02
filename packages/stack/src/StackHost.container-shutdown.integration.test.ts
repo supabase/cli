@@ -192,7 +192,7 @@ it.live.skipIf(process.platform === "win32")(
                   ),
                   jwtExpiry: 3600,
                 },
-                endpoints: { sql: { port: "auto" } },
+                endpoints: {},
               }),
             ),
             Effect.flatMap((database) =>

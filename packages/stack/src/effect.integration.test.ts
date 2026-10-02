@@ -32,11 +32,13 @@ import * as State from "./State.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { sharedStateRoot } from "../tests/helpers/integration-state.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
-const FIXED_API_PORT = 24_393;
+// Below the automatic port span and every OS ephemeral range, so another test's outbound socket
+// or auto-allocated listener cannot already hold it.
+const FIXED_API_PORT = 19_393;
 const databaseOwnerMarker = Schema.fromJsonString(
   Schema.Struct({ stackId: Schema.String, instanceId: Schema.String }),
 );
@@ -222,7 +224,7 @@ const resetDataStory = (runtime: "native" | "docker") =>
     const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-reset-data-${runtime}-` });
     const options = {
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot: sharedStateRoot(),
       cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
       runtime,
     } satisfies Parameters<typeof create>[0];
@@ -851,9 +853,10 @@ it.live("plans requested creations against the saved composition and honours eag
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-" });
+    const stateRoot = sharedStateRoot();
     const stack = yield* create({
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot,
       cacheRoot: `${root}/cache`,
       runtime: "native",
     });
@@ -908,7 +911,7 @@ it.live("plans requested creations against the saved composition and honours eag
           { id: authId, service: "auth", member: true, change: "unchanged" },
         ]);
         const client = yield* Effect.promise(() =>
-          PromiseApi.open({ id: stack.id, stateRoot: `${root}/state`, cacheRoot: `${root}/cache` }),
+          PromiseApi.open({ id: stack.id, stateRoot, cacheRoot: `${root}/cache` }),
         );
         const promisePlan = yield* Effect.promise(() =>
           client.composition
@@ -960,7 +963,7 @@ it.live("plans a Studio public API URL the project sets but not the one the stac
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-studio-" });
     const stack = yield* create({
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot: sharedStateRoot(),
       cacheRoot: `${root}/cache`,
       runtime: "native",
     });
@@ -1013,7 +1016,7 @@ it.live("plans a project's own URL for an input whose supplying member is absent
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-plan-unbound-" });
     const stack = yield* create({
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot: sharedStateRoot(),
       cacheRoot: `${root}/cache`,
       runtime: "native",
     });

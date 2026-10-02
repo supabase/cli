@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { create, open } from "./effect.ts";
 import * as State from "./State.ts";
 import { assertOwnerExited, captureOwnerPid, watchLeaseRelease } from "../tests/owner.ts";
+import { sharedStateRoot } from "../tests/helpers/integration-state.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
@@ -98,10 +99,10 @@ it.live.skipIf(process.platform === "win32")(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-session-kill-" });
-      const stateRoot = `${root}/state`;
+      const stateRoot = sharedStateRoot();
       const creator = yield* ChildProcess.make(
         process.execPath,
-        [sessionFixture, root, cacheRoot],
+        [sessionFixture, root, cacheRoot, stateRoot],
         {
           stdin: "ignore",
           stdout: "pipe",

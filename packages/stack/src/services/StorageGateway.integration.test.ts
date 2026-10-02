@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from "effect";
+import { Context, Crypto, Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import {
@@ -11,7 +11,8 @@ import {
 import * as State from "../State.ts";
 import type { SavedStack } from "../State.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { ownerFor } from "../../tests/owner-rpc.ts";
+import { ownerFor, registerLeased } from "../../tests/owner-rpc.ts";
+import { sharedStateRoot } from "../../tests/helpers/integration-state.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
@@ -23,19 +24,15 @@ const s3Credentials = {
 
 const layout = Effect.fnUntraced(function* (runtime: SavedStack["runtime"], stackId: string) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const stateRoot = sharedStateRoot();
   if (runtime === "native") {
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-gateway-native-" });
-    return { stateRoot: `${root}/state`, dataRoot: `${root}/data`, storageRoot: `${root}/storage` };
+    return { stateRoot, dataRoot: `${root}/data`, storageRoot: `${root}/storage` };
   }
-  const dataRoot = yield* makeDockerDatabaseRoot("storage-gateway-docker-", stackId).pipe(
-    Effect.flatMap(fs.realPath),
-  );
-  return {
-    stateRoot: path.dirname(path.dirname(dataRoot)),
-    dataRoot,
-    storageRoot: `${dataRoot}/storage`,
-  };
+  const dataRoot = yield* makeDockerDatabaseRoot("storage-gateway-docker-", stackId, {
+    stateRoot,
+  }).pipe(Effect.flatMap(fs.realPath));
+  return { stateRoot, dataRoot, storageRoot: `${dataRoot}/storage` };
 });
 
 /** Starts Database and Storage in an owned stack and returns Storage's gateway URL. */
@@ -55,7 +52,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     ports: [],
   };
   const state = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
-  yield* state.save(saved);
+  yield* registerLeased(state, saved);
   const owner = yield* ownerFor({ saved, state, root: dataRoot, cacheRoot });
   yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
   const created = yield* owner.rpc.supabaseComposition({

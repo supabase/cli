@@ -3,6 +3,7 @@ import { PgClient } from "@effect/sql-pg";
 import { expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema } from "effect";
 import { HttpClient } from "effect/unstable/http";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "./Owner.ts";
@@ -11,7 +12,8 @@ import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
 import { ServiceCreation, type ServiceCreationInput } from "./services/Catalog.ts";
-import { ownerFor } from "../tests/owner-rpc.ts";
+import { ownerFor, registerLeased } from "../tests/owner-rpc.ts";
+import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -55,7 +57,7 @@ it.effect("credential lookup leaves a fresh stack untouched for custom database 
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-credentials-" });
       const stack = initial("owner-credentials");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const owner = yield* ownerFor({
         saved: stack,
         state,
@@ -89,9 +91,12 @@ it.live("forwards and rotates saved identity across composed services in one own
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-identity-rotation-" });
-      const stack = initial("a".repeat(64));
-      const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      // Exactly 64 characters, the boundary `services/Database.ts` enforces, with a unique prefix
+      // so this test's identity never collides with another file's on the shared state root.
+      const uniqueSuffix = randomUUID().replaceAll("-", "").slice(0, 12);
+      const stack = initial(`${uniqueSuffix}${"a".repeat(64 - uniqueSuffix.length)}`);
+      const state = yield* stateFor(sharedStateRoot());
+      yield* registerLeased(state, stack);
       const owner = yield* ownerFor({
         saved: stack,
         state,
@@ -331,7 +336,7 @@ it.effect("publishes service removal and composition pruning together", () =>
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-remove-" });
       const stack = initial("owner-remove");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const removalWrite = yield* Ref.make(false);
       const failingState: State.Interface = {
         ...state,
@@ -383,9 +388,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-" });
-        const stack = initial("owner-integration");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("owner-integration"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,
@@ -485,8 +490,8 @@ it.effect("isolates owner graphs built in one scope", () =>
       const state = yield* stateFor(`${root}/state`);
       const first = initial("owner-layer-first");
       const second = initial("owner-layer-second");
-      yield* state.save(first);
-      yield* state.save(second);
+      yield* registerLeased(state, first);
+      yield* registerLeased(state, second);
       const memoMap = yield* Layer.makeMemoMap;
       const scope = yield* Effect.scope;
       const buildOwner = (saved: SavedStack) =>
@@ -534,9 +539,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-factory-" });
-        const stack = initial("owner-factory");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("owner-factory"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,
@@ -602,7 +607,7 @@ it.effect("validates Supabase composition recipes before creating instances", ()
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-factory-errors-" });
       const stack = initial("owner-factory-errors");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const owner = yield* ownerFor({
         saved: stack,
         state,
@@ -692,7 +697,7 @@ it.effect("lets a retry choose other credentials after the first database creati
       });
       const stack = initial("owner-credential-rollback");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const database = (password: string) => ({
         service: "database" as const,
         config: { version: "17", databasePassword: Redacted.make(password), jwtExpiry: 3600 },
@@ -732,7 +737,7 @@ it.effect("rejects a duplicate instance without releasing the existing instance'
         instances: [instance],
         ports: [claim],
       };
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
 
       const failure = yield* ownerFor({
         saved: { ...stack, instances: [instance, instance] },
@@ -754,7 +759,7 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-credentials-" });
       const stack = initial("owner-credentials");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       yield* owner.rpc.createService({
@@ -789,7 +794,7 @@ it.live("rejects a missing required input before starting or stopping the servic
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-missing-input-" });
       const stack = initial("owner-missing-input");
       const state = yield* stateFor(`${root}/state`);
-      yield* state.save(stack);
+      yield* registerLeased(state, stack);
       const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
       const unbound = yield* owner.rpc.createService({

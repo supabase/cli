@@ -27,6 +27,7 @@ export default defineConfig({
           // Integration workers start real service processes and containers.
           maxWorkers: 4,
           sequence: { groupOrder: 1 },
+          globalSetup: ["tests/integration-global-setup.ts"],
         },
       },
       {
