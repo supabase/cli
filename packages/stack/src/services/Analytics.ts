@@ -15,6 +15,9 @@ export const Endpoints = Schema.Struct({ http: Schema.optionalKey(EndpointIntent
 export interface Endpoints extends Schema.Schema.Type<typeof Endpoints> {}
 export const Creation = serviceCreation("analytics", Config, Endpoints);
 
+/** The schema holding Analytics' sources and the event tables of its Postgres backend. */
+export const schema = "_analytics";
+
 export interface Creation extends Schema.Schema.Type<typeof Creation> {}
 
 export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
@@ -37,7 +40,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           ? {}
           : { PORT: String(http.port), PHX_HTTP_PORT: String(http.port) }),
         DB_DATABASE: "_supabase",
-        DB_SCHEMA: "_analytics",
+        DB_SCHEMA: schema,
         DB_HOSTNAME: db.host,
         DB_PORT: db.port,
         DB_USERNAME: db.username ?? "supabase_admin",
@@ -49,7 +52,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           ? {}
           : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
         POSTGRES_BACKEND_URL: databaseUrl,
-        POSTGRES_BACKEND_SCHEMA: "_analytics",
+        POSTGRES_BACKEND_SCHEMA: schema,
       };
     }),
   args: () => Effect.succeed(["start"]),

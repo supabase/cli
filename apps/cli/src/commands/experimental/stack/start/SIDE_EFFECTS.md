@@ -101,8 +101,12 @@ it is healthy again, including after an owner restart. A missing or unreadable p
 the oldest retained line. Lines already deleted by log retention are skipped, and Analytics refusing
 the API key pauses shipping until Analytics stops or turns unhealthy and is healthy again, or the
 composition selects a different Analytics instance. A failed log read is retried from the saved
-position with a backoff. Each event carries an id derived from its instance and position, so a request that fails
-after it may have been ingested is repeated without duplicating rows. Shipping never wakes Analytics
+position with a backoff. Each event carries an id derived from its instance and position. Before
+posting a request, the owner records it as pending in `cursor.json`; it then reads Analytics'
+Postgres tables (`_analytics.sources` and `_analytics.log_events_<token>` in the stack database)
+to confirm which events are stored, posts only the missing ones, and advances the position once
+all are stored. Events still missing 5 seconds after a request are posted again, and a pending
+request is confirmed the same way after an owner restart or an Analytics restart. Shipping never wakes Analytics
 and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
 services log. Service log streams and `supabase stack logs` are never blocked by shipping.
 

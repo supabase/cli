@@ -667,14 +667,28 @@ While the composed Analytics instance is running and healthy, the owner ships th
 stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances to its
 direct backend (never the proxy, so shipping neither wakes it nor counts as activity), in bodies of
 at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
-position of its last shipped record, written atomically after each body settles: a missing cursor
-or unreadable cursor starts at the oldest retained segment, and a cursor in a deleted segment
-resumes at the next retained one. A failed log read restarts the instance from its cursor after a
-capped backoff, and attaching an instance removes temporary cursor writes a dead owner left behind.
-Bodies of an instance are sequential. Event ids
-derive from the instance and record position, and Logflare keeps the first row per id, so a failed
-body is posted again until it settles or the target changes. A 401, 403 or 404 response pauses the
-instance with its cursor until the target changes; any other 4xx except 408 and 429 skips the body. The target is re-selected when the composition or Analytics' health changes.
+position of its last confirmed record plus an optional pending body (its end position, source,
+send time and event ids): a missing cursor or unreadable cursor starts at the oldest retained
+segment, and a cursor in a deleted segment resumes at the next retained one. A failed log read
+restarts the instance from its cursor after a capped backoff, and attaching an instance removes
+temporary cursor writes a dead owner left behind.
+
+Bodies of an instance are sequential, and event ids derive from the instance and record position.
+Logflare answers a post once it queued the events and stores them later in per-source batches; a
+batch holding an id already stored is dropped whole. So delivery is confirmed in Analytics'
+Postgres database: the owner reads which ids `_analytics.log_events_<token>` holds, resolving the
+token from `_analytics.sources`, through the database Analytics is composed with. The pending body
+is written atomically before it is posted, and a failed write blocks posting. Only ids not yet
+stored are posted. After a success, timeout, 5xx or interruption the owner polls the stored ids;
+once all are stored the cursor advances and the pending body is cleared, and ids still missing 5
+seconds after a post are posted again. A start, restart or retarget reconciles a pending body
+before later records; pending records already deleted by retention are skipped with a warning. A
+401, 403 or 404 response clears the pending body and pauses the instance with its cursor until the
+target changes; any other 4xx except 408 and 429 skips the body. A retarget waits for a post in
+flight. The target is re-selected when the composition or Analytics' health changes. A batch that
+Analytics commits more than 5 seconds after its post can still conflict with a repost, and the
+check depends on Logflare's private table layout, which the owner's Analytics integration test
+pins.
 
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
 `<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
