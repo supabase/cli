@@ -124,8 +124,9 @@ and ports are retained. Changed exclusions reuse existing service identities, da
 Removed services remain saved and stopped so including them again can reuse them; a saved stopped
 instance of a newly included service is reused when its endpoints and versions still match. The
 project configuration file is unchanged. A changed endpoint, artifact version, or PostgreSQL major
-version fails before modifying the stopped composition, naming the changed setting and suggesting
-`supabase stack destroy` to recreate the stack.
+version fails before modifying the stopped composition, naming the `config.toml` key or
+`SUPABASE_*` env var behind the change with its saved and requested values, and suggesting either
+reverting it or running the stack's exact `supabase stack destroy` command to recreate it.
 
 ## First startup and retries
 
@@ -173,3 +174,12 @@ name (protocol, address, port, and URL, matching `stack status`, with no synthet
 empty message. See [`docs/stack-commands.md`](../../../../../docs/stack-commands.md) for an
 example. Failures retain typed command errors and package diagnostics. Telemetry state is flushed
 after success or failure.
+
+A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
+envelope: one entry per affected service (a shared setting such as the API port appears once per
+API-backed service, unlike the deduplicated text message), each with `service`, `path` (the
+composition planner's dotted path, e.g. `endpoints.http.port`, not a `config.toml` key), `key`,
+`saved`, `requested`, and `editable`. `recreate_command` is the exact `supabase stack destroy
+--stack-id <id>` invocation, without `--yes`, since destroy deletes local database data; running it
+non-interactively or with `--output-format json`/`--output-format stream-json` requires passing
+`--yes` explicitly.
