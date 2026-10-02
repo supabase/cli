@@ -445,14 +445,15 @@ const makeState = (
     });
     const remove = Effect.fn("State.remove")(function* (id: string) {
       yield* checkId(id);
-      for (const file of [statePath(id), ownerPath(id), ownerLog(id)])
-        yield* fs
-          .remove(file, { force: true })
-          .pipe(Effect.mapError((cause) => stateError("remove", cause)));
+      // Logs go before the state file, so a stack whose logs remain stays listed for another removal.
       yield* fs.remove(logsRoot(id), { recursive: true, force: true }).pipe(
         retryShared,
         Effect.mapError((cause) => stateError("remove", cause)),
       );
+      for (const file of [statePath(id), ownerPath(id), ownerLog(id)])
+        yield* fs
+          .remove(file, { force: true })
+          .pipe(Effect.mapError((cause) => stateError("remove", cause)));
       yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
       yield* removeEmptyDirectory(stackRoot(id));
     });

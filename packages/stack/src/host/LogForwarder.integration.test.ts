@@ -34,9 +34,13 @@ import type { LogRecord } from "./LogRecord.ts";
 import * as LogForwarder from "./LogForwarder.ts";
 import * as LogStore from "./LogStore.ts";
 
-const { flushWindowMillis, pollMillis } = LogForwarder;
+const { flushWindowMillis, pollMillis, postTimeoutMillis, retryMillis, stuckMillis } = LogForwarder;
 
-/** A clock that moves only when the test advances it; `sleeping` waits for a pending sleep. */
+/**
+ * A clock that moves only when the test advances it; `sleeping` waits for a pending sleep of that
+ * duration. Wake-ups run on a later macrotask, since completing a deferred resumes its fiber
+ * inline and a sleeper and the test would otherwise drive each other without yielding to I/O.
+ */
 const makeManualClock = Effect.gen(function* () {
   let now = yield* Clock.currentTimeMillis;
   const sleeps = new Set<{
@@ -45,6 +49,8 @@ const makeManualClock = Effect.gen(function* () {
     readonly woken: Deferred.Deferred<void>;
   }>();
   const waiters = new Set<{ readonly millis: number; readonly ready: Deferred.Deferred<void> }>();
+  const wake = (deferred: Deferred.Deferred<void>) =>
+    setImmediate(() => Deferred.doneUnsafe(deferred, Effect.void));
   const nanos = () => BigInt(now) * 1_000_000n;
   const clock: Clock.Clock = {
     currentTimeMillisUnsafe: () => now,
@@ -62,7 +68,7 @@ const makeManualClock = Effect.gen(function* () {
         for (const waiter of waiters)
           if (waiter.millis === millis) {
             waiters.delete(waiter);
-            Deferred.doneUnsafe(waiter.ready, Effect.void);
+            wake(waiter.ready);
           }
         return Deferred.await(entry.woken).pipe(
           Effect.ensuring(Effect.sync(() => sleeps.delete(entry))),
@@ -86,7 +92,7 @@ const makeManualClock = Effect.gen(function* () {
         for (const entry of sleeps)
           if (entry.until <= now) {
             sleeps.delete(entry);
-            Deferred.doneUnsafe(entry.woken, Effect.void);
+            wake(entry.woken);
           }
       }),
   };
@@ -186,6 +192,11 @@ const analyticsTarget = (port: Effect.Effect<number>) =>
           observation,
           awake ? serving("analytics") : observationOf("analytics", { lifecycle: "stopped" }),
         ),
+      /** Restarts Analytics as a new launch, which loses whatever the previous one had queued. */
+      relaunch: (launchId: number) =>
+        SubscriptionRef.set(observation, observationOf("analytics", { lifecycle: "stopped" })).pipe(
+          Effect.andThen(SubscriptionRef.set(observation, { ...serving("analytics"), launchId })),
+        ),
       instance: {
         id: "analytics",
         service: "analytics" as const,
@@ -217,6 +228,7 @@ const startForwarder = (
   logflare: FakeLogflare,
   instances: ReadonlyArray<LogForwarder.ForwardedInstance | LogForwarder.ForwardedStream>,
   clock?: Clock.Clock,
+  stored?: LogForwarder.StoredEvents,
 ) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
@@ -225,7 +237,7 @@ const startForwarder = (
     const forwarder = yield* LogForwarder.make({
       composition,
       logs: store,
-      storedEvents: () => logflare.storedEvents,
+      storedEvents: () => (stored === undefined ? logflare.storedEvents : Effect.succeed(stored)),
     }).pipe(Scope.provide(scope));
     for (const instance of instances) yield* forwarder.attach(instance);
     yield* forwarder.rebind;
@@ -585,27 +597,38 @@ describe("LogForwarder", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("posts the events of a batch Analytics dropped again once the flush window passes", () =>
-    Effect.gen(function* () {
-      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
-      const manual = yield* makeManualClock;
-      yield* analytics.set(true);
-      yield* startForwarder(store, logflare, [analytics.instance, database.instance], manual.clock);
-      yield* database.log("line 1", "line 2");
-      const posted = yield* logflare.next;
-      yield* logflare.discard;
+  it.live(
+    "posts accepted events Analytics has not stored again to its next launch, not to the launch that may still store them",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+        const manual = yield* makeManualClock;
+        yield* analytics.set(true);
+        yield* startForwarder(
+          store,
+          logflare,
+          [analytics.instance, database.instance],
+          manual.clock,
+        );
+        yield* database.log("line 1", "line 2");
+        const posted = yield* logflare.next;
 
-      yield* manual.sleeping(pollMillis);
-      yield* manual.advance(flushWindowMillis);
-      const resent = yield* logflare.next;
-      yield* logflare.apply();
-      yield* database.log("line 3");
-      const later = yield* nextPost(logflare, manual);
+        yield* manual.sleeping(pollMillis);
+        yield* manual.advance(stuckMillis - pollMillis);
+        yield* manual.sleeping(pollMillis);
+        const resentToSameLaunch = yield* logflare.unread;
+        yield* logflare.discard;
+        yield* analytics.relaunch(2);
+        const resent = yield* logflare.next;
+        yield* logflare.apply();
+        yield* database.log("line 3");
+        const later = yield* nextPost(logflare, manual);
 
-      expect(ids(resent)).toEqual(ids(posted));
-      expect(messages(later)).toEqual(["line 3"]);
-      expect(yield* storedMessages(logflare)).toEqual(["line 1", "line 2"]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+        expect(resentToSameLaunch).toBe(0);
+        expect(ids(resent)).toEqual(ids(posted));
+        expect(messages(later)).toEqual(["line 3"]);
+        expect(yield* storedMessages(logflare)).toEqual(["line 1", "line 2"]);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("posts again only the events Analytics did not store", () =>
@@ -622,7 +645,8 @@ describe("LogForwarder", () => {
       yield* logflare.discard;
 
       yield* manual.sleeping(pollMillis);
-      yield* manual.advance(flushWindowMillis);
+      yield* manual.advance(postTimeoutMillis + flushWindowMillis);
+      yield* analytics.relaunch(2);
       const resent = yield* logflare.next;
       yield* logflare.apply();
 
@@ -650,8 +674,8 @@ describe("LogForwarder", () => {
         yield* database.log("line 1");
         const queued = yield* logflare.next;
 
-        yield* manual.sleeping(5_000);
-        yield* manual.advance(5_000);
+        yield* manual.sleeping(postTimeoutMillis);
+        yield* manual.advance(postTimeoutMillis);
         yield* manual.sleeping(pollMillis);
         yield* logflare.apply();
         yield* database.log("line 2");
@@ -700,10 +724,10 @@ describe("LogForwarder", () => {
       yield* database.log("line 1");
       const first = yield* logflare.next.pipe(
         Effect.as("posted"),
-        Effect.raceFirst(manual.sleeping(250).pipe(Effect.as("retrying"))),
+        Effect.raceFirst(manual.sleeping(retryMillis).pipe(Effect.as("retrying"))),
       );
       yield* Ref.set(broken, false);
-      yield* manual.advance(250);
+      yield* manual.advance(retryMillis);
       const posted = yield* logflare.next;
 
       expect(first).toBe("retrying");
@@ -711,26 +735,47 @@ describe("LogForwarder", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("posts a pending body again after a restart once the flush window passes", () =>
-    Effect.gen(function* () {
-      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
-      const manual = yield* makeManualClock;
-      const instances = [analytics.instance, database.instance];
-      yield* analytics.set(true);
-      const first = yield* startForwarder(store, logflare, instances, manual.clock);
-      yield* database.log("line 1");
-      const posted = yield* logflare.next;
-      yield* logflare.discard;
-      yield* manual.sleeping(pollMillis);
-      yield* first.stop;
+  it.live(
+    "posts a pending body again after a restart only once the flush window passed since its slow post ended",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+        const manual = yield* makeManualClock;
+        const instances = [analytics.instance, database.instance];
+        const checking = yield* Queue.unbounded<void>();
+        const checked = yield* Deferred.make<void>();
+        const slowCheck: LogForwarder.StoredEvents = {
+          storedIds: (source, eventIds) =>
+            Queue.offer(checking, undefined).pipe(
+              Effect.andThen(Deferred.await(checked)),
+              Effect.andThen(logflare.storedIds(source, eventIds)),
+            ),
+        };
+        yield* analytics.set(true);
+        const first = yield* startForwarder(store, logflare, instances, manual.clock, slowCheck);
+        yield* database.log("line 1");
+        yield* Queue.take(checking);
+        yield* manual.advance(2_000);
+        const release = yield* logflare.hold;
+        yield* Deferred.succeed(checked, undefined);
+        const posted = yield* logflare.next;
+        yield* manual.advance(2_000);
+        yield* release;
+        yield* manual.sleeping(pollMillis);
+        yield* logflare.discard;
+        yield* first.stop;
 
-      yield* startForwarder(store, logflare, instances, manual.clock);
-      yield* manual.sleeping(pollMillis);
-      yield* manual.advance(flushWindowMillis);
-      const resent = yield* logflare.next;
+        yield* startForwarder(store, logflare, instances, manual.clock);
+        yield* manual.sleeping(pollMillis);
+        yield* manual.advance(flushWindowMillis - 1);
+        yield* manual.sleeping(pollMillis);
+        const resentInWindow = yield* logflare.unread;
+        yield* manual.advance(postTimeoutMillis);
+        const resent = yield* logflare.next;
 
-      expect(ids(resent)).toEqual(ids(posted));
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+        expect(resentInWindow).toBe(0);
+        expect(ids(resent)).toEqual(ids(posted));
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("warns about pending events retention deleted and ships the retained records", () =>
@@ -763,7 +808,7 @@ describe("LogForwarder", () => {
         Effect.provide(captured),
       );
       yield* manual.sleeping(pollMillis);
-      yield* manual.advance(flushWindowMillis);
+      yield* manual.advance(postTimeoutMillis + flushWindowMillis);
       const shipped: Array<string> = [];
       while (shipped.at(-1) !== "later 29") {
         shipped.push(...messages(yield* nextPost(logflare, manual)));
@@ -819,6 +864,113 @@ describe("LogForwarder", () => {
 
       expect(messages(rejected)).toEqual(["rejected line"]);
       expect(messages(accepted)).toEqual(["accepted line"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("stores a line holding NUL, replaced, instead of losing its batch", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture();
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
+
+      yield* database.log("before \u0000 after", "next line");
+      const posted = yield* logflare.next;
+      yield* database.log("later");
+      yield* logflare.next;
+
+      expect(messages(posted)).toEqual(["before � after", "next line"]);
+      expect((yield* storedMessages(logflare)).slice(0, 2)).toEqual(messages(posted));
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live(
+    "posts events a batch lost one at a time and skips the one that never stores, then ships later lines",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database, analytics } = yield* fixture({
+          logflare: {
+            unstorable: (event) => event.event_message === "never stored",
+          },
+        });
+        const manual = yield* makeManualClock;
+        const warnings: Array<unknown> = [];
+        const captured = Logger.layer([
+          Logger.make(({ logLevel, message }) => {
+            if (logLevel === "Warn") warnings.push(message);
+          }),
+        ]);
+        yield* analytics.set(true);
+        yield* startForwarder(
+          store,
+          logflare,
+          [analytics.instance, database.instance],
+          manual.clock,
+        ).pipe(Effect.provide(captured));
+
+        yield* database.log("good 1", "never stored", "good 2");
+        const batch = yield* logflare.next;
+        yield* logflare.apply();
+        yield* manual.sleeping(pollMillis);
+        yield* manual.advance(stuckMillis);
+        const first = yield* logflare.next;
+        yield* logflare.apply();
+        const poison = yield* nextPost(logflare, manual);
+        yield* logflare.apply();
+        yield* manual.sleeping(pollMillis);
+        yield* manual.advance(stuckMillis);
+        const second = yield* logflare.next;
+        yield* logflare.apply();
+        yield* database.log("later");
+        const later = yield* nextPost(logflare, manual);
+        yield* logflare.apply();
+
+        expect(messages(batch)).toEqual(["good 1", "never stored", "good 2"]);
+        expect([first, poison, second, later].map(messages)).toEqual([
+          ["good 1"],
+          ["never stored"],
+          ["good 2"],
+          ["later"],
+        ]);
+        expect((yield* storedMessages(logflare)).slice(0, 2)).toEqual(["good 1", "good 2"]);
+        expect(warnings).toEqual([
+          [
+            "Analytics has not stored 3 postgres.logs lines of database it accepted; posting them one at a time",
+          ],
+          [
+            "Analytics did not store a postgres.logs line of database posted on its own; skipping it",
+          ],
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("keeps shipping to the new target after a retarget while a post is in flight", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database } = yield* fixture();
+      const firstLaunch = yield* Scope.make();
+      const firstPort = yield* logflare.listen(firstLaunch);
+      const port = yield* Ref.make(firstPort);
+      const analytics = yield* analyticsTarget(Ref.get(port));
+      yield* analytics.set(true);
+      const forwarder = yield* startForwarder(store, logflare, [
+        analytics.instance,
+        database.instance,
+      ]);
+      const release = yield* logflare.hold;
+      yield* database.log("in flight");
+      const inFlight = yield* logflare.next;
+
+      yield* analytics.set(false);
+      yield* forwarder.awaitShipping(false);
+      yield* Ref.set(port, logflare.port);
+      yield* SubscriptionRef.set(analytics.observation, { ...serving("analytics"), launchId: 2 });
+      yield* forwarder.awaitShipping(true);
+      yield* release;
+      yield* database.log("after the retarget");
+      const after = yield* logflare.next;
+
+      expect(inFlight.port).toBe(firstPort);
+      expect(after.port).toBe(logflare.port);
+      expect(messages(after)).toEqual(["after the retarget"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

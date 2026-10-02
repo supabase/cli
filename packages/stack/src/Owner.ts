@@ -61,7 +61,6 @@ import {
   type ServiceCreationInput,
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
-import { databaseConnection } from "./services/ServiceConfig.ts";
 import * as Container from "./runtime/Container.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
@@ -195,30 +194,26 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   const logStore = yield* LogStore.make({ root: options.state.logsRoot(options.saved.id) }).pipe(
     Effect.provideContext(services),
   );
-  /** The database Analytics stores events in, on its direct backend, with Analytics' credentials. */
+  /** The database Analytics stores events in, as the host reaches it. */
   const analyticsDatabase = (analyticsId: string) =>
     Effect.gen(function* () {
       const creation = yield* Ref.get((yield* orchestrator.get(analyticsId)).creation);
       const databaseUrl =
         creation.service === "analytics" ? creation.config.databaseUrl : undefined;
+      if (databaseUrl === undefined)
+        return yield* new ServiceError({
+          operation: "analytics",
+          message: "Analytics has no database URL",
+        });
       const dependency = (yield* orchestrator.composition).dependencies.find(
         ({ to, bindings }) =>
           to === analyticsId && bindings?.some(({ input }) => input === "databaseUrl") === true,
       );
-      if (databaseUrl === undefined || dependency === undefined)
-        return yield* new ServiceError({
-          operation: "analytics",
-          message: "Analytics has no composed database",
-        });
-      const connection = yield* databaseConnection(databaseUrl);
-      const endpoint = yield* (yield* orchestrator.get(dependency.from)).recipe.endpoint("sql");
-      return {
-        host: (endpoint.kind === "unix" ? endpoint.path : endpoint.host) ?? "127.0.0.1",
-        port: endpoint.port,
-        database: connection.database,
-        username: connection.username,
-        password: connection.password,
-      } satisfies LogflareStorage.AnalyticsDatabase;
+      const bound =
+        dependency === undefined
+          ? undefined
+          : yield* (yield* orchestrator.get(dependency.from)).recipe.endpoint("sql");
+      return yield* LogflareStorage.analyticsDatabase(databaseUrl, bound);
     });
   const forwarder = yield* LogForwarder.make({
     composition: orchestrator.composition,

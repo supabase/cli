@@ -201,16 +201,39 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
   },
 };
 
+/**
+ * Replaces NUL and unpaired surrogates with U+FFFD: Logflare stores events as Postgres `jsonb`,
+ * which rejects both, and one rejected event drops its whole batch.
+ */
+const storableText = (text: string): string => text.replaceAll("\u0000", "�").toWellFormed();
+
+const storableValue = (value: unknown): unknown => {
+  if (typeof value === "string") return storableText(value);
+  if (Array.isArray(value)) return value.map(storableValue);
+  return typeof value === "object" && value !== null ? storableRecord(value) : value;
+};
+
+const storableRecord = (record: object): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [storableText(key), storableValue(value)]),
+  );
+
 /** Builds the Logflare event for one service log line received at `timestamp`. */
 export const logflareEvent = (
   service: ShippedService,
   timestamp: string,
   message: string,
-): LogflareEvent =>
-  remaps[service]({
+): LogflareEvent => {
+  const event = remaps[service]({
     project: "default",
     event_message: message,
     appname: service,
     timestamp,
     metadata: {},
   });
+  return {
+    ...event,
+    event_message: storableText(event.event_message),
+    metadata: storableRecord(event.metadata),
+  };
+};
