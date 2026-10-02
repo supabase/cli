@@ -534,7 +534,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
         if (isBodyRejection(error))
           return warnOnce(
             warned.rejection,
-            `Analytics rejected a body of ${lines(body.items.length, source)} of ${session.instanceId}`,
+            `Analytics rejected a body of ${lines(body.items.length, source)} of ${session.instanceId}; posting it again in halves to skip only the lines it rejects alone`,
             error,
           ).pipe(Effect.as<Delivery>("rejected"));
         if (!mayHaveQueued(error))

@@ -856,7 +856,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         dropped.delete(dropKey(marker.launchId, marker.stream));
       if (Exit.isSuccess(written)) {
         broken = undefined;
-        for (const entry of entries)
+        for (const entry of [...markers, ...entries])
           if (entry.kind === "lost" && !warnedLaunches.has(entry.launchId)) {
             warnedLaunches.add(entry.launchId);
             yield* Effect.logWarning(
