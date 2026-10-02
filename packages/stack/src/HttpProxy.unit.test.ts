@@ -9,6 +9,11 @@ describe("redactCredentials", () => {
       redacted: "/api/ok?select=*&apikey=redacted&Access_Token=redacted",
     },
     {
+      case: "redacts an Edge Function websocket JWT",
+      url: "/functions/v1/realtime-chat?jwt=eyJ.p.s",
+      redacted: "/functions/v1/realtime-chat?jwt=redacted",
+    },
+    {
       case: "redacts Auth codes and OTP token hashes",
       url: "/auth/v1/verify?code=pkce&token_hash=h&type=signup",
       redacted: "/auth/v1/verify?code=redacted&token_hash=redacted&type=signup",

@@ -167,6 +167,7 @@ const decodeNested = (value: string) => {
 // presigned URLs carry their SigV4 signature, credential scope and session token.
 const credentialParameters = [
   "apikey",
+  "jwt",
   "access_token",
   "token",
   "token_hash",
