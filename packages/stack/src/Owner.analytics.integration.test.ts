@@ -7,11 +7,13 @@ import {
   DateTime,
   Effect,
   Fiber,
+  FileSystem,
   Layer,
   Option,
   Path,
   Redacted,
   Schedule,
+  Schema,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
@@ -41,6 +43,9 @@ const query = <A extends object>(url: string, statement: string) =>
     }),
   );
 
+const Confirmed = Schema.Struct({ generation: Schema.Int, byteOffset: Schema.Int });
+const decodeConfirmed = Schema.decodeUnknownEffect(Schema.fromJsonString(Confirmed));
+
 interface StoredEvent {
   readonly message: string;
   readonly severity: string | null;
@@ -53,6 +58,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
         const client = yield* HttpClient.HttpClient;
@@ -189,6 +195,27 @@ it.live(
             timestamp: expect.any(String),
           },
         ]);
+        // The cursor passes a body only once shipping read its events back from Analytics' tables.
+        const awakeRecord = Option.getOrUndefined(
+          yield* owner.rpc.readLogs({ id: databaseId, follow: false }).pipe(
+            Stream.filter((record) => record.text?.includes(`LOG:  ${awakeMarker}`) === true),
+            Stream.runHead,
+          ),
+        );
+        const passedAwake = ({ generation, byteOffset }: typeof Confirmed.Type) =>
+          awakeRecord?.position !== undefined &&
+          (generation > awakeRecord.position.generation ||
+            (generation === awakeRecord.position.generation &&
+              byteOffset >= awakeRecord.position.byteOffset));
+        const confirmed = yield* fs
+          .readFileString(path.join(state.logsRoot(stackId), "database", databaseId, "cursor.json"))
+          .pipe(
+            Effect.flatMap(decodeConfirmed),
+            Effect.filterOrFail(passedAwake),
+            Effect.retry(Schedule.spaced("250 millis")),
+            Effect.timeout("60 seconds"),
+          );
+        expect(passedAwake(confirmed)).toBe(true);
         const restPath = `/${stackId}-probe`;
         yield* client.get(`${rest.url}${restPath}`);
         expect(
@@ -226,9 +253,10 @@ it.live(
           Stream.runHead,
           Effect.forkScoped,
         );
+        const raisedAt = DateTime.toEpochMillis(yield* DateTime.now);
         yield* raise(asleepMarker);
         const asleepRecord = Option.getOrUndefined(yield* Fiber.join(persistedAsleep));
-        const wokeAt = DateTime.formatIso(yield* DateTime.now);
+        const wakeRequestedAt = DateTime.toEpochMillis(yield* DateTime.now);
 
         yield* wakeAnalytics;
         yield* Effect.forkScoped(keepAwake);
@@ -237,7 +265,10 @@ it.live(
           `body->>'event_message' LIKE '%LOG:  ${asleepMarker}'`,
         );
         expect(shippedAsleep?.timestamp).toBe(asleepRecord?.timestamp);
-        expect((shippedAsleep?.timestamp ?? "") < wokeAt).toBe(true);
+        // The owner stamps a line with host time on arrival, possibly in the millisecond it is read.
+        const shippedAt = Date.parse(shippedAsleep?.timestamp ?? "");
+        expect(shippedAt).toBeGreaterThanOrEqual(raisedAt);
+        expect(shippedAt).toBeLessThanOrEqual(wakeRequestedAt);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 600_000 },

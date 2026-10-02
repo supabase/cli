@@ -1,9 +1,9 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import {
   Clock,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -11,15 +11,21 @@ import {
   Layer,
   Logger,
   Path,
+  PlatformError,
   PubSub,
   Queue,
   Ref,
   References,
-  Schema,
   Scope,
   Stream,
   SubscriptionRef,
 } from "effect";
+import {
+  makeFakeLogflare,
+  type FakeLogflare,
+  type FakeLogflareOptions,
+  type Received,
+} from "../../tests/fake-logflare.ts";
 import type { ServiceObservation } from "../Service.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import { CatalogError } from "../services/Recipe.ts";
@@ -28,73 +34,77 @@ import type { LogRecord } from "./LogRecord.ts";
 import * as LogForwarder from "./LogForwarder.ts";
 import * as LogStore from "./LogStore.ts";
 
-const Body = Schema.Struct({
-  batch: Schema.Array(
-    Schema.Struct({
-      id: Schema.String,
-      event_message: Schema.String,
-      appname: Schema.String,
-      timestamp: Schema.String,
-      metadata: Schema.Record(Schema.String, Schema.Unknown),
-    }),
-  ),
-});
-type Event = Schema.Schema.Type<typeof Body>["batch"][number];
+const { flushWindowMillis, pollMillis } = LogForwarder;
 
-interface Received {
-  readonly url: string;
-  readonly apiKey: string | undefined;
-  readonly events: ReadonlyArray<Event>;
-}
-
-const decodeBody = Schema.decodeUnknownSync(Body);
-
-/** A Logflare stand-in that records posts and answers the next `failures` of them with `status`. */
-const makeSink = Effect.gen(function* () {
-  const received = yield* Queue.unbounded<Received>();
-  const control = { failures: 0, status: 500 };
-  const server = yield* Effect.acquireRelease(
-    Effect.callback<{ readonly port: number; readonly server: ReturnType<typeof createServer> }>(
-      (resume) => {
-        const server = createServer((request, response) => {
-          const chunks: Array<Uint8Array> = [];
-          request.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-          request.on("end", () => {
-            const apiKey = request.headers["x-api-key"];
-            Queue.offerUnsafe(received, {
-              url: request.url ?? "",
-              apiKey: typeof apiKey === "string" ? apiKey : undefined,
-              events: decodeBody(JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)))).batch,
-            });
-            response.statusCode = control.failures > 0 ? control.status : 200;
-            control.failures = Math.max(0, control.failures - 1);
-            response.end();
-          });
-        });
-        server.listen(0, "127.0.0.1", () => {
-          const address = server.address();
-          if (address === null || typeof address === "string")
-            return resume(Effect.die("sink has no address"));
-          resume(Effect.succeed({ port: address.port, server }));
-        });
-      },
-    ),
-    ({ server }) =>
-      Effect.callback<void>((resume) => {
-        server.closeAllConnections();
-        server.close(() => resume(Effect.void));
+/** A clock that moves only when the test advances it; `sleeping` waits for a pending sleep. */
+const makeManualClock = Effect.gen(function* () {
+  let now = yield* Clock.currentTimeMillis;
+  const sleeps = new Set<{
+    readonly millis: number;
+    readonly until: number;
+    readonly woken: Deferred.Deferred<void>;
+  }>();
+  const waiters = new Set<{ readonly millis: number; readonly ready: Deferred.Deferred<void> }>();
+  const nanos = () => BigInt(now) * 1_000_000n;
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => now,
+    currentTimeMillis: Effect.sync(() => now),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: nanos,
+    monotonicTimeNanos: Effect.sync(nanos),
+    sleep: (duration) =>
+      Effect.suspend(() => {
+        const millis = Duration.toMillis(duration);
+        if (millis <= 0) return Effect.void;
+        const entry = { millis, until: now + millis, woken: Deferred.makeUnsafe<void>() };
+        sleeps.add(entry);
+        for (const waiter of waiters)
+          if (waiter.millis === millis) {
+            waiters.delete(waiter);
+            Deferred.doneUnsafe(waiter.ready, Effect.void);
+          }
+        return Deferred.await(entry.woken).pipe(
+          Effect.ensuring(Effect.sync(() => sleeps.delete(entry))),
+        );
       }),
-  );
+  };
   return {
-    port: server.port,
-    next: Queue.take(received),
-    failNext: (count: number, status = 500) =>
+    clock,
+    sleeping: (millis: number) =>
+      Effect.suspend(() => {
+        if ([...sleeps].some((entry) => entry.millis === millis)) return Effect.void;
+        const waiter = { millis, ready: Deferred.makeUnsafe<void>() };
+        waiters.add(waiter);
+        return Deferred.await(waiter.ready).pipe(
+          Effect.ensuring(Effect.sync(() => waiters.delete(waiter))),
+        );
+      }),
+    advance: (millis: number) =>
       Effect.sync(() => {
-        control.failures = count;
-        control.status = status;
+        now += millis;
+        for (const entry of sleeps)
+          if (entry.until <= now) {
+            sleeps.delete(entry);
+            Deferred.doneUnsafe(entry.woken, Effect.void);
+          }
       }),
   };
 });
+type ManualClock = Effect.Success<typeof makeManualClock>;
+
+/** Takes the next post, running each stored-id poll the forwarder waits on until one arrives. */
+const nextPost = (logflare: FakeLogflare, manual: ManualClock): Effect.Effect<Received> =>
+  logflare.next.pipe(
+    Effect.raceFirst(
+      manual
+        .sleeping(pollMillis)
+        .pipe(
+          Effect.andThen(manual.advance(pollMillis)),
+          Effect.andThen(Effect.suspend(() => nextPost(logflare, manual))),
+        ),
+    ),
+  );
 
 const observationOf = (
   id: string,
@@ -166,10 +176,11 @@ const databaseSource = (store: LogStore.Interface) =>
     };
   });
 
-const analyticsTarget = (port: number) =>
+const analyticsTarget = (port: Effect.Effect<number>) =>
   Effect.gen(function* () {
     const observation = yield* SubscriptionRef.make(observationOf("analytics", {}));
     return {
+      observation,
       set: (awake: boolean) =>
         SubscriptionRef.set(
           observation,
@@ -178,7 +189,14 @@ const analyticsTarget = (port: number) =>
       instance: {
         id: "analytics",
         service: "analytics" as const,
-        endpoint: () => Effect.succeed({ kind: "tcp" as const, host: "127.0.0.1" as const, port }),
+        endpoint: () =>
+          port.pipe(
+            Effect.map((current) => ({
+              kind: "tcp" as const,
+              host: "127.0.0.1" as const,
+              port: current,
+            })),
+          ),
         creation: Effect.succeed({ service: "analytics" as const, config: { apiKey: "test-key" } }),
         observation: SubscriptionRef.changes(observation),
       } satisfies LogForwarder.ForwardedInstance,
@@ -196,15 +214,19 @@ const composition = Effect.succeed({
 /** Starts a forwarder in its own scope so a test can stop it like an owner. */
 const startForwarder = (
   store: LogStore.Interface,
+  logflare: FakeLogflare,
   instances: ReadonlyArray<LogForwarder.ForwardedInstance | LogForwarder.ForwardedStream>,
+  clock?: Clock.Clock,
 ) =>
   Effect.gen(function* () {
     const scope = yield* Scope.make();
     // Stops before the test's store and temp directory close, so no cursor write races removal.
     yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-    const forwarder = yield* LogForwarder.make({ composition, logs: store }).pipe(
-      Scope.provide(scope),
-    );
+    const forwarder = yield* LogForwarder.make({
+      composition,
+      logs: store,
+      storedEvents: () => logflare.storedEvents,
+    }).pipe(Scope.provide(scope));
     for (const instance of instances) yield* forwarder.attach(instance);
     yield* forwarder.rebind;
     const awaitShipping = (value: boolean) =>
@@ -214,20 +236,29 @@ const startForwarder = (
         Stream.runDrain,
       );
     return { awaitShipping, detach: forwarder.detach, stop: Scope.close(scope, Exit.void) };
-  });
+  }).pipe(clock === undefined ? (effect) => effect : Effect.provideService(Clock.Clock, clock));
 
-const fixture = (options: Omit<LogStore.LogStoreOptions, "root"> = {}) =>
+/** Without `logflare` options, the fake stores each accepted post right away. */
+const fixture = (
+  options: {
+    readonly store?: Omit<LogStore.LogStoreOptions, "root">;
+    readonly logflare?: FakeLogflareOptions;
+  } = {},
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "log-forwarder-" });
-    const store = yield* LogStore.make({ root, ...options });
-    const sink = yield* makeSink;
+    const store = yield* LogStore.make({ root, ...options.store });
+    const logflare = yield* makeFakeLogflare(options.logflare ?? { flushMillis: 0 });
     const database = yield* databaseSource(store);
-    const analytics = yield* analyticsTarget(sink.port);
-    return { root, store, sink, database, analytics };
+    const analytics = yield* analyticsTarget(Effect.succeed(logflare.port));
+    return { root, store, logflare, database, analytics };
   });
 
 const messages = (post: Received) => post.events.map((event) => event.event_message);
+const ids = (post: Received) => post.events.map((event) => event.id);
+const storedMessages = (logflare: FakeLogflare) =>
+  logflare.stored.pipe(Effect.map((events) => events.map((event) => event.event_message)));
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -236,15 +267,18 @@ describe("LogForwarder", () => {
     "ships records written while Analytics slept with their timestamps, without markers",
     () =>
       Effect.gen(function* () {
-        const { root, store, sink, database, analytics } = yield* fixture();
-        const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]);
+        const { root, store, logflare, database, analytics } = yield* fixture();
+        const forwarder = yield* startForwarder(store, logflare, [
+          analytics.instance,
+          database.instance,
+        ]);
         yield* database.log("while asleep 1", "while asleep 2");
 
         yield* analytics.set(true);
         yield* forwarder.awaitShipping(true);
-        const caughtUp = yield* sink.next;
+        const caughtUp = yield* logflare.next;
         yield* database.log("while awake");
-        const live = yield* sink.next;
+        const live = yield* logflare.next;
 
         expect(caughtUp.url).toBe("/api/logs?source_name=postgres.logs");
         expect(caughtUp.apiKey).toBe("test-key");
@@ -256,17 +290,76 @@ describe("LogForwarder", () => {
         expect([...caughtUp.events, ...live.events].map((event) => event.timestamp)).toEqual(
           persisted.map((record) => record.timestamp),
         );
-        const ids = [...caughtUp.events, ...live.events].map((event) => event.id);
-        expect(new Set(ids).size).toBe(3);
-        expect(ids.every((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab]/u.test(id))).toBe(
-          true,
+        const shipped = [...ids(caughtUp), ...ids(live)];
+        expect(new Set(shipped).size).toBe(3);
+        expect(
+          shipped.every((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab]/u.test(id)),
+        ).toBe(true);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live(
+    "ships a record persisted while Analytics slept once it wakes on a new port, without repeating the post it let finish",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database } = yield* fixture({ logflare: {} });
+        const manual = yield* makeManualClock;
+        const firstLaunch = yield* Scope.make();
+        const asleepPort = yield* logflare.listen(firstLaunch);
+        const port = yield* Ref.make(asleepPort);
+        const analytics = yield* analyticsTarget(Ref.get(port));
+        yield* analytics.set(true);
+        const forwarder = yield* startForwarder(
+          store,
+          logflare,
+          [analytics.instance, database.instance],
+          manual.clock,
         );
+        const release = yield* logflare.hold;
+        yield* database.log("while awake");
+        const beforeSleep = yield* logflare.next;
+
+        yield* SubscriptionRef.set(
+          analytics.observation,
+          observationOf("analytics", { lifecycle: "stopping", launchId: 1 }),
+        );
+        yield* forwarder.awaitShipping(false);
+        yield* release;
+        yield* logflare.apply();
+        yield* Scope.close(firstLaunch, Exit.void);
+        yield* SubscriptionRef.set(analytics.observation, observationOf("analytics", {}));
+        yield* database.log("while asleep");
+        yield* Ref.set(port, logflare.port);
+        yield* logflare.respond(503);
+        yield* SubscriptionRef.set(
+          analytics.observation,
+          observationOf("analytics", { lifecycle: "starting", health: "starting", launchId: 2 }),
+        );
+        yield* SubscriptionRef.set(
+          analytics.observation,
+          observationOf("analytics", { lifecycle: "running", health: "starting", launchId: 2 }),
+        );
+        yield* SubscriptionRef.set(analytics.observation, { ...serving("analytics"), launchId: 2 });
+        const unavailable = yield* logflare.next;
+        yield* manual.sleeping(pollMillis);
+        yield* manual.advance(flushWindowMillis);
+        const caughtUp = yield* logflare.next;
+        yield* logflare.apply();
+
+        expect(beforeSleep.port).toBe(asleepPort);
+        expect(messages(beforeSleep)).toEqual(["while awake"]);
+        expect(yield* logflare.aborted).toBe(0);
+        expect(unavailable.port).toBe(logflare.port);
+        expect(messages(unavailable)).toEqual(["while asleep"]);
+        expect(ids(caughtUp)).toEqual(ids(unavailable));
+        expect(yield* storedMessages(logflare)).toEqual(["while awake", "while asleep"]);
+        expect(yield* logflare.dropped).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("stops shipping quietly when the log store closes", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const { store, logflare, database, analytics } = yield* fixture();
       const warnings: Array<unknown> = [];
       const stopped = yield* Deferred.make<void>();
       const captured = Logger.layer([
@@ -276,14 +369,14 @@ describe("LogForwarder", () => {
             Deferred.doneUnsafe(stopped, Effect.void);
         }),
       ]);
-      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]).pipe(
-        Effect.provide(captured),
-        Effect.provideService(References.MinimumLogLevel, "Debug"),
-      );
+      const forwarder = yield* startForwarder(store, logflare, [
+        analytics.instance,
+        database.instance,
+      ]).pipe(Effect.provide(captured), Effect.provideService(References.MinimumLogLevel, "Debug"));
       yield* analytics.set(true);
       yield* forwarder.awaitShipping(true);
       yield* database.log("before removal");
-      const shipped = yield* sink.next;
+      const shipped = yield* logflare.next;
 
       yield* store.close;
       yield* Deferred.await(stopped);
@@ -296,7 +389,7 @@ describe("LogForwarder", () => {
 
   it.live("ships again after a failed log read while Analytics stays healthy", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const { store, logflare, database, analytics } = yield* fixture();
       const reads = yield* Ref.make(0);
       const flaky: LogStore.Interface = {
         ...store,
@@ -322,10 +415,10 @@ describe("LogForwarder", () => {
       yield* database.log("after a failed read");
       yield* analytics.set(true);
 
-      yield* startForwarder(flaky, [analytics.instance, database.instance]).pipe(
+      yield* startForwarder(flaky, logflare, [analytics.instance, database.instance]).pipe(
         Effect.provide(captured),
       );
-      const shipped = yield* sink.next;
+      const shipped = yield* logflare.next;
 
       expect(messages(shipped)).toEqual(["after a failed read"]);
       expect(yield* Ref.get(reads)).toBe(2);
@@ -339,7 +432,7 @@ describe("LogForwarder", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { root, store, database, analytics } = yield* fixture();
+      const { root, store, logflare, database, analytics } = yield* fixture();
       const directory = path.join(root, "database", "database");
       const stale = path.join(directory, ".state-write-stale");
       const recent = path.join(directory, ".state-write-recent");
@@ -349,7 +442,7 @@ describe("LogForwarder", () => {
       const twoDaysAgo = (yield* Clock.currentTimeMillis) / 1000 - 2 * 24 * 60 * 60;
       yield* fs.utimes(stale, twoDaysAgo, twoDaysAgo);
 
-      yield* startForwarder(store, [analytics.instance, database.instance]);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
 
       expect(yield* fs.exists(stale)).toBe(false);
       expect(yield* fs.exists(recent)).toBe(true);
@@ -360,7 +453,7 @@ describe("LogForwarder", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { root, store, sink, database, analytics } = yield* fixture();
+      const { root, store, logflare, database, analytics } = yield* fixture();
       const renaming = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const injected: FileSystem.FileSystem = {
@@ -373,13 +466,13 @@ describe("LogForwarder", () => {
               )
             : fs.rename(from, to),
       };
-      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]).pipe(
-        Effect.provideService(FileSystem.FileSystem, injected),
-      );
+      const forwarder = yield* startForwarder(store, logflare, [
+        analytics.instance,
+        database.instance,
+      ]).pipe(Effect.provideService(FileSystem.FileSystem, injected));
       yield* analytics.set(true);
       yield* forwarder.awaitShipping(true);
       yield* database.log("before removal");
-      yield* sink.next;
       yield* Deferred.await(renaming);
 
       const directory = path.join(root, "database", "database");
@@ -398,85 +491,331 @@ describe("LogForwarder", () => {
 
   it.live("resumes from its persisted cursor after the forwarder restarts", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const { store, logflare, database, analytics } = yield* fixture();
       yield* analytics.set(true);
-      const first = yield* startForwarder(store, [analytics.instance, database.instance]);
+      const first = yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
       yield* database.log("line 1", "line 2");
-      const shipped = yield* sink.next;
-      // Shipping line 3 implies the cursor passed lines 1 and 2 before it.
+      const shipped = yield* logflare.next;
       yield* database.log("line 3");
-      const third = yield* sink.next;
+      const third = yield* logflare.next;
       yield* first.stop;
 
       yield* database.log("line 4");
-      yield* startForwarder(store, [analytics.instance, database.instance]);
-      const resumed: Array<Event> = [];
-      while (resumed.at(-1)?.event_message !== "line 4") resumed.push(...(yield* sink.next).events);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
+      const resumed = yield* logflare.next;
 
       expect(messages(shipped)).toEqual(["line 1", "line 2"]);
       expect(messages(third)).toEqual(["line 3"]);
-      expect(["line 3", "line 4"]).toEqual(
-        expect.arrayContaining(resumed.map((e) => e.event_message)),
-      );
-      const repeated = resumed.find((event) => event.event_message === "line 3");
-      if (repeated !== undefined) expect(repeated.id).toBe(third.events[0]?.id);
+      expect(messages(resumed)).toEqual(["line 4"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("posts an unsettled body again before any later body", () =>
+  it.live(
+    "does not post an accepted body again after an interruption before it was confirmed",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+        const manual = yield* makeManualClock;
+        const instances = [analytics.instance, database.instance];
+        yield* analytics.set(true);
+        const first = yield* startForwarder(store, logflare, instances, manual.clock);
+        const release = yield* logflare.hold;
+        yield* database.log("line 1");
+        const accepted = yield* logflare.next;
+
+        const stopping = yield* Effect.forkChild(first.stop, { startImmediately: true });
+        yield* release;
+        yield* Fiber.join(stopping);
+        yield* logflare.apply();
+        yield* startForwarder(store, logflare, instances, manual.clock);
+        yield* database.log("line 2");
+        const resumed = yield* logflare.next;
+        yield* logflare.apply();
+
+        expect(messages(accepted)).toEqual(["line 1"]);
+        expect(messages(resumed)).toEqual(["line 2"]);
+        expect(yield* storedMessages(logflare)).toEqual(["line 1", "line 2"]);
+        expect(yield* logflare.dropped).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("does not post stored events again when its cursor is lost", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+      const instances = [analytics.instance, database.instance];
       yield* analytics.set(true);
-      yield* startForwarder(store, [analytics.instance, database.instance]);
-      yield* sink.failNext(1);
+      const first = yield* startForwarder(store, logflare, instances);
+      yield* database.log("line 1");
+      const shipped = yield* logflare.next;
+      yield* logflare.apply();
+      yield* first.stop;
+      yield* fs.remove(path.join(root, "database", "database", "cursor.json"), { force: true });
+
+      yield* startForwarder(store, logflare, instances);
+      yield* database.log("line 2");
+      const resumed = yield* logflare.next;
+
+      expect(messages(shipped)).toEqual(["line 1"]);
+      expect(messages(resumed)).toEqual(["line 2"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("posts a body Analytics failed again before any later body", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+      const manual = yield* makeManualClock;
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance], manual.clock);
+      yield* logflare.respond(500);
       const lines = Array.from({ length: 300 }, (_, index) => `burst ${index}`);
 
       yield* database.log(...lines);
-      const failed = yield* sink.next;
-      const retried = yield* sink.next;
-      const shipped = [...retried.events];
-      while (shipped.length < lines.length) shipped.push(...(yield* sink.next).events);
+      const failed = yield* logflare.next;
+      yield* manual.sleeping(pollMillis);
+      yield* manual.advance(flushWindowMillis);
+      const retried = yield* logflare.next;
+      yield* logflare.apply();
+      const rest = yield* nextPost(logflare, manual);
 
-      expect(retried.events.map((event) => event.id)).toEqual(
-        failed.events.map((event) => event.id),
+      expect(ids(retried)).toEqual(ids(failed));
+      expect([...messages(retried), ...messages(rest)]).toEqual(lines);
+      expect(failed.events.length).toBeLessThanOrEqual(256);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("posts the events of a batch Analytics dropped again once the flush window passes", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+      const manual = yield* makeManualClock;
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance], manual.clock);
+      yield* database.log("line 1", "line 2");
+      const posted = yield* logflare.next;
+      yield* logflare.discard;
+
+      yield* manual.sleeping(pollMillis);
+      yield* manual.advance(flushWindowMillis);
+      const resent = yield* logflare.next;
+      yield* logflare.apply();
+      yield* database.log("line 3");
+      const later = yield* nextPost(logflare, manual);
+
+      expect(ids(resent)).toEqual(ids(posted));
+      expect(messages(later)).toEqual(["line 3"]);
+      expect(yield* storedMessages(logflare)).toEqual(["line 1", "line 2"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("posts again only the events Analytics did not store", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture({
+        logflare: { batchEvents: 2 },
+      });
+      const manual = yield* makeManualClock;
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance], manual.clock);
+      yield* database.log("line 1", "line 2", "line 3", "line 4");
+      const posted = yield* logflare.next;
+      yield* logflare.apply(1);
+      yield* logflare.discard;
+
+      yield* manual.sleeping(pollMillis);
+      yield* manual.advance(flushWindowMillis);
+      const resent = yield* logflare.next;
+      yield* logflare.apply();
+
+      expect(messages(posted)).toEqual(["line 1", "line 2", "line 3", "line 4"]);
+      expect(messages(resent)).toEqual(["line 3", "line 4"]);
+      expect(yield* storedMessages(logflare)).toEqual(["line 1", "line 2", "line 3", "line 4"]);
+      expect(yield* logflare.dropped).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live(
+    "waits for a post that timed out after Analytics queued it instead of posting it again",
+    () =>
+      Effect.gen(function* () {
+        const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+        const manual = yield* makeManualClock;
+        yield* analytics.set(true);
+        yield* startForwarder(
+          store,
+          logflare,
+          [analytics.instance, database.instance],
+          manual.clock,
+        );
+        const release = yield* logflare.hold;
+        yield* database.log("line 1");
+        const queued = yield* logflare.next;
+
+        yield* manual.sleeping(5_000);
+        yield* manual.advance(5_000);
+        yield* manual.sleeping(pollMillis);
+        yield* logflare.apply();
+        yield* database.log("line 2");
+        const later = yield* nextPost(logflare, manual);
+        yield* release;
+
+        expect(messages(queued)).toEqual(["line 1"]);
+        expect(messages(later)).toEqual(["line 2"]);
+        expect(yield* logflare.dropped).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("posts nothing while it cannot save its cursor", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+      const manual = yield* makeManualClock;
+      const broken = yield* Ref.make(true);
+      const injected: FileSystem.FileSystem = {
+        ...fs,
+        rename: (from, to) =>
+          Ref.get(broken).pipe(
+            Effect.flatMap((failing) =>
+              failing && to.endsWith("cursor.json")
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "Unknown",
+                      module: "FileSystem",
+                      method: "rename",
+                      pathOrDescriptor: to,
+                      description: "injected cursor write failure",
+                    }),
+                  )
+                : fs.rename(from, to),
+            ),
+          ),
+      };
+      yield* analytics.set(true);
+      yield* startForwarder(
+        store,
+        logflare,
+        [analytics.instance, database.instance],
+        manual.clock,
+      ).pipe(Effect.provideService(FileSystem.FileSystem, injected));
+
+      yield* database.log("line 1");
+      const first = yield* logflare.next.pipe(
+        Effect.as("posted"),
+        Effect.raceFirst(manual.sleeping(250).pipe(Effect.as("retrying"))),
       );
-      expect(shipped.map((event) => event.event_message)).toEqual(lines);
-      expect(Math.max(failed.events.length, retried.events.length)).toBeLessThanOrEqual(256);
+      yield* Ref.set(broken, false);
+      yield* manual.advance(250);
+      const posted = yield* logflare.next;
+
+      expect(first).toBe("retrying");
+      expect(messages(posted)).toEqual(["line 1"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("posts a pending body again after a restart once the flush window passes", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture({ logflare: {} });
+      const manual = yield* makeManualClock;
+      const instances = [analytics.instance, database.instance];
+      yield* analytics.set(true);
+      const first = yield* startForwarder(store, logflare, instances, manual.clock);
+      yield* database.log("line 1");
+      const posted = yield* logflare.next;
+      yield* logflare.discard;
+      yield* manual.sleeping(pollMillis);
+      yield* first.stop;
+
+      yield* startForwarder(store, logflare, instances, manual.clock);
+      yield* manual.sleeping(pollMillis);
+      yield* manual.advance(flushWindowMillis);
+      const resent = yield* logflare.next;
+
+      expect(ids(resent)).toEqual(ids(posted));
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("warns about pending events retention deleted and ships the retained records", () =>
+    Effect.gen(function* () {
+      const { root, store, logflare, database, analytics } = yield* fixture({
+        store: { rotateBytes: 200, retainBytes: 400 },
+        logflare: {},
+      });
+      const manual = yield* makeManualClock;
+      const instances = [analytics.instance, database.instance];
+      const warnings: Array<unknown> = [];
+      const captured = Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          if (logLevel === "Warn") warnings.push(message);
+        }),
+      ]);
+      yield* analytics.set(true);
+      const first = yield* startForwarder(store, logflare, instances, manual.clock);
+      yield* database.log("first");
+      yield* logflare.next;
+      yield* logflare.discard;
+      yield* manual.sleeping(pollMillis);
+      yield* first.stop;
+      for (let index = 0; index < 30; index++) yield* database.log(`later ${index}`);
+      const retained = (yield* LogStore.streamStackLogs({ root }).pipe(Stream.runCollect)).filter(
+        (record) => record.kind === "stdout",
+      );
+
+      yield* startForwarder(store, logflare, instances, manual.clock).pipe(
+        Effect.provide(captured),
+      );
+      yield* manual.sleeping(pollMillis);
+      yield* manual.advance(flushWindowMillis);
+      const shipped: Array<string> = [];
+      while (shipped.at(-1) !== "later 29") {
+        shipped.push(...messages(yield* nextPost(logflare, manual)));
+        yield* logflare.apply();
+      }
+
+      expect(retained.map((record) => record.text)).not.toContain("first");
+      expect(shipped).toEqual(retained.map((record) => record.text));
+      expect(warnings).toEqual([
+        [
+          "Logs of database instance database were deleted before Analytics stored them; skipping 1 lines",
+        ],
+        [
+          "Logs of database instance database were deleted before shipping; resuming from the next retained record",
+        ],
+      ]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("pauses without advancing when Analytics refuses its credentials", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const { store, logflare, database, analytics } = yield* fixture();
       yield* analytics.set(true);
-      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]);
-      yield* sink.failNext(1, 401);
+      const forwarder = yield* startForwarder(store, logflare, [
+        analytics.instance,
+        database.instance,
+      ]);
+      yield* logflare.respond(401);
 
       yield* database.log("refused line");
-      const refused = yield* sink.next;
+      const refused = yield* logflare.next;
       yield* analytics.set(false);
       yield* forwarder.awaitShipping(false);
       yield* analytics.set(true);
-      const resumed = yield* sink.next;
+      const resumed = yield* logflare.next;
 
       expect(messages(refused)).toEqual(["refused line"]);
-      expect(resumed.events.map((event) => event.id)).toEqual(
-        refused.events.map((event) => event.id),
-      );
+      expect(ids(resumed)).toEqual(ids(refused));
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("skips a body Analytics rejects and ships the next one", () =>
     Effect.gen(function* () {
-      const { store, sink, database, analytics } = yield* fixture();
+      const { store, logflare, database, analytics } = yield* fixture();
       yield* analytics.set(true);
-      yield* startForwarder(store, [analytics.instance, database.instance]);
-      yield* sink.failNext(1, 400);
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
+      yield* logflare.respond(400);
 
       yield* database.log("rejected line");
-      const rejected = yield* sink.next;
+      const rejected = yield* logflare.next;
       yield* database.log("accepted line");
-      const accepted = yield* sink.next;
+      const accepted = yield* logflare.next;
 
       expect(messages(rejected)).toEqual(["rejected line"]);
       expect(messages(accepted)).toEqual(["accepted line"]);
@@ -487,13 +826,13 @@ describe("LogForwarder", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { root, store, sink, database, analytics } = yield* fixture();
+      const { root, store, logflare, database, analytics } = yield* fixture();
       yield* database.log("before a corrupt cursor");
       yield* fs.writeFileString(path.join(root, "database", "database", "cursor.json"), "{oops");
 
       yield* analytics.set(true);
-      yield* startForwarder(store, [analytics.instance, database.instance]);
-      const shipped = yield* sink.next;
+      yield* startForwarder(store, logflare, [analytics.instance, database.instance]);
+      const shipped = yield* logflare.next;
 
       expect(messages(shipped)).toEqual(["before a corrupt cursor"]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -501,16 +840,18 @@ describe("LogForwarder", () => {
 
   it.live("restarts from the oldest retained segment when its cursor's segment was deleted", () =>
     Effect.gen(function* () {
-      const { root, store, sink, database, analytics } = yield* fixture({
-        rotateBytes: 200,
-        retainBytes: 400,
+      const { root, store, logflare, database, analytics } = yield* fixture({
+        store: { rotateBytes: 200, retainBytes: 400 },
       });
       yield* analytics.set(true);
-      const forwarder = yield* startForwarder(store, [analytics.instance, database.instance]);
+      const forwarder = yield* startForwarder(store, logflare, [
+        analytics.instance,
+        database.instance,
+      ]);
       yield* database.log("first");
-      yield* sink.next;
+      yield* logflare.next;
       yield* database.log("second");
-      yield* sink.next;
+      yield* logflare.next;
       yield* analytics.set(false);
       yield* forwarder.awaitShipping(false);
       for (let index = 0; index < 30; index++) yield* database.log(`asleep ${index}`);
@@ -519,20 +860,17 @@ describe("LogForwarder", () => {
       );
 
       yield* analytics.set(true);
-      const shipped: Array<Event> = [];
-      while (shipped.at(-1)?.event_message !== "asleep 29")
-        shipped.push(...(yield* sink.next).events);
+      const shipped: Array<string> = [];
+      while (shipped.at(-1) !== "asleep 29") shipped.push(...messages(yield* logflare.next));
 
       expect(retained.map((record) => record.text)).not.toContain("second");
-      expect(shipped.map((event) => event.event_message)).toEqual(
-        retained.map((record) => record.text),
-      );
+      expect(shipped).toEqual(retained.map((record) => record.text));
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live("ships gateway access lines to the API Gateway source", () =>
+  it.live("ships gateway lines to cloudflare.logs.prod", () =>
     Effect.gen(function* () {
-      const { store, sink, analytics } = yield* fixture();
+      const { store, logflare, analytics } = yield* fixture({ logflare: {} });
       const gateway = yield* GatewayLog.make;
       yield* store.attach({
         ...GatewayLog.gatewayLog,
@@ -540,7 +878,7 @@ describe("LogForwarder", () => {
         observation: gateway.observation,
       });
       yield* analytics.set(true);
-      yield* startForwarder(store, [
+      yield* startForwarder(store, logflare, [
         analytics.instance,
         { id: GatewayLog.gatewayLog.instanceId, service: GatewayLog.gatewayLog.service },
       ]);
@@ -555,10 +893,14 @@ describe("LogForwarder", () => {
         bytes: 60,
         durationMillis: 3,
       });
-      const shipped = yield* sink.next;
+      const shipped = yield* logflare.next;
+      yield* logflare.apply();
 
       expect(shipped.url).toBe("/api/logs?source_name=cloudflare.logs.prod");
       expect(shipped.events).toEqual([expect.objectContaining({ appname: "gateway" })]);
+      expect(yield* logflare.storedIds("cloudflare.logs.prod", ids(shipped))).toEqual(
+        new Set(ids(shipped)),
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });
