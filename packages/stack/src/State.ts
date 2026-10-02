@@ -272,7 +272,7 @@ const stateWritePrefix = ".state-write-";
 const staleWriteAgeMillis = 24 * 60 * 60 * 1000;
 
 /** Best-effort removal of temporary write directories a killed writer left behind. */
-const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: string) =>
+export const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: string) =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const entries = yield* fs.readDirectory(root);
@@ -678,8 +678,12 @@ const makeState = (
         for (const directory of [configRoot, path.dirname(configRoot), instanceRoot])
           yield* removeEmptyDirectory(directory);
       }).pipe(
+        Effect.as(true),
         Effect.catchCause((cause) =>
-          Effect.logWarning(`Unable to remove the files of Vector instance ${instanceId}`, cause),
+          Effect.logWarning(
+            `Unable to remove the files of Vector instance ${instanceId}; the next owner start retries`,
+            cause,
+          ).pipe(Effect.as(false)),
         ),
       );
     /** The saved document and its Vector instance ids, when it still holds one. */
@@ -700,21 +704,21 @@ const makeState = (
       const target = statePath(id);
       // Only a document that still holds Vector takes the registry lock, to migrate it.
       if ((yield* legacyVector(target)) === undefined) return;
-      const removed = yield* withLock(
+      yield* withLock(
         Effect.gen(function* () {
           const legacy = yield* legacyVector(target);
-          if (legacy === undefined) return [];
+          if (legacy === undefined) return;
           const { text, removed } = legacy;
           const state = yield* decodeState(text, id, target);
           if (state.id !== id)
             return yield* stateError("identity", "State document identity does not match its path");
-          yield* save(state);
-          return removed;
+          // The saved ids keep a failed file removal retried by the next migration.
+          const cleaned = yield* Effect.forEach(removed, (instanceId) =>
+            removeVectorData(id, instanceId),
+          );
+          if (cleaned.every(Boolean)) yield* save(state);
         }),
       );
-      yield* Effect.forEach(removed, (instanceId) => removeVectorData(id, instanceId), {
-        discard: true,
-      });
     });
     return {
       read,

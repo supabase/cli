@@ -99,7 +99,9 @@ each instance keeps its position in `logs/<service>/<instance-id>/cursor.json`, 
 while Analytics is stopped, starting, or unhealthy are shipped with their original timestamps once
 it is healthy again, including after an owner restart. A missing or unreadable position starts from
 the oldest retained line. Lines already deleted by log retention are skipped, and Analytics refusing
-the API key pauses shipping until Analytics restarts or the composition changes. Each event carries an id derived from its instance and position, so a request that fails
+the API key pauses shipping until Analytics stops or turns unhealthy and is healthy again, or the
+composition selects a different Analytics instance. A failed log read is retried from the saved
+position with a backoff. Each event carries an id derived from its instance and position, so a request that fails
 after it may have been ingested is repeated without duplicating rows. Shipping never wakes Analytics
 and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
 services log. Service log streams and `supabase stack logs` are never blocked by shipping.

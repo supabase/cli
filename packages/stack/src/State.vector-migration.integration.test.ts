@@ -1,6 +1,18 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Path, Schema } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  PlatformError,
+  Ref,
+  Schema,
+} from "effect";
 import { create, open } from "./effect.ts";
 import * as State from "./State.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -139,6 +151,49 @@ describe("saved Vector instance migration", () => {
       yield* state.migrate("legacy");
       expect(yield* fs.readFileString(file)).toBe(migrated);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live(
+    "keeps Vector saved when removing its files fails, and retries at the next migration",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-retry-" });
+        const failNext = yield* Ref.make(true);
+        const injected: FileSystem.FileSystem = {
+          ...fs,
+          remove: (target, options) =>
+            Effect.gen(function* () {
+              if (
+                target.endsWith("vector.rendered.yaml") &&
+                (yield* Ref.getAndSet(failNext, false))
+              )
+                return yield* PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                });
+              return yield* fs.remove(target, options);
+            }),
+        };
+        const state = yield* stateFor(root).pipe(
+          Effect.provideService(FileSystem.FileSystem, injected),
+        );
+        const file = yield* writeLegacyState(root, "legacy", root);
+        const runtime = path.join(root, "legacy", "data", "vector", "runtime");
+
+        yield* state.migrate("legacy");
+        const afterFailure = yield* savedServices(yield* fs.readFileString(file));
+        const keptFiles = yield* fs.exists(runtime);
+        yield* state.migrate("legacy");
+
+        expect(afterFailure).toEqual(["analytics", "mail", "vector", "vector"]);
+        expect(keptFiles).toBe(true);
+        expect(yield* savedServices(yield* fs.readFileString(file))).toEqual(["analytics", "mail"]);
+        expect(yield* fs.exists(runtime)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("checks a state without Vector while another operation holds the registry lock", () =>

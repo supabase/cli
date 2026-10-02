@@ -33,6 +33,16 @@ it("splits PostgREST's timestamp prefix from the message and converts its zone o
   });
 });
 
+it("splits PostgREST's timestamp prefix from a message that contains a colon", () => {
+  const event = logflareEvent(
+    "rest",
+    received,
+    "28/Sep/2026:12:30:15 +0200: Failed to load schema cache: connection refused",
+  );
+  expect(event.event_message).toBe("Failed to load schema cache: connection refused");
+  expect(event.timestamp).toBe("2026-09-28T10:30:15.000Z");
+});
+
 it("parses a PostgREST request line into request metadata stamped with the request time", () => {
   const line =
     '172.18.0.1 - anon [28/Sep/2026:12:30:15 +0200] "GET /items?select=id HTTP/1.1" 200 2 "" "curl/8.7.1"';

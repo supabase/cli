@@ -13,6 +13,7 @@ import {
   Path,
   PubSub,
   Queue,
+  Ref,
   References,
   Schema,
   Scope,
@@ -289,6 +290,68 @@ describe("LogForwarder", () => {
 
       expect(messages(shipped)).toEqual(["before removal"]);
       expect(warnings).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("ships again after a failed log read while Analytics stays healthy", () =>
+    Effect.gen(function* () {
+      const { store, sink, database, analytics } = yield* fixture();
+      const reads = yield* Ref.make(0);
+      const flaky: LogStore.Interface = {
+        ...store,
+        read: (instanceId, options) =>
+          Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 0
+                ? Effect.succeed(
+                    Stream.fail(
+                      new LogStore.LogStoreError({ operation: "read", message: "injected" }),
+                    ),
+                  )
+                : store.read(instanceId, options),
+            ),
+          ),
+      };
+      const warnings: Array<unknown> = [];
+      const captured = Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          if (logLevel === "Warn") warnings.push(message);
+        }),
+      ]);
+      yield* database.log("after a failed read");
+      yield* analytics.set(true);
+
+      yield* startForwarder(flaky, [analytics.instance, database.instance]).pipe(
+        Effect.provide(captured),
+      );
+      const shipped = yield* sink.next;
+
+      expect(messages(shipped)).toEqual(["after a failed read"]);
+      expect(yield* Ref.get(reads)).toBe(2);
+      expect(warnings).toEqual([
+        ["Reading database logs to ship failed; retrying", expect.anything()],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("removes an instance's stale cursor write directories when it attaches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, store, database, analytics } = yield* fixture();
+      const directory = path.join(root, "database", "database");
+      const stale = path.join(directory, ".state-write-stale");
+      const recent = path.join(directory, ".state-write-recent");
+      yield* fs.makeDirectory(stale, { recursive: true });
+      yield* fs.makeDirectory(recent, { recursive: true });
+      // A numeric file time is in seconds.
+      const twoDaysAgo = (yield* Clock.currentTimeMillis) / 1000 - 2 * 24 * 60 * 60;
+      yield* fs.utimes(stale, twoDaysAgo, twoDaysAgo);
+
+      yield* startForwarder(store, [analytics.instance, database.instance]);
+
+      expect(yield* fs.exists(stale)).toBe(false);
+      expect(yield* fs.exists(recent)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

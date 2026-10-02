@@ -87,7 +87,8 @@ const compareRecords = (left: StackLogRecord, right: StackLogRecord) =>
 
 interface Launch {
   readonly id: number;
-  readonly timestamp: string;
+  /** Unknown until its launch record is read; a saved launch may not have written one. */
+  readonly timestamp: string | undefined;
 }
 
 interface InstanceTail {
@@ -98,19 +99,28 @@ interface InstanceTail {
   launch: Launch | undefined;
 }
 
+/** Whether a record belongs to `launchId` or a later launch; a gap marker carries no launch id. */
+export const isFromLaunch = (record: LogRecord, launchId: number | undefined) =>
+  launchId === undefined || record.launchId === undefined || record.launchId >= launchId;
+
 /** Launch ids increase per instance; a gap marker carries none, so its time decides. */
 const fromLaunch = (record: StackLogRecord, launch: Launch) =>
   record.launchId === undefined
-    ? record.timestamp >= launch.timestamp
-    : record.launchId >= launch.id;
+    ? launch.timestamp === undefined || record.timestamp >= launch.timestamp
+    : isFromLaunch(record, launch.id);
 
 /**
- * Collects each instance's newest `tail` lines and last position, optionally only the records of
- * its highest launch.
+ * Collects each instance's newest `tail` lines and last position. With `startLaunches`, it keeps
+ * only the records of each instance's current launch: its saved launch id, or else its highest
+ * launch record, which `launches` reports for following.
  */
-export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) => {
+export const makeHistoryCollector = (
+  tail: number,
+  startLaunches: ReadonlyMap<string, number> | undefined,
+) => {
   const instances = new Map<string, InstanceTail>();
   const positions = new Map<string, LogPosition>();
+  const launches = new Map(startLaunches);
   const push = (record: StackLogRecord) => {
     const position = record.position;
     const last = positions.get(record.instanceId);
@@ -118,15 +128,24 @@ export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) =>
       positions.set(record.instanceId, position);
     let state = instances.get(record.instanceId);
     if (state === undefined) {
-      state = { records: [], head: 0, lines: 0, total: 0, launch: undefined };
+      const saved = startLaunches?.get(record.instanceId);
+      state = {
+        records: [],
+        head: 0,
+        lines: 0,
+        total: 0,
+        launch: saved === undefined ? undefined : { id: saved, timestamp: undefined },
+      };
       instances.set(record.instanceId, state);
     }
-    if (fromLatestLaunch) {
+    if (startLaunches !== undefined) {
       const latest = state.launch;
       if (
         record.kind === "launch" &&
         record.launchId !== undefined &&
-        (latest === undefined || record.launchId > latest.id)
+        (latest === undefined ||
+          record.launchId > latest.id ||
+          (record.launchId === latest.id && latest.timestamp === undefined))
       ) {
         const launch = { id: record.launchId, timestamp: record.timestamp };
         state.records = state.records.slice(state.head).filter((kept) => fromLaunch(kept, launch));
@@ -134,6 +153,7 @@ export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) =>
         state.lines = state.records.filter(isLine).length;
         state.total = state.lines;
         state.launch = launch;
+        launches.set(record.instanceId, launch.id);
       } else if (latest !== undefined && !fromLaunch(record, latest)) return;
     }
     const line = isLine(record);
@@ -163,11 +183,15 @@ export const makeHistoryCollector = (tail: number, fromLatestLaunch: boolean) =>
       state.head = 0;
     }
   };
-  const finish = (): { readonly window: LogWindow; readonly positions: typeof positions } => {
+  const finish = (): {
+    readonly window: LogWindow;
+    readonly positions: typeof positions;
+    readonly launches: ReadonlyMap<string, number>;
+  } => {
     const kept = [...instances.values()].flatMap((state) => state.records.slice(state.head));
     const total = [...instances.values()].reduce((sum, state) => sum + state.total, 0);
     const window = tailWindow(kept.toSorted(compareRecords), tail);
-    return { window: { ...window, total }, positions };
+    return { window: { ...window, total }, positions, launches };
   };
   return { push, finish };
 };
