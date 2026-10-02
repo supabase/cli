@@ -189,7 +189,8 @@ const retainedEntries = (
 
 /**
  * Drops saved Vector instances, which the stack no longer runs, with every composition member,
- * dependency and port claim that references them.
+ * dependency and port claim that references them. An instance with an unsafe id stays, so decoding
+ * rejects the document.
  */
 const withoutVectorInstances = (
   document: unknown,
@@ -198,7 +199,7 @@ const withoutVectorInstances = (
     return { document, removed: [] };
   const removed = document.instances.flatMap((instance: unknown) =>
     Predicate.isReadonlyObject(instance) &&
-    typeof instance.id === "string" &&
+    Schema.is(SafeId)(instance.id) &&
     Predicate.isReadonlyObject(instance.creation) &&
     instance.creation.service === "vector"
       ? [instance.id]
@@ -661,33 +662,56 @@ const makeState = (
         .remove(ownerPath(id), { force: true })
         .pipe(Effect.mapError((cause) => stateError("remove", cause)));
     });
+    const vectorConfigRoot = (instanceRoot: string) => path.join(instanceRoot, "runtime", "vector");
+    const isVectorRecipe = (entry: string) =>
+      entry === "vector.yaml" ||
+      entry === "vector-api.yaml" ||
+      entry === "vector.rendered.yaml" ||
+      entry.startsWith(".vector-write-");
+    /**
+     * Instance data roots that still hold Vector recipe files. Found by layout rather than by
+     * saved ids, so a cleanup that failed is retried after the document no longer names Vector.
+     */
+    const vectorDataRoots = (id: string) =>
+      Effect.gen(function* () {
+        const dataRoot = path.join(stackRoot(id), "data");
+        const entries = yield* fs.readDirectory(dataRoot).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed([]),
+          ),
+          retryTransientRead,
+        );
+        const roots: Array<string> = [];
+        for (const entry of entries.filter(Schema.is(SafeId))) {
+          const instanceRoot = path.join(dataRoot, entry);
+          // Another service's data directory may be unreadable to this process.
+          const configEntries = yield* fs
+            .readDirectory(vectorConfigRoot(instanceRoot))
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+          if (configEntries.some(isVectorRecipe)) roots.push(instanceRoot);
+        }
+        return roots;
+      });
     // A caller's Vector configPath may live under the instance root, so only recipe files and
     // empty directories go.
-    const removeVectorData = (id: string, instanceId: string) =>
+    const removeVectorData = (instanceRoot: string) =>
       Effect.gen(function* () {
-        const instanceRoot = path.join(stackRoot(id), "data", instanceId);
-        const configRoot = path.join(instanceRoot, "runtime", "vector");
-        if (!(yield* fs.exists(configRoot))) return;
+        const configRoot = vectorConfigRoot(instanceRoot);
         for (const entry of yield* fs.readDirectory(configRoot))
-          if (
-            entry === "vector.yaml" ||
-            entry === "vector-api.yaml" ||
-            entry === "vector.rendered.yaml" ||
-            entry.startsWith(".vector-write-")
-          )
+          if (isVectorRecipe(entry))
             yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
         for (const directory of [configRoot, path.dirname(configRoot), instanceRoot])
           yield* removeEmptyDirectory(directory);
       }).pipe(
-        Effect.as(true),
         Effect.catchCause((cause) =>
           Effect.logWarning(
-            `Unable to remove the files of Vector instance ${instanceId}; the next owner start retries`,
+            `Unable to remove the Vector files in ${instanceRoot}; the next owner start retries`,
             cause,
-          ).pipe(Effect.as(false)),
+          ),
         ),
       );
-    /** The saved document and its Vector instance ids, when it still holds one. */
+    /** The saved document text when it still holds a Vector instance. */
     const legacyVector = (target: string) =>
       Effect.gen(function* () {
         if (!(yield* fs.exists(target).pipe(retryTransientRead))) return undefined;
@@ -698,26 +722,24 @@ const makeState = (
           Effect.map(withoutVectorInstances),
           Effect.orElseSucceed(() => ({ removed: [] })),
         );
-        return removed.length === 0 ? undefined : { text, removed };
+        return removed.length === 0 ? undefined : text;
       });
     const migrate = Effect.fn("State.migrate")(function* (id: string) {
       yield* checkId(id);
       const target = statePath(id);
-      // Only a document that still holds Vector takes the registry lock, to migrate it.
-      if ((yield* legacyVector(target)) === undefined) return;
+      // Only a stack that still holds Vector takes the registry lock, to migrate it.
+      if ((yield* legacyVector(target)) === undefined && (yield* vectorDataRoots(id)).length === 0)
+        return;
       yield* withLock(
         Effect.gen(function* () {
-          const legacy = yield* legacyVector(target);
-          if (legacy === undefined) return;
-          const { text, removed } = legacy;
-          const state = yield* decodeState(text, id, target);
-          if (state.id !== id)
+          const text = yield* legacyVector(target);
+          const state = text === undefined ? undefined : yield* decodeState(text, id, target);
+          if (state !== undefined && state.id !== id)
             return yield* stateError("identity", "State document identity does not match its path");
-          // The saved ids keep a failed file removal retried by the next migration.
-          const cleaned = yield* Effect.forEach(removed, (instanceId) =>
-            removeVectorData(id, instanceId),
-          );
-          if (cleaned.every(Boolean)) yield* save(state);
+          const roots = yield* vectorDataRoots(id);
+          yield* Effect.annotateCurrentSpan({ vector_data_roots: roots.length });
+          yield* Effect.forEach(roots, removeVectorData, { discard: true });
+          if (state !== undefined) yield* save(state);
         }),
       );
     });

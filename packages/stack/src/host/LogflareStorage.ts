@@ -19,11 +19,8 @@ import { StoredEventsError, type StoredEvents } from "./LogForwarder.ts";
 
 /** The database Analytics' Postgres backend writes to, as the host reaches it. */
 export interface AnalyticsDatabase {
-  readonly host: string;
-  readonly port: number;
-  readonly database: string;
-  readonly username: string;
-  readonly password: string;
+  /** A connection URL that keeps the query parameters, such as TLS settings, of Analytics' URL. */
+  readonly url: string;
 }
 
 /**
@@ -35,16 +32,13 @@ export const analyticsDatabase = Effect.fnUntraced(function* (
   bound: ServiceEndpoint | undefined,
 ) {
   const backend = yield* backendConnection(databaseUrl);
-  return {
-    host:
-      bound === undefined
-        ? backend.host
-        : ((bound.kind === "unix" ? bound.path : bound.host) ?? "127.0.0.1"),
-    port: bound === undefined ? Number(backend.port) : bound.port,
-    database: backend.database,
-    username: backend.username,
-    password: backend.password,
-  } satisfies AnalyticsDatabase;
+  if (bound === undefined) return { url: backend.url } satisfies AnalyticsDatabase;
+  const url = new URL(backend.url);
+  // A socket directory is passed as the `host` parameter, which takes precedence over the hostname.
+  if (bound.kind === "unix" && bound.path !== undefined) url.searchParams.set("host", bound.path);
+  else url.hostname = bound.host ?? "127.0.0.1";
+  url.port = String(bound.port);
+  return { url: url.toString() } satisfies AnalyticsDatabase;
 });
 
 /** A source token with `-` replaced by `_`, as Logflare names its event tables. */
@@ -62,14 +56,7 @@ export const make = Effect.fn("LogflareStorage.make")(function* <E>(
     acquire: database.pipe(
       Effect.flatMap((connection) =>
         Layer.build(
-          PgClient.layer({
-            host: connection.host,
-            port: connection.port,
-            database: connection.database,
-            username: connection.username,
-            password: Redacted.make(connection.password),
-            connectTimeout: "2 seconds",
-          }),
+          PgClient.layer({ url: Redacted.make(connection.url), connectTimeout: "2 seconds" }),
         ),
       ),
       Effect.map((context) => Context.get(context, PgClient.PgClient)),
@@ -131,13 +118,14 @@ export const make = Effect.fn("LogflareStorage.make")(function* <E>(
         if (ids.length === 0) return new Set<string>();
         const table = yield* Cache.get(tables, source);
         yield* Effect.annotateCurrentSpan({ table_found: Option.isSome(table) });
+        // A failed query looks the table up again, since a replaced source has a new one.
         const rows = Option.isNone(table)
           ? []
           : yield* withClient(
               (sql) =>
                 sql<{ readonly id: string }>`
                   SELECT id::text AS id FROM ${sql(schema)}.${sql(table.value)} WHERE id IN ${sql.in(ids)}`,
-            );
+            ).pipe(Effect.tapError(() => Cache.invalidate(tables, source)));
         yield* Effect.annotateCurrentSpan({ stored_count: rows.length });
         return new Set(rows.map(({ id }) => id));
       },

@@ -151,13 +151,45 @@ describe("splitter", () => {
     ]);
   });
 
-  it("flushes a launch's partial line when it ends and keeps a late line whole across batches", () => {
+  it("keeps an ended launch's lines open until its published output is split", () => {
+    const splitter = makeSplitter();
+    const euro = bytes("€");
+    push(
+      splitter,
+      { ...chunk(1, 0, ""), bytes: new Uint8Array([...bytes("price "), euro[0] ?? 0]) },
+      10,
+    );
+    push(splitter, chunk(1, 0, "busy\r", "stderr"), 10);
+
+    splitter.endLaunch(1);
+    const queued = [
+      ...push(
+        splitter,
+        { ...chunk(1, 1, ""), bytes: new Uint8Array([...euro.subarray(1), ...bytes("\ntail")]) },
+        15,
+      ),
+      ...push(splitter, chunk(1, 1, "\nnext\n", "stderr"), 15),
+      ...splitter.flushEnded(15, false),
+    ];
+    const flushed = splitter.flushEnded(20, true);
+
+    expect(lines(queued)).toEqual(["price €", "next"]);
+    expect(flushed).toEqual([
+      { kind: "stdout", timestamp: 15, launchId: 1, text: "tail", truncated: false },
+    ]);
+  });
+
+  it("flushes a launch's partial line after it ends and keeps a late line whole across batches", () => {
     const splitter = makeSplitter();
     push(splitter, chunk(1, 0, "no newline"), 10);
 
-    const ended = splitter.endLaunch(1, 20);
-    const early = [...push(splitter, chunk(1, 1, "late "), 30), ...splitter.flushEnded(31)];
-    const completed = [...push(splitter, chunk(1, 2, "tail\n"), 40), ...splitter.flushEnded(41)];
+    splitter.endLaunch(1);
+    const ended = splitter.flushEnded(20, true);
+    const early = [...push(splitter, chunk(1, 1, "late "), 30), ...splitter.flushEnded(31, true)];
+    const completed = [
+      ...push(splitter, chunk(1, 2, "tail\n"), 40),
+      ...splitter.flushEnded(41, true),
+    ];
 
     expect(ended).toEqual([
       { kind: "stdout", timestamp: 10, launchId: 1, text: "no newline", truncated: false },
@@ -170,11 +202,12 @@ describe("splitter", () => {
 
   it("flushes a late partial of an ended launch once it stays idle for the grace", () => {
     const splitter = makeSplitter();
-    splitter.endLaunch(1, 0);
+    splitter.endLaunch(1);
+    splitter.flushEnded(0, true);
     push(splitter, chunk(1, 0, "idle partial"), 50);
 
-    const waiting = splitter.flushEnded(50 + endedLineGraceMillis - 1);
-    const flushed = splitter.flushEnded(50 + endedLineGraceMillis);
+    const waiting = splitter.flushEnded(50 + endedLineGraceMillis - 1, true);
+    const flushed = splitter.flushEnded(50 + endedLineGraceMillis, true);
 
     expect(waiting).toEqual([]);
     expect(lines(flushed)).toEqual(["idle partial"]);

@@ -684,9 +684,10 @@ cleanup keeps it.
 #### Shipping logs to Analytics
 
 While the composed Analytics instance is running and healthy, the owner ships the persisted
-stdout/stderr records of Auth, REST, Realtime, Storage, Functions and database instances, and of
-the gateway stream as Studio's API Gateway source, to its direct backend, never the proxy, so
-shipping neither wakes it nor counts as activity. The owner logs
+stdout/stderr records of the Auth, REST, Realtime, Storage, Functions and database instances of the
+composition, and of the gateway stream as Studio's API Gateway source, to its direct backend, never
+the proxy, so shipping neither wakes it nor counts as activity; standalone instances such as shadow
+databases are not shipped. The owner logs
 each target change, and the target is re-selected when the composition, Analytics' health or its
 launch changes.
 

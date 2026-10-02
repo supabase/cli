@@ -98,7 +98,10 @@ const serving = (id: string) =>
 const encoder = new TextEncoder();
 
 /** A shipped service instance, named after its service, whose output a real log store persists. */
-const serviceSource = (store: LogStore.Interface, service: "database" | "auth" = "database") =>
+const serviceSource = (
+  store: LogStore.Interface,
+  service: "database" | "auth" | "storage" = "database",
+) =>
   Effect.gen(function* () {
     const logs = yield* PubSub.unbounded<LaunchOutput>();
     const observation = yield* SubscriptionRef.make(serving(service));
@@ -179,6 +182,7 @@ const composition = Effect.succeed({
   members: [
     { id: "analytics", activation: "lazy" as const },
     { id: "database", activation: "eager" as const },
+    { id: "auth", activation: "eager" as const },
   ],
   dependencies: [],
 });
@@ -325,6 +329,28 @@ describe("LogForwarder", () => {
         expect(yield* storedMessages(logflare)).toEqual(["while awake", "while asleep"]);
         expect(yield* logflare.dropped).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("ships only instances of the composition", () =>
+    Effect.gen(function* () {
+      const { store, logflare, database, analytics } = yield* fixture();
+      const standalone = yield* serviceSource(store, "storage");
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [
+        analytics.instance,
+        standalone.instance,
+        database.instance,
+      ]);
+
+      yield* standalone.log("standalone line");
+      yield* database.log("composed line");
+      const posted = yield* logflare.next;
+      yield* database.log("later line");
+      const later = yield* logflare.next;
+
+      expect(messages(posted)).toEqual(["composed line"]);
+      expect(messages(later)).toEqual(["later line"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live("stops shipping quietly when the log store closes", () =>

@@ -230,6 +230,66 @@ describe("LogStore", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("splits output queued when the launch ends before writing its partial lines", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* tempRoot("log-store-queued-end-");
+      const blocked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const injected = replaceWrites(fs, (file, buffer) =>
+        new TextDecoder().decode(buffer).includes("busy")
+          ? Deferred.succeed(blocked, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(file.writeAll(buffer)),
+            )
+          : file.writeAll(buffer),
+      );
+      const { store } = yield* openStore(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, injected),
+      );
+      const leave = yield* Deferred.make<void>();
+      const left = yield* Deferred.make<void>();
+      const fake = yield* fakeInstance("queued-end");
+      // The store pulls past the transition only after it has handled it.
+      const observation = Stream.make({ launchId: 1 }).pipe(
+        Stream.concat(
+          Stream.fromEffect(Deferred.await(leave).pipe(Effect.as({ launchId: undefined }))),
+        ),
+        Stream.concat(Stream.fromEffectDrain(Deferred.succeed(left, undefined))),
+        Stream.concat(Stream.never),
+      );
+      yield* store.attach({ ...fake, observation });
+      const reader = yield* collect(store.read("queued-end", { from: "oldest", follow: true }));
+      const euro = encoder.encode("€");
+      const withBytes = (chunk: LaunchOutput, bytes: ReadonlyArray<number>): LaunchOutput => ({
+        ...chunk,
+        bytes: new Uint8Array(bytes),
+      });
+
+      yield* fake.publish(
+        withBytes(fake.chunk(1, ""), [...encoder.encode("price "), euro[0] ?? 0]),
+        fake.chunk(1, "busy\r", "stderr"),
+      );
+      yield* Deferred.await(blocked);
+      yield* fake.publish(
+        withBytes(fake.chunk(1, ""), [...euro.subarray(1), ...encoder.encode("\ntail")]),
+        fake.chunk(1, "\nnext\n", "stderr"),
+      );
+      yield* Deferred.succeed(leave, undefined);
+      yield* Deferred.await(left);
+      yield* Deferred.succeed(release, undefined);
+      const records = yield* untilLast(reader, "tail");
+
+      expect(records.map(({ kind, text }) => ({ kind, text }))).toEqual([
+        { kind: "launch", text: undefined },
+        { kind: "stderr", text: "busy" },
+        { kind: "stdout", text: "price €" },
+        { kind: "stderr", text: "next" },
+        { kind: "stdout", text: "tail" },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("writes a late partial line of an ended launch once it stays quiet for the grace", () =>
     Effect.gen(function* () {
       const root = yield* tempRoot("log-store-quiet-");

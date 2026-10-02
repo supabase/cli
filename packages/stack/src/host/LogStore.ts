@@ -904,7 +904,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           Effect.suspend(() => {
             const entries = chunks.flatMap((chunk) => splitter.push(chunk));
             const published = chunks.reduce((latest, chunk) => Math.max(latest, chunk.time), 0);
-            return persist([...entries, ...splitter.flushEnded(published)]);
+            return persist([...entries, ...splitter.flushEnded(published, false)]);
           }),
         )
         .pipe(
@@ -920,21 +920,24 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         );
 
     /**
-     * Flushes due late partial lines unless published output is still unsplit, whose batch then
-     * signals again; `false` when it deferred.
+     * Flushes due partial lines of ended launches unless published output is still unsplit, whose
+     * batch then signals again; `false` when it deferred.
      */
     const flushIdle = handle.lock.withPermits(1)(
       Effect.uninterruptible(
         Effect.gen(function* () {
           if (holding || (yield* PubSub.remaining(subscription)) > 0) return false;
           const now = yield* Clock.currentTimeMillis;
-          yield* persist(splitter.flushEnded(now));
+          yield* persist(splitter.flushEnded(now, true));
           return true;
         }),
       ),
     );
 
-    /** Flushes late partial lines of ended launches once they stay idle for the grace. */
+    /**
+     * Flushes partial lines of ended launches once the output published before the end is split,
+     * and late partial lines once they stay idle for the grace.
+     */
     const flushLate = Effect.forever(
       Effect.gen(function* () {
         yield* Queue.take(lateLines);
@@ -956,7 +959,9 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
             Effect.flatMap((prior) =>
               prior === undefined
                 ? Effect.void
-                : persistFlushed((now) => splitter.endLaunch(prior, now)),
+                : Effect.sync(() => splitter.endLaunch(prior)).pipe(
+                    Effect.andThen(Queue.offer(lateLines, undefined)),
+                  ),
             ),
           ),
         ),
