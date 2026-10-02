@@ -369,11 +369,27 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       atEnd: true,
       partial,
     });
-    /** Reports segments deleted before `generation` as a gap that resumes there. */
+    /**
+     * Reports segments deleted before `generation` as a gap that resumes there, stamped with the
+     * time of its first retained record so history sorted by time keeps it in place.
+     */
     const gap = Effect.fnUntraced(function* (generation: number) {
       const resumeAt = { generation, byteOffset: 0 };
-      const records: ReadonlyArray<LogRecord> =
-        cursor.generation === 0 ? [] : [{ kind: "lost", timestamp: yield* nowIso, resumeAt }];
+      if (cursor.generation === 0)
+        return {
+          records: [],
+          cursor: resumeAt,
+          listed,
+          atEnd: false,
+          partial: false,
+        } satisfies Step;
+      const next = yield* readAt(directory, resumeAt, live).pipe(
+        Effect.map((chunk) => Option.getOrUndefined(chunk)?.records[0]?.timestamp),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const records: ReadonlyArray<LogRecord> = [
+        { kind: "lost", timestamp: next ?? (yield* nowIso), resumeAt },
+      ];
       return { records, cursor: resumeAt, listed, atEnd: false, partial: false } satisfies Step;
     });
     const first = listed[0];

@@ -108,7 +108,11 @@ export const segmentName = (generation: number) => `${String(generation).padStar
 /** The generation a segment file name encodes, or `undefined` for other files. */
 export const segmentGeneration = (name: string): number | undefined => {
   const match = /^(\d+)\.log$/u.exec(name);
-  return match === null ? undefined : Number(match[1]);
+  const generation = match === null ? Number.NaN : Number(match[1]);
+  // Only the name `segmentName` gives a generation, so a listed segment can be opened again.
+  return Number.isSafeInteger(generation) && segmentName(generation) === name
+    ? generation
+    : undefined;
 };
 
 interface LineState {

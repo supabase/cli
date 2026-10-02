@@ -550,6 +550,8 @@ describe("LogStore", () => {
       expect(gap?.launchId).toBeUndefined();
       expect(gap?.position).toBeUndefined();
       expect(gap?.resumeAt?.generation).toBeGreaterThan(1);
+      // Stamped like the first retained record, so history sorted by time keeps the gap before it.
+      expect(gap?.timestamp).toBe(records[records.indexOf(gap ?? records[0]!) + 1]?.timestamp);
       expect(texts(records).length).toBeLessThan(60);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

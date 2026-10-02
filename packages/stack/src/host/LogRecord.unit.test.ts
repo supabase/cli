@@ -80,6 +80,8 @@ describe("record format", () => {
     expect(segmentGeneration(segmentName(12))).toBe(12);
     expect(segmentGeneration("cursor.json")).toBeUndefined();
     expect(segmentGeneration("0000000012.log.tmp")).toBeUndefined();
+    expect(segmentGeneration("12.log")).toBeUndefined();
+    expect(segmentGeneration("99999999999999999999.log")).toBeUndefined();
   });
 });
 
