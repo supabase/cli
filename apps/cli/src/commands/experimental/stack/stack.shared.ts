@@ -123,17 +123,14 @@ export const stackTargetResolverLayer = Layer.effect(
       stateRoot: string,
       prefix: string,
     ) {
-      const unreadable: Array<{ readonly id: string; readonly message: string }> = [];
-      const discovered = yield* stackApi
+      const unreadable: Array<{ readonly id: string; readonly error: Error }> = [];
+      const matches = yield* stackApi
         .discover({
           stateRoot,
-          onInvalidState: (id, error) =>
-            Effect.sync(() => {
-              if (id.startsWith(prefix)) unreadable.push({ id, message: error.message });
-            }),
+          idPrefix: prefix,
+          onInvalidState: (id, error) => Effect.sync(() => unreadable.push({ id, error })),
         })
         .pipe(Effect.mapError(stateError));
-      const matches = discovered.filter(({ definition }) => definition.id.startsWith(prefix));
       const matchedIds = [
         ...matches.map(({ definition }) => definition.id),
         ...unreadable.map(({ id }) => id),
@@ -148,8 +145,11 @@ export const stackTargetResolverLayer = Layer.effect(
       const [invalid] = unreadable;
       if (invalid !== undefined)
         return yield* new StackTargetError({
-          message: `Stack ${invalid.id} could not be read: ${invalid.message}`,
+          message: `Stack ${invalid.id} could not be read: ${invalid.error.message}`,
           reason: "invalid-config",
+          suggestion:
+            "Inspect the stack registry under $SUPABASE_HOME/stacks or ~/.supabase/stacks.",
+          cause: invalid.error,
         });
       return matches[0];
     });

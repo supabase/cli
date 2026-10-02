@@ -82,7 +82,7 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("rejects an id prefix that more than one saved stack shares", () =>
+  it.live("rejects an id prefix that several readable or unreadable saved stacks share", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -95,6 +95,9 @@ describe("stack target resolver", () => {
         path.join(home, "stacks", twin, "state.json"),
         saved.replaceAll(id, twin),
       );
+      const broken = `${id.slice(0, 8)}${"f".repeat(56)}`;
+      yield* fs.makeDirectory(path.join(home, "stacks", broken));
+      yield* fs.writeFileString(path.join(home, "stacks", broken, "state.json"), "{broken");
 
       const failure = yield* resolve({
         projectRoot: root,
@@ -103,9 +106,10 @@ describe("stack target resolver", () => {
       }).pipe(Effect.flip);
 
       expect(failure.reason).toBe("flags");
-      expect(failure.message).toContain(`Stack id prefix ${id.slice(0, 8)} matches 2 stacks`);
+      expect(failure.message).toContain(`Stack id prefix ${id.slice(0, 8)} matches 3 stacks`);
       expect(failure.message).toContain(id);
       expect(failure.message).toContain(twin);
+      expect(failure.message).toContain(broken);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
