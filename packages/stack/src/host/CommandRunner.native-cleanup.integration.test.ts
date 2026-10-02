@@ -1,10 +1,23 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Stream } from "effect";
+import { beforeAll, expect, it } from "@effect/vitest";
+import { Effect, Context, FileSystem, Layer, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { tmpdir } from "node:os";
+import { prepareNativeArtifact, postgresVersion } from "../Artifacts.ts";
 import { postgres } from "../Commands.ts";
 import * as CommandRunner from "./CommandRunner.ts";
+
+const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+
+// Downloads psql under the hook timeout, so the test timeout covers only the cleanup retries.
+beforeAll(() =>
+  Effect.runPromise(
+    prepareNativeArtifact({ service: "database", version: postgresVersion("17") }, cacheRoot).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  ),
+);
 
 it.live.skipIf(process.platform === "win32")(
   "retries failed native workload cleanup when the stack runner is cleaned up",
@@ -12,9 +25,7 @@ it.live.skipIf(process.platform === "win32")(
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-runner-cleanup-" });
-        const cacheRoot = path.join(root, "cache");
         let isRunningCalls = 0;
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawner = ChildProcessSpawner.make((command) =>
