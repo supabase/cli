@@ -183,8 +183,6 @@ export const stackCapabilityForService = (service: ServiceCreation["service"]) =
   switch (service) {
     case "imgproxy":
       return "storage";
-    case "vector":
-      return "analytics";
     case "pgmeta":
       return "studio";
     default:

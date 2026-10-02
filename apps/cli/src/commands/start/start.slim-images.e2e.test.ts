@@ -2,7 +2,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import { BunServices } from "@effect/platform-bun";
 import { Clock, Data, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { beforeAll, describe, expect, it } from "@effect/vitest";
-import { catalogPins, type ServiceKind } from "@supabase/stack/internal/artifacts";
+import { catalogPins, type ArtifactKind } from "@supabase/stack/internal/artifacts";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { isSlimImageRef, toSlimImage } from "../../shared/services/slim-images.ts";
@@ -73,7 +73,7 @@ const PULL_ALIASES = [
  * Dockerfile-derived image: whether the Dockerfile's tag currently matches that catalog pin is
  * unrelated to whether the pinned slim image itself accepts the BusyBox argv).
  */
-const WGET_PROBE_SERVICES: ReadonlyArray<ServiceKind> = [
+const WGET_PROBE_SERVICES: ReadonlyArray<ArtifactKind> = [
   "auth",
   "realtime",
   "storage",

@@ -21,37 +21,6 @@ class AnalyticsFlowError extends Schema.TaggedError<AnalyticsFlowError>()(
   },
 ) {}
 
-/** Builds the Vector config used by the whole-stack Analytics flow. */
-export const vectorAnalyticsConfig = (marker: string): string =>
-  `sources:
-  demo_logs:
-    type: demo_logs
-    format: json
-    interval: 1
-transforms:
-  fixture_marker:
-    type: remap
-    inputs: [demo_logs]
-    source: |
-      .event_message = ${JSON.stringify(marker)}
-      .message = ${JSON.stringify(marker)}
-sinks:
-  analytics:
-    type: http
-    inputs: [fixture_marker]
-    uri: "${"${LOGFLARE_URL}"}/api/logs?source_name=postgres.logs"
-    method: post
-    encoding:
-      codec: json
-    request:
-      headers:
-        x-api-key: "${"${LOGFLARE_PRIVATE_ACCESS_TOKEN}"}"
-    batch:
-      max_events: 1
-      timeout_secs: 1
-    healthcheck: false
-`;
-
 const request = Effect.fn("WholeStack.analyticsRequest")(
   (request: HttpClientRequest.HttpClientRequest) =>
     Effect.gen(function* () {
@@ -60,7 +29,7 @@ const request = Effect.fn("WholeStack.analyticsRequest")(
     }).pipe(Effect.mapError((cause) => new AnalyticsFlowError({ operation: "request", cause }))),
 );
 
-/** Sends one marker directly to Logflare, for separating API ingest from Vector ingest. */
+/** Sends one marker directly to Logflare. */
 const postAnalyticsMarker = Effect.fn("WholeStack.postAnalyticsMarker")(
   (analyticsUrl: string, apiKey: string, marker: string, timestampMillis: number) =>
     Effect.gen(function* () {
@@ -144,25 +113,22 @@ const queryMarkerUntilVisible = Effect.fn("WholeStack.queryMarkerUntilVisible")(
     ),
 );
 
-/** Exercises direct and Vector Analytics ingestion for one whole-stack phase. */
+/** Names the marker every phase of a stack ingests, for cross-stack isolation checks. */
+export const stackAnalyticsMarker = (stackId: string): string => `stack-${stackId}`;
+
+/** Exercises Analytics ingestion for one whole-stack phase. */
 export const exerciseAnalytics = Effect.fn("WholeStack.exerciseAnalytics")(
-  (analyticsUrl: string, vectorUrl: string, apiKey: string, stackId: string, phase: string) =>
+  (analyticsUrl: string, apiKey: string, stackId: string, phase: string) =>
     Effect.gen(function* () {
       const phaseStartedAtMillis = yield* Clock.currentTimeMillis;
-      const directMarker = `direct-${stackId}-${phase}-${phaseStartedAtMillis}`;
-      const vectorMarker = `vector-${stackId}`;
-      yield* postAnalyticsMarker(analyticsUrl, apiKey, directMarker, phaseStartedAtMillis);
-      const vectorHealth = yield* request(HttpClientRequest.get(`${vectorUrl}/health`));
-      yield* vectorHealth.text;
-      if (vectorHealth.status >= 400)
-        return yield* new AnalyticsFlowError({
-          operation: "vector-health",
-          cause: vectorHealth.status,
-        });
+      const phaseMarker = `direct-${stackId}-${phase}-${phaseStartedAtMillis}`;
+      const stackMarker = stackAnalyticsMarker(stackId);
+      yield* postAnalyticsMarker(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis);
+      yield* postAnalyticsMarker(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis);
       yield* Effect.all(
         [
-          queryMarkerUntilVisible(analyticsUrl, apiKey, directMarker, phaseStartedAtMillis),
-          queryMarkerUntilVisible(analyticsUrl, apiKey, vectorMarker, phaseStartedAtMillis),
+          queryMarkerUntilVisible(analyticsUrl, apiKey, phaseMarker, phaseStartedAtMillis),
+          queryMarkerUntilVisible(analyticsUrl, apiKey, stackMarker, phaseStartedAtMillis),
         ],
         { concurrency: 2, discard: true },
       );

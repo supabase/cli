@@ -353,7 +353,7 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(out.stderrText).toBe("");
-      expect(rows).toHaveLength(13);
+      expect(rows).toHaveLength(12);
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "ghcr.io/supabase/cli/postgres",
@@ -367,14 +367,9 @@ describe("services", () => {
         }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({
-          name: "ghcr.io/supabase/cli/vector",
-          local: catalogUpstreamVersion("vector"),
-        }),
-      );
-      expect(rows).toContainEqual(
         expect.objectContaining({ name: "ghcr.io/supabase/cli/storage", local: "v1.79.28" }),
       );
+      expect(rows.map((row) => row.name)).not.toContain("ghcr.io/supabase/cli/vector");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

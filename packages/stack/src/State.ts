@@ -1,7 +1,6 @@
 import {
   Clock,
   Data,
-  Duration,
   Effect,
   Exit,
   FileSystem,
@@ -20,6 +19,7 @@ import { rmdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { CompositionConfig } from "./Orchestrator.ts";
+import { errorCode, retrySharingViolation } from "./internal/sharing-violation.ts";
 import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
 import { ServiceCreation } from "./services/Catalog.ts";
 
@@ -33,6 +33,8 @@ const SafeId = Schema.String.pipe(
 const SavedInstance = Schema.Struct({
   id: SafeId,
   creation: Schema.toCodecJson(ServiceCreation),
+  /** The latest launch id; the next owner continues after it, so launch ids keep increasing. */
+  launchId: Schema.optionalKey(Schema.Int),
 });
 interface SavedInstance extends Schema.Schema.Type<typeof SavedInstance> {}
 
@@ -128,7 +130,13 @@ export class StateError extends Data.TaggedError("StateError")<{
 }> {}
 
 export interface Interface {
+  /** Omits saved Vector instances and their composition entries without rewriting the file. */
   readonly read: (id: string) => Effect.Effect<SavedStack | undefined, StateError>;
+  /**
+   * Persists the removal of saved Vector instances and deletes their stack-owned files. Call while
+   * holding the stack's lease, before any of its services run.
+   */
+  readonly migrate: (id: string) => Effect.Effect<void, StateError>;
   /** Skips each stack entry that stays unreadable after transient retries, reporting it to `onInvalidState`. */
   readonly list: Effect.Effect<ReadonlyArray<SavedStack>, StateError>;
   /** Decodes only each stack's port claims and silently skips entries that cannot provide them. */
@@ -153,6 +161,8 @@ export interface Interface {
   readonly retractHolder: (id: string) => Effect.Effect<void, StateError>;
   /** The file that receives the stack owner's stdout and stderr. */
   readonly ownerLog: (id: string) => string;
+  /** The directory that holds the stack's persisted service logs. */
+  readonly logsRoot: (id: string) => string;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/State") {}
@@ -169,12 +179,67 @@ const checkId = (id: string): Effect.Effect<void, StateError> =>
     ? Effect.void
     : Effect.fail(stateError("identity", `Invalid state id: ${id}`));
 
+const retainedEntries = (
+  entries: unknown,
+  retired: (entry: Readonly<Record<string, unknown>>) => boolean,
+): unknown =>
+  Array.isArray(entries)
+    ? entries.filter((entry: unknown) => !(Predicate.isReadonlyObject(entry) && retired(entry)))
+    : entries;
+
+/**
+ * Drops saved Vector instances, which the stack no longer runs, with every composition member,
+ * dependency and port claim that references them. An instance with an unsafe id stays, so decoding
+ * rejects the document.
+ */
+const withoutVectorInstances = (
+  document: unknown,
+): { readonly document: unknown; readonly removed: ReadonlyArray<string> } => {
+  if (!Predicate.isReadonlyObject(document) || !Array.isArray(document.instances))
+    return { document, removed: [] };
+  const removed = document.instances.flatMap((instance: unknown) =>
+    Predicate.isReadonlyObject(instance) &&
+    Schema.is(SafeId)(instance.id) &&
+    Predicate.isReadonlyObject(instance.creation) &&
+    instance.creation.service === "vector"
+      ? [instance.id]
+      : [],
+  );
+  if (removed.length === 0) return { document, removed };
+  const ids: ReadonlySet<unknown> = new Set(removed);
+  const { composition } = document;
+  return {
+    removed,
+    document: {
+      ...document,
+      instances: retainedEntries(document.instances, (instance) => ids.has(instance.id)),
+      composition: Predicate.isReadonlyObject(composition)
+        ? {
+            ...composition,
+            members: retainedEntries(composition.members, (member) => ids.has(member.id)),
+            dependencies: retainedEntries(
+              composition.dependencies,
+              (dependency) => ids.has(dependency.from) || ids.has(dependency.to),
+            ),
+          }
+        : composition,
+      ports: retainedEntries(
+        document.ports,
+        ({ key }) => typeof key === "string" && removed.some((id) => key.startsWith(`${id}:`)),
+      ),
+    },
+  };
+};
+
 const decodeState = (
   text: string,
   id: string,
   target: string,
 ): Effect.Effect<SavedStack, StateError> =>
-  Schema.decodeEffect(Schema.fromJsonString(SavedStack))(text).pipe(
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(text).pipe(
+    Effect.flatMap((document) =>
+      Schema.decodeUnknownEffect(SavedStack)(withoutVectorInstances(document).document),
+    ),
     Effect.mapError(
       (cause) =>
         new StateError({
@@ -193,12 +258,22 @@ interface Options {
   readonly onLeaseContended?: (id: string) => Effect.Effect<void>;
 }
 
+const logsDirectory = "logs";
+
+/** Resolves the persisted service logs directory of a stack without opening the state root. */
+export const stackLogsRoot = (
+  path: Path.Path,
+  stateRoot: string,
+  id: string,
+): Effect.Effect<string, StateError> =>
+  checkId(id).pipe(Effect.as(path.join(path.normalize(stateRoot), id, logsDirectory)));
+
 const stateWritePrefix = ".state-write-";
 /** A state write takes milliseconds, so a temporary directory this old belongs to a dead writer. */
 const staleWriteAgeMillis = 24 * 60 * 60 * 1000;
 
 /** Best-effort removal of temporary write directories a killed writer left behind. */
-const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: string) =>
+export const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: string) =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const entries = yield* fs.readDirectory(root);
@@ -218,6 +293,49 @@ const reapStaleWrites = (fs: FileSystem.FileSystem, path: Path.Path, root: strin
       { discard: true },
     );
   }).pipe(Effect.ignore);
+
+/**
+ * Replaces `target` with `content` (mode 0600) through a temporary file in a fresh directory under
+ * `directory`, which must share the target's file system, retrying Windows sharing violations.
+ */
+export const writeFileAtomically = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  options: {
+    readonly directory: string;
+    readonly target: string;
+    readonly content: string;
+    readonly platform?: NodeJS.Platform;
+  },
+): Effect.Effect<void, StateError> =>
+  Effect.acquireUseRelease(
+    fs
+      .makeTempDirectory({ directory: options.directory, prefix: stateWritePrefix })
+      .pipe(Effect.mapError((cause) => stateError("write", cause))),
+    (directory) =>
+      Effect.gen(function* () {
+        const temporary = path.join(directory, path.basename(options.target));
+        yield* fs
+          .writeFileString(temporary, options.content, { mode: 0o600 })
+          .pipe(Effect.mapError((cause) => stateError("write", cause)));
+        yield* fs.rename(temporary, options.target).pipe(
+          retrySharingViolation(options.platform),
+          Effect.mapError(
+            (cause) =>
+              new StateError({
+                operation: "publish",
+                message: `Unable to publish state to ${options.target}${errorCode(cause) ? ` (${errorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                cause,
+              }),
+          ),
+          Effect.withSpan("State.publish"),
+        );
+      }),
+    (directory) =>
+      fs
+        .remove(directory, { recursive: true, force: true })
+        .pipe(Effect.mapError((cause) => stateError("cleanup", cause))),
+  );
 
 const makeState = (
   options: Options,
@@ -242,40 +360,13 @@ const makeState = (
     const leasePath = (id: string) => path.join(stackRoot(id), "owner.lock");
     const ownerPath = (id: string) => path.join(stackRoot(id), "owner.json");
     const ownerLog = (id: string) => path.join(stackRoot(id), "owner.log");
-    const publishRetrySchedule = Schedule.exponential("10 millis", 2).pipe(
-      Schedule.modifyDelay(({ duration }) =>
-        Effect.succeed(Duration.min(duration, Duration.millis(100))),
-      ),
-      Schedule.upTo({ times: 12 }),
-    );
-    const errorCode = (error: unknown): string | undefined => {
-      if (!Predicate.hasProperty(error, "cause")) return undefined;
-      return Predicate.hasProperty(error.cause, "code") && typeof error.cause.code === "string"
-        ? error.cause.code
-        : undefined;
-    };
-    /** Windows reports a file that another process is replacing as a transient sharing violation. */
-    const sharingViolation = (error: unknown) =>
-      (options.platform ?? process.platform) === "win32" &&
-      ["EPERM", "EACCES", "EBUSY"].includes(errorCode(error) ?? "");
+    const logsRoot = (id: string) => path.join(stackRoot(id), logsDirectory);
+    const retryShared = retrySharingViolation(options.platform);
     const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
+        retryShared,
         Effect.mapError((cause) => stateError("read", cause)),
       );
-    const publish = Effect.fn("State.publish")(function* (temporary: string, target: string) {
-      yield* fs.rename(temporary, target).pipe(
-        Effect.retry({ schedule: publishRetrySchedule, while: sharingViolation }),
-        Effect.mapError(
-          (cause) =>
-            new StateError({
-              operation: "publish",
-              message: `Unable to publish state to ${target}${errorCode(cause) ? ` (${errorCode(cause)})` : ""}: ${cause instanceof Error ? cause.message : String(cause)}`,
-              cause,
-            }),
-        ),
-      );
-    });
     const removeEmptyDirectory = (directory: string) =>
       Effect.tryPromise({
         try: () => rmdir(directory),
@@ -335,28 +426,17 @@ const makeState = (
       );
     const claims = Effect.fn("State.claims")(() => readEntries(readClaims, () => Effect.void));
     const writeAtomically = (id: string, target: string, serialized: string) =>
-      Effect.gen(function* () {
-        yield* fs
-          .makeDirectory(stackRoot(id), { recursive: true, mode: 0o700 })
-          .pipe(Effect.mapError((cause) => stateError("write", cause)));
-        yield* Effect.acquireUseRelease(
-          fs
-            .makeTempDirectory({ directory: root, prefix: stateWritePrefix })
-            .pipe(Effect.mapError((cause) => stateError("write", cause))),
-          (directory) =>
-            Effect.gen(function* () {
-              const temporary = path.join(directory, path.basename(target));
-              yield* fs
-                .writeFileString(temporary, serialized, { mode: 0o600 })
-                .pipe(Effect.mapError((cause) => stateError("write", cause)));
-              yield* publish(temporary, target);
-            }),
-          (directory) =>
-            fs
-              .remove(directory, { recursive: true, force: true })
-              .pipe(Effect.mapError((cause) => stateError("cleanup", cause))),
-        );
-      });
+      fs.makeDirectory(stackRoot(id), { recursive: true, mode: 0o700 }).pipe(
+        Effect.mapError((cause) => stateError("write", cause)),
+        Effect.andThen(
+          writeFileAtomically(fs, path, {
+            directory: root,
+            target,
+            content: serialized,
+            ...(options.platform === undefined ? {} : { platform: options.platform }),
+          }),
+        ),
+      );
     const save = Effect.fn("State.save")(function* (state: SavedStack) {
       yield* checkId(state.id);
       const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(SavedStack))(state).pipe(
@@ -366,6 +446,11 @@ const makeState = (
     });
     const remove = Effect.fn("State.remove")(function* (id: string) {
       yield* checkId(id);
+      // Logs go before the state file, so a stack whose logs remain stays listed for another removal.
+      yield* fs.remove(logsRoot(id), { recursive: true, force: true }).pipe(
+        retryShared,
+        Effect.mapError((cause) => stateError("remove", cause)),
+      );
       for (const file of [statePath(id), ownerPath(id), ownerLog(id)])
         yield* fs
           .remove(file, { force: true })
@@ -577,8 +662,111 @@ const makeState = (
         .remove(ownerPath(id), { force: true })
         .pipe(Effect.mapError((cause) => stateError("remove", cause)));
     });
+    const vectorConfigRoot = (instanceRoot: string) => path.join(instanceRoot, "runtime", "vector");
+    const isVectorRecipe = (entry: string) =>
+      entry === "vector.yaml" ||
+      entry === "vector-api.yaml" ||
+      entry === "vector.rendered.yaml" ||
+      entry.startsWith(".vector-write-");
+    /**
+     * Resolved instance data roots that still hold Vector recipe files. Found by layout rather than
+     * by saved ids, so a cleanup that failed is retried after the document no longer names Vector.
+     * A root whose config directory resolves elsewhere is skipped, so removal stays in the stack.
+     */
+    const vectorDataRoots = (id: string) =>
+      Effect.gen(function* () {
+        const dataRoot = path.join(stackRoot(id), "data");
+        const entries = yield* fs.readDirectory(dataRoot).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed([]),
+          ),
+          retryTransientRead,
+        );
+        if (entries.length === 0) return [];
+        const realDataRoot = path.join(
+          yield* fs.realPath(stackRoot(id)).pipe(retryTransientRead),
+          "data",
+        );
+        const roots: Array<string> = [];
+        for (const entry of entries.filter(Schema.is(SafeId))) {
+          const instanceRoot = path.join(realDataRoot, entry);
+          const configRoot = vectorConfigRoot(instanceRoot);
+          // Another service's data directory may be unreadable to this process.
+          const configEntries = yield* fs
+            .realPath(vectorConfigRoot(path.join(dataRoot, entry)))
+            .pipe(
+              Effect.flatMap((resolved) =>
+                resolved === configRoot ? fs.readDirectory(configRoot) : Effect.succeed([]),
+              ),
+              Effect.orElseSucceed((): ReadonlyArray<string> => []),
+            );
+          if (configEntries.some(isVectorRecipe)) roots.push(instanceRoot);
+        }
+        return roots;
+      });
+    // A caller's Vector configPath may live under the instance root, so only recipe files and
+    // empty directories go.
+    const removeVectorData = (instanceRoot: string) =>
+      Effect.gen(function* () {
+        const configRoot = vectorConfigRoot(instanceRoot);
+        for (const entry of yield* fs.readDirectory(configRoot))
+          if (isVectorRecipe(entry))
+            yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
+        for (const directory of [configRoot, path.dirname(configRoot), instanceRoot])
+          yield* removeEmptyDirectory(directory);
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            `Unable to remove the Vector files in ${instanceRoot}; the next owner start retries`,
+            cause,
+          ),
+        ),
+      );
+    /** Whether the saved document still holds a Vector instance. */
+    const holdsVector = (target: string) =>
+      Effect.gen(function* () {
+        if (!(yield* fs.exists(target).pipe(retryTransientRead))) return false;
+        const text = yield* fs.readFileString(target).pipe(retryTransientRead);
+        const { removed } = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          text,
+        ).pipe(
+          Effect.map(withoutVectorInstances),
+          Effect.orElseSucceed(() => ({ removed: [] })),
+        );
+        return removed.length > 0;
+      });
+    /** What a migration still has to do, or `undefined` when the stack no longer holds Vector. */
+    const vectorLeftovers = (id: string) =>
+      Effect.gen(function* () {
+        const legacy = yield* holdsVector(statePath(id));
+        const candidates = yield* vectorDataRoots(id);
+        if (!legacy && candidates.length === 0) return undefined;
+        const saved = yield* read(id);
+        // Vector files in a saved instance's root belong to that instance, e.g. a caller's config.
+        const live = new Set(saved?.instances.map((instance) => instance.id));
+        const roots = candidates.filter((root) => !live.has(path.basename(root)));
+        return legacy || roots.length > 0
+          ? { saved: legacy ? saved : undefined, roots }
+          : undefined;
+      });
+    const migrate = Effect.fn("State.migrate")(function* (id: string) {
+      yield* checkId(id);
+      // Only a stack that still holds Vector takes the registry lock, to migrate it.
+      if ((yield* vectorLeftovers(id)) === undefined) return;
+      yield* withLock(
+        Effect.gen(function* () {
+          const leftovers = yield* vectorLeftovers(id);
+          if (leftovers === undefined) return;
+          yield* Effect.annotateCurrentSpan({ vector_data_roots: leftovers.roots.length });
+          yield* Effect.forEach(leftovers.roots, removeVectorData, { discard: true });
+          if (leftovers.saved !== undefined) yield* save(leftovers.saved);
+        }),
+      );
+    });
     return {
       read,
+      migrate,
       list: list(),
       claims: claims(),
       save,
@@ -590,6 +778,7 @@ const makeState = (
       publishHolder,
       retractHolder,
       ownerLog,
+      logsRoot,
     };
   });
 
