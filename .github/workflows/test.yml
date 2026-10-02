@@ -186,11 +186,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # GitHub-hosted macOS runners have no Docker and Windows runners can't
-        # run Linux containers, so only the native backend's whole-stack e2e
-        # entry files run here. Linux coverage for both backends comes from
-        # test-stack-e2e.
-        os: [macos-latest, windows-latest]
+        # Native artifacts exist for macOS and Linux only, and macOS runners have
+        # no Docker; Linux coverage for both backends comes from test-stack-e2e.
+        os: [macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
