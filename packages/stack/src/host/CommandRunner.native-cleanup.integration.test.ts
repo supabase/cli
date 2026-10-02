@@ -1,10 +1,24 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
-import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Stream } from "effect";
+import { beforeAll, expect, it } from "@effect/vitest";
+import { Context, Effect, FileSystem, Layer, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { tmpdir } from "node:os";
+import { postgresVersion, prepareNativeArtifact } from "../Artifacts.ts";
 import { postgres } from "../Commands.ts";
 import * as CommandRunner from "./CommandRunner.ts";
+
+const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
+
+beforeAll(
+  () =>
+    prepareNativeArtifact({ service: "database", version: postgresVersion("17") }, cacheRoot).pipe(
+      Effect.provide(layer),
+      Effect.runPromise,
+    ),
+  120_000,
+);
 
 it.live.skipIf(process.platform === "win32")(
   "retries failed native workload cleanup when the stack runner is cleaned up",
@@ -12,9 +26,7 @@ it.live.skipIf(process.platform === "win32")(
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "native-runner-cleanup-" });
-        const cacheRoot = path.join(root, "cache");
         let isRunningCalls = 0;
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawner = ChildProcessSpawner.make((command) =>
@@ -52,13 +64,13 @@ it.live.skipIf(process.platform === "win32")(
             });
           }),
         );
-        const layer = CommandRunner.layer({
+        const runnerLayer = CommandRunner.layer({
           stackId: "native-cleanup-test",
           root,
           cacheRoot,
           runtime: "native",
         }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
-        const runner = Context.get(yield* Layer.build(layer), CommandRunner.Service);
+        const runner = Context.get(yield* Layer.build(runnerLayer), CommandRunner.Service);
         const result = yield* runner
           .run({
             command: {
@@ -80,6 +92,6 @@ it.live.skipIf(process.platform === "win32")(
         expect(isRunningCalls).toBe(3);
         yield* runner.cleanup;
         expect(isRunningCalls).toBe(4);
-      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+      }).pipe(Effect.provide(layer)),
     ),
 );

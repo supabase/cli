@@ -24,8 +24,9 @@ export default defineConfig({
           include: ["**/*.integration.test.ts"],
           hookTimeout: 120_000,
           testTimeout: 30_000,
-          // Integration workers start real service processes and containers.
-          maxWorkers: 4,
+          // Most files start real containers, so the Docker engine bounds throughput; more
+          // workers only stretch each test's duration toward its timeout.
+          maxWorkers: 2,
           sequence: { groupOrder: 1 },
           globalSetup: ["tests/docker-volume-run.ts"],
         },
