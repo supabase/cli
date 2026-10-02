@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
@@ -413,6 +413,87 @@ describe("functions download", () => {
         ),
       ),
     );
+  });
+
+  it.live("reports an eszip path that cannot be written as the raw host error", () => {
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(
+        path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        { recursive: true },
+      );
+
+      const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        message: expect.stringMatching(
+          /^failed to download file: E[A-Z]+: .*output_hello-world\.eszip/,
+        ),
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          nativeDownloadLayer(
+            (request) => Effect.succeed(jsonResponse(request, 200, {})),
+            ["functions", "download", "hello-world", "--use-docker", "--project-ref", PROJECT_ID],
+          ),
+          child.layer,
+        ),
+      ),
+    );
+  });
+
+  it.live("prints the raw host error when the temporary eszip cannot be removed", () => {
+    const out = mockOutput({ format: "text" });
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      beforeSpawn: (record) =>
+        record.command === "docker" && record.args[0] === "run"
+          ? Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const eszipPath = path.join(
+                tempRoot.current,
+                "supabase",
+                ".temp",
+                "output_hello-world.eszip",
+              );
+              yield* fs.remove(eszipPath);
+              yield* fs.makeDirectory(path.join(eszipPath, "occupied"), { recursive: true });
+            }).pipe(Effect.provide(BunServices.layer), Effect.orDie)
+          : Effect.void,
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api: mockCommandPlatformApi({
+          handler: (request) => Effect.succeed(jsonResponse(request, 200, {})),
+        }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      mockProxy().layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
+
+      expect(out.stderrText).toMatch(
+        /Path is a directory: rm returned EISDIR \(is a directory\) .*output_hello-world\.eszip\n/,
+      );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
