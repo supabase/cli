@@ -7,6 +7,7 @@ import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";
+import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -99,12 +100,13 @@ it.live("retains dedicated assignments across network reopen", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-retain-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
-      const first = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const first = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const firstNamespace = yield* first.register({
         id: "one",
         endpoints: { api: endpoint(target, Ref.get(enabled)) },
@@ -112,7 +114,7 @@ it.live("retains dedicated assignments across network reopen", () =>
       yield* firstNamespace.bind;
       const firstAddress = yield* firstNamespace.address("api", "host");
       expect(yield* request(firstAddress.host, firstAddress.port, "/one")).toBe("backend:/one");
-      const saved = yield* state.read("stack");
+      const saved = yield* state.read(stackId);
       expect(saved?.ports).toHaveLength(1);
       yield* Ref.set(enabled, false);
       yield* firstNamespace.close;
@@ -122,7 +124,7 @@ it.live("retains dedicated assignments across network reopen", () =>
         "backend:/restart",
       );
       yield* firstNamespace.close;
-      const second = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const second = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const secondNamespace = yield* second.register({
         id: "one",
         endpoints: { api: endpoint(target, Ref.get(enabled)) },
@@ -134,8 +136,8 @@ it.live("retains dedicated assignments across network reopen", () =>
         "backend:/reopen",
       );
       yield* secondNamespace.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(0);
-      expect(yield* fs.exists(path.join(root, "stack", "state.json"))).toBe(true);
+      expect((yield* state.read(stackId))?.ports).toHaveLength(0);
+      expect(yield* fs.exists(path.join(root, stackId, "state.json"))).toBe(true);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -144,13 +146,14 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-shared-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const firstEnabled = yield* Ref.make(true);
       const secondEnabled = yield* Ref.make(true);
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const first = yield* network.register({
         id: "rest",
         endpoints: {
@@ -186,7 +189,7 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
       expect(yield* request(address.host, address.port, "/auth/v1")).toBe("backend:/auth/v1");
       yield* Ref.set(secondEnabled, false);
       yield* second.close;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(1);
+      expect((yield* state.read(stackId))?.ports).toHaveLength(1);
       yield* first.bind;
       expect((yield* first.address("api", "host")).port).toBe(address.port);
       expect(yield* request(address.host, address.port, "/rest/reopen")).toBe(
@@ -194,7 +197,7 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
       );
       yield* first.close;
       yield* second.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(1);
+      expect((yield* state.read(stackId))?.ports).toHaveLength(1);
       expect(yield* fs.exists(root)).toBe(true);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -203,14 +206,15 @@ it.live("keeps shared routes independent and retains the shared claim", () =>
 it.live("reports a dedicated port conflict without rewriting saved ownership", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-conflict-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("first", "auto"));
-      yield* state.save(stack("second", 20001));
+      const firstId = uniqueStackId("first");
+      const secondId = uniqueStackId("second");
+      yield* state.save(stack(firstId, "auto"));
+      yield* state.save(stack(secondId, 20001));
       const target = yield* backend;
       const firstEnabled = yield* Ref.make(true);
-      const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
+      const firstNetwork = yield* makeTestNetwork({ stackId: firstId, runtime: "native", state });
       const first = yield* firstNetwork.register({
         id: "db",
         endpoints: { sql: { ...endpoint(target, Ref.get(firstEnabled)), protocol: "tcp" } },
@@ -218,7 +222,7 @@ it.live("reports a dedicated port conflict without rewriting saved ownership", (
       yield* first.bind;
       const firstPort = (yield* first.address("sql", "host")).port;
       const secondEnabled = yield* Ref.make(true);
-      const secondNetwork = yield* makeTestNetwork({ stackId: "second", runtime: "native", state });
+      const secondNetwork = yield* makeTestNetwork({ stackId: secondId, runtime: "native", state });
       const second = yield* secondNetwork.register({
         id: "db",
         endpoints: {
@@ -231,7 +235,7 @@ it.live("reports a dedicated port conflict without rewriting saved ownership", (
       });
       const failure = yield* second.bind.pipe(Effect.flip);
       expect(failure.operation).toBe("bind");
-      expect((yield* state.read("second"))?.ports).toEqual([
+      expect((yield* state.read(secondId))?.ports).toEqual([
         { key: "api", host: "127.0.0.1", port: 20001 },
       ]);
       yield* Ref.set(firstEnabled, false);
@@ -245,13 +249,13 @@ it.live("reports a dedicated port conflict without rewriting saved ownership", (
 it.live("can bind a shared listener after saving its first assignment failed", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-save-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const failing = yield* Ref.make(true);
       const network = yield* makeTestNetwork({
-        stackId: "stack",
+        stackId,
         runtime: "native",
         state: {
           ...state,
@@ -281,7 +285,7 @@ it.live("can bind a shared listener after saving its first assignment failed", (
       expect(yield* request(address.host, address.port, "/rest")).toBe("backend:/rest");
       yield* namespace.release;
       yield* network.release;
-      expect((yield* state.read("stack"))?.ports).toHaveLength(0);
+      expect((yield* state.read(stackId))?.ports).toHaveLength(0);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -289,13 +293,13 @@ it.live("can bind a shared listener after saving its first assignment failed", (
 it.live("releases dedicated HTTP activity after the response while keep-alive stays open", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-http-activity-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const released = yield* Deferred.make<void>();
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const service = yield* network.register({
         id: "studio",
         endpoints: {
@@ -344,12 +348,12 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-fixed-port-" });
+        const root = sharedStateRoot();
         const state = yield* makeTestState(root);
-        yield* state.save(stack("stack", "auto"));
+        const stackId = uniqueStackId("stack");
+        yield* state.save(stack(stackId, "auto"));
         const target = yield* backend;
-        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
         const studio = yield* network.register({
           id: "studio",
           endpoints: { http: joinEndpoint(target, Effect.succeed(true)) },
@@ -357,7 +361,7 @@ it.live(
         yield* studio.bind;
         // The join route is queued, not installed: it never claims or asserts the shared "api"
         // port, so no shared listener or claim exists yet, whatever port a later claimant picks.
-        const beforeClaimant = yield* state.read("stack");
+        const beforeClaimant = yield* state.read(stackId);
         expect(beforeClaimant?.ports.some((claim) => claim.key === "api")).toBe(false);
         const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
         yield* rest.bind;
@@ -373,12 +377,12 @@ it.live(
 it.live("drops a queued join route when its namespace closes before any claimant binds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-cancel-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const studio = yield* network.register({
         id: "studio",
         endpoints: { http: joinEndpoint(target, Effect.succeed(false)) },
@@ -401,12 +405,12 @@ it.live("drops a queued join route when its namespace closes before any claimant
 it.live("stays idempotent across repeated binds of the joining namespace", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-idempotent-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
       yield* rest.bind;
       const studio = yield* network.register({
@@ -425,14 +429,12 @@ it.live("stays idempotent across repeated binds of the joining namespace", () =>
 it.live("keeps a namespace's own shared route when its join endpoint also binds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({
-        prefix: "network-join-shares-namespace-",
-      });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const combo = yield* network.register({
         id: "combo",
         endpoints: {
@@ -454,13 +456,13 @@ it.live("keeps a namespace's own shared route when its join endpoint also binds"
 it.live("re-adds a joined route after its namespace closes and rebinds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-rebind-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
       yield* rest.bind;
       const studio = yield* network.register({
@@ -487,13 +489,13 @@ it.live("re-adds a joined route after its namespace closes and rebinds", () =>
 it.live("never restores a joined route once its namespace is released", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-release-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const enabled = yield* Ref.make(true);
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
       yield* rest.bind;
       const studio = yield* network.register({
@@ -521,14 +523,14 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-last-close-" });
+        const root = sharedStateRoot();
         const state = yield* makeTestState(root);
-        yield* state.save(stack("stack", "auto"));
+        const stackId = uniqueStackId("stack");
+        yield* state.save(stack(stackId, "auto"));
         const target = yield* backend;
         const restEnabled = yield* Ref.make(true);
         const studioEnabled = yield* Ref.make(true);
-        const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+        const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
         const rest = yield* network.register(claimant("rest", target, Ref.get(restEnabled)));
         yield* rest.bind;
         const studio = yield* network.register({
@@ -576,13 +578,13 @@ it.live(
 it.live("wakes a sleeping backend when a request reaches its joined route", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-join-wake-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
       const woken = yield* Deferred.make<void>();
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "native", state });
       const rest = yield* network.register(claimant("rest", target, Effect.succeed(true)));
       yield* rest.bind;
       const studio = yield* network.register({
@@ -608,12 +610,12 @@ it.live("wakes a sleeping backend when a request reaches its joined route", () =
 it.live("addresses docker runtime endpoints through the stack host alias", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-docker-alias-" });
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* state.save(stack("stack", "auto"));
+      const stackId = uniqueStackId("stack");
+      yield* state.save(stack(stackId, "auto"));
       const target = yield* backend;
-      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "docker", state });
+      const network = yield* makeTestNetwork({ stackId, runtime: "docker", state });
       const namespace = yield* network.register({
         id: "one",
         endpoints: { api: endpoint(target, Effect.succeed(false)) },

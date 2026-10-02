@@ -23,3 +23,15 @@ export const ownerFor = (options: {
     );
     return { rpc, namespace: owner.namespace, getStackCredentials: owner.getStackCredentials };
   });
+
+/**
+ * Registers a stack the way the product owner does: takes its lease for the enclosing scope,
+ * then saves it, so an in-process owner double built with `ownerFor` holds the lease like
+ * production. Call once per logical stack, before any fault-injecting wrapper around `state`.
+ */
+export const registerLeased = (state: StateInterface, saved: SavedStack) =>
+  Effect.gen(function* () {
+    const held = yield* state.lease(saved.id);
+    if (!held) return yield* Effect.die(`Could not take the lease for stack ${saved.id}`);
+    yield* state.save(saved);
+  });

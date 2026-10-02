@@ -24,16 +24,18 @@ export const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<
 );
 
 /**
- * Allocates the documented state-root layout used by Docker database fixtures. The volume this
- * state root's Docker database creates is removed by the `SUPABASE_STACK_TEST_RUN` test-run
- * cleanup (see `tests/docker-volume-run.ts`), not by this fixture.
+ * Allocates the documented state-root layout used by Docker database fixtures, under a fresh
+ * private root or, with `stateRoot`, under an existing one such as the shared integration root.
+ * The volume this state root's Docker database creates is removed by the `SUPABASE_STACK_TEST_RUN`
+ * test-run cleanup (see `tests/docker-volume-run.ts`), not by this fixture.
  */
 export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
-  (prefix: string, stackId = "catalog-test") =>
+  (prefix: string, stackId = "catalog-test", options: { readonly stateRoot?: string } = {}) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const temporaryRoot = yield* fs.makeTempDirectoryScoped({ prefix });
-      const root = `${temporaryRoot}/state/${stackId}/data`;
+      const stateRoot =
+        options.stateRoot ?? `${yield* fs.makeTempDirectoryScoped({ prefix })}/state`;
+      const root = `${stateRoot}/${stackId}/data`;
       yield* fs.makeDirectory(root, { recursive: true });
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {

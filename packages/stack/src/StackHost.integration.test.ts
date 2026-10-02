@@ -36,6 +36,8 @@ import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
+import { registerLeased } from "../tests/owner-rpc.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -137,12 +139,13 @@ const inProcessRuntime = (
   owner: Parameters<typeof makeRuntime>[0],
   state: State.Interface,
   root: string,
+  stackId = "stack",
 ) =>
   Effect.gen(function* () {
     const acquired = yield* bindControl();
     const toolContext = yield* Layer.build(
       CommandRunner.layer({
-        stackId: "stack",
+        stackId,
         root,
         cacheRoot: "/tmp/supabase-stack-artifacts",
         runtime: "native",
@@ -152,7 +155,7 @@ const inProcessRuntime = (
       owner,
       {
         endpoint: {
-          stackId: "stack",
+          stackId,
           identity: { projectRoot: root, branchContext: "main", stackName: "host" },
           pid: process.pid,
           port: acquired.port,
@@ -217,9 +220,10 @@ it.live("preserves composition outcomes over RPC", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-outcomes-" });
-      const state = yield* stateFor(`${root}/state`);
+      const state = yield* stateFor(sharedStateRoot());
+      const stackId = uniqueStackId("stack-host-outcomes");
       const saved = {
-        id: "stack",
+        id: stackId,
         runtime: "native" as const,
         identity: { projectRoot: root, branchContext: "main", stackName: "host-outcomes" },
         instances: [],
@@ -227,14 +231,14 @@ it.live("preserves composition outcomes over RPC", () =>
         composition: { members: [], dependencies: [] },
         ports: [],
       };
-      yield* state.save(saved);
+      yield* registerLeased(state, saved);
       const owner = yield* ownerFor({
         saved,
         state,
         root: `${root}/data`,
         cacheRoot: "/tmp/supabase-stack-artifacts",
       });
-      const { runtime } = yield* inProcessRuntime(owner, state, root);
+      const { runtime } = yield* inProcessRuntime(owner, state, root, stackId);
       const client = yield* ownerClient(runtime.access);
       const port = yield* occupiedPort;
       const lazy = yield* client.createService({
@@ -501,9 +505,11 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-" });
-        const state = yield* stateFor(`${root}/state`);
+        const stateRoot = sharedStateRoot();
+        const state = yield* stateFor(stateRoot);
+        const stackId = uniqueStackId("stack-host");
         yield* state.save({
-          id: "stack",
+          id: stackId,
           runtime: "native",
           identity: { projectRoot: root, branchContext: "main", stackName: "host" },
           instances: [],
@@ -512,9 +518,9 @@ it.live(
           ports: [],
         });
         const access = yield* launchHost(state, {
-          stateRoot: `${root}/state`,
+          stateRoot,
           cacheRoot: "/tmp/supabase-stack-artifacts",
-          stackId: "stack",
+          stackId,
         });
         const { endpoint } = access;
         const http = yield* HttpClient.HttpClient;
@@ -807,13 +813,14 @@ it.live("withdraws a command waiting for its prerequisite", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-const disconnectFixture = (prefix: string) =>
+const disconnectFixture = (prefix: string, overrides: { readonly stateRoot?: string } = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix });
-    const state = yield* stateFor(`${root}/state`);
+    const stackId = overrides.stateRoot === undefined ? "stack" : uniqueStackId(prefix);
+    const state = yield* stateFor(overrides.stateRoot ?? `${root}/state`);
     const saved: State.SavedStack = {
-      id: "stack",
+      id: stackId,
       runtime: "native",
       identity: { projectRoot: root, branchContext: "main", stackName: prefix },
       instances: [],
@@ -956,7 +963,9 @@ it.live("persists a composition change after its caller disconnects", () =>
 
 const abandonedComposition = (prefix: string, destroy: boolean) =>
   Effect.gen(function* () {
-    const { root, state, saved } = yield* disconnectFixture(prefix);
+    const { root, state, saved } = yield* disconnectFixture(prefix, {
+      stateRoot: sharedStateRoot(),
+    });
     const persisted = yield* Deferred.make<void>();
     const allow = yield* Deferred.make<void>();
     yield* Effect.addFinalizer(() => Deferred.succeed(allow, undefined));
@@ -999,6 +1008,7 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
       },
       state,
       root,
+      saved.id,
     );
     const client = yield* ownerClient(runtime.access);
     const composition = yield* Effect.forkScoped(

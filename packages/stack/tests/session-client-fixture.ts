@@ -2,15 +2,16 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { Effect, Layer, Schema } from "effect";
 import { create } from "../src/effect.ts";
 
-const [root, cacheRoot] = process.argv.slice(2);
-if (root === undefined || cacheRoot === undefined) throw new Error("Session fixture roots missing");
+const [root, cacheRoot, stateRoot] = process.argv.slice(2);
+if (root === undefined || cacheRoot === undefined || stateRoot === undefined)
+  throw new Error("Session fixture roots missing");
 
 /** Creates a session stack with a running native service, reports it, and waits to be killed. */
 const program = Effect.scoped(
   Effect.gen(function* () {
     const stack = yield* create({
       projectRoot: root,
-      stateRoot: `${root}/state`,
+      stateRoot,
       cacheRoot,
       runtime: "native",
       lifetime: "session",

@@ -16,6 +16,7 @@ import {
 import { discover, type Stack } from "./effect.ts";
 import { makeTestStack } from "./testing.ts";
 import { postgres } from "./Commands.ts";
+import { sharedStateRoot } from "../tests/helpers/integration-state.ts";
 
 const sql = (stack: Stack, databaseUrl: string, command: string) =>
   Effect.gen(function* () {
@@ -45,7 +46,7 @@ it.live(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-state-" });
+      const stateRoot = sharedStateRoot();
       const cacheRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-cache-" });
       const exercise = (label: string) =>
         Effect.gen(function* () {
@@ -75,12 +76,19 @@ it.live(
           expect(unknown.message).toContain("the database data was not reset");
           expect(yield* rows).toBe(`${label}0,${label}1,${label}2`);
           expect(yield* snapshotDescriptors(path.join(stateRoot, test.stack.id))).toHaveLength(4);
+          return test.stack.id;
         }).pipe(Effect.scoped);
 
-      yield* Effect.all([exercise("a"), exercise("b")], { concurrency: "unbounded" });
+      const [aId, bId] = yield* Effect.all([exercise("a"), exercise("b")], {
+        concurrency: "unbounded",
+      });
 
-      expect(yield* discover({ stateRoot })).toEqual([]);
-      expect(yield* snapshotDescriptors(stateRoot)).toEqual([]);
+      const discovered = yield* discover({ stateRoot });
+      expect(
+        discovered.some(({ definition }) => definition.id === aId || definition.id === bId),
+      ).toBe(false);
+      expect(yield* snapshotDescriptors(path.join(stateRoot, aId))).toEqual([]);
+      expect(yield* snapshotDescriptors(path.join(stateRoot, bId))).toEqual([]);
       expect(yield* snapshotDescriptors(cacheRoot)).toEqual([]);
     }).pipe(
       Effect.scoped,
@@ -95,9 +103,7 @@ it.live(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "stack-testing-partial-reset-",
-      });
+      const stateRoot = sharedStateRoot();
       const test = yield* makeTestStack({ runtime: "native", stateRoot });
       yield* test.checkpoint("0");
 
@@ -131,8 +137,7 @@ it.live(
   "restarts the composition when a checkpoint is interrupted after the stack stops",
   () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-interrupt-" });
+      const stateRoot = sharedStateRoot();
       const test = yield* makeTestStack({ runtime: "native", stateRoot });
       const database = test.services.database;
       const subscribed = yield* Deferred.make<void>();
@@ -172,7 +177,10 @@ it.live(
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-failure-" });
+      const stateRoot = sharedStateRoot();
+      const projectRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-testing-failure-project-",
+      });
       const occupied = yield* NodeSocketServer.make({ host: "127.0.0.1", port: 0 });
       if (occupied.address._tag !== "TcpAddress") return yield* Effect.die("Expected TCP");
       const port = occupied.address.port;
@@ -181,6 +189,7 @@ it.live(
         services: [{ service: "mail", endpoints: { http: { port } } }],
         runtime: "native",
         stateRoot,
+        projectRoot,
       }).pipe(Effect.scoped, Effect.exit);
 
       expect(Exit.isFailure(startup)).toBe(true);
@@ -193,7 +202,11 @@ it.live(
       expect(failure.value.message).toMatch(new RegExp(`\\b${port}\\b.*\\bin use\\b`));
       expect(failure.value.message).toContain("Services: none");
       expect(failure.value.message).toMatch(/Owner log: .+\/owner\.log$/);
-      expect(yield* discover({ stateRoot })).toEqual([]);
+      const resolvedProjectRoot = yield* fs.realPath(projectRoot);
+      const ownEntries = (yield* discover({ stateRoot })).filter(
+        ({ definition }) => definition.identity.projectRoot === resolvedProjectRoot,
+      );
+      expect(ownEntries).toEqual([]);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
@@ -205,17 +218,18 @@ it.live(
   "closes a test stack that its test already destroyed",
   () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-destroyed-" });
+      const stateRoot = sharedStateRoot();
 
-      const afterDestroy = yield* Effect.gen(function* () {
+      const { afterDestroy, stackId } = yield* Effect.gen(function* () {
         const test = yield* makeTestStack({ services: ["mail"], runtime: "native", stateRoot });
         yield* test.stack.destroy;
-        return yield* test.stack.composition.start.pipe(Effect.flip);
+        const afterDestroy = yield* test.stack.composition.start.pipe(Effect.flip);
+        return { afterDestroy, stackId: test.stack.id };
       }).pipe(Effect.scoped);
 
       expect(afterDestroy.reason).toBe("owner-unavailable");
-      expect(yield* discover({ stateRoot })).toEqual([]);
+      const discovered = yield* discover({ stateRoot });
+      expect(discovered.some(({ definition }) => definition.id === stackId)).toBe(false);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

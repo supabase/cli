@@ -18,7 +18,8 @@ import { SignJWT } from "jose";
 import { tmpdir } from "node:os";
 import * as State from "../State.ts";
 import type { SavedStack } from "../State.ts";
-import { ownerFor } from "../../tests/owner-rpc.ts";
+import { ownerFor, registerLeased } from "../../tests/owner-rpc.ts";
+import { sharedStateRoot, uniqueStackId } from "../../tests/helpers/integration-state.ts";
 import {
   makeSupabaseComposition,
   SupabaseCompositionError,
@@ -26,9 +27,10 @@ import {
 } from "./Supabase.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
-// Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
-const FIXED_STUDIO_PORT = 24_391;
-const FIXED_MAIL_PORT = 24_392;
+// Below the automatic port span and every OS ephemeral range, so another test's outbound socket
+// or auto-allocated listener cannot already hold them.
+const FIXED_STUDIO_PORT = 19_391;
+const FIXED_MAIL_PORT = 19_392;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -92,9 +94,9 @@ it.live("removes a managed SMTP binding when Mail is excluded", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-exclude-mail-" });
-    const saved = initial("catalog-exclude-mail");
-    const state = yield* stateFor(`${root}/state`);
-    yield* state.save(saved);
+    const saved = initial(uniqueStackId("catalog-exclude-mail"));
+    const state = yield* stateFor(sharedStateRoot());
+    yield* registerLeased(state, saved);
     const owner = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
     yield* Effect.acquireUseRelease(
       Effect.succeed(owner),
@@ -191,9 +193,9 @@ it.live(
         const fs = yield* FileSystem.FileSystem;
         const client = yield* HttpClient.HttpClient;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-auth-storage-" });
-        const stack = initial("catalog-native-auth-storage");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("catalog-native-auth-storage"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const storageRoot = `${root}/storage`;
         yield* fs.makeDirectory(storageRoot, { recursive: true });
         const owner = yield* ownerFor({
@@ -335,9 +337,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-reuse-" });
-        const stack = initial("catalog-native-reuse");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("catalog-native-reuse"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,
@@ -431,9 +433,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-studio-reuse-" });
-        const stack = initial("catalog-native-studio-reuse");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("catalog-native-studio-reuse"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,
@@ -516,9 +518,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-reuse-running-" });
-        const stack = initial("catalog-native-reuse-running");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("catalog-native-reuse-running"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,
@@ -560,9 +562,9 @@ it.live(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-native-reuse-cleanup-" });
-        const stack = initial("catalog-native-reuse-cleanup");
-        const state = yield* stateFor(`${root}/state`);
-        yield* state.save(stack);
+        const stack = initial(uniqueStackId("catalog-native-reuse-cleanup"));
+        const state = yield* stateFor(sharedStateRoot());
+        yield* registerLeased(state, stack);
         const owner = yield* ownerFor({
           saved: stack,
           state,

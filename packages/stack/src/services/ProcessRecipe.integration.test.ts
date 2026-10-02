@@ -48,6 +48,7 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
+import { sharedPortClaims } from "../../tests/helpers/integration-state.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -100,8 +101,7 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
     });
   });
 
-// No saved stacks to consult.
-const testReadPortClaims = Effect.succeed([]);
+const testReadPortClaims = sharedPortClaims;
 const testReserveNativePort = (
   key: string,
   claims: ReadonlyArray<State.StackClaims>,

@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect";
+import { Context, Effect, FileSystem, Layer, Redacted, Ref } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
@@ -11,6 +11,11 @@ import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import {
+  sharedPortClaims,
+  sharedStateRoot,
+  uniqueStackId,
+} from "../../tests/helpers/integration-state.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -47,11 +52,11 @@ describe("service catalog", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const path = yield* Path.Path;
           const client = yield* HttpClient.HttpClient;
-          const root = yield* makeDockerDatabaseRoot("catalog-rest-");
-          const stackId = "catalog-network";
-          const state = yield* makeTestState(path.dirname(path.dirname(path.dirname(root))));
+          const stackId = uniqueStackId("catalog-network");
+          const stateRoot = sharedStateRoot();
+          const root = yield* makeDockerDatabaseRoot("catalog-rest-", stackId, { stateRoot });
+          const state = yield* makeTestState(stateRoot);
           yield* state.save({
             id: stackId,
             identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },
@@ -218,7 +223,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const database = yield* makeService(databaseRecipe.definition, {
           id: "database",
@@ -259,7 +264,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const rest = yield* makeService(restRecipe.definition, {
           id: "rest",

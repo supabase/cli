@@ -7,6 +7,7 @@ import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { sharedPortClaims } from "../../tests/helpers/integration-state.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
@@ -71,7 +72,7 @@ describe("service catalog", () => {
                   },
                 },
                 runtime === "native" ? options(root) : dockerOptions(root),
-                Effect.succeed([]),
+                sharedPortClaims,
               );
               const pooler = yield* makeService(poolerRecipe.definition, {
                 id: `pooler-${runtime}-${poolMode}`,

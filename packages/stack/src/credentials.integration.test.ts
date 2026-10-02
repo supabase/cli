@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { tmpdir } from "node:os";
 import { create, open } from "./effect.ts";
+import { sharedStateRoot } from "../tests/helpers/integration-state.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -52,7 +53,7 @@ it.live("resolves composition credentials before creating services", () =>
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-composition-credentials-" });
       const stack = yield* create({
         projectRoot: root,
-        stateRoot: `${root}/state`,
+        stateRoot: sharedStateRoot(),
         cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
         runtime: "native",
       });
