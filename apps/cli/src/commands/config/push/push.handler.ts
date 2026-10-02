@@ -230,6 +230,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       mapPushBranchResolveError,
     );
     resolvedRef = ref;
+    yield* Effect.annotateCurrentSpan({
+      "project.ref": ref,
+      "config.target_is_branch": branch !== undefined,
+    });
 
     // 2. Load config.toml with the resolved ref (a TOML parse error aborts before any network
     // call); a matching `[remotes.<name>]` overlay merges before decode in the same call.
@@ -265,13 +269,15 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     // Deprecated `auth.external.{linkedin,slack}` blocks are stripped from `loaded.document`
     // before this decode, so scan `removedDeprecatedExternalProviders` too, or a secret hiding in
     // one of them would skip the check.
-    const secretError =
-      assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
-      assertDecryptableSecrets(
-        { auth: { external: loaded.removedDeprecatedExternalProviders } },
-        secretEnvLookup,
-        dotenvPrivateKeys,
-      );
+    const secretError = yield* Effect.sync(
+      () =>
+        assertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+        assertDecryptableSecrets(
+          { auth: { external: loaded.removedDeprecatedExternalProviders } },
+          secretEnvLookup,
+          dotenvPrivateKeys,
+        ),
+    ).pipe(Effect.withSpan("config.push.verifyDecryptable"));
     if (secretError !== undefined) {
       return yield* new ConfigPushLoadConfigError({ message: secretError });
     }
@@ -310,7 +316,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       !yes && tty.stdinIsTty && !output.interactive
         ? Effect.succeed(defaultValue)
         : promptYesNo(output, yes, label, defaultValue, true, { readMachineStdin: true });
-    const target = yield* resolveConfigPushTarget(ref, { knownBranch });
+    const target = yield* resolveConfigPushTarget(ref, { knownBranch }).pipe(
+      Effect.withSpan("config.push.probeTarget"),
+    );
+    yield* Effect.annotateCurrentSpan("config.target_kind", target.kind);
     yield* output.raw(configPushTargetLines(target), "stderr");
     if (target.kind === "branch" && knownBranch === undefined) {
       // Defaults `false`: an unattended run without affirmative consent
@@ -406,7 +415,8 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     const local = yield* configProjectConfigTry(() => fromConfigDocument(loaded));
     const changeSet = yield* configProjectConfigTry(() =>
       diffProjectConfig({ local: loaded, remote }),
-    );
+    ).pipe(Effect.withSpan("config.push.computeDiff"));
+    yield* Effect.annotateCurrentSpan("change.count", changeSet.counts.total);
 
     // 9. Route pushable changes to their v1 write endpoint and resolve every
     // declared secret's send/unchanged/not_set/gated status.
@@ -427,7 +437,7 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
         new ConfigPushLoadConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
-    });
+    }).pipe(Effect.withSpan("config.push.resolveAuthSecrets"));
     const now = yield* DateTime.now;
 
     // Whether each resource's local gate is on, computed once for the resource loop below and
@@ -482,7 +492,11 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
           "stderr",
         );
         if (yield* keep(pushPromptKey(resource))) {
-          yield* write(body);
+          yield* write(body).pipe(
+            Effect.withSpan("config.push.updateResource", {
+              attributes: { "config.resource": resource },
+            }),
+          );
           const sentSecretPaths = pushSentSecretPaths(encoded);
           return {
             service: resource,
@@ -715,6 +729,10 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
     if (notes !== "") {
       yield* output.raw(notes, "stderr");
     }
+    yield* Effect.annotateCurrentSpan(
+      "resource.updated_count",
+      services.filter((service) => service.status === "updated").length,
+    );
 
     // 13. Machine-readable summary in `json` / `stream-json` mode.
     if (output.format !== "text") {

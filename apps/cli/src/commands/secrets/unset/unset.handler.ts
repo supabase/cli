@@ -74,6 +74,8 @@ export const secretsUnset = Effect.fn("secrets.unset")(function* (flags: Secrets
       return yield* new SecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
+    yield* Effect.annotateCurrentSpan({ "secret.count": names.length });
+
     const unsetting =
       output.format === "text" ? yield* output.task("Unsetting secrets...") : undefined;
     yield* api.v1.bulkDeleteSecrets({ ref, body: names }).pipe(

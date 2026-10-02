@@ -352,4 +352,4 @@ export const upgradeNoticeHook = (
             process.stderr.write(text);
           },
         }),
-      ).pipe(Effect.ignoreCause);
+      ).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);

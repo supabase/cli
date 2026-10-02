@@ -147,6 +147,10 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
     const unavailable = results.flatMap(({ id, result }) =>
       Result.isSuccess(result) && result.success === "unavailable" ? [id] : [],
     );
+    yield* Effect.annotateCurrentSpan({
+      "stack.count": results.length,
+      "stack.stopped_count": stopped.length,
+    });
     if (output.format === "text") {
       for (const id of stopped) yield* output.raw(`Stack ${id} stopped.\n`);
       for (const id of unavailable)

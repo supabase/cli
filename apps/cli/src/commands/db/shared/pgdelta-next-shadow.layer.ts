@@ -331,77 +331,32 @@ export const pgDeltaNextShadowLayer = Layer.effect(
     });
 
     return PgDeltaNextShadow.of({
-      provisionMigrations: (opts) =>
-        Effect.gen(function* () {
-          const backend = yield* currentStackBackend;
-          const port = backend.kind === "stack" ? 0 : yield* nextPort();
-          const built = yield* buildNativeBase(opts);
-          const input = buildNativeInput(opts, built, port);
-          return backend.kind === "stack"
-            ? yield* stackProvisionMigrations(input, cacheOpts(opts, "config"))
-            : yield* provisionMigrations(input, cacheOpts(opts, "config"));
-        }).pipe(Effect.mapError(nextShadowError)),
-      provisionPlan: (opts) =>
-        Effect.gen(function* () {
-          const backend = yield* currentStackBackend;
-          const migrationsPort = backend.kind === "stack" ? 0 : yield* nextPort();
-          const declarativePort = backend.kind === "stack" ? 0 : yield* nextPort(migrationsPort);
-          const built = yield* buildNativeBase(opts);
-          const migrationsInput = buildNativeInput(opts, built, migrationsPort);
-          const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          if (backend.kind === "stack") {
-            const migrations = yield* stackProvisionMigrations(
-              migrationsInput,
-              cacheOpts(opts, "config"),
-            );
-            const declarative = yield* stackProvisionDeclarative(
-              declarativeInput,
-              cacheOpts(opts, "disabled"),
-            );
-            return {
-              migrationsUrl: migrations.migrationsUrl,
-              declarativeUrl: declarative.declarativeUrl,
-              allowSameDatabaseIdentity: allowSameDatabaseIdentityForPlanShadows({
-                declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
-                sameSnapshotKey:
-                  migrations.snapshotKey !== undefined &&
-                  migrations.snapshotKey === declarative.snapshotKey,
-              }),
-            } satisfies PgDeltaNextPlanShadows;
-          }
-          const [migrationsPeek, declarativePeek] = yield* Effect.all([
-            peekShadowBaseline(migrationsInput.base, cacheOpts(opts, "config")),
-            peekShadowBaseline(declarativeInput.base, cacheOpts(opts, "disabled")),
-          ]);
-          const withPeek = (cache: ShadowCacheOpts, peek: ShadowBaselinePeek): ShadowCacheOpts =>
-            peek.state === "uncachable"
-              ? cache
-              : { ...cache, precomputedKeyInputs: peek.keyInputs };
-          const strategy = resolvePlanShadowStrategy(migrationsPeek, declarativePeek);
-          // Peeked inputs are reused only when acquire immediately follows peek: always for
-          // migrations, only under `parallel` for declarative. Delayed declarative acquires
-          // re-resolve so a mid-run `roles.sql` edit can't publish under a stale key — identity
-          // still comes from the acquired handles' snapshot keys, so this can't lie about lineage.
-          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
-          const declarativeOpts =
-            strategy === "parallel"
-              ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
-              : cacheOpts(opts, "disabled");
-
-          const buffered = strategy === "sequential" ? undefined : bufferedShadowOutput(output);
-          const provisions = runPlanShadowProvisions({
-            strategy,
-            provisionMigrations: (onBaselineSeam) =>
-              provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
-            provisionDeclarative: provisionDeclarative(
-              declarativeInput,
-              declarativeOpts,
-              buffered === undefined ? output : buffered.output,
-            ),
-          });
-          const [migrations, declarative] = yield* buffered === undefined
-            ? provisions
-            : provisions.pipe(Effect.ensuring(buffered.flush));
+      provisionMigrations: Effect.fn("PgDeltaNextShadow.provisionMigrations")(function* (opts) {
+        const backend = yield* currentStackBackend;
+        const port = backend.kind === "stack" ? 0 : yield* nextPort();
+        const built = yield* buildNativeBase(opts);
+        const input = buildNativeInput(opts, built, port);
+        return backend.kind === "stack"
+          ? yield* stackProvisionMigrations(input, cacheOpts(opts, "config"))
+          : yield* provisionMigrations(input, cacheOpts(opts, "config"));
+      }, Effect.mapError(nextShadowError)),
+      provisionPlan: Effect.fn("PgDeltaNextShadow.provisionPlan")(function* (opts) {
+        const backend = yield* currentStackBackend;
+        const migrationsPort = backend.kind === "stack" ? 0 : yield* nextPort();
+        const declarativePort = backend.kind === "stack" ? 0 : yield* nextPort(migrationsPort);
+        const built = yield* buildNativeBase(opts);
+        const migrationsInput = buildNativeInput(opts, built, migrationsPort);
+        const declarativeInput = buildNativeInput(opts, built, declarativePort);
+        yield* Effect.annotateCurrentSpan({ "stack.backend": backend.kind });
+        if (backend.kind === "stack") {
+          const migrations = yield* stackProvisionMigrations(
+            migrationsInput,
+            cacheOpts(opts, "config"),
+          );
+          const declarative = yield* stackProvisionDeclarative(
+            declarativeInput,
+            cacheOpts(opts, "disabled"),
+          );
           return {
             migrationsUrl: migrations.migrationsUrl,
             declarativeUrl: declarative.declarativeUrl,
@@ -412,7 +367,49 @@ export const pgDeltaNextShadowLayer = Layer.effect(
                 migrations.snapshotKey === declarative.snapshotKey,
             }),
           } satisfies PgDeltaNextPlanShadows;
-        }).pipe(Effect.mapError(nextShadowError)),
+        }
+        const [migrationsPeek, declarativePeek] = yield* Effect.all([
+          peekShadowBaseline(migrationsInput.base, cacheOpts(opts, "config")),
+          peekShadowBaseline(declarativeInput.base, cacheOpts(opts, "disabled")),
+        ]);
+        const withPeek = (cache: ShadowCacheOpts, peek: ShadowBaselinePeek): ShadowCacheOpts =>
+          peek.state === "uncachable" ? cache : { ...cache, precomputedKeyInputs: peek.keyInputs };
+        const strategy = resolvePlanShadowStrategy(migrationsPeek, declarativePeek);
+        yield* Effect.annotateCurrentSpan({ "shadow.plan_strategy": strategy });
+        // Peeked inputs are reused only when acquire immediately follows peek: always for
+        // migrations, only under `parallel` for declarative. Delayed declarative acquires
+        // re-resolve so a mid-run `roles.sql` edit can't publish under a stale key — identity
+        // still comes from the acquired handles' snapshot keys, so this can't lie about lineage.
+        const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
+        const declarativeOpts =
+          strategy === "parallel"
+            ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
+            : cacheOpts(opts, "disabled");
+        const buffered = strategy === "sequential" ? undefined : bufferedShadowOutput(output);
+        const provisions = runPlanShadowProvisions({
+          strategy,
+          provisionMigrations: (onBaselineSeam) =>
+            provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
+          provisionDeclarative: provisionDeclarative(
+            declarativeInput,
+            declarativeOpts,
+            buffered === undefined ? output : buffered.output,
+          ),
+        });
+        const [migrations, declarative] = yield* buffered === undefined
+          ? provisions
+          : provisions.pipe(Effect.ensuring(buffered.flush));
+        return {
+          migrationsUrl: migrations.migrationsUrl,
+          declarativeUrl: declarative.declarativeUrl,
+          allowSameDatabaseIdentity: allowSameDatabaseIdentityForPlanShadows({
+            declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
+            sameSnapshotKey:
+              migrations.snapshotKey !== undefined &&
+              migrations.snapshotKey === declarative.snapshotKey,
+          }),
+        } satisfies PgDeltaNextPlanShadows;
+      }, Effect.mapError(nextShadowError)),
     });
   }),
 );

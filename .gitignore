@@ -5,7 +5,8 @@ coverage/
 .env
 .env.*
 !.env.example
-.claude/
+.claude/*
+!.claude/skills
 .agents/.repos/effect-v3
 .repos/slim-services/
 .worktrees/

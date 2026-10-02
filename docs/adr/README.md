@@ -68,6 +68,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0024 | [Top-Level `pull` Orchestration](0024-top-level-pull-orchestration.md)                                         | accepted   |
 | 0025 | [Ephemeral Postgres for Schema Tooling](0025-ephemeral-postgres-for-schema-tooling.md)                         | superseded |
 | 0026 | [Slim Image and Native Artifact Mirrors](0026-slim-artifact-mirrors.md)                                        | proposed   |
+| 0027 | [CLI Tracing Conventions](0027-cli-tracing-conventions.md)                                                     | proposed   |
 
 ## Template
 

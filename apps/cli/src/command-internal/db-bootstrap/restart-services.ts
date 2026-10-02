@@ -123,7 +123,7 @@ function restartSatelliteServices(
     if (failures.length > 0) {
       return yield* Effect.fail(new RestartServicesError({ message: failures.join("\n") }));
     }
-  });
+  }).pipe(Effect.withSpan("RestartServices.restartSatellites"));
 }
 
 /** Gateway-recovery hint, rendered as a `Suggestion:` line by `Output.fail`. */
@@ -217,7 +217,7 @@ function reloadKong(spawner: Spawner, projectId: string): Effect.Effect<void, Ko
         }),
       );
     }
-  });
+  }).pipe(Effect.withSpan("RestartServices.reloadKong"));
 }
 
 /**
@@ -231,5 +231,5 @@ export function restartServicesAndReloadKong(
   return Effect.gen(function* () {
     yield* restartSatelliteServices(spawner, projectId);
     yield* reloadKong(spawner, projectId);
-  });
+  }).pipe(Effect.withSpan("RestartServices.restartAndReloadKong"));
 }

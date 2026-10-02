@@ -86,6 +86,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             ? "The stack has no composition members to stream."
             : `No service matches ${requested}.`,
       });
+    yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
     const streams = selected.map((instance) =>
       instance.logs.pipe(
         Stream.groupByKey((entry) => entry.stream),

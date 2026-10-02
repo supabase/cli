@@ -93,6 +93,10 @@ export interface EdgeRuntimeBringUpInput {
 export const startStackEdgeRuntimeContainer = Effect.fn("start.edgeRuntime")(function* (
   input: EdgeRuntimeBringUpInput,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    "image.name": input.image,
+    "function.count": Object.keys(input.configFunctions).length,
+  });
   return yield* startEdgeRuntimeContainer({
     config: {
       projectId: input.projectId,

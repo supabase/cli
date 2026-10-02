@@ -18,9 +18,13 @@ import { dockerfileServiceImage } from "../../../shared/services/dockerfile-imag
 import { COMPOSE_PROJECT_LABEL } from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
 import { CLI_PROJECT_LABEL } from "../../../command-internal/docker-ids.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
-import { trimGoSpace } from "../shared/go-string.ts";
 import { INTERNAL_SCHEMAS } from "../../../command-internal/pg-dump.env.ts";
 import { DbDiffPgAdminError } from "./diff.errors.ts";
+
+// Trims the Unicode `White_Space` set like Go's `strings.TrimSpace`; unlike JS `trim`, it
+// leaves a leading U+FEFF (BOM) in place.
+const trimGoSpace = (value: string): string =>
+  value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 
 // `differ` has no slim build, so the slim flag never applies to it.
 const DIFFER_IMAGE = dockerfileServiceImage("differ", false);

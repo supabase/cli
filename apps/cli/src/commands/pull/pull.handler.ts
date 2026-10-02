@@ -224,21 +224,20 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
 
     // Resolves the pull target exactly once; every sub-step below targets `ref` directly
     // instead of re-resolving (ADR 0024).
-    const source = yield* openConfigPullSource();
-    const { ref, branch } = yield* resolveConfigTarget(
-      requested,
-      pullTargetErrors,
-      mapBranchResolveError,
-    );
-    resolvedRef = ref;
+    const { ref, branch, runPlan, source } = yield* Effect.gen(function* () {
+      const pullSource = yield* openConfigPullSource();
+      const target = yield* resolveConfigTarget(requested, pullTargetErrors, mapBranchResolveError);
+      resolvedRef = target.ref;
 
-    // `planConfigPullRun` does everything up through the schema-validation gate: no git check,
-    // no prompt, no write.
-    const runPlan = yield* planConfigPullRun({
-      target: { ref, branch },
-      remoteLabel,
-      source,
-    });
+      // `planConfigPullRun` does everything up through the schema-validation gate: no git
+      // check, no prompt, no write.
+      const plan = yield* planConfigPullRun({
+        target,
+        remoteLabel,
+        source: pullSource,
+      });
+      return { ref: target.ref, branch: target.branch, runPlan: plan, source: pullSource };
+    }).pipe(Effect.withSpan("pull.resolveTarget"));
 
     // Retry hints below use the planned remote destination's label, not the raw `remoteLabel`
     // flag: for a branch-derived implicit target, that's the `[remotes.<branch>]` block the
@@ -408,91 +407,95 @@ export const pull = Effect.fn("pull")(function* (flags: PullFlags) {
     // Each step is failure-isolated: one failing doesn't stop the rest from running and being
     // reported.
     const stepContext: PullStepContext = { ref, assumeYes: true };
-    let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
-    const results: Array<PullStepResult> = [];
+    const { results, firstFailureCause } = yield* Effect.gen(function* () {
+      let firstFailureCause: Cause.Cause<PullStepFailureCause> | undefined;
+      const results: Array<PullStepResult> = [];
 
-    const configCapture = yield* pullCaptureStep(pullConfigStep({ runPlan, source }));
-    if (configCapture.kind === "ok") {
-      results.push(
-        pullConfigStepResult(
-          // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
-          // the workdir-relative path, matching the dry-run/declined branches above.
-          { ...configCapture.value, configFilePath: runPlan.context.configPath },
-          configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
-        ),
-      );
-    } else {
-      results.push(
-        pullWithRetryHint(
-          pullFailedStepResult("config", Cause.squash(configCapture.cause)),
-          ref,
-          plannedRemoteLabel,
-        ),
-      );
-      firstFailureCause = configCapture.cause;
-    }
-
-    const migrationCapture = yield* pullCaptureStep(
-      shouldFetchMigrationHistory
-        ? pullMigrationHistoryStep(stepContext)
-        : Effect.succeed<PullMigrationHistoryStepOutcome>({
-            kind: "skipped",
-            reason: "not_needed",
-          }),
-    );
-    if (migrationCapture.kind === "ok") {
-      results.push(pullMigrationHistoryStepResult(migrationCapture.value));
-    } else {
-      results.push(
-        pullWithRetryHint(
-          pullFailedStepResult(
-            "migration_history",
-            Cause.squash(migrationCapture.cause),
-            cliSettings.workdir,
+      const configCapture = yield* pullCaptureStep(pullConfigStep({ runPlan, source }));
+      if (configCapture.kind === "ok") {
+        results.push(
+          pullConfigStepResult(
+            // `pullConfigStep` returns the plan's absolute `configFilePath`; overridden here to
+            // the workdir-relative path, matching the dry-run/declined branches above.
+            { ...configCapture.value, configFilePath: runPlan.context.configPath },
+            configPullPayloadFor(runPlan, { dryRun: false, declined: false }),
           ),
-          ref,
-          plannedRemoteLabel,
-        ),
-      );
-      firstFailureCause ??= migrationCapture.cause;
-    }
-
-    const dbCapture = yield* pullCaptureStep(pullDbStep(stepContext));
-    if (dbCapture.kind === "ok") {
-      results.push(pullDbStepResult(dbCapture.value));
-    } else {
-      results.push(
-        pullWithRetryHint(
-          pullDbStepFailureResult(
-            Cause.squash(dbCapture.cause),
+        );
+      } else {
+        results.push(
+          pullWithRetryHint(
+            pullFailedStepResult("config", Cause.squash(configCapture.cause)),
             ref,
             plannedRemoteLabel,
-            cliSettings.workdir,
           ),
-          ref,
-          plannedRemoteLabel,
-        ),
-      );
-      firstFailureCause ??= dbCapture.cause;
-    }
+        );
+        firstFailureCause = configCapture.cause;
+      }
 
-    const functionsCapture = yield* pullCaptureStep(pullFunctionsStep(stepContext));
-    if (functionsCapture.kind === "ok") {
-      results.push(pullFunctionsStepResult(functionsCapture.value));
-    } else {
-      results.push(
-        pullWithRetryHint(
-          pullFailedStepResult(
-            "functions",
-            Cause.squash(functionsCapture.cause),
-            cliSettings.workdir,
-          ),
-          ref,
-          plannedRemoteLabel,
-        ),
+      const migrationCapture = yield* pullCaptureStep(
+        shouldFetchMigrationHistory
+          ? pullMigrationHistoryStep(stepContext)
+          : Effect.succeed<PullMigrationHistoryStepOutcome>({
+              kind: "skipped",
+              reason: "not_needed",
+            }),
       );
-      firstFailureCause ??= functionsCapture.cause;
-    }
+      if (migrationCapture.kind === "ok") {
+        results.push(pullMigrationHistoryStepResult(migrationCapture.value));
+      } else {
+        results.push(
+          pullWithRetryHint(
+            pullFailedStepResult(
+              "migration_history",
+              Cause.squash(migrationCapture.cause),
+              cliSettings.workdir,
+            ),
+            ref,
+            plannedRemoteLabel,
+          ),
+        );
+        firstFailureCause ??= migrationCapture.cause;
+      }
+
+      const dbCapture = yield* pullCaptureStep(pullDbStep(stepContext));
+      if (dbCapture.kind === "ok") {
+        results.push(pullDbStepResult(dbCapture.value));
+      } else {
+        results.push(
+          pullWithRetryHint(
+            pullDbStepFailureResult(
+              Cause.squash(dbCapture.cause),
+              ref,
+              plannedRemoteLabel,
+              cliSettings.workdir,
+            ),
+            ref,
+            plannedRemoteLabel,
+          ),
+        );
+        firstFailureCause ??= dbCapture.cause;
+      }
+
+      const functionsCapture = yield* pullCaptureStep(pullFunctionsStep(stepContext));
+      if (functionsCapture.kind === "ok") {
+        results.push(pullFunctionsStepResult(functionsCapture.value));
+      } else {
+        results.push(
+          pullWithRetryHint(
+            pullFailedStepResult(
+              "functions",
+              Cause.squash(functionsCapture.cause),
+              cliSettings.workdir,
+            ),
+            ref,
+            plannedRemoteLabel,
+          ),
+        );
+        firstFailureCause ??= functionsCapture.cause;
+      }
+
+      return { results, firstFailureCause };
+    }).pipe(Effect.withSpan("pull.runSteps"));
 
     const aggregate = pullAggregate({
       ref,

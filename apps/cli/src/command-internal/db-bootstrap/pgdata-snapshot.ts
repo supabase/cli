@@ -202,7 +202,10 @@ export const exportPgDataTar = (
           pgDataSnapshotUnavailable(`failed to publish ${tarPath}: ${cause.message}`),
         ),
       );
-  }).pipe(Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))));
+  }).pipe(
+    Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))),
+    Effect.withSpan("PgDataSnapshot.export"),
+  );
 };
 
 /** POSIX tar's fixed block size: headers, file content, and the end marker are all multiples of it. */
@@ -507,6 +510,13 @@ export const validatePgDataArchive = (
     Effect.mapError((cause) =>
       pgDataSnapshotUnavailable(`failed to read ${tarPath}: ${cause.message}`),
     ),
+    Effect.tap((problem) =>
+      Effect.annotateCurrentSpan(
+        "snapshot.problem",
+        Option.isSome(problem) ? problem.value._tag : "none",
+      ),
+    ),
+    Effect.withSpan("PgDataSnapshot.validate"),
   );
 
 /** {@link validatePgDataArchive}'s verdict, split out so it is pure and directly testable. */

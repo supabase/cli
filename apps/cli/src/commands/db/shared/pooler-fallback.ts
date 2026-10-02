@@ -41,7 +41,7 @@ export const isDirectLinkedHost = (params: {
  * warning and retries once via `runWithConn`. Otherwise returns the original `result`
  * unchanged, so the caller's failure classification always reads the correct stderr.
  */
-export const runWithPoolerFallback = Effect.fnUntraced(function* <E, RRun>(params: {
+export const runWithPoolerFallback = Effect.fn("PoolerFallback.run")(function* <E, RRun>(params: {
   /** The first attempt's result; returned unchanged when no fallback fires. */
   readonly result: PoolerFallbackResult;
   readonly connType: DbConnType;

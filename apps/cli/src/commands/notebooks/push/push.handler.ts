@@ -141,6 +141,13 @@ export const notebooksPush = Effect.fn("notebooks.push")(function* (flags: Noteb
         pulled.push(notebook.name);
       }
 
+      yield* Effect.annotateCurrentSpan({
+        "notebook.created_count": created.length,
+        "notebook.updated_count": updated.length,
+        "notebook.deleted_count": deleted.length,
+        "notebook.pulled_count": pulled.length,
+      });
+
       const payload = {
         project_ref: ref,
         notebooks_dir: dir,

@@ -60,7 +60,7 @@ function resolveProfile(
     }
 
     return yield* loadProfile(token, fs);
-  });
+  }).pipe(Effect.withSpan("CommandSettings.resolveProfile"));
 }
 
 /**
@@ -71,34 +71,32 @@ function resolveProfile(
  * `explicit` is true only when the flag/env value was used verbatim, without walking up to find
  * `supabase/config.toml`; some config loads use it to skip a redundant ancestor search.
  */
-export function resolveWorkdir(
+export const resolveWorkdir = Effect.fn("CommandSettings.resolveWorkdir")(function* (
   flagValue: Option.Option<string>,
   envValue: Option.Option<string>,
   cwd: string,
   configTomlExists: (path: string) => Effect.Effect<boolean>,
   path: Path.Path,
-): Effect.Effect<{ readonly workdir: string; readonly explicit: boolean }> {
-  return Effect.gen(function* () {
-    if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-      return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
+) {
+  if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, flagValue.value), explicit: true };
+  }
+  if (Option.isSome(envValue) && envValue.value.length > 0) {
+    return { workdir: path.resolve(cwd, envValue.value), explicit: true };
+  }
+  let current = cwd;
+  while (true) {
+    const candidate = path.join(current, "supabase", "config.toml");
+    if (yield* configTomlExists(candidate)) {
+      return { workdir: current, explicit: false };
     }
-    if (Option.isSome(envValue) && envValue.value.length > 0) {
-      return { workdir: path.resolve(cwd, envValue.value), explicit: true };
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return { workdir: cwd, explicit: false };
     }
-    let current = cwd;
-    while (true) {
-      const candidate = path.join(current, "supabase", "config.toml");
-      if (yield* configTomlExists(candidate)) {
-        return { workdir: current, explicit: false };
-      }
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return { workdir: cwd, explicit: false };
-      }
-      current = parent;
-    }
-  });
-}
+    current = parent;
+  }
+});
 
 export const commandSettingsLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -111,6 +109,7 @@ export const commandSettingsLayer = Layer.unwrap(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+
         const runtimeInfo = yield* RuntimeInfo;
         const provider = yield* ConfigProvider.ConfigProvider;
         const read = <A>(config: Config.Config<A>) => config.parse(provider);
@@ -174,6 +173,11 @@ export const commandSettingsLayer = Layer.unwrap(
 
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
 
+        yield* Effect.annotateCurrentSpan({
+          "config.workdir_explicit": explicitWorkdir,
+          "config.access_token_from_env": Option.isSome(accessToken),
+        });
+
         return CommandSettings.of({
           profile,
           profileEnvValue,
@@ -191,7 +195,7 @@ export const commandSettingsLayer = Layer.unwrap(
           workdirEnvValue,
           userAgent,
         });
-      }),
+      }).pipe(Effect.withSpan("CommandSettings.load")),
     );
   }),
 );

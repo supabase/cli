@@ -54,7 +54,6 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
   access-token
   cli-latest
   telemetry.json
-  traces/
   bin/
   stacks/
     <stack-id>/
