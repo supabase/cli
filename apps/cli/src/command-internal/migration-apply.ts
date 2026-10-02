@@ -58,6 +58,7 @@ const SET_PATTERN = /^SET(?:\s|\/\*|--)/iu;
 const LOCAL_PATTERN = /^LOCAL(?:\s|\/\*|--|$)/iu;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
+const SQL_KEYWORD_PATTERN = /^[A-Z]+(?=\s|\/\*|--|$)/u;
 
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
@@ -65,15 +66,15 @@ const TRANSACTION_CONTROL_PATTERN =
  */
 const trimLeadingSqlComments = (sql: string): string => {
   // Stripped via code point comparison so it isn't relied on to match a whitespace regex class.
-  let trimmed = sql.replace(/^[ \t\n\r]+/u, "");
+  let trimmed = sql.replace(/^[ \t\n\r\f\v]+/u, "");
   while (trimmed.charCodeAt(0) === BOM_CODE_POINT) {
-    trimmed = trimmed.slice(1).replace(/^[ \t\n\r]+/u, "");
+    trimmed = trimmed.slice(1).replace(/^[ \t\n\r\f\v]+/u, "");
   }
   for (;;) {
     if (trimmed.startsWith("--")) {
       const idx = trimmed.search(/[\r\n]/u);
       if (idx < 0) return "";
-      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r]+/u, "");
+      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r\f\v]+/u, "");
     } else if (trimmed.startsWith("/*")) {
       let depth = 1;
       let index = 2;
@@ -89,7 +90,7 @@ const trimLeadingSqlComments = (sql: string): string => {
         }
       }
       if (depth > 0) return trimmed;
-      trimmed = trimmed.slice(index).replace(/^[ \t\n\r]+/u, "");
+      trimmed = trimmed.slice(index).replace(/^[ \t\n\r\f\v]+/u, "");
     } else {
       return trimmed.trim();
     }
@@ -116,15 +117,20 @@ export const isPipelineIncompatible = (sql: string): boolean => {
 
 /** Whether the statement owns a transaction boundary that must not be nested. */
 export const hasTransactionControl = (sql: string): boolean => {
-  const upper = trimLeadingSqlComments(sql).toUpperCase();
-  const words = upper.split(/\s+/u);
+  let remaining = trimLeadingSqlComments(sql).toUpperCase();
+  const words: Array<string> = [];
+  while (words.length < 3) {
+    const word = SQL_KEYWORD_PATTERN.exec(remaining)?.[0];
+    if (word === undefined) break;
+    words.push(word);
+    remaining = trimLeadingSqlComments(remaining.slice(word.length));
+  }
   if (words[0] === "ROLLBACK") {
     const toIndex = words[1] === "WORK" || words[1] === "TRANSACTION" ? 2 : 1;
-    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] rewinds the current
-    // transaction without ending it, so it still needs the CLI-managed wrapper.
+    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] keeps the transaction open.
     return words[toIndex] !== "TO";
   }
-  return TRANSACTION_CONTROL_PATTERN.test(upper);
+  return TRANSACTION_CONTROL_PATTERN.test(words.join(" "));
 };
 
 const ROLE_REVERT_PATTERN =

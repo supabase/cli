@@ -865,15 +865,23 @@ describe("applyMigrationFile", () => {
 
 describe("hasTransactionControl", () => {
   it("recognizes authored boundaries after comments without matching routine bodies", () => {
-    expect(hasTransactionControl("-- authored\nBEGIN")).toBe(true);
-    expect(hasTransactionControl("START TRANSACTION ISOLATION LEVEL SERIALIZABLE")).toBe(true);
+    for (const sql of [
+      "-- authored\nBEGIN",
+      "START TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+      "BEGIN/* authored */",
+      "COMMIT-- authored",
+      "START/* scoped */TRANSACTION",
+      "PREPARE\f/* scoped */TRANSACTION 'prepared'",
+    ]) {
+      expect(hasTransactionControl(sql)).toBe(true);
+    }
     expect(
       hasTransactionControl("CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql"),
     ).toBe(false);
   });
 
   it("distinguishes transaction rollback from savepoint rollback", () => {
-    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION"]) {
+    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION", "ROLLBACK/* end */"]) {
       expect(hasTransactionControl(sql)).toBe(true);
     }
     for (const sql of [
@@ -881,6 +889,9 @@ describe("hasTransactionControl", () => {
       "ROLLBACK TO SAVEPOINT before_change",
       "ROLLBACK WORK TO SAVEPOINT before_change",
       "ROLLBACK TRANSACTION TO before_change",
+      "ROLLBACK/* rewind */TO before_change",
+      "ROLLBACK/* rewind */WORK/* scope */TO SAVEPOINT before_change",
+      "ROLLBACK\v/* rewind */TRANSACTION\f/* scope */TO before_change",
     ]) {
       expect(hasTransactionControl(sql)).toBe(false);
     }

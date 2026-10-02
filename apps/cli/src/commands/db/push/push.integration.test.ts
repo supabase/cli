@@ -433,6 +433,12 @@ describe("db push", () => {
     ],
     ["CR-terminated comment", "-- settings\rSET LOCAL lock_timeout = '1s';", true],
     [
+      "SQL whitespace between comments",
+      "/* first */\f/* second */SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    ["SQL whitespace between keywords", "SET\v/* scope */LOCAL lock_timeout = '1s';", true],
+    [
       "bare SET LOCAL",
       "-- settings\nSET LOCAL statement_timeout = '1s';\nSET LOCAL lock_timeout = '1s';",
       true,
@@ -440,6 +446,16 @@ describe("db push", () => {
     [
       "authored transaction",
       "BEGIN;\nSET LOCAL statement_timeout = '1s';\nLOCK TABLE t;\nCOMMIT;",
+      false,
+    ],
+    [
+      "comment-delimited authored transaction",
+      "BEGIN/* authored */; SET LOCAL lock_timeout = '1s'; COMMIT/* authored */;",
+      false,
+    ],
+    [
+      "comment-separated transaction keywords",
+      "START/* scoped */TRANSACTION; SET LOCAL lock_timeout = '1s'; COMMIT/* authored */;",
       false,
     ],
     [
