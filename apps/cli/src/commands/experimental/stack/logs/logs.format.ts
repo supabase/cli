@@ -10,9 +10,7 @@ import {
   yellow,
 } from "../../../../command-internal/colors.ts";
 import { stripControlSequences } from "../../../../shared/output/strip-control-sequences.ts";
-import type { StreamEvent } from "../../../../shared/output/types.ts";
-
-export type LogSource = "history" | "live";
+import { markerText } from "../../../../command-internal/stack-log-events.ts";
 
 /** A `--since` bound: an absolute time, or each instance's latest launch. */
 export type SinceBound =
@@ -202,29 +200,6 @@ export const isAfter = (record: LogRecord, printed: LogPosition | undefined) =>
   record.position === undefined ||
   comparePositions(record.position, printed) > 0;
 
-/** The `log-entry` or `log-marker` event of a record. */
-export const logEvent = (record: StackLogRecord, source: LogSource): StreamEvent => {
-  const subject = { service: record.service, instance_id: record.instanceId };
-  if (record.kind === "stdout" || record.kind === "stderr")
-    return {
-      type: "log-entry",
-      timestamp: record.timestamp,
-      source,
-      ...subject,
-      stream: record.kind,
-      line: record.text ?? "",
-    };
-  return {
-    type: "log-marker",
-    timestamp: record.timestamp,
-    source,
-    ...subject,
-    kind: record.kind,
-    ...(record.stream === undefined ? {} : { stream: record.stream }),
-    ...(record.count === undefined ? {} : { count: record.count }),
-  };
-};
-
 const palette = [aqua, yellow, green, magenta, blue];
 const pad = (value: number, width: number) => String(value).padStart(width, "0");
 
@@ -236,15 +211,6 @@ const localTime = (iso: string) =>
       return `${pad(parts.hour, 2)}:${pad(parts.minute, 2)}:${pad(parts.second, 2)}.${pad(parts.millisecond, 3)}`;
     },
   });
-
-/** The text of a launch or lost marker, as `stack logs` prints it. */
-export const markerText = (record: LogRecord) => {
-  if (record.kind === "launch")
-    return record.launchId === undefined ? "--- launch ---" : `--- launch ${record.launchId} ---`;
-  if (record.count === undefined) return "--- older records were removed by retention ---";
-  const unit = record.count === 1 ? "chunk" : "chunks";
-  return `--- ${record.count} ${record.stream ?? "output"} ${unit} lost ---`;
-};
 
 /** Formats records as `<label> | <local time> <line>`, labels aligned across `instances`. */
 export const makeTextFormatter = (

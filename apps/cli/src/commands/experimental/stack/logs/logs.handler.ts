@@ -17,13 +17,12 @@ import type { StackLogsFlags } from "./logs.command.ts";
 import {
   isAfter,
   isFromLaunch,
-  logEvent,
   makeHistoryCollector,
   makeTextFormatter,
   parseSince,
   truncationFooter,
-  type LogSource,
 } from "./logs.format.ts";
+import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
 
 const targetError = (cause: StackTargetError) =>
   new StackCommandLogsError({

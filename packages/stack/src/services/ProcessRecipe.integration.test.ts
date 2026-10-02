@@ -1023,7 +1023,6 @@ describe("process recipe startup", () => {
           excluded: ReadonlySet<number>,
         ) => reserveNativePort(claims, key, sharedStart, excluded);
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-range",
             instanceId: "instance",
@@ -1048,6 +1047,7 @@ describe("process recipe startup", () => {
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
         const runtime = yield* recipe.definition.launch({
           id: "pooler",
+          launchId: 1,
           config: creation,
           scope,
         });

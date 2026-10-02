@@ -56,7 +56,6 @@ import {
   removeOwnedInstanceRoot,
 } from "./InstanceRoot.ts";
 import {
-  CatalogError,
   type CatalogOptions,
   type ProcessRecipeResult,
   type RecipeCreation,
@@ -180,14 +179,6 @@ export interface ProcessDependencies {
 const serviceError = mapToServiceError;
 
 const describeProcessExit = (code: number) => `Process exited with ${code}`;
-
-const catalogError = (operation: string, message: string, service?: ServiceKind, cause?: unknown) =>
-  new CatalogError({
-    operation,
-    message,
-    ...(service === undefined ? {} : { service }),
-    ...(cause === undefined ? {} : { cause }),
-  });
 
 const processExit = (
   exitCode: Effect.Effect<number, { readonly message: string }>,
