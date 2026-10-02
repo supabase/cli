@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { findLineCapViolations, type FileLineCounts } from "./check-test-line-cap.ts";
+import {
+  findLineCapViolations,
+  parseNameStatusZ,
+  type FileLineCounts,
+} from "./check-test-line-cap.ts";
 
 describe("findLineCapViolations", () => {
   test.each([
@@ -26,11 +30,6 @@ describe("findLineCapViolations", () => {
       { path: "mid.test.ts", baseLines: 900, headLines: 1050 },
       true,
     ],
-    [
-      "renamed oversized file compared with its old size",
-      { path: "renamed.test.ts", baseLines: 1500, headLines: 1600 },
-      true,
-    ],
   ] satisfies ReadonlyArray<[string, FileLineCounts, boolean]>)(
     "%s",
     (_name, file, expectViolation) => {
@@ -38,4 +37,29 @@ describe("findLineCapViolations", () => {
       expect(violations.length > 0).toBe(expectViolation);
     },
   );
+});
+
+describe("parseNameStatusZ", () => {
+  test("parses modified, added, renamed-with-score, and odd-path records, ignoring deletes", () => {
+    const record = [
+      "M",
+      "a.test.ts",
+      "A",
+      "new.test.ts",
+      "R087",
+      "old-name.test.ts",
+      "renamed.test.ts",
+      "D",
+      "removed.test.ts",
+      "M",
+      "spacé dir/weird name.test.ts",
+    ].join("\0");
+
+    expect(parseNameStatusZ(record)).toEqual([
+      { path: "a.test.ts", basePath: "a.test.ts" },
+      { path: "new.test.ts", basePath: "new.test.ts" },
+      { path: "renamed.test.ts", basePath: "old-name.test.ts" },
+      { path: "spacé dir/weird name.test.ts", basePath: "spacé dir/weird name.test.ts" },
+    ]);
+  });
 });

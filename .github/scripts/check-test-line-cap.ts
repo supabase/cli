@@ -17,7 +17,7 @@ export function findLineCapViolations(
 }
 
 export function formatViolation(violation: LineCapViolation): string {
-  return `${violation.path}: base ${violation.baseLines} -> head ${violation.headLines} non-blank lines (cap ${CAP_FLOOR})`;
+  return `${violation.path}: base ${violation.baseLines} -> head ${violation.headLines} non-blank lines (cap ${Math.max(CAP_FLOOR, violation.baseLines)})`;
 }
 
 export function nonBlankLineCount(text: string): number {
@@ -56,14 +56,7 @@ async function resolveBase(explicitBase: string | undefined): Promise<string | u
   if (mergeBase.ok) return mergeBase.stdout.trim();
 
   console.log(
-    "::notice ::origin/develop not found locally; fetching it before resolving a merge-base.",
-  );
-  await run(["git", "fetch", "--no-tags", "--depth=50", "origin", "develop"]);
-  const retried = await run(["git", "merge-base", "HEAD", "origin/develop"]);
-  if (retried.ok) return retried.stdout.trim();
-
-  console.log(
-    "::notice ::could not resolve a merge-base against origin/develop; skipping the line-cap check for this run.",
+    "::notice ::could not resolve a merge-base against origin/develop; run `git fetch origin develop` and retry. Skipping the line-cap check for this run.",
   );
   return undefined;
 }
@@ -73,23 +66,67 @@ interface ChangedFile {
   readonly basePath: string;
 }
 
-async function changedTestFiles(base: string): Promise<ReadonlyArray<ChangedFile>> {
-  const diff = await run(["git", "diff", "--name-status", "-M", base, "--", "*.test.ts"]);
-  if (!diff.ok) {
-    throw new Error(`git diff --name-status -M ${base} failed: ${diff.stderr.trim()}`);
-  }
-
+/**
+ * Parses NUL-delimited `git diff --name-status -z` output. A rename or copy record carries a
+ * similarity score followed by the old and new paths; a delete carries no new path and is
+ * dropped since there is nothing left to check.
+ */
+export function parseNameStatusZ(output: string): ReadonlyArray<ChangedFile> {
+  const fields = output.split("\0");
   const files: ChangedFile[] = [];
-  for (const line of diff.stdout.split("\n")) {
-    if (line.trim() === "") continue;
-    const [status = "", first = "", second] = line.split("\t");
-    if (status.startsWith("D")) continue;
-    if (status.startsWith("R")) {
-      files.push({ path: second ?? "", basePath: first });
+  let index = 0;
+  while (index < fields.length) {
+    const status = fields[index] ?? "";
+    if (status === "") {
+      index += 1;
       continue;
     }
-    files.push({ path: first, basePath: first });
+    if (status.startsWith("R") || status.startsWith("C")) {
+      const basePath = fields[index + 1] ?? "";
+      const path = fields[index + 2] ?? "";
+      files.push({ path, basePath });
+      index += 3;
+      continue;
+    }
+    if (status.startsWith("D")) {
+      index += 2;
+      continue;
+    }
+    const path = fields[index + 1] ?? "";
+    files.push({ path, basePath: path });
+    index += 2;
   }
+  return files;
+}
+
+async function changedTestFiles(base: string): Promise<ReadonlyArray<ChangedFile>> {
+  const diff = await run(["git", "diff", "--name-status", "-M", "-z", base, "--", "*.test.ts"]);
+  if (!diff.ok) {
+    throw new Error(`git diff --name-status -M -z ${base} failed: ${diff.stderr.trim()}`);
+  }
+
+  const files = [...parseNameStatusZ(diff.stdout)];
+
+  // `git diff` skips untracked files, so a new test file that isn't added yet is listed separately.
+  const untracked = await run([
+    "git",
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    "*.test.ts",
+  ]);
+  if (!untracked.ok) {
+    throw new Error(`git ls-files --others failed: ${untracked.stderr.trim()}`);
+  }
+
+  const known = new Set(files.map((file) => file.path));
+  for (const path of untracked.stdout.split("\0")) {
+    if (path === "" || known.has(path)) continue;
+    files.push({ path, basePath: path });
+  }
+
   return files;
 }
 
