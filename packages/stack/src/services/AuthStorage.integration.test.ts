@@ -20,7 +20,7 @@ const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
 
 let scope: Scope.Closeable;
 let root: string;
-let database: ServiceInstance<any>;
+let database: ServiceInstance<any> | undefined;
 let databaseUrl: string;
 
 describe("service catalog", () => {
@@ -58,7 +58,11 @@ describe("service catalog", () => {
   }, 120_000);
 
   afterAll(
-    () => database.stop.pipe(Effect.andThen(Scope.close(scope, Exit.void)), Effect.runPromise),
+    () =>
+      Effect.suspend(() => (database === undefined ? Effect.void : database.stop)).pipe(
+        Effect.ensuring(Scope.close(scope, Exit.void)),
+        Effect.runPromise,
+      ),
     60_000,
   );
 
