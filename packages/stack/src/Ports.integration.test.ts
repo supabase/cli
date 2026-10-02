@@ -3,7 +3,11 @@ import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, FileSystem, Hash, Layer, Option, Ref, Scope } from "effect";
 import { makePorts, portBase, portSpan, PortError, reserveNativePort } from "./Ports.ts";
 import * as State from "./State.ts";
-import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
+import {
+  sharedPortClaims,
+  sharedStateRoot,
+  uniqueStackId,
+} from "../tests/helpers/integration-state.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -439,13 +443,18 @@ it.live("lets exactly one of two stacks sharing a saved port bind it when both s
 // Fixed so a test can force two reservations to the same candidate; production uses randomPortSpanStart.
 const fixedStart = Effect.succeed(0);
 
-// Binds a real listener directly in the native-reservation span, retrying past occupied
-// candidates, instead of reserving then releasing a port that something else could grab meanwhile.
-const bindBlockingPort = (host: string) =>
+const noClaimedPorts: ReadonlySet<number> = new Set();
+
+// Binds a real listener directly in the native-reservation span, retrying past occupied and
+// claimed candidates, instead of reserving then releasing a port that something else could grab
+// meanwhile.
+const bindBlockingPort = (host: string, claimed: ReadonlySet<number> = noClaimedPorts) =>
   Effect.gen(function* () {
     for (let offset = 0; offset < portSpan; offset++) {
-      const attempt = yield* Effect.exit(bind(host, portBase + offset));
-      if (Exit.isSuccess(attempt)) return { port: portBase + offset, listener: attempt.value };
+      const port = portBase + offset;
+      if (claimed.has(port)) continue;
+      const attempt = yield* Effect.exit(bind(host, port));
+      if (Exit.isSuccess(attempt)) return { port, listener: attempt.value };
     }
     return yield* Effect.die("No port in the native reservation span was free for the fixture");
   });
@@ -456,9 +465,10 @@ it.live("skips a native backend port claimed by another saved stack", () =>
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped();
       const state = yield* makeTestState(root);
+      const shared = yield* sharedPortClaims;
 
       const probeScope = yield* Scope.make();
-      const probe = yield* reserveNativePort([], "pooler", fixedStart).pipe(
+      const probe = yield* reserveNativePort(shared, "pooler", fixedStart).pipe(
         Effect.provideService(Scope.Scope, probeScope),
       );
       yield* Scope.close(probeScope, Exit.void);
@@ -467,7 +477,13 @@ it.live("skips a native backend port claimed by another saved stack", () =>
         { key: "db/sql", host: "127.0.0.1", port: probe.port },
       ]);
 
-      const reserved = yield* reserveNativePort(yield* state.claims, "pooler", fixedStart);
+      // Starts at the claimed port with the same shared snapshot, so only the claim can skip it.
+      const claimedStart = Effect.succeed(probe.port - portBase);
+      const reserved = yield* reserveNativePort(
+        [...(yield* state.claims), ...shared],
+        "pooler",
+        claimedStart,
+      );
       expect(reserved.port).not.toBe(probe.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -476,11 +492,13 @@ it.live("skips a native backend port claimed by another saved stack", () =>
 it.live("skips a native backend port a wildcard listener holds", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const claims = yield* sharedPortClaims;
+      const claimed = new Set(claims.flatMap((stack) => stack.ports.map((claim) => claim.port)));
       // A wildcard bind is reachable through loopback, so a loopback-only probe would miss it.
-      const blocked = yield* bindBlockingPort("0.0.0.0");
+      const blocked = yield* bindBlockingPort("0.0.0.0", claimed);
       const forcedStart = Effect.succeed(blocked.port - portBase);
 
-      const reserved = yield* reserveNativePort([], "pooler", forcedStart);
+      const reserved = yield* reserveNativePort(claims, "pooler", forcedStart);
       expect(reserved.port).not.toBe(blocked.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -489,45 +507,66 @@ it.live("skips a native backend port a wildcard listener holds", () =>
 it.live("excludes a port a previous attempt lost from the next reservation", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      // Read once and reuse, so claims cannot change between the two reservations and newly
+      // exclude the port on their own; only the `excluded` set may.
+      const claims = yield* sharedPortClaims;
       const firstScope = yield* Scope.make();
-      const first = yield* reserveNativePort([], "pooler", fixedStart).pipe(
+      const first = yield* reserveNativePort(claims, "pooler", fixedStart).pipe(
         Effect.provideService(Scope.Scope, firstScope),
       );
       yield* Scope.close(firstScope, Exit.void);
 
-      const second = yield* reserveNativePort([], "pooler", fixedStart, new Set([first.port]));
+      // Starts the scan at first's own port, so excluding it is the only reason the second
+      // reservation can move past it.
+      const secondStart = Effect.succeed(first.port - portBase);
+      const second = yield* reserveNativePort(claims, "pooler", secondStart, new Set([first.port]));
       expect(second.port).not.toBe(first.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
+// Mirrors the unexported `scanStart` in ./Ports.ts; several stories below need a competitor id
+// whose own first candidate collides with another stack's port.
+const scanStart = (projectRoot: string, id: string, key: string) =>
+  Math.abs(Hash.string(`${projectRoot}:${id}:${key}`)) % portSpan;
+
+/** Brute-forces a stack id whose first automatic candidate is `target`, dying if none is found. */
+const findScanStartCollision = (projectRoot: string, key: string, target: number) =>
+  Effect.gen(function* () {
+    for (let suffix = 0; suffix < 200_000; suffix++) {
+      const candidate = `competitor-${suffix}`;
+      if (scanStart(projectRoot, candidate, key) === target) return candidate;
+    }
+    return yield* Effect.die(`No id shares candidate ${target} as its own first scan candidate`);
+  });
+
 it.live("skips a public auto candidate a loopback listener already holds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped();
+      const root = sharedStateRoot();
       const state = yield* makeTestState(root);
-      yield* saveStack(state, root, "stack");
+      const stackId = uniqueStackId("stack");
+      yield* saveStack(state, root, stackId);
       const ports = yield* makePorts(state);
       // A container-runtime stack's bind to the wildcard host would otherwise succeed here too.
-      const request = { stackId: "stack", key: "api", host: "0.0.0.0", port: "auto" as const };
+      const request = { stackId, key: "api", host: "0.0.0.0", port: "auto" as const };
       const accept = (_host: string, port: number) => Effect.succeed(port);
 
-      // A loopback-only listener keeps occupying the port while only its saved claim is released,
-      // so the next auto allocation has to skip it for real via loopbackOccupied, not a real bind.
+      // Releasing the claim, rather than closing its scope, leaves the listener live while
+      // freeing the port for anyone's claims-based scan.
       const probe = yield* ports.acquire(request, (_host, port) => bind("127.0.0.1", port));
-      yield* ports.release("stack", "api");
+      yield* ports.release(stackId, "api");
 
-      const acquired = yield* ports.acquire(request, accept);
+      // A competitor whose own first candidate is probe's port proves the skip can only come
+      // from loopbackOccupied finding the still-live listener, not from a claims-based skip.
+      const competitorId = yield* findScanStartCollision(root, "api", probe.port - portBase);
+      yield* saveStack(state, root, competitorId);
+
+      const acquired = yield* ports.acquire({ ...request, stackId: competitorId }, accept);
       expect(acquired.port).not.toBe(probe.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
-
-// Mirrors the unexported `scanStart` in ./Ports.ts; the regression below needs the automatic
-// allocation's first candidate to find a colliding sibling.
-const scanStart = (projectRoot: string, id: string, key: string) =>
-  Math.abs(Hash.string(`${projectRoot}:${id}:${key}`)) % portSpan;
 
 it.live(
   "keeps automatic allocation off a stopped sibling's saved port that is its own first candidate",
@@ -538,32 +577,30 @@ it.live(
         const projectRoot = yield* fs.makeTempDirectoryScoped({
           prefix: "ports-sibling-project-",
         });
-        const firstRoot = yield* fs.makeTempDirectoryScoped({ prefix: "ports-sibling-first-" });
         const key = "sql";
-        const firstId = "first";
-        const firstStart = scanStart(projectRoot, firstId, key);
-        let competitorId: string | undefined;
-        for (let suffix = 0; suffix < 200_000 && competitorId === undefined; suffix++) {
-          const candidate = `competitor-${suffix}`;
-          if (scanStart(projectRoot, candidate, key) === firstStart) competitorId = candidate;
-        }
-        if (competitorId === undefined)
-          return yield* Effect.die("No competitor id shares the first candidate's scan start");
-
+        const firstId = uniqueStackId("first");
         const accept = (_host: string, port: number) => Effect.succeed(port);
         const request = { stackId: firstId, key, host: "127.0.0.1", port: "auto" as const };
 
-        const firstState = yield* makeTestState(firstRoot);
-        yield* saveStack(firstState, projectRoot, firstId);
-        const firstPorts = yield* makePorts(firstState, "linux");
+        // `first` lives on the shared root, so every other suite allocator already sees its
+        // claim once saved; its actual port (not a prediction) names the candidate to collide.
+        const sharedRoot = sharedStateRoot();
+        const sharedState = yield* makeTestState(sharedRoot);
+        yield* saveStack(sharedState, projectRoot, firstId);
+        const sharedPorts = yield* makePorts(sharedState, "linux");
         const firstScope = yield* Scope.make();
-        const firstAcquired = yield* firstPorts
+        const firstAcquired = yield* sharedPorts
           .acquire(request, accept)
           .pipe(Effect.provideService(Scope.Scope, firstScope));
         yield* Scope.close(firstScope, Exit.void);
-        expect(firstAcquired.port).toBe(portBase + firstStart);
+        const competitorId = yield* findScanStartCollision(
+          projectRoot,
+          key,
+          firstAcquired.port - portBase,
+        );
 
-        // Proves the prerequisite: alone, the competitor's own first candidate is the same port.
+        // Proves the prerequisite: alone, in a private root, the competitor's own first
+        // candidate is the same port.
         const verifyRoot = yield* fs.makeTempDirectoryScoped({ prefix: "ports-sibling-verify-" });
         const verifyState = yield* makeTestState(verifyRoot);
         yield* saveStack(verifyState, projectRoot, competitorId);
@@ -574,14 +611,14 @@ it.live(
         );
         expect(verifyAcquired.port).toBe(firstAcquired.port);
 
-        yield* saveStack(firstState, projectRoot, competitorId);
-        const competitorAcquired = yield* firstPorts.acquire(
+        yield* saveStack(sharedState, projectRoot, competitorId);
+        const competitorAcquired = yield* sharedPorts.acquire(
           { ...request, stackId: competitorId },
           accept,
         );
         expect(competitorAcquired.port).not.toBe(firstAcquired.port);
 
-        const reopenedPorts = yield* makePorts(yield* makeTestState(firstRoot), "linux");
+        const reopenedPorts = yield* makePorts(yield* makeTestState(sharedRoot), "linux");
         const firstReacquired = yield* reopenedPorts.acquire(request, accept);
         expect(firstReacquired.port).toBe(firstAcquired.port);
       }),

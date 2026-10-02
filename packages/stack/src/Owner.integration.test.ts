@@ -792,8 +792,8 @@ it.live("rejects a missing required input before starting or stopping the servic
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-missing-input-" });
-      const stack = initial("owner-missing-input");
-      const state = yield* stateFor(`${root}/state`);
+      const stack = initial(uniqueStackId("owner-missing-input"));
+      const state = yield* stateFor(sharedStateRoot());
       yield* registerLeased(state, stack);
       const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
       yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));

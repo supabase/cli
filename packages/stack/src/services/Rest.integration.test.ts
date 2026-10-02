@@ -11,7 +11,11 @@ import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { sharedStateRoot, uniqueStackId } from "../../tests/helpers/integration-state.ts";
+import {
+  sharedPortClaims,
+  sharedStateRoot,
+  uniqueStackId,
+} from "../../tests/helpers/integration-state.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(State.layer({ root })).pipe(
@@ -219,7 +223,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const database = yield* makeService(databaseRecipe.definition, {
           id: "database",
@@ -260,7 +264,7 @@ describe("service catalog", () => {
             },
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const rest = yield* makeService(restRecipe.definition, {
           id: "rest",

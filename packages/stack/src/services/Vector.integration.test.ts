@@ -5,6 +5,7 @@ import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { sharedPortClaims } from "../../tests/helpers/integration-state.ts";
 
 const options = (root: string, runtime: "docker" | "native") => ({
   stackId: "catalog-test",
@@ -33,7 +34,7 @@ describe("vector recipe", () => {
                 endpoints: { http: { port: "auto" } },
               },
               options(root, runtime),
-              Effect.succeed([]),
+              sharedPortClaims,
             );
             const vector = yield* makeService(recipe.definition, {
               id: "vector",

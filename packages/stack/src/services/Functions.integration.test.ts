@@ -22,6 +22,7 @@ import { makeService } from "../Service.ts";
 import type * as State from "../State.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+import { sharedPortClaims } from "../../tests/helpers/integration-state.ts";
 
 // No saved stacks to consult; this test never launches the native backend it configures.
 const testReadPortClaims = Effect.succeed([]);
@@ -207,7 +208,7 @@ describe("service catalog", () => {
                 instanceId: "ancestor",
                 cacheRoot: "/tmp/supabase-stack-artifacts",
               },
-              Effect.succeed([]),
+              sharedPortClaims,
             );
             const logs = yield* Ref.make("");
             yield* recipe.logs.pipe(
@@ -276,7 +277,7 @@ describe("service catalog", () => {
               instanceId: "deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
-            Effect.succeed([]),
+            sharedPortClaims,
           );
           const logs = yield* Ref.make("");
           yield* recipe.logs.pipe(
@@ -348,7 +349,7 @@ describe("service catalog", () => {
               instanceId: "plain-deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
-            Effect.succeed([]),
+            sharedPortClaims,
           );
           const logs = yield* Ref.make("");
           const warned = yield* Deferred.make<void>();
@@ -459,7 +460,7 @@ for (const runtime of ["native", "docker"] as const) {
               runtime,
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
-            Effect.succeed([]),
+            sharedPortClaims,
           );
           const logs = yield* Ref.make("");
           yield* recipe.logs.pipe(

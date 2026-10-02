@@ -4,6 +4,7 @@ import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { sharedPortClaims } from "../../tests/helpers/integration-state.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-mail",
@@ -94,7 +95,7 @@ describe("service catalog", () => {
             makeServiceRecipe(
               { service: "mail", config: {} },
               { ...options(root), instanceId },
-              Effect.succeed([]),
+              sharedPortClaims,
             );
           const first = yield* recipeFor("mail-a");
           const second = yield* recipeFor("mail-b");
@@ -129,7 +130,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           options(root),
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
@@ -198,7 +199,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           options(root),
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
@@ -223,7 +224,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           { ...options(root), instanceId: "../escaped" },
-          Effect.succeed([]),
+          sharedPortClaims,
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
