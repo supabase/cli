@@ -1019,8 +1019,8 @@ describe("native process group cleanup", () => {
           const fiber = yield* Effect.forkChild(native.kill);
           yield* TestClock.adjust("20 millis"); // graceful signal timeout
           yield* Effect.yieldNow;
-          // launcherReapTimeout in NativeProcess.ts; kept in sync here.
-          yield* TestClock.adjust("2 seconds"); // launcher reap-grace timeout
+          // launcherReapGuardTimeout in NativeProcess.ts; kept in sync here.
+          yield* TestClock.adjust("1 second"); // launcher reap-grace timeout
           yield* Effect.yieldNow;
           expect(forcedSignals).toEqual(["SIGKILL"]);
           // The launcher was force-killed but its exit is not resolved yet:
@@ -1070,7 +1070,8 @@ describe("native process group cleanup", () => {
           const fiber = yield* Effect.forkChild(native.kill.pipe(Effect.exit));
           yield* TestClock.adjust("20 millis");
           yield* Effect.yieldNow;
-          yield* TestClock.adjust("2 seconds");
+          // launcherReapGuardTimeout in NativeProcess.ts; kept in sync here.
+          yield* TestClock.adjust("1 second");
           yield* Effect.yieldNow;
           expect(forcedSignals).toEqual(["SIGKILL"]);
           // A killed process reports its exit as a signal-interrupted
