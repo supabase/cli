@@ -9,6 +9,7 @@ import {
   Layer,
   Path,
   Predicate,
+  Ref,
   Result,
   Schedule,
   Stream,
@@ -184,12 +185,40 @@ const authFailureCases = [
 ];
 
 const containerLogs = (container: string) =>
-  docker(["logs", container], DOCKER_COMMAND_TIMEOUT_MS).pipe(
-    Effect.map(({ stdout, stderr }) => `${stdout}\n${stderr}`),
-    Effect.catch((error) =>
-      Effect.succeed(`\n\n<docker logs failed: ${String(error.cause ?? error.message)}>`),
-    ),
-  );
+  Effect.gen(function* () {
+    const stdout = yield* Ref.make("");
+    const stderr = yield* Ref.make("");
+    const failure = yield* Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", ["logs", container], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      yield* Effect.all(
+        [
+          child.exitCode,
+          Stream.runForEach(Stream.decodeText(child.stdout), (chunk) =>
+            Ref.update(stdout, (text) => text + chunk),
+          ),
+          Stream.runForEach(Stream.decodeText(child.stderr), (chunk) =>
+            Ref.update(stderr, (text) => text + chunk),
+          ),
+        ],
+        { concurrency: "unbounded" },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout(DOCKER_COMMAND_TIMEOUT_MS),
+      Effect.match({
+        onFailure: (cause) => `\n<docker logs failed: ${String(cause)}>`,
+        onSuccess: () => "",
+      }),
+    );
+    return `${yield* Ref.get(stdout)}\n${yield* Ref.get(stderr)}${failure}`;
+  });
 
 const containerState = (container: string) =>
   docker(
@@ -364,8 +393,10 @@ const resolveImage = (image: string, deadline?: number) =>
 const removeOnClose = (containers: ReadonlyArray<string>, network?: string) =>
   Effect.addFinalizer(() =>
     docker(["rm", "-f", ...containers]).pipe(
-      Effect.andThen(network === undefined ? Effect.void : docker(["network", "rm", network])),
       Effect.ignore,
+      Effect.andThen(
+        network === undefined ? Effect.void : Effect.ignore(docker(["network", "rm", network])),
+      ),
     ),
   );
 
