@@ -434,178 +434,173 @@ function makePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan, Subj
   libraries: PgDeltaNextLibraries<FactBase, PlanOptions, Plan, Subject>,
 ): PgDeltaNextAdapterShape {
   return {
-    diff: (input: PgDeltaNextDiffInput) =>
-      Effect.gen(function* () {
-        const format = yield* attemptPgDeltaNext("diff", () =>
-          pgDeltaNextFormatOptions(input.formatOptions),
-        );
-        const profile = yield* tryPgDeltaNext("diff", () =>
-          libraries.resolveProfile(input.sourcePool, { redactSecrets: true }, input.schema),
-        );
-        const [source, desired] = yield* tryPgDeltaNext("diff", () =>
-          Promise.all([
-            profile.extract(input.sourcePool, { redactSecrets: true }),
-            profile.extract(input.desiredPool, { redactSecrets: true }),
+    diff: Effect.fn("PgDeltaNextAdapter.diff")(function* (input: PgDeltaNextDiffInput) {
+      const format = yield* attemptPgDeltaNext("diff", () =>
+        pgDeltaNextFormatOptions(input.formatOptions),
+      );
+      const profile = yield* tryPgDeltaNext("diff", () =>
+        libraries.resolveProfile(input.sourcePool, { redactSecrets: true }, input.schema),
+      );
+      const [source, desired] = yield* tryPgDeltaNext("diff", () =>
+        Promise.all([
+          profile.extract(input.sourcePool, { redactSecrets: true }),
+          profile.extract(input.desiredPool, { redactSecrets: true }),
+        ]),
+      );
+      return yield* attemptPgDeltaNext("diff", () => {
+        const generatedPlan = libraries.plan(source.factBase, desired.factBase, {
+          ...profile.planOptions,
+          redactSecrets: true,
+        });
+        const rendered = libraries.renderPlanFiles(generatedPlan, {
+          allowDrops: input.allowDrops,
+        });
+        const renderedFiles = formatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = readPlanDiagnostics<Subject>(generatedPlan);
+        const diagnostics = [
+          ...normalizePgDeltaNextDiagnostics(source.diagnostics, "source", libraries.encodeSubject),
+          ...normalizePgDeltaNextDiagnostics(
+            desired.diagnostics,
+            "desired",
+            libraries.encodeSubject,
+          ),
+          ...normalizePgDeltaNextDiagnostics(planDiagnostics, "plan", libraries.encodeSubject),
+        ];
+        return {
+          changes: rendered.changes,
+          sql: renderedFiles.map((file) => file.contents).join("\n\n"),
+          files: normalizePgDeltaNextRenderedFiles(renderedFiles),
+          diagnostics,
+          hazards: libraries.summarizeHazards(generatedPlan, [
+            ...source.diagnostics,
+            ...desired.diagnostics,
+            ...planDiagnostics,
           ]),
-        );
-        return yield* attemptPgDeltaNext("diff", () => {
-          const generatedPlan = libraries.plan(source.factBase, desired.factBase, {
-            ...profile.planOptions,
-            redactSecrets: true,
-          });
-          const rendered = libraries.renderPlanFiles(generatedPlan, {
-            allowDrops: input.allowDrops,
-          });
-          const renderedFiles = formatPgDeltaNextRenderedFiles(rendered.files, format);
-          const planDiagnostics = readPlanDiagnostics<Subject>(generatedPlan);
-          const diagnostics = [
+          ...(input.debug
+            ? {
+                debug: {
+                  sourceSnapshot: libraries.serializeSnapshot(source.factBase, {
+                    pgVersion: source.pgVersion,
+                    redactSecrets: true,
+                    profile: profile.id,
+                  }),
+                  desiredSnapshot: libraries.serializeSnapshot(desired.factBase, {
+                    pgVersion: desired.pgVersion,
+                    redactSecrets: true,
+                    profile: profile.id,
+                  }),
+                  plan: libraries.serializePlan(generatedPlan),
+                },
+              }
+            : {}),
+        };
+      });
+    }),
+    exportDeclarativeSchema: Effect.fn("PgDeltaNextAdapter.exportDeclarativeSchema")(function* (
+      input: PgDeltaNextDeclarativeExportInput,
+    ) {
+      const result = yield* tryPgDeltaNext("declarativeExport", () =>
+        libraries.buildSchemaExport(input.pool, pgDeltaNextExportOptions(input)),
+      );
+      return yield* attemptPgDeltaNext("declarativeExport", () => ({
+        files: result.files.map((file) => ({ name: file.name, sql: file.sql })),
+        manifest: {
+          ...result.manifest,
+          files: result.files.map((file) => file.name).sort(),
+        },
+        diagnostics: normalizePgDeltaNextDiagnostics(
+          result.diagnostics,
+          "export",
+          libraries.encodeSubject,
+        ),
+      }));
+    }),
+    planDeclarativeSchema: Effect.fn("PgDeltaNextAdapter.planDeclarativeSchema")(function* (
+      input: PgDeltaNextDeclarativePlanInput,
+    ) {
+      const format = yield* attemptPgDeltaNext("declarativePlan", () =>
+        pgDeltaNextFormatOptions(input.formatOptions),
+      );
+      const result = yield* tryPgDeltaNext("declarativePlan", () =>
+        libraries.planSchemaFiles(
+          input.targetPool,
+          input.shadowPool,
+          input.files,
+          pgDeltaNextPlanOptions(input),
+        ),
+      );
+      return yield* attemptPgDeltaNext("declarativePlan", () => {
+        const rendered = libraries.renderPlanFiles(result.plan, {
+          allowDrops: input.allowDrops,
+        });
+        const renderedFiles = formatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = readPlanDiagnostics<Subject>(result.plan);
+        const libraryDiagnostics = [
+          ...result.loadDiagnostics,
+          ...result.targetDiagnostics,
+          ...result.driftDiagnostics,
+          ...planDiagnostics,
+        ];
+        return {
+          changes: rendered.changes,
+          sql: renderedFiles.map((file) => file.contents).join("\n\n"),
+          files: normalizePgDeltaNextRenderedFiles(renderedFiles),
+          diagnostics: [
             ...normalizePgDeltaNextDiagnostics(
-              source.diagnostics,
-              "source",
+              result.loadDiagnostics,
+              "declarativeLoad",
               libraries.encodeSubject,
             ),
             ...normalizePgDeltaNextDiagnostics(
-              desired.diagnostics,
-              "desired",
+              result.targetDiagnostics,
+              "declarativeTarget",
+              libraries.encodeSubject,
+            ),
+            ...normalizePgDeltaNextDiagnostics(
+              result.driftDiagnostics,
+              "declarativeDrift",
               libraries.encodeSubject,
             ),
             ...normalizePgDeltaNextDiagnostics(planDiagnostics, "plan", libraries.encodeSubject),
-          ];
-          return {
-            changes: rendered.changes,
-            sql: renderedFiles.map((file) => file.contents).join("\n\n"),
-            files: normalizePgDeltaNextRenderedFiles(renderedFiles),
-            diagnostics,
-            hazards: libraries.summarizeHazards(generatedPlan, [
-              ...source.diagnostics,
-              ...desired.diagnostics,
-              ...planDiagnostics,
-            ]),
-            ...(input.debug
-              ? {
-                  debug: {
-                    sourceSnapshot: libraries.serializeSnapshot(source.factBase, {
-                      pgVersion: source.pgVersion,
-                      redactSecrets: true,
-                      profile: profile.id,
-                    }),
-                    desiredSnapshot: libraries.serializeSnapshot(desired.factBase, {
-                      pgVersion: desired.pgVersion,
-                      redactSecrets: true,
-                      profile: profile.id,
-                    }),
-                    plan: libraries.serializePlan(generatedPlan),
-                  },
-                }
-              : {}),
-          };
-        });
-      }),
-    exportDeclarativeSchema: (input: PgDeltaNextDeclarativeExportInput) =>
-      Effect.gen(function* () {
-        const result = yield* tryPgDeltaNext("declarativeExport", () =>
-          libraries.buildSchemaExport(input.pool, pgDeltaNextExportOptions(input)),
-        );
-        return yield* attemptPgDeltaNext("declarativeExport", () => ({
-          files: result.files.map((file) => ({ name: file.name, sql: file.sql })),
-          manifest: {
-            ...result.manifest,
-            files: result.files.map((file) => file.name).sort(),
-          },
-          diagnostics: normalizePgDeltaNextDiagnostics(
-            result.diagnostics,
-            "export",
-            libraries.encodeSubject,
-          ),
-        }));
-      }),
-    planDeclarativeSchema: (input: PgDeltaNextDeclarativePlanInput) =>
-      Effect.gen(function* () {
-        const format = yield* attemptPgDeltaNext("declarativePlan", () =>
-          pgDeltaNextFormatOptions(input.formatOptions),
-        );
-        const result = yield* tryPgDeltaNext("declarativePlan", () =>
-          libraries.planSchemaFiles(
-            input.targetPool,
-            input.shadowPool,
-            input.files,
-            pgDeltaNextPlanOptions(input),
-          ),
-        );
-        return yield* attemptPgDeltaNext("declarativePlan", () => {
-          const rendered = libraries.renderPlanFiles(result.plan, {
-            allowDrops: input.allowDrops,
-          });
-          const renderedFiles = formatPgDeltaNextRenderedFiles(rendered.files, format);
-          const planDiagnostics = readPlanDiagnostics<Subject>(result.plan);
-          const libraryDiagnostics = [
-            ...result.loadDiagnostics,
-            ...result.targetDiagnostics,
-            ...result.driftDiagnostics,
-            ...planDiagnostics,
-          ];
-          return {
-            changes: rendered.changes,
-            sql: renderedFiles.map((file) => file.contents).join("\n\n"),
-            files: normalizePgDeltaNextRenderedFiles(renderedFiles),
-            diagnostics: [
-              ...normalizePgDeltaNextDiagnostics(
-                result.loadDiagnostics,
-                "declarativeLoad",
-                libraries.encodeSubject,
-              ),
-              ...normalizePgDeltaNextDiagnostics(
-                result.targetDiagnostics,
-                "declarativeTarget",
-                libraries.encodeSubject,
-              ),
-              ...normalizePgDeltaNextDiagnostics(
-                result.driftDiagnostics,
-                "declarativeDrift",
-                libraries.encodeSubject,
-              ),
-              ...normalizePgDeltaNextDiagnostics(planDiagnostics, "plan", libraries.encodeSubject),
-              ...skippedStatementDiagnostics(result.skipped),
-            ],
-            hazards: libraries.summarizeHazards(result.plan, libraryDiagnostics),
-            skipped: result.skipped.map((skipped) => ({
-              file: skipped.file,
-              statement: skipped.stmt,
-            })),
-            removals: libraries.summarizeRemovals(result.plan),
-            ...(input.debug ? { debug: { plan: libraries.serializePlan(result.plan) } } : {}),
-          };
-        });
-      }),
-    captureSnapshot: (input: PgDeltaNextSnapshotCaptureInput) =>
-      Effect.gen(function* () {
-        const profile = yield* tryPgDeltaNext("snapshotCapture", () =>
-          libraries.resolveProfile(input.pool, {
-            redactSecrets: true,
-            skipBaseline: true,
-          }),
-        );
-        const result = yield* tryPgDeltaNext("snapshotCapture", () =>
-          profile.extract(input.pool, { redactSecrets: true }),
-        );
-        return yield* attemptPgDeltaNext<PgDeltaNextSnapshotCaptureResult>(
-          "snapshotCapture",
-          () => ({
-            generation: "v2",
-            snapshot: libraries.serializeSnapshot(result.factBase, {
-              pgVersion: result.pgVersion,
-              redactSecrets: true,
-              profile: profile.id,
-            }),
-            pgVersion: result.pgVersion,
-            diagnostics: normalizePgDeltaNextDiagnostics(
-              result.diagnostics,
-              "snapshot",
-              libraries.encodeSubject,
-            ),
-          }),
-        );
-      }),
+            ...skippedStatementDiagnostics(result.skipped),
+          ],
+          hazards: libraries.summarizeHazards(result.plan, libraryDiagnostics),
+          skipped: result.skipped.map((skipped) => ({
+            file: skipped.file,
+            statement: skipped.stmt,
+          })),
+          removals: libraries.summarizeRemovals(result.plan),
+          ...(input.debug ? { debug: { plan: libraries.serializePlan(result.plan) } } : {}),
+        };
+      });
+    }),
+    captureSnapshot: Effect.fn("PgDeltaNextAdapter.captureSnapshot")(function* (
+      input: PgDeltaNextSnapshotCaptureInput,
+    ) {
+      const profile = yield* tryPgDeltaNext("snapshotCapture", () =>
+        libraries.resolveProfile(input.pool, {
+          redactSecrets: true,
+          skipBaseline: true,
+        }),
+      );
+      const result = yield* tryPgDeltaNext("snapshotCapture", () =>
+        profile.extract(input.pool, { redactSecrets: true }),
+      );
+      return yield* attemptPgDeltaNext<PgDeltaNextSnapshotCaptureResult>("snapshotCapture", () => ({
+        generation: "v2",
+        snapshot: libraries.serializeSnapshot(result.factBase, {
+          pgVersion: result.pgVersion,
+          redactSecrets: true,
+          profile: profile.id,
+        }),
+        pgVersion: result.pgVersion,
+        diagnostics: normalizePgDeltaNextDiagnostics(
+          result.diagnostics,
+          "snapshot",
+          libraries.encodeSubject,
+        ),
+      }));
+    }),
   };
 }
 

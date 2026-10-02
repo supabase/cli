@@ -42,7 +42,7 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
  * top-level directory is fatal (so callers don't claim a bundle was saved), while every
  * individual artifact write is best-effort (a failed copy must not mask the original error).
  */
-export const saveDebugBundle = Effect.fnUntraced(function* (
+export const saveDebugBundle = Effect.fn("DebugBundle.save")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,

@@ -157,7 +157,7 @@ export interface ComputeEntryWrite {
  * writes the starter files first, and a failure after that would leave a directory nothing
  * records.
  */
-export const planComputeEntry = Effect.fnUntraced(function* (options: {
+export const planComputeEntry = Effect.fn("Compute.planConfigEntry")(function* (options: {
   readonly configPath: string;
   readonly name: string;
   /** Rendered as written: strings are quoted, numbers are not, lists become TOML arrays. */
@@ -231,7 +231,9 @@ export const planComputeEntry = Effect.fnUntraced(function* (options: {
  * exist yet, so `new` works in a directory that has never been `supabase
  * init`-ed.
  */
-export const commitComputeEntry = Effect.fnUntraced(function* (write: ComputeEntryWrite) {
+export const commitComputeEntry = Effect.fn("Compute.commitConfigEntry")(function* (
+  write: ComputeEntryWrite,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(write.configPath), { recursive: true });

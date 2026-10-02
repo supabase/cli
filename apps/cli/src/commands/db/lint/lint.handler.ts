@@ -42,7 +42,7 @@ const asString = (value: unknown): string =>
   value === null || value === undefined ? "" : String(value);
 
 /** Lists the user schemas — used when `--schema` is omitted. */
-const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
+const listUserSchemas = Effect.fn("DbLint.listUserSchemas")(function* (session: DbSession) {
   const rows = yield* session
     .query(LIST_SCHEMAS_SQL, [MANAGED_SCHEMAS])
     .pipe(
@@ -55,12 +55,13 @@ const listUserSchemas = Effect.fnUntraced(function* (session: DbSession) {
 });
 
 /** Runs the pgsql_check-based lint, minus the transaction setup the handler owns. */
-const lintDatabase = Effect.fnUntraced(function* (
+const lintDatabase = Effect.fn("DbLint.lintDatabase")(function* (
   session: DbSession,
   schemaFlags: ReadonlyArray<string>,
 ) {
   const output = yield* Output;
   const schemas = schemaFlags.length > 0 ? schemaFlags : yield* listUserSchemas(session);
+  yield* Effect.annotateCurrentSpan({ "schema.count": schemas.length });
 
   yield* session.exec(ENABLE_PGSQL_CHECK).pipe(
     Effect.mapError(
@@ -141,6 +142,12 @@ const runLint = Effect.fnUntraced(function* (
       linkedProjectRef: flags.projectRef,
     });
 
+    yield* Effect.annotateCurrentSpan({
+      "db.is_local": cfg.isLocal,
+      "db.lint.level": level,
+      "db.lint.fail_on": failOn,
+    });
+
     const results = yield* Effect.scoped(
       Effect.gen(function* () {
         yield* output.raw(
@@ -179,6 +186,7 @@ const runLint = Effect.fnUntraced(function* (
     }
 
     const filtered = filterLintResult(results, LINT_LEVEL_ENUM.toEnum(level));
+    yield* Effect.annotateCurrentSpan({ "db.lint.issue_count": filtered.length });
 
     if (output.format === "text") {
       // Encoding no-ops on an empty slice.

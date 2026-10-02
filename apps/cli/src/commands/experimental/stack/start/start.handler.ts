@@ -355,6 +355,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           : status.lifecycle !== "starting" && status.wakeEnabled,
       );
     if (fullyStarted) {
+      yield* Effect.annotateCurrentSpan({ "stack.path": "already-running" });
       yield* Ref.set(startupComplete, true);
       yield* reportReady(
         yield* startReport(stack, currentInstances),
@@ -370,6 +371,10 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           lifecycle === "running" || lifecycle === "starting" || wakeEnabled,
       );
     if (resumable) {
+      yield* Effect.annotateCurrentSpan({
+        "stack.path": "resume",
+        "stack.service_count": currentInstances.length,
+      });
       yield* output.info(
         "Resuming the saved stack services. Run `supabase stack stop`, then `supabase stack start` to apply configuration or service-selection changes.",
       );
@@ -547,6 +552,12 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       const candidate = candidates[0];
       if (candidate !== undefined) reuseIds.push(candidate.id);
     }
+    yield* Effect.annotateCurrentSpan({
+      "stack.path": "start",
+      "stack.service_count": requested.length,
+      "stack.initial_composition": initialComposition,
+      "stack.service_kinds_changed": serviceKindsChanged,
+    });
     const starting = yield* output.task("Starting local Supabase stack...");
     const members = yield* stack.composition
       .supabase(requested, {
@@ -620,6 +631,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         message: "The stack has no saved credentials",
       });
     if (initialComposition || serviceKindsChanged) {
+      yield* Effect.annotateCurrentSpan({ "stack.migrations_applied": true });
       const migrations = initialComposition
         ? {
             workdir: target.projectRoot,
@@ -649,6 +661,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           (message) => new SeedConfigLoadError({ message }),
         );
         if (hasConfiguredBuckets(context.config)) {
+          yield* Effect.annotateCurrentSpan({ "stack.storage_seeded": true });
           yield* storage.start.pipe(
             Effect.tapError((error) => starting.fail(error.message)),
             Effect.mapError(stackError),

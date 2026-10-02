@@ -11,11 +11,7 @@ import { Duration, Effect } from "effect";
 import { SUGGEST_ENV_VAR, SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
 import type { DbConnectError, DbExecError } from "./db-connection.errors.ts";
 import { type DbSession, type PgConnInput, DbConnection } from "./db-connection.service.ts";
-import {
-  acquirePgPool,
-  dbConnectionSqlPgLayer,
-  PgBatchQuery,
-} from "./db-connection.sql-pg.layer.ts";
+import { acquirePgPool, dbConnectionLayer, PgBatchQuery } from "./db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
   dashboardUrl: "https://supabase.com/dashboard",
@@ -55,7 +51,7 @@ const connectFailure = (
         Effect.mapError(() => new Error("expected the connection to fail")),
         Effect.orDie,
       );
-  }).pipe(Effect.provide(dbConnectionSqlPgLayer));
+  }).pipe(Effect.provide(dbConnectionLayer));
 
 /** A TCP port that is guaranteed closed: bind an ephemeral port, then release it. */
 const acquireClosedPort = (): Promise<number> =>
@@ -403,7 +399,7 @@ const fakeQueryServer = (
     });
   });
 
-describe("dbConnectionSqlPgLayer connect failures", () => {
+describe("dbConnectionLayer connect failures", () => {
   it.live(
     "surfaces host, user, database, and the driver cause when a remote (--linked) connection is refused",
     () =>
@@ -487,7 +483,7 @@ describe("dbConnectionSqlPgLayer connect failures", () => {
   );
 });
 
-describe("dbConnectionSqlPgLayer exec failures", () => {
+describe("dbConnectionLayer exec failures", () => {
   it.live(
     "maps a real wire ErrorResponse to pgconn's PgError rendering with detail and position",
     () =>
@@ -540,7 +536,7 @@ describe("dbConnectionSqlPgLayer exec failures", () => {
               Effect.mapError(() => new Error("expected the statement to fail")),
               Effect.orDie,
             );
-        }).pipe(Effect.provide(dbConnectionSqlPgLayer), Effect.ensuring(Effect.sync(server.close)));
+        }).pipe(Effect.provide(dbConnectionLayer), Effect.ensuring(Effect.sync(server.close)));
         expect(error._tag).toBe("DbExecError");
         expect(error.message).toBe('FEHLER: type "ltree" does not exist (SQLSTATE 42704)');
         if (error._tag === "DbExecError") {
@@ -552,7 +548,7 @@ describe("dbConnectionSqlPgLayer exec failures", () => {
   );
 });
 
-describe("dbConnectionSqlPgLayer extended batches", () => {
+describe("dbConnectionLayer extended batches", () => {
   /**
    * Narrow a batch failure to its statement-execution error. `execBatch` also fails
    * with `DbConnectError` when it cannot check a connection out of the pool,
@@ -584,7 +580,7 @@ describe("dbConnectionSqlPgLayer extended batches", () => {
       return yield* use(session);
     }).pipe(
       Effect.scoped,
-      Effect.provide(dbConnectionSqlPgLayer),
+      Effect.provide(dbConnectionLayer),
       Effect.ensuring(Effect.sync(server.close)),
     );
 

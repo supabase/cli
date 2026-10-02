@@ -14,6 +14,11 @@ export const dbPull = Effect.fn("db.pull")(function* (flags: DbPullFlags, invoke
   const output = yield* Output;
   const outcome = yield* runDbPull(flags, invoke);
 
+  yield* Effect.annotateCurrentSpan({
+    "db.pull.outcome": outcome.kind,
+    "db.pull.engine": outcome.engine,
+  });
+
   if (output.format !== "text") {
     if (outcome.kind === "declarative") {
       yield* output.success("Declarative schema pulled.", {

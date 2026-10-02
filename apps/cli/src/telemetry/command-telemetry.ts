@@ -10,6 +10,7 @@ import { GLOBAL_FLAGS, OutputFlag, globalFlagValues } from "../command-internal/
 import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../shared/telemetry/analytics.service.ts";
+import { TelemetryRuntime } from "../shared/telemetry/runtime.service.ts";
 import {
   type CliErrorActionability,
   classifyCliErrorActionability,
@@ -320,19 +321,31 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
   return result;
 }
 
+const annotateCommandSpan = Effect.fnUntraced(function* (commandRunId: string, command: string) {
+  const telemetryRuntime = yield* Effect.serviceOption(TelemetryRuntime);
+  // Trace export needs no consent, so persistent identifiers are recorded only when it is granted.
+  yield* Effect.annotateCurrentSpan({
+    command_run_id: commandRunId,
+    command,
+    ...(Option.isSome(telemetryRuntime) &&
+      telemetryRuntime.value.consent === "granted" && {
+        device_id: telemetryRuntime.value.deviceId,
+        session_id: telemetryRuntime.value.sessionId,
+        is_first_run: telemetryRuntime.value.isFirstRun,
+      }),
+  });
+});
+
 function withCommandTracingImplementation() {
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const commandRuntime = yield* CommandRuntime;
       const command = getCommandRuntimeCommand(commandRuntime);
 
-      return yield* Effect.gen(function* () {
-        yield* Effect.annotateCurrentSpan({
-          command_run_id: commandRuntime.commandRunId,
-          command,
-        });
-        return yield* self;
-      }).pipe(Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)));
+      return yield* annotateCommandSpan(commandRuntime.commandRunId, command).pipe(
+        Effect.andThen(self),
+        Effect.withSpan(getCommandRuntimeSpanName(commandRuntime)),
+      );
     });
 }
 
@@ -347,10 +360,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
       const command = getCommandRuntimeCommand(commandRuntime);
 
       return yield* Effect.gen(function* () {
-        yield* Effect.annotateCurrentSpan({
-          command_run_id: commandRuntime.commandRunId,
-          command,
-        });
+        yield* annotateCommandSpan(commandRuntime.commandRunId, command);
 
         const analytics = yield* Analytics;
         const output = yield* Output;

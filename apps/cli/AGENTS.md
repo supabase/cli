@@ -25,8 +25,8 @@ src/commands/<command>/
   SIDE_EFFECTS.md        # required compatibility contract
 ```
 
-Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Tracing is
-local observability and span names follow `<command>.<sub>`. Read `src/shared/` and the
+Register every command in `src/cli/root.ts`. Keep `.format.ts` and `.encoders.ts` pure. Handler
+phase spans are named `<command>.<phase>`; see the root tracing rule. Read `src/shared/` and the
 command-level infrastructure under
 `src/config/`, `src/auth/`, `src/telemetry/`, `src/output/`, and `src/command-internal/` before
 adding an equivalent helper.
