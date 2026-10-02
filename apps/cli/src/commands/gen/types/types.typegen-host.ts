@@ -70,9 +70,12 @@ const spawnForTypegen = (
       );
       // Written here rather than handed to the spawner, so a tool that exits before reading its
       // input fails the write in this fiber, where it is expected, instead of in a forked one.
-      const feedStdin = Stream.run(
-        Stream.make(new TextEncoder().encode(request.stdin)),
-        child.stdin,
+      // Raced against the child's own exit: under load, a stalled write can lose its scheduling
+      // race against the pipe's "error" event and wait forever on a drain that never comes. Exit
+      // is always observable, so it bounds the wait without a timer.
+      const feedStdin = Effect.raceFirst(
+        Stream.run(Stream.make(new TextEncoder().encode(request.stdin)), child.stdin),
+        child.exitCode,
       ).pipe(Effect.ignore);
       const [, stdout, stderr, exitCode] = yield* Effect.all(
         [
