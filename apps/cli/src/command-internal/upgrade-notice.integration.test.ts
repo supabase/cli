@@ -1,12 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -14,7 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { runUpgradeNotice, upgradeNoticeHook } from "./upgrade-notice.ts";
+import { upgradeNoticeHook } from "./upgrade-notice.ts";
 
 describe("upgrade notice user-level cache", () => {
   let root: string;
@@ -41,8 +33,9 @@ describe("upgrade notice user-level cache", () => {
     utimesSync(cacheFile, then, then);
   }
 
-  /** Runs the production hook with real `SUPABASE_HOME` resolution, capturing stderr. */
-  async function runHook(args: ReadonlyArray<string>): Promise<string> {
+  /** Runs the production hook with real `SUPABASE_HOME` resolution and a stub release fetch. */
+  async function runHook(latestTag: string) {
+    let fetchCalls = 0;
     const written: Array<string> = [];
     const realWrite = process.stderr.write.bind(process.stderr);
     const realEnv = {
@@ -57,12 +50,19 @@ describe("upgrade notice user-level cache", () => {
     }) as typeof process.stderr.write;
     try {
       await Effect.runPromise(
-        upgradeNoticeHook(args, {
-          cleanShowHelp: false,
-          delegatedToGo: false,
-          workingDirectory: workdir,
-          isValueTakingFlagToken: () => false,
-        }),
+        upgradeNoticeHook(
+          ["projects", "list"],
+          {
+            cleanShowHelp: false,
+            delegatedToGo: false,
+            workingDirectory: workdir,
+            isValueTakingFlagToken: () => false,
+          },
+          () => {
+            fetchCalls += 1;
+            return Promise.resolve(latestTag);
+          },
+        ),
       );
     } finally {
       process.stderr.write = realWrite;
@@ -71,39 +71,24 @@ describe("upgrade notice user-level cache", () => {
         else process.env[key] = value;
       }
     }
-    return stripVTControlCharacters(written.join(""));
+    return { fetchCalls, stderr: stripVTControlCharacters(written.join("")) };
   }
 
   it("serves a fresh SUPABASE_HOME cache outside a project without fetching", async () => {
-    // A fetch from the hook would replace the cached tag, so an unchanged mtime proves none ran.
     writeUserCache("v99.99.99", 60_000);
-    const mtimeBefore = statSync(cacheFile).mtimeMs;
 
-    const stderr = await runHook(["projects", "list"]);
+    const { fetchCalls, stderr } = await runHook("v99.99.100");
 
+    expect(fetchCalls).toBe(0);
     expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-    expect(statSync(cacheFile).mtimeMs).toBe(mtimeBefore);
   });
 
   it("refetches a stale SUPABASE_HOME cache and records the new tag", async () => {
     writeUserCache("v2.100.0", 11 * 60 * 60 * 1000);
-    let fetchCalls = 0;
 
-    await runUpgradeNotice({
-      env: {},
-      args: ["projects", "list"],
-      cwd: workdir,
-      currentVersion: "2.113.0",
-      supabaseHome,
-      now: Date.now,
-      fetchLatestTag: () => {
-        fetchCalls += 1;
-        return Promise.resolve("v2.114.0");
-      },
-      writeStderr: () => {},
-    });
+    const { fetchCalls } = await runHook("v99.99.100");
 
     expect(fetchCalls).toBe(1);
-    expect(readFileSync(cacheFile, "utf8")).toBe("v2.114.0");
+    expect(readFileSync(cacheFile, "utf8")).toBe("v99.99.100");
   });
 });
