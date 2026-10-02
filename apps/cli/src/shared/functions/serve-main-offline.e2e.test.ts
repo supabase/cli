@@ -279,7 +279,7 @@ describe("functions serve runtime template (offline)", () => {
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-offline-e2e-"));
       const container = `supabase-serve-offline-e2e-${process.pid.toString()}`;
       try {
-        await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
+        await writeFile(join(dir, "index.ts"), await Effect.runPromise(bundleServeMainTemplate()));
 
         const run = spawnSync(
           "docker",
@@ -341,7 +341,7 @@ describe("functions serve runtime template (offline)", () => {
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
       const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
       try {
-        await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
+        await writeFile(join(dir, "index.ts"), await Effect.runPromise(bundleServeMainTemplate()));
 
         const run = spawnSync(
           "docker",
@@ -440,7 +440,7 @@ describe("functions serve runtime template (offline)", () => {
       const runtimeContainer = `${network}-runtime`;
       const kongContainer = `${network}-kong`;
       try {
-        await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
+        await writeFile(join(dir, "index.ts"), await Effect.runPromise(bundleServeMainTemplate()));
         await mkdir(join(dir, "functions", "custom"), { recursive: true });
         await mkdir(join(dir, "functions", "_shared"), { recursive: true });
         await mkdir(join(dir, "functions", "custom", ".supabase-worker", "custom"), {
