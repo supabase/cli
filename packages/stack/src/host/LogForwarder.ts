@@ -102,8 +102,8 @@ interface Target {
   readonly stored: StoredEvents;
   /** One permit per session using `stored`; the view closes once a retired target has none. */
   readonly users: Semaphore.Semaphore;
-  /** The latest post to this launch, by sequence number, that Analytics stored events of. */
-  readonly storedPost: Ref.Ref<number>;
+  /** Per source, the latest post to this launch, by sequence number, that Analytics stored events of. */
+  readonly storedPost: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
 /** A shipped event; its id derives from the instance and record position. */
@@ -333,7 +333,8 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   const rebinding = yield* Semaphore.make(1);
   const run = yield* crypto.randomUUIDv4;
   const launchPrefix = `${run}:`;
-  const launchOf = (candidate: Candidate) => `${launchPrefix}${candidate.launchId ?? "unknown"}`;
+  const launchOf = (candidate: Candidate) =>
+    `${launchPrefix}${candidate.instance.id}:${candidate.launchId ?? "unknown"}`;
   let postSequence = 0;
 
   const rebind = Effect.gen(function* () {
@@ -358,7 +359,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
             launch: launchOf(serving),
             stored: yield* options.storedEvents(serving.instance).pipe(Scope.provide(scope)),
             users: yield* Semaphore.make(targetUsers),
-            storedPost: yield* Ref.make(0),
+            storedPost: yield* Ref.make<ReadonlyMap<string, number>>(new Map()),
           };
     const retired = yield* Ref.getAndSet(
       targetScope,
@@ -577,7 +578,9 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
             counts.checks++ === 0 ? (check) => check : Effect.withTracerEnabled(false),
           );
         if (lastPost > 0 && [...lastPosted].some((id) => stored.has(id)))
-          yield* Ref.update(session.current.storedPost, (post) => Math.max(post, lastPost));
+          yield* Ref.update(session.current.storedPost, (posts) =>
+            new Map(posts).set(source, Math.max(posts.get(source) ?? 0, lastPost)),
+          );
         const missing = wanted.filter((id) => !stored.has(id));
         if (missing.length === 0) return [];
         const now = yield* Clock.currentTimeMillis;
@@ -682,7 +685,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
             else groups.unshift(...halves(left));
           }
         }
-        const proof = yield* Ref.get(session.current.storedPost);
+        const proof = (yield* Ref.get(session.current.storedPost)).get(source) ?? 0;
         for (const suspect of suspects)
           if (proof > suspect.post) yield* skip(suspect.id, "while it stored later posts");
         const kept = new Set(remaining);
