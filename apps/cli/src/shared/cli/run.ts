@@ -75,10 +75,9 @@ import {
  * Services available before evaluating the root command. Keep this list explicit: preserving the
  * root command's requirement channel here makes an accidentally unprovided service fail at the
  * shell boundary instead of becoming a runtime missing-service defect. Every entry must be
- * genuinely satisfied at the root: by `cliProgramFor`'s provide chain (including
- * `fallbackCommandLayer`'s root `CommandRuntime` placeholder) or, for the `GlobalFlag`
- * identifiers, by the CLI parser itself. Never widen this union to silence a leaked command
- * requirement; provide the layer in the command instead.
+ * genuinely satisfied at the root by `cliProgramFor`'s provide chain (including
+ * `fallbackCommandLayer`'s root `CommandRuntime` placeholder). Never widen this union to silence
+ * a leaked command requirement; provide the layer in the command instead.
  */
 export type AllowedRunCliServices =
   | Analytics
@@ -96,9 +95,7 @@ export type AllowedRunCliServices =
   | Scope.Scope
   | Stdio.Stdio
   | TelemetryRuntime
-  | Tty
-  | "effect/unstable/cli/GlobalFlag/linked"
-  | "effect/unstable/cli/GlobalFlag/local";
+  | Tty;
 
 export type CliRootCommand = Command.Command<"supabase", {}, {}, unknown, AllowedRunCliServices>;
 
@@ -538,16 +535,14 @@ function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-type AnyAnalyticsLayer = Layer.Layer<
-  Analytics,
-  Config.ConfigError | PlatformError.PlatformError,
-  any
->;
-
-export interface RunCliOptions {
+export interface RunCliOptions<BeforeParseError = never> {
   /** Runs after runtime services are installed and before command parsing. */
-  readonly beforeParse?: Effect.Effect<void, unknown, FileSystem.FileSystem | Path.Path>;
-  readonly analyticsLayer: AnyAnalyticsLayer;
+  readonly beforeParse?: Effect.Effect<void, BeforeParseError, FileSystem.FileSystem | Path.Path>;
+  readonly analyticsLayer: Layer.Layer<
+    Analytics,
+    Config.ConfigError | PlatformError.PlatformError,
+    CliSettings | Crypto.Crypto | FileSystem.FileSystem | Path.Path | RuntimeInfo | Tty
+  >;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the seam for the CLI's
    * upgrade notice. `cleanShowHelp` marks the exit-0 `ShowHelp` failure branch (a bare group
@@ -571,10 +566,11 @@ function cliProgramFor<
   ContextInput,
   E,
   R extends AllowedRunCliServices,
+  BeforeParseError,
 >(
   rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
   args: ReadonlyArray<string>,
-  options: RunCliOptions,
+  options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
 ) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
@@ -595,6 +591,19 @@ function cliProgramFor<
     ),
   );
   const commandProgram = options.beforeParse ?? Effect.void;
+  const commandLayer = formatterLayerFor(rootCommand, args, outputFormat).pipe(
+    Layer.provideMerge(options.analyticsLayer),
+  );
+  const cliProgramLayer = telemetryRuntimeLayer.pipe(
+    Layer.provideMerge(cliSettingsLayerFor(runtimeLayer)),
+    Layer.provideMerge(cliProjectHomeLayerFor(runtimeLayer)),
+    Layer.provideMerge(cliProjectContextLayerFor(runtimeLayer)),
+    Layer.provideMerge(projectLinkStateLayer),
+    Layer.provideMerge(runtimeLayer),
+    Layer.provideMerge(fallbackCommandLayer),
+    Layer.provideMerge(Layer.succeed(CliArgs, { args })),
+    Layer.provideMerge(BunServices.layer),
+  );
   return withoutParseErrorHelpDump(
     commandProgram.pipe(
       Effect.andThen(Command.runWith(rootCommand, { version: CLI_VERSION })(args)),
@@ -603,20 +612,7 @@ function cliProgramFor<
       rootCommand,
       args,
     },
-  ).pipe(
-    Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
-    Effect.provide(options.analyticsLayer),
-    withDebugConsole,
-    Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliSettingsLayerFor(runtimeLayer)),
-    Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
-    Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
-    Effect.provide(projectLinkStateLayer),
-    Effect.provide(runtimeLayer),
-    Effect.provide(fallbackCommandLayer),
-    Effect.provide(Layer.succeed(CliArgs, { args })),
-    Effect.provide(BunServices.layer),
-  );
+  ).pipe(Effect.provide(commandLayer), withDebugConsole, Effect.provide(cliProgramLayer));
 }
 
 /**
@@ -629,33 +625,38 @@ class CliNonZeroExit {
   constructor(readonly code: number) {}
 }
 
-export async function runCli<
+export const runCli = Effect.fnUntraced(function* <
   Name extends string,
   Input,
   ContextInput,
   E,
   R extends AllowedRunCliServices,
->(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
+  BeforeParseError,
+>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, R>,
+  options: RunCliOptions<BeforeParseError>,
+) {
   const bootMs = Math.round(performance.now());
-  const args = await Effect.runPromise(
-    Effect.gen(function* () {
-      const stdio = yield* Stdio.Stdio;
-      return yield* stdio.args;
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+  const args = yield* Effect.gen(function* () {
+    const stdio = yield* Stdio.Stdio;
+    return yield* stdio.args;
+  }).pipe(Effect.provide(BunServices.layer));
 
   // Same shape `formatterLayerFor` builds below, so `normalizeCause`'s fallback path can reuse
   // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the formatters would.
   const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
-  const outputFormat = await Effect.runPromise(
-    Effect.gen(function* () {
-      const aiTool = yield* AiTool;
-      return resolveAgentOutputFormatFromArgs(args, aiTool.name);
-    }).pipe(Effect.provide(aiToolLayer)),
-  );
+  const outputFormat = yield* Effect.gen(function* () {
+    const aiTool = yield* AiTool;
+    return resolveAgentOutputFormatFromArgs(args, aiTool.name);
+  }).pipe(Effect.provide(aiToolLayer));
   const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
 
+  const signalAwareLayer = processControlLayer.pipe(
+    Layer.provideMerge(runtimeInfoLayer),
+    Layer.provideMerge(ttyLayer),
+    Layer.provideMerge(BunServices.layer),
+  );
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
@@ -678,12 +679,7 @@ export async function runCli<
 
       return yield* outcome.exit;
     }),
-  ).pipe(
-    Effect.provide(processControlLayer),
-    Effect.provide(runtimeInfoLayer),
-    Effect.provide(ttyLayer),
-    Effect.provide(BunServices.layer),
-  );
+  ).pipe(Effect.provide(signalAwareLayer));
 
   const selfManagedSignalProgram = Effect.scoped(
     Effect.gen(function* () {
@@ -694,6 +690,20 @@ export async function runCli<
   ).pipe(Effect.provide(processControlLayer));
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
+  const runToExitCodeLayer = outputLayerFor(outputFormat).pipe(
+    Layer.provideMerge(telemetryRuntimeLayer),
+    Layer.provideMerge(cliProjectHomeLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(cliSettingsLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(cliProjectContextLayerFor(handledRuntimeLayer)),
+    Layer.provideMerge(ttyLayer),
+    Layer.provideMerge(goProxyInvocationLayer),
+    Layer.provideMerge(successTrailerLayer),
+  );
+  const handledProgramLayer = processControlLayer.pipe(
+    Layer.provideMerge(runtimeInfoLayer),
+    Layer.provideMerge(BunServices.layer),
+    Layer.provideMerge(cliConfigProviderLayer),
+  );
 
   const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
@@ -749,22 +759,11 @@ export async function runCli<
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
       return exitCode ?? 0;
-    }).pipe(
-      Effect.provide(outputLayerFor(outputFormat)),
-      Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
-      Effect.provide(ttyLayer),
-      Effect.provide(goProxyInvocationLayer),
-      Effect.provide(successTrailerLayer),
-    );
+    }).pipe(Effect.provide(runToExitCodeLayer));
 
   // The exit code is resolved inside the traced scope so its flush completes before
   // `processControl.exit`, which skips finalizers.
-  const handledProgram = <A, E, R>(
-    program: Effect.Effect<A, E, R>,
-  ): Effect.Effect<never, unknown, never> =>
+  const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const exitCode = yield* resolveTraceSettings.pipe(
@@ -784,15 +783,11 @@ export async function runCli<
     }).pipe(
       Effect.withTracerEnabled(false),
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-      Effect.provide(processControlLayer),
-      Effect.provide(runtimeInfoLayer),
-      Effect.provide(BunServices.layer),
-      Effect.provide(cliConfigProviderLayer),
+      Effect.provide(handledProgramLayer),
     );
 
   if (useGlobalSignalInterrupt) {
-    await Effect.runPromise(handledProgram(signalAwareProgram));
-  } else {
-    await Effect.runPromise(handledProgram(selfManagedSignalProgram));
+    return yield* handledProgram(signalAwareProgram);
   }
-}
+  return yield* handledProgram(selfManagedSignalProgram);
+});

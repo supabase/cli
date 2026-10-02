@@ -40,9 +40,11 @@ if (
     defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
   ))
 ) {
-  await runCli(selectedRoot, {
-    analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-    afterSuccess: upgradeNoticeHook,
-    ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
-  });
+  await Effect.runPromise(
+    runCli(selectedRoot, {
+      analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+      afterSuccess: upgradeNoticeHook,
+      ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
+    }),
+  );
 }
