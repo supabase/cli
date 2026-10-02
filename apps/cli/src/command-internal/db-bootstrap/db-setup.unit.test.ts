@@ -773,7 +773,7 @@ describe("runDatabaseWebhooksSetup", () => {
           dbUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
           enabled,
         });
-      }).pipe(Effect.provide(Layer.mergeAll(dbConnection, BunServices.layer))),
+      }).pipe(Effect.provide(Layer.mergeAll(dbConnection, BunServices.layer, mockOutput().layer))),
     };
   };
 

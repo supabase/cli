@@ -15,6 +15,7 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import type { DbBatchStatement, DbSession } from "./db-connection.service.ts";
 import {
   applyMigrationFile,
+  applyMigrations,
   applySchemaFiles,
   hasTransactionControl,
   isPipelineIncompatible,
@@ -114,6 +115,7 @@ const executedSql = (
 const run = (
   session: DbSession,
   migrationPath: string,
+  out = mockOutput(),
 ): Effect.Effect<void, TestError | DbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -125,7 +127,7 @@ const run = (
       migrationPath,
       (message) => new TestError({ message }),
     );
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(BunServices.layer), Effect.provide(out.layer));
 
 describe("applyMigrationFile", () => {
   it.effect(
@@ -703,7 +705,7 @@ describe("applyMigrationFile", () => {
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
     const out = mockOutput({ format: "text" });
-    return run(session, file).pipe(
+    return run(session, file, out).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           const batch = calls.find((call) => call.kind === "batch");
@@ -720,11 +722,10 @@ describe("applyMigrationFile", () => {
             "reset role",
             "select 1",
           ]);
-          expect(out.stderrText).not.toContain("WARN:");
+          expect(out.stderrText).not.toContain("Warning:");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(out.layer),
     );
   });
 
@@ -865,15 +866,26 @@ describe("applyMigrationFile", () => {
 
 describe("hasTransactionControl", () => {
   it("recognizes authored boundaries after comments without matching routine bodies", () => {
-    expect(hasTransactionControl("-- authored\nBEGIN")).toBe(true);
-    expect(hasTransactionControl("START TRANSACTION ISOLATION LEVEL SERIALIZABLE")).toBe(true);
+    for (const sql of [
+      "-- authored\nBEGIN",
+      "START TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+      "BEGIN/* authored */",
+      "COMMIT-- authored",
+      "COMMIT AND CHAIN",
+      "ROLLBACK PREPARED 'prepared'",
+      "START/* scoped */TRANSACTION",
+      "PREPARE\f/* scoped */TRANSACTION 'prepared'",
+    ]) {
+      expect(hasTransactionControl(sql)).toBe(true);
+    }
     expect(
       hasTransactionControl("CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql"),
     ).toBe(false);
+    expect(hasTransactionControl("PREPARE statement AS SELECT 1")).toBe(false);
   });
 
   it("distinguishes transaction rollback from savepoint rollback", () => {
-    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION"]) {
+    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION", "ROLLBACK/* end */"]) {
       expect(hasTransactionControl(sql)).toBe(true);
     }
     for (const sql of [
@@ -881,6 +893,9 @@ describe("hasTransactionControl", () => {
       "ROLLBACK TO SAVEPOINT before_change",
       "ROLLBACK WORK TO SAVEPOINT before_change",
       "ROLLBACK TRANSACTION TO before_change",
+      "ROLLBACK/* rewind */TO before_change",
+      "ROLLBACK/* rewind */WORK/* scope */TO SAVEPOINT before_change",
+      "ROLLBACK\v/* rewind */TRANSACTION\f/* scope */TO before_change",
     ]) {
       expect(hasTransactionControl(sql)).toBe(false);
     }
@@ -1150,6 +1165,84 @@ describe("seedGlobals", () => {
   });
 });
 
+for (const runner of ["migrations", "globals", "schema"] as const) {
+  for (const [name, openingSql, warningFile] of [
+    ["open transaction", "BEGIN;", undefined],
+    ["warning before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN;", "open.sql"],
+    ["closed transaction", "BEGIN; COMMIT;", "close.sql"],
+  ] as const) {
+    it.effect(`tracks authored scope across ${runner} files with ${name}`, () => {
+      const dir = mkdtempSync(join(tmpdir(), "cross-file-scope-"));
+      const opening = join(dir, "20240101000000_open.sql");
+      const middle = join(dir, "20240102000000_middle.sql");
+      const empty = join(dir, "20240103000000_empty.sql");
+      const closing = join(dir, "20240104000000_close.sql");
+      writeFileSync(opening, openingSql);
+      writeFileSync(middle, "SELECT 42;");
+      writeFileSync(empty, "");
+      writeFileSync(closing, "SET LOCAL lock_timeout = '1s'; SELECT 1; COMMIT;");
+      const { session, calls } = fakeSession();
+      const out = mockOutput();
+      const mapError = (message: string) => new TestError({ message });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        if (runner === "migrations") {
+          yield* applyMigrations(session, fs, path, [opening, middle, empty, closing], mapError);
+        } else if (runner === "globals") {
+          yield* seedGlobals(session, fs, path, [opening, middle, empty, closing], mapError);
+        } else {
+          yield* applySchemaFiles(session, fs, path, dir, ["*.sql"], mapError);
+        }
+        const warnings = out.rawChunks.filter((chunk) => chunk.text.includes("uses SET LOCAL"));
+        expect(warnings).toHaveLength(warningFile === undefined ? 0 : 1);
+        if (warningFile !== undefined) expect(warnings[0]?.text).toContain(warningFile);
+        expect(executedSql(calls)).toContain("SELECT 42");
+        expect(executedSql(calls)).toContain("SELECT 1");
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+        Effect.provide(BunServices.layer),
+        Effect.provide(out.layer),
+      );
+    });
+  }
+}
+
+for (const fileKind of ["globals", "schema"] as const) {
+  it.effect(`uses SQL-file guidance when splitting a ${fileKind} file`, () => {
+    const dir = mkdtempSync(join(tmpdir(), "sql-file-guidance-"));
+    const file = join(dir, "schema.sql");
+    writeFileSync(file, "VACUUM;");
+    const { session, calls } = fakeSession();
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (fileKind === "globals") {
+        yield* seedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      } else {
+        yield* applySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["schema.sql"],
+          (message) => new TestError({ message }),
+        );
+      }
+      expect(out.stderrText).toContain("this SQL file");
+      expect(out.stderrText).toContain("-- pg-delta: transaction=false");
+      expect(out.stderrText).not.toContain("migration file");
+      expect(out.stderrText).not.toContain("Migration history");
+      expect(executedSql(calls)).toContain("VACUUM");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+      Effect.provide(BunServices.layer),
+      Effect.provide(out.layer),
+    );
+  });
+}
+
 describe("applySchemaFiles", () => {
   it.effect(
     "reports a read failure with the workdir-relative path, not the absolute path used to read it (Go open supabase/... parity)",
@@ -1184,7 +1277,7 @@ describe("applySchemaFiles", () => {
         }
         chmodSync(file, 0o644);
         rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(BunServices.layer));
+      }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockOutput().layer));
     },
   );
 
@@ -1228,6 +1321,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1269,6 +1363,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1304,6 +1399,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1347,6 +1443,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1390,6 +1487,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1433,6 +1531,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1469,6 +1568,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1512,6 +1612,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1548,6 +1649,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1588,6 +1690,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );
@@ -1627,6 +1730,7 @@ describe("applySchemaFiles", () => {
           }),
         ),
         Effect.provide(BunServices.layer),
+        Effect.provide(mockOutput().layer),
       );
     },
   );

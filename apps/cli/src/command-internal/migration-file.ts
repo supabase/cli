@@ -9,7 +9,8 @@ export interface ParsedMigrationContent {
   readonly transactionMode: MigrationTransactionMode;
 }
 
-const PG_DELTA_NO_TRANSACTION_DIRECTIVE = "-- pg-delta: transaction=false";
+/** Exact first-line marker for statement-by-statement migration execution. */
+export const PG_DELTA_NO_TRANSACTION_DIRECTIVE = "-- pg-delta: transaction=false";
 
 /**
  * Parses the durable execution metadata and SQL statements in a migration file.

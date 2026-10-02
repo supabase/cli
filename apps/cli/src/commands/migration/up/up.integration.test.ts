@@ -29,6 +29,7 @@ const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDE
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
 interface SetupOpts {
+  readonly historyProvisioned?: boolean;
   readonly format?: OutputFormat;
   readonly args?: ReadonlyArray<string>;
   readonly remote?: ReadonlyArray<string>;
@@ -80,6 +81,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             if (sql === READ_VAULT)
               return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([
                 ...(opts.existingVault ?? []),
+              ]);
+            if (opts.historyProvisioned === true && sql.includes(" AS provisioned FROM"))
+              return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([
+                { provisioned: true },
               ]);
             return Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
           }),
@@ -156,6 +161,36 @@ const insertedVersions = (queries: Array<{ sql: string; params?: ReadonlyArray<u
 const tmp = useTempWorkdir();
 
 describe("migration up", () => {
+  for (const [name, openingSql, warningFile] of [
+    ["open transaction", "BEGIN;", undefined],
+    ["warning before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN;", "open.sql"],
+    ["closed transaction", "BEGIN; COMMIT;", "close.sql"],
+  ] as const) {
+    it.live(`tracks authored scope across migration files with ${name}`, () => {
+      const { layer, out, queries } = setup(tmp.current, { historyProvisioned: true });
+      return Effect.gen(function* () {
+        yield* seed(tmp.current, "20240101000000_open.sql", openingSql);
+        yield* seed(tmp.current, "20240102000000_middle.sql", "SELECT 42;");
+        yield* seed(tmp.current, "20240103000000_empty.sql", "");
+        yield* seed(
+          tmp.current,
+          "20240104000000_close.sql",
+          "SET LOCAL lock_timeout = '1s'; SELECT 1; COMMIT;",
+        );
+        yield* migrationUp(flags());
+        const warnings = out.rawChunks.filter((chunk) => chunk.text.includes("uses SET LOCAL"));
+        expect(warnings).toHaveLength(warningFile === undefined ? 0 : 1);
+        if (warningFile !== undefined) expect(warnings[0]?.text).toContain(warningFile);
+        expect(insertedVersions(queries)).toEqual([
+          "20240101000000",
+          "20240102000000",
+          "20240103000000",
+          "20240104000000",
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
   it.live("applies pending migrations in order and prints progress", () => {
     const { layer, out, queries } = setup(tmp.current, { remote: ["20240101000000"] });
     return Effect.gen(function* () {

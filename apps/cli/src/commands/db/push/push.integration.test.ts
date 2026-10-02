@@ -360,6 +360,169 @@ describe("db push", () => {
     });
   });
 
+  for (const [code, statement, hint] of [
+    ["25P01", "LOCK TABLE t IN ACCESS EXCLUSIVE MODE", "BEGIN; ... COMMIT;"],
+    ["25001", "DROP SUBSCRIPTION app_events", "-- pg-delta: transaction=false"],
+  ]) {
+    it.live(`explains how to fix migration transaction error ${code}`, () => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: {
+          ...migrationFile("20240101000000", `SELECT 1;\n${statement};`),
+          ...migrationFile("20240102000000", "SELECT 2;"),
+        },
+        failExec: statement,
+        failExecWith: { message: `ERROR: transaction error (SQLSTATE ${code})`, code },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        const error = yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+        expect(error.message).toContain(`SQLSTATE ${code}`);
+        expect(error.message).toContain(`At statement: 1\n${statement}`);
+        expect(error.message).toContain(hint);
+        expect(conn.execs).not.toContain("SELECT 2");
+        expect(
+          conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+        ).toBe(false);
+      });
+    });
+  }
+
+  for (const format of ["text", "json", "stream-json"] as const) {
+    it.live(`warns once about automatic migration splitting in ${format} mode`, () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        format,
+        files: migrationFile(
+          "20240101000000",
+          "CREATE INDEX CONCURRENTLY first_idx ON t(id);\nCREATE INDEX CONCURRENTLY second_idx ON t(id);",
+        ),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const warnings =
+          format === "stream-json"
+            ? out.messages
+                .filter((message) => message.type === "warn")
+                .map((message) => message.message)
+            : out.rawChunks
+                .filter((chunk) => chunk.stream === "stderr" && chunk.text.startsWith("Warning:"))
+                .map((chunk) => chunk.text);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("20240101000000_test.sql");
+        expect(warnings[0]).toContain("partially applied");
+        expect(warnings[0]).toContain("Migration history is recorded only after full success");
+        expect(warnings[0]).toContain("their own migration file");
+        expect(warnings[0]).toContain("-- pg-delta: transaction=false");
+        expect(out.stdoutText).not.toContain("Warning:");
+        expect(conn.execs).toContain("CREATE INDEX CONCURRENTLY first_idx ON t(id)");
+        expect(conn.execs).toContain("CREATE INDEX CONCURRENTLY second_idx ON t(id)");
+        expect(
+          conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+        ).toBe(true);
+      });
+    });
+  }
+
+  for (const [name, body, warns] of [
+    ["comment-separated SET LOCAL", "SET/* scope */LOCAL/* timeout */lock_timeout = '1s';", true],
+    [
+      "directive-marked SET LOCAL",
+      "-- pg-delta: transaction=false\nSET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    ["CR-terminated comment", "-- settings\rSET LOCAL lock_timeout = '1s';", true],
+    [
+      "SQL whitespace between comments",
+      "/* first */\f/* second */SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    ["SQL whitespace between keywords", "SET\v/* scope */LOCAL lock_timeout = '1s';", true],
+    [
+      "bare SET LOCAL",
+      "-- settings\nSET LOCAL statement_timeout = '1s';\nSET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "authored transaction",
+      "BEGIN;\nSET LOCAL statement_timeout = '1s';\nLOCK TABLE t;\nCOMMIT;",
+      false,
+    ],
+    [
+      "comment-delimited authored transaction",
+      "BEGIN/* authored */; SET LOCAL lock_timeout = '1s'; COMMIT/* authored */;",
+      false,
+    ],
+    [
+      "comment-separated transaction keywords",
+      "START/* scoped */TRANSACTION; SET LOCAL lock_timeout = '1s'; COMMIT/* authored */;",
+      false,
+    ],
+    ["SET LOCAL before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN; SELECT 1; COMMIT;", true],
+    ["SET LOCAL after COMMIT", "BEGIN; SELECT 1; COMMIT; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after ROLLBACK", "BEGIN; SELECT 1; ROLLBACK; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after END", "BEGIN; SELECT 1; END; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after ABORT", "BEGIN; SELECT 1; ABORT; SET LOCAL lock_timeout = '1s';", true],
+    [
+      "SET LOCAL after PREPARE TRANSACTION",
+      "BEGIN; SELECT 1; PREPARE TRANSACTION 'test'; SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "chained transaction",
+      "BEGIN; COMMIT/* boundary */WORK AND/* option */CHAIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "chained rollback",
+      "BEGIN; ROLLBACK TRANSACTION AND CHAIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "unchained transaction",
+      "BEGIN; COMMIT WORK AND NO CHAIN; SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "savepoint rollback",
+      "BEGIN; SAVEPOINT point; ROLLBACK WORK TO SAVEPOINT point; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "directive with an authored transaction",
+      "-- pg-delta: transaction=false\nBEGIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "explicit no-transaction directive",
+      "-- pg-delta: transaction=false\nCREATE INDEX CONCURRENTLY t_idx ON t(id);",
+      false,
+    ],
+    [
+      "routine body",
+      "DO $$ BEGIN PERFORM set_config('statement_timeout', '1s', true); END $$;\nSELECT 'SET LOCAL statement_timeout';",
+      false,
+    ],
+    ["nested comment", "/* outer /* inner */ SET LOCAL lock_timeout = '1s' */ SELECT 1;", false],
+  ] as const) {
+    it.live(`only warns about missing transaction blocks for ${name}`, () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: migrationFile("20240101000000", body),
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const warnings = out.rawChunks.filter(
+          (chunk) => chunk.stream === "stderr" && chunk.text.startsWith("Warning:"),
+        );
+        expect(warnings).toHaveLength(warns ? 1 : 0);
+        if (warns) expect(warnings[0]?.text).toContain("BEGIN; ... COMMIT;");
+      });
+    });
+  }
+
   it.live("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

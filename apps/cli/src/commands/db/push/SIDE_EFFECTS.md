@@ -121,3 +121,20 @@ stdout is payload-only. A single `result` object is emitted:
   Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
   such statements in their own migration file. Intentional fix for supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`).
+
+- **Migration transaction guidance**: the per-file pipeline does not add `BEGIN` or
+  `COMMIT`. A SQLSTATE 25P01 failure retains its statement context and recommends
+  authored `BEGIN; ... COMMIT;` around statements such as `LOCK TABLE`. A top-level
+  `SET LOCAL` outside an authored transaction block emits one warning per file that
+  its setting may have no effect. Authored transaction controls execute as written.
+- Automatic splitting of pipeline-incompatible statements still applies, with one
+  warning per file explaining possible partial application and recommending a
+  separate migration file starting with `-- pg-delta: transaction=false`. For
+  globals and schema files without migration history, the warning recommends
+  starting the current SQL file with that directive. SQLSTATE
+  25001 failures recommend that directive without an authored transaction block.
+  The directive matches the exact first line, allowing a UTF-8 BOM and LF/CRLF;
+  marked files execute one statement at a time and record history only after full
+  success. Their earlier statements remain applied if a later statement fails.
+  Warnings use stderr in text/JSON modes (including `-o` machine formats), and
+  structured warning log events in stream JSON. Dry runs emit no execution warnings.

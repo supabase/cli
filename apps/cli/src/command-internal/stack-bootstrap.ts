@@ -68,7 +68,11 @@ const withDatabaseSession = <A, E, R>(
 export const applyStackWebhooksOnly = (
   database: DatabaseInstance,
   webhooksEnabled: boolean,
-): Effect.Effect<void, StackBootstrapError, DbConnection | FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  void,
+  StackBootstrapError,
+  DbConnection | FileSystem.FileSystem | Path.Path | Output
+> =>
   withDatabaseSession(database, (session) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

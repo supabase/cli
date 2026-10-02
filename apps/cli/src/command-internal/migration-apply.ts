@@ -16,7 +16,7 @@ import {
   createMigrationTable,
   sortMigrationPathsByVersion,
 } from "./migration-history.ts";
-import { parseMigrationContent } from "./migration-file.ts";
+import { PG_DELTA_NO_TRANSACTION_DIRECTIVE, parseMigrationContent } from "./migration-file.ts";
 import { sqlFilesGlob } from "./sql-files-glob.ts";
 import { splitSqlTokens } from "./sql-split.ts";
 
@@ -54,8 +54,9 @@ const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
-const TRANSACTION_CONTROL_PATTERN =
-  /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
+const SET_PATTERN = /^SET(?:\s|\/\*|--)/iu;
+const LOCAL_PATTERN = /^LOCAL(?:\s|\/\*|--|$)/iu;
+const SQL_KEYWORD_PATTERN = /^[A-Z]+(?=\s|\/\*|--|$)/u;
 
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
@@ -63,19 +64,31 @@ const TRANSACTION_CONTROL_PATTERN =
  */
 const trimLeadingSqlComments = (sql: string): string => {
   // Stripped via code point comparison so it isn't relied on to match a whitespace regex class.
-  let trimmed = sql.replace(/^[ \t\n\r]+/u, "");
+  let trimmed = sql.replace(/^[ \t\n\r\f\v]+/u, "");
   while (trimmed.charCodeAt(0) === BOM_CODE_POINT) {
-    trimmed = trimmed.slice(1).replace(/^[ \t\n\r]+/u, "");
+    trimmed = trimmed.slice(1).replace(/^[ \t\n\r\f\v]+/u, "");
   }
   for (;;) {
     if (trimmed.startsWith("--")) {
-      const idx = trimmed.indexOf("\n");
+      const idx = trimmed.search(/[\r\n]/u);
       if (idx < 0) return "";
-      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r]+/u, "");
+      trimmed = trimmed.slice(idx + 1).replace(/^[ \t\n\r\f\v]+/u, "");
     } else if (trimmed.startsWith("/*")) {
-      const idx = trimmed.indexOf("*/");
-      if (idx < 0) return trimmed;
-      trimmed = trimmed.slice(idx + 2).replace(/^[ \t\n\r]+/u, "");
+      let depth = 1;
+      let index = 2;
+      while (index < trimmed.length && depth > 0) {
+        if (trimmed.startsWith("/*", index)) {
+          depth += 1;
+          index += 2;
+        } else if (trimmed.startsWith("*/", index)) {
+          depth -= 1;
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      if (depth > 0) return trimmed;
+      trimmed = trimmed.slice(index).replace(/^[ \t\n\r\f\v]+/u, "");
     } else {
       return trimmed.trim();
     }
@@ -100,18 +113,39 @@ export const isPipelineIncompatible = (sql: string): boolean => {
   );
 };
 
-/** Whether the statement owns a transaction boundary that must not be nested. */
-export const hasTransactionControl = (sql: string): boolean => {
-  const upper = trimLeadingSqlComments(sql).toUpperCase();
-  const words = upper.split(/\s+/u);
+const transactionBoundary = (sql: string): "begin" | "end" | "chain" | undefined => {
+  let remaining = trimLeadingSqlComments(sql).toUpperCase();
+  const words: Array<string> = [];
+  while (words.length < 5) {
+    const word = SQL_KEYWORD_PATTERN.exec(remaining)?.[0];
+    if (word === undefined) break;
+    words.push(word);
+    remaining = trimLeadingSqlComments(remaining.slice(word.length));
+  }
   if (words[0] === "ROLLBACK") {
     const toIndex = words[1] === "WORK" || words[1] === "TRANSACTION" ? 2 : 1;
-    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] rewinds the current
-    // transaction without ending it, so it still needs the CLI-managed wrapper.
-    return words[toIndex] !== "TO";
+    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] keeps the transaction open.
+    if (words[toIndex] === "TO") return undefined;
   }
-  return TRANSACTION_CONTROL_PATTERN.test(upper);
+  if (words[0] === "BEGIN" || (words[0] === "START" && words[1] === "TRANSACTION")) {
+    return "begin";
+  }
+  if (words[0] === "PREPARE" && words[1] === "TRANSACTION") return "end";
+  if (
+    words[0] === "COMMIT" ||
+    words[0] === "END" ||
+    words[0] === "ROLLBACK" ||
+    words[0] === "ABORT"
+  ) {
+    const optionIndex = words[1] === "WORK" || words[1] === "TRANSACTION" ? 2 : 1;
+    return words[optionIndex] === "AND" && words[optionIndex + 1] === "CHAIN" ? "chain" : "end";
+  }
+  return undefined;
 };
+
+/** Whether the statement owns a transaction boundary that must not be nested. */
+export const hasTransactionControl = (sql: string): boolean =>
+  transactionBoundary(sql) !== undefined;
 
 const ROLE_REVERT_PATTERN =
   /^(?:RESET\s+ROLE|RESET\s+SESSION\s+AUTHORIZATION|SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(?:NONE|DEFAULT)|SET\s+SESSION\s+AUTHORIZATION\s+DEFAULT|DISCARD\s+ALL)(?:\s|;|$)/u;
@@ -361,6 +395,17 @@ export const formatExecBatchError = (e: DbExecError, index: number, stat: string
     msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
     msg.push("      Learn more: supabase migration new --help");
   }
+  if (e.code === "25P01") {
+    msg.push(
+      "Hint: Wrap the statements that require a transaction in BEGIN; ... COMMIT; in this file.",
+    );
+  } else if (e.code === "25001") {
+    msg.push("Hint: Put statements that cannot run in a transaction in their own migration file");
+    msg.push(`      starting with ${PG_DELTA_NO_TRANSACTION_DIRECTIVE}, without BEGIN/COMMIT.`);
+    msg.push(
+      "      That file runs statement by statement and can be partially applied on failure.",
+    );
+  }
   msg.push(`At statement: ${index}`, marked);
   return formattedExecBatchFailure(`${errorMessage(e)}\n${msg.join("\n")}`, e);
 };
@@ -397,7 +442,8 @@ const formattedExecBatchDbError = (error: unknown): DbExecError | undefined => {
  *
  * Does not create the history table or unconditionally `RESET ALL` (caller responsibility).
  * `forceNoVersion` skips the history insert; `projectEnv` is forwarded to
- * {@link checkScannerBufferSize}.
+ * {@link checkScannerBufferSize}. Returns the authored transaction scope for warnings in the
+ * next file on the same session; this does not change how statements execute.
  */
 const execMigrationBatch = <E>(
   session: DbSession,
@@ -408,7 +454,8 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E | DbConnectError> =>
+  initialAuthoredTransaction: boolean = false,
+): Effect.Effect<boolean, E | DbConnectError, Output> =>
   Effect.gen(function* () {
     // A read failure here is a different error class than a statement-execution failure below,
     // tagged "read" so callers that attach a suggestion only around execution failures can tell
@@ -435,7 +482,7 @@ const execMigrationBatch = <E>(
 
     // Every failure from here on is an execution failure, tagged "exec" (vs. the "read" failures
     // above) — only execution failures get a suggestion attached; callers rely on this tag.
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const { statements, transactionMode } = parseMigrationContent(content);
       const filename = path.basename(migrationPath);
       const matches = MIGRATE_FILE_PATTERN.exec(filename);
@@ -448,6 +495,33 @@ const execMigrationBatch = <E>(
       });
 
       const restoreRole = session.restoreRoleSql;
+      const output = yield* Output;
+      const warn = (message: string) =>
+        output.format === "stream-json"
+          ? output.warn(message)
+          : output.raw(`Warning: ${message}\n`, "stderr");
+      const authoredTransaction = statements.some(hasTransactionControl);
+      let inAuthoredTransaction = initialAuthoredTransaction;
+      let unscopedSetLocal = false;
+      for (const statement of statements) {
+        const boundary = transactionBoundary(statement);
+        if (boundary === "begin") inAuthoredTransaction = true;
+        else if (boundary === "end") inAuthoredTransaction = false;
+        const sql = trimLeadingSqlComments(statement);
+        if (
+          !inAuthoredTransaction &&
+          SET_PATTERN.test(sql) &&
+          LOCAL_PATTERN.test(trimLeadingSqlComments(sql.slice(3)))
+        ) {
+          unscopedSetLocal = true;
+        }
+      }
+      if (unscopedSetLocal) {
+        yield* warn(
+          `${filename} uses SET LOCAL without an explicit transaction block. ` +
+            "The setting may have no effect. Wrap the affected statements in BEGIN; ... COMMIT;.",
+        );
+      }
 
       const executeSequentially = (cleanup: string) =>
         Effect.gen(function* () {
@@ -498,13 +572,24 @@ const execMigrationBatch = <E>(
       // Session settings must remain active for the nontransactional action, so no transaction
       // boundary is added around this branch.
       if (transactionMode === "none") {
-        return yield* executeSequentially("RESET ALL");
+        return yield* executeSequentially("RESET ALL").pipe(Effect.as(inAuthoredTransaction));
       }
 
       // A file with authored transaction boundaries owns those semantics; execute statements
       // exactly as written and only record history after they all succeed.
-      if (statements.some(hasTransactionControl)) {
-        return yield* executeSequentially("ROLLBACK");
+      if (authoredTransaction) {
+        return yield* executeSequentially("ROLLBACK").pipe(Effect.as(inAuthoredTransaction));
+      }
+
+      if (statements.some(isPipelineIncompatible)) {
+        yield* warn(
+          `${filename} contains statements that cannot run in a transaction and will run separately. ` +
+            "The file can be partially applied on failure. " +
+            (version.length > 0 ? "Migration history is recorded only after full success. " : "") +
+            (version.length > 0
+              ? `Put these statements in their own migration file starting with ${PG_DELTA_NO_TRANSACTION_DIRECTIVE}.`
+              : `To run this SQL file statement by statement, start it with ${PG_DELTA_NO_TRANSACTION_DIRECTIVE}.`),
+        );
       }
 
       // The global statement index of the next statement to run, so error context stays accurate
@@ -586,6 +671,7 @@ const execMigrationBatch = <E>(
         }
       }
       yield* flushBatch(true);
+      return inAuthoredTransaction;
     }).pipe(
       Effect.mapError((error) =>
         // A batch connection failure is not an execution failure: it keeps its own
@@ -620,6 +706,8 @@ const resetConnectionState = <E>(
  * `mapError` lets the caller tag the failure (e.g. `PgDeltaDeclarativeApplyError`). Statement
  * failures also expose their structured PostgreSQL error so local replay can classify precise
  * SQLSTATE/object combinations without parsing formatted context.
+ * A caller applying several files on one session can share `transactionScope` for warnings;
+ * it advances only after a file succeeds and never changes SQL execution.
  */
 export const applyMigrationFile = <E>(
   session: DbSession,
@@ -627,18 +715,24 @@ export const applyMigrationFile = <E>(
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string, dbError?: DbExecError) => E,
-): Effect.Effect<void, E | DbConnectError> =>
+  transactionScope?: { inAuthoredTransaction: boolean },
+): Effect.Effect<void, E | DbConnectError, Output> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* createMigrationTable(session).pipe(Effect.mapError((e) => mapError(errorMessage(e))));
-    yield* execMigrationBatch(
+    const inAuthoredTransaction = yield* execMigrationBatch(
       session,
       fs,
       path,
       migrationPath,
       (message, _phase, dbError) => mapError(message, dbError),
       false,
+      migrationPath,
+      {},
+      transactionScope?.inAuthoredTransaction ?? false,
     );
+    if (transactionScope !== undefined)
+      transactionScope.inAuthoredTransaction = inAuthoredTransaction;
   });
 
 /**
@@ -660,10 +754,21 @@ export const applyMigrations = <E>(
     // Sorted by version, not file name, so callers passing a name-ordered listing (`db reset`,
     // the shadow-database replay) apply files in the same order `db push` does. Idempotent for
     // callers that already sorted.
+    let inAuthoredTransaction = false;
     for (const migrationPath of sortMigrationPathsByVersion(pending)) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
       yield* resetConnectionState(session, mapError);
-      yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
+      inAuthoredTransaction = yield* execMigrationBatch(
+        session,
+        fs,
+        path,
+        migrationPath,
+        mapError,
+        false,
+        migrationPath,
+        {},
+        inAuthoredTransaction,
+      );
     }
   }).pipe(
     Effect.withSpan("MigrationApply.run", { attributes: { "migration.count": pending.length } }),
@@ -683,9 +788,20 @@ export const seedGlobals = <E>(
 ): Effect.Effect<void, E | DbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
+    let inAuthoredTransaction = false;
     for (const globalPath of globals) {
       yield* output.raw(`Seeding globals from ${path.basename(globalPath)}...\n`, "stderr");
-      yield* execMigrationBatch(session, fs, path, globalPath, mapError, true);
+      inAuthoredTransaction = yield* execMigrationBatch(
+        session,
+        fs,
+        path,
+        globalPath,
+        mapError,
+        true,
+        globalPath,
+        {},
+        inAuthoredTransaction,
+      );
     }
   }).pipe(
     Effect.withSpan("MigrationApply.seedGlobals", { attributes: { "file.count": globals.length } }),
@@ -710,12 +826,14 @@ export const execSqlFile = <E>(
   mapError: (message: string, phase: "read" | "exec") => E,
   displayPath?: string,
   projectEnv?: Readonly<Record<string, string>>,
-): Effect.Effect<void, E | DbConnectError> =>
-  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
+): Effect.Effect<void, E | DbConnectError, Output> =>
+  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv).pipe(
+    Effect.asVoid,
+  );
 
 /**
  * Applies the experimental declarative schema-files branch. Reads `schema_paths` via the shared
- * glob ({@link sqlFilesGlob}), then runs each matched file's statements with {@link execSqlFile}
+ * glob ({@link sqlFilesGlob}), then runs each matched file's statements with `execMigrationBatch`
  * in glob order — no history table, no history row, and no `RESET ALL` between files (a
  * stepped-down session's role re-assert at each file's end is the one exception).
  *
@@ -730,7 +848,7 @@ export const execSqlFile = <E>(
  * On a per-file execution failure, attaches `"See schema file: <file>"` as a suggestion via the
  * optional second argument of `mapError`; a file-read failure carries no suggestion.
  *
- * `projectEnv` is forwarded to {@link checkScannerBufferSize} via `execSqlFile`.
+ * `projectEnv` is forwarded to {@link checkScannerBufferSize} via `execMigrationBatch`.
  */
 export const applySchemaFiles = <E>(
   session: DbSession,
@@ -740,7 +858,7 @@ export const applySchemaFiles = <E>(
   schemaPaths: ReadonlyArray<string>,
   mapError: (message: string, suggestion?: string) => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E | DbConnectError> =>
+): Effect.Effect<void, E | DbConnectError, Output> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* sqlFilesGlob(fs, path, schemaPaths, workdir);
     yield* Effect.annotateCurrentSpan("file.count", files.length);
@@ -752,12 +870,13 @@ export const applySchemaFiles = <E>(
       }
       return;
     }
+    let inAuthoredTransaction = false;
     for (const file of files) {
       const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
       // `file` is workdir-relative when the declared pattern was relative, verbatim when
       // absolute — passed through as the display path so a read failure reports it instead of
       // the `absolutePath` the real read needs.
-      yield* execSqlFile(
+      inAuthoredTransaction = yield* execMigrationBatch(
         session,
         fs,
         path,
@@ -766,8 +885,10 @@ export const applySchemaFiles = <E>(
           phase === "exec"
             ? mapError(message, `See schema file: ${bold(file)}`)
             : mapError(message),
+        true,
         file,
         projectEnv,
+        inAuthoredTransaction,
       );
     }
   }).pipe(Effect.withSpan("MigrationApply.schemaFiles"));

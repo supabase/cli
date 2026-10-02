@@ -72,3 +72,10 @@ Same structured `applied` result delivered as an NDJSON `result` event.
   from the top. Prefer idempotent forms (`… IF NOT EXISTS`) for such statements.
   Intentional fix for supabase/cli#5139, adopted into TS in PR supabase/cli#5671
   (landed on develop as `b48fad60`).
+
+- Transaction diagnostics follow [db push's migration guidance](../../db/push/SIDE_EFFECTS.md).
+  SQLSTATE 25P01 errors recommend authored `BEGIN; ... COMMIT;`; SQLSTATE 25001
+  errors recommend a separate migration starting with `-- pg-delta: transaction=false`
+  without `BEGIN`/`COMMIT`. Bare `SET LOCAL` and automatic splitting emit per-file
+  warnings. Authored boundaries and directive-marked files keep their existing
+  execution and history behavior; warnings preserve machine-readable stdout.

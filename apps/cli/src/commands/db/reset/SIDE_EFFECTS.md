@@ -271,7 +271,10 @@ to those defaults (the usual outcome for an interactive terminal).
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
-  adopted into TS in PR supabase/cli#5671).
+  adopted into TS in PR supabase/cli#5671). Transaction diagnostics and the explicit
+  no-transaction directive follow [db push's migration guidance](../push/SIDE_EFFECTS.md).
+  SQLSTATE 25P01 errors recommend authored `BEGIN; ... COMMIT;`; bare `SET LOCAL`
+  and automatic splitting emit per-file warnings without changing execution.
 - `--no-seed` forces seeding off; on the
   local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override
