@@ -145,7 +145,10 @@ limitations over speculative machinery while preserving required safeguards.
 - Assert behavior that matters to consumers, not implementation details. Prefer real parsers and observable outcomes over source-text or registry checks. Exercise shared contracts across supported implementations.
 - Make assertions meaningful: establish prerequisites, check specific failures, and choose matchers that express the intended contract.
 - Keep setup concise with small fixtures. Accept some duplication rather than introducing unnecessary test abstractions.
-- Remove redundant coverage. Push back on review suggestions that add assertions without protecting meaningful behavior.
+
+Follow the [test-audit skill](.agents/skills/test-audit/SKILL.md) whenever a test is written,
+changed, or reviewed: it gates new tests before they land and audits existing ones for redundant,
+mock-driven, or implementation-coupled coverage.
 
 Name tests `*.unit.test.ts`, `*.integration.test.ts`, or `*.e2e.test.ts`; colocate them with source.
 Use `tests/` for shared helpers. For CLI commands, unit-test complex pure logic, integration-test
