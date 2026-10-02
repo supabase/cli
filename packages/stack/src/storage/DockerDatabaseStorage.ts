@@ -395,7 +395,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
               if (Number(code) !== 0)
                 return yield* errorFor(
-                  "engine",
+                  args[0] ?? "engine",
                   stderr.trim() || `Container engine exited with ${code}`,
                 );
               return stdout.trim();
