@@ -192,6 +192,28 @@ describe("attribute entries", () => {
     });
   });
 
+  it("scrubs credentials that appear in the path of a non-Storage url.full", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl";
+    const attributes = Object.fromEntries(
+      sanitizeAttributeEntries([["url.full", `https://idp.example.com/saml/${jwt}/metadata?x=1`]]),
+    );
+    const exported = JSON.stringify(
+      sanitizeTraceData(
+        traceWith({
+          attributes: [
+            {
+              key: "url.full",
+              value: { stringValue: `https://idp.example.com/saml/${jwt}/metadata` },
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(attributes["url.full"]).toBe("https://idp.example.com/saml/<redacted>/metadata");
+    expect(exported).not.toContain(jwt);
+  });
+
   it("keeps only allowlisted headers", () => {
     const attributes = Object.fromEntries(
       sanitizeAttributeEntries([

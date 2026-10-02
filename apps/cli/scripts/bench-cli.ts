@@ -423,7 +423,14 @@ const runCommandBench = (
           }
 
           const spans =
-            traceFile === undefined ? undefined : summarizeSpanRun(yield* readSpans(traceFile));
+            traceFile === undefined
+              ? undefined
+              : summarizeSpanRun(
+                  // Trace data is optional; a missing or unreadable file must not discard timings.
+                  (yield* readSpans(traceFile).pipe(
+                    Effect.orElseSucceed(() => ({ spans: [], skippedLines: 0 })),
+                  )).spans,
+                );
           if (spans !== undefined) spanRuns[planned.build].push(spans);
 
           raw.push({

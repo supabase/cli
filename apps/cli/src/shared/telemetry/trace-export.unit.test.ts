@@ -102,6 +102,19 @@ describe("resolveTraceSettings", () => {
       env: { SUPABASE_OTLP_ENDPOINT: "http://localhost:4318", SUPABASE_OTLP_HEADERS: "no-sep" },
       reason: "SUPABASE_OTLP_HEADERS must be a comma-separated list",
     },
+    {
+      setting: "header name",
+      env: { SUPABASE_OTLP_ENDPOINT: "http://localhost:4318", SUPABASE_OTLP_HEADERS: "x%20y=1" },
+      reason: "SUPABASE_OTLP_HEADERS must be a comma-separated list",
+    },
+    {
+      setting: "header value",
+      env: {
+        SUPABASE_OTLP_ENDPOINT: "http://localhost:4318",
+        SUPABASE_OTLP_HEADERS: "x-a=1%0D%0Ainjected: yes",
+      },
+      reason: "SUPABASE_OTLP_HEADERS must be a comma-separated list",
+    },
   ])("warns and turns tracing off for invalid collector $setting", ({ env, reason }) =>
     Effect.gen(function* () {
       const { settings, stderr } = yield* resolveWithEnv(env);

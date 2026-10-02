@@ -1,7 +1,10 @@
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   analyzeTrace,
   parseTraceReportArgs,
+  readSpans,
   reportSpanName,
   type ReportSpan,
 } from "./trace-report.ts";
@@ -107,5 +110,44 @@ describe("reportSpanName", () => {
       "ContainerCli.spawn (image inspect)",
     );
     expect(reportSpanName("Db.query", undefined)).toBe("Db.query");
+  });
+});
+
+describe("readSpans", () => {
+  it("keeps decodable batches and counts lines that do not decode", async () => {
+    const batch = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "t",
+                  spanId: "s",
+                  name: "cli.run",
+                  startTimeUnixNano: "0",
+                  endTimeUnixNano: "1000000",
+                  status: { code: 1 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const file = yield* fs.makeTempFileScoped({ suffix: ".jsonl" });
+          yield* fs.writeFileString(file, `${batch}\n{"resourceSpans": [\n`);
+          return yield* readSpans(file);
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    expect(result.spans.map((span) => span.name)).toEqual(["cli.run"]);
+    expect(result.skippedLines).toBe(1);
   });
 });

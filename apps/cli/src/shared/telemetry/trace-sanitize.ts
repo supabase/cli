@@ -116,7 +116,7 @@ function redactStoragePath(pathname: string): string {
 function urlWithoutQuery(value: string): string {
   try {
     const url = new URL(value);
-    return `${url.protocol}//${url.host}${redactStoragePath(url.pathname)}`;
+    return scrubString(`${url.protocol}//${url.host}${redactStoragePath(url.pathname)}`);
   } catch {
     return scrubString(value);
   }

@@ -70,6 +70,9 @@ function otlpTracesUrl(endpoint: string): Option.Option<string> {
   }
 }
 
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/u;
+
 /** Parses `key=value,key2=value2` with percent-encoded parts, as in `OTEL_EXPORTER_OTLP_HEADERS`. */
 function parseOtlpHeaders(value: string): Option.Option<Record<string, string>> {
   const headers: Record<string, string> = {};
@@ -78,9 +81,10 @@ function parseOtlpHeaders(value: string): Option.Option<Record<string, string>> 
     const separator = pair.indexOf("=");
     if (separator <= 0) return Option.none();
     try {
-      headers[decodeURIComponent(pair.slice(0, separator).trim())] = decodeURIComponent(
-        pair.slice(separator + 1).trim(),
-      );
+      const name = decodeURIComponent(pair.slice(0, separator).trim());
+      const headerValue = decodeURIComponent(pair.slice(separator + 1).trim());
+      if (!HEADER_NAME.test(name) || !HEADER_VALUE.test(headerValue)) return Option.none();
+      headers[name] = headerValue;
     } catch {
       return Option.none();
     }

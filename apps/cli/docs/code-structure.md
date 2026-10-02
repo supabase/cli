@@ -66,13 +66,13 @@ Rules:
 - Shared service files use `<topic>.service.ts`.
 - Shared layer files use `<topic>.layer.ts`.
 - Do not prefix leaf files with the slice name.
-  - `tracing.layer.ts`, not `telemetry.tracing.layer.ts`
+  - `trace-export.layer.ts`, not `telemetry.trace-export.layer.ts`
   - `credentials.service.ts`, not `auth.credentials.service.ts`
 
 ## Symbol Naming
 
-- Service symbols are plain nouns: `Credentials`, `Tracing`, `Output`.
-- Layer exports use concrete `*Layer` names: `credentialsLayer`, `tracingLayer`, `outputLayer`.
+- Service symbols are plain nouns: `Credentials`, `Output`.
+- Layer exports use concrete `*Layer` names: `credentialsLayer`, `outputLayer`.
 - Do not use `.Default`.
 - Do not rely on `static layer` as the default pattern for shared concern slices.
 
@@ -134,7 +134,7 @@ If a command needs private DI, prefer colocated `*.service.ts` and `*.layer.ts` 
 
 Examples where comments are expected:
 
-- `telemetry/tracing.layer.ts`
+- `telemetry/trace-export.layer.ts`
 - `output/output.layer.ts`
 - `auth/credentials.layer.ts`
 

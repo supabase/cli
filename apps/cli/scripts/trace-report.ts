@@ -169,14 +169,23 @@ function formatReport(report: TraceReport): string {
   return lines.join("\n");
 }
 
-/** Decodes a `SUPABASE_TRACE_FILE`'s OTLP/JSON lines into flat spans. */
+/**
+ * Decodes a `SUPABASE_TRACE_FILE`'s OTLP/JSON lines into flat spans, skipping lines that do not
+ * decode, such as a batch truncated by an interrupted run.
+ */
 export const readSpans = Effect.fnUntraced(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(file);
   const spans: Array<ReportSpan> = [];
+  let skippedLines = 0;
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
-    const batch = yield* Schema.decodeUnknownEffect(TraceBatch)(line);
+    const decoded = yield* Schema.decodeUnknownEffect(TraceBatch)(line).pipe(Effect.option);
+    if (decoded._tag === "None") {
+      skippedLines += 1;
+      continue;
+    }
+    const batch = decoded.value;
     for (const resource of batch.resourceSpans) {
       for (const scope of resource.scopeSpans) {
         for (const span of scope.spans) {
@@ -197,7 +206,7 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
       }
     }
   }
-  return spans;
+  return { spans, skippedLines };
 });
 
 const USAGE = "usage: bun scripts/trace-report.ts <trace-file> [--top N] [--json]";
@@ -241,7 +250,11 @@ const main = Effect.gen(function* () {
     ),
   );
   if (options === undefined) return;
-  const report = analyzeTrace(yield* readSpans(options.file), options.top);
+  const { spans, skippedLines } = yield* readSpans(options.file);
+  if (skippedLines > 0) {
+    yield* Console.error(`warning: skipped ${skippedLines} trace line(s) that did not decode`);
+  }
+  const report = analyzeTrace(spans, options.top);
   yield* Console.log(options.json ? JSON.stringify(report, null, 2) : formatReport(report));
 });
 
