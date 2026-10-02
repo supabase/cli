@@ -11,12 +11,14 @@ export const sharedStateRoot = (): string => inject("stackStateRoot");
  * The shared root's current port claims, so a test's own public or native backend port
  * reservation skips ports a sibling test's stack already saved there.
  */
-export const sharedPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError> =
-  Effect.scoped(
-    Layer.build(State.layer({ root: sharedStateRoot() })).pipe(
-      Effect.flatMap((context) => Context.get(context, State.Service).claims),
-    ),
-  ).pipe(Effect.provide(NodeServices.layer));
+export const sharedPortClaims: Effect.Effect<
+  ReadonlyArray<State.StackClaims>,
+  State.StateError
+> = Effect.scoped(
+  Layer.build(State.layer({ root: sharedStateRoot() })).pipe(
+    Effect.flatMap((context) => Context.get(context, State.Service).claims),
+  ),
+).pipe(Effect.provide(NodeServices.layer));
 
 /**
  * A stack id unique to this call, safe for `State`'s id pattern (`SafeId` in `src/State.ts`) and
