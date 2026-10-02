@@ -113,6 +113,18 @@ describe("resolveDbImage", () => {
       });
     });
 
+    it.effect("keeps an OrioleDB tag the catalog does not pin on docker.io", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const dir = withTemp();
+      return Effect.gen(function* () {
+        expect(yield* resolve(dir, 17, "17.0.0.000")).toEqual({
+          image: "supabase/postgres:17.0.0.000-orioledb",
+          configImage: "supabase/postgres:17.0.0.000-orioledb",
+        });
+        rmSync(dir, { recursive: true, force: true });
+      });
+    });
+
     it.effect("rewrites the current PG15 default tag to its catalog-pinned slim image", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();

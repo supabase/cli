@@ -40,7 +40,7 @@ The CLI's stack catalog (`packages/stack/src/Artifacts.ts`) is the single versio
 every consumer of a slim-capable service: the new stack, legacy `supabase start`, and legacy
 slim mode. Each slim-capable service pins exactly one committed slim-services release per
 release line it carries (`ArtifactPin`, keyed by upstream version; only postgres carries more
-than one line, its default plus an additional Postgres 15 pin). Everything else is derived from
+than one line, its default plus additional Postgres 15 and OrioleDB pins). Everything else is derived from
 that pin — never the other way around.
 
 `apps/cli/src/shared/services/Dockerfile`, and its byte-identical Go copy
@@ -141,9 +141,13 @@ upgrade first and the hotfix PR is superseded and must be closed by hand.
 
 A service with a single pin has a single line, which accepts any comparable newer upstream: a
 Studio year rollover or a postgrest major bump moves that line forward. Only a service with
-additional pins (postgres) assigns each release tag to a line by its leading version component. A
-tag on no carried line, or with a version that isn't comparable, is warned about and ignored
-rather than failing the run. Comparison strips a trailing `-sha-<hex>`, so two Studio builds dated
+additional pins (postgres) assigns each release tag to a line by its leading version component
+plus any engine-variant suffix: postgres `17.11.0.002-orioledb` is on line `17-orioledb`, separate
+from stock `17`, and compares within it without the suffix. The first release of a variant line
+whose stock major the catalog carries is an **add** (branch `slim-bump/<svc>-<line>`, title
+`chore(stack): add <svc> <release_version>`) that inserts the line's pin; later releases hotfix or
+upgrade it like any other line. Any other tag on no carried line, or with a version that isn't
+comparable, is warned about and ignored rather than failing the run. Comparison strips a trailing `-sha-<hex>`, so two Studio builds dated
 the same day compare equal and never produce an upgrade; the manual `--release` path pins such a
 build.
 

@@ -18,6 +18,7 @@ import type { SetupDatabaseOptions } from "./db-bootstrap/db-setup.ts";
 import { listLocalMigrationPaths } from "./migration-history.ts";
 import { applyMigrations } from "./migration-apply.ts";
 import { stackShadowCacheEntry, stackShadowCacheRoles } from "./stack-shadow-cache.ts";
+import { stackDatabaseVersion } from "./stack-database-version.ts";
 
 type Runtime = "native" | "docker" | "podman";
 
@@ -79,9 +80,21 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
   return { stack, runtime };
 });
 
+/** The project's resolved database version, so the shadow runs the same line as the local database. */
+const shadowDatabaseVersion = (input: ShadowSetupInput<unknown>) =>
+  Effect.fromResult(
+    stackDatabaseVersion({
+      major_version: input.setup.majorVersion,
+      orioledb_version: input.db.orioledb_version,
+    }),
+  ).pipe(
+    Effect.mapError((message) => new ShadowDbError({ message, reason: "container_configuration" })),
+  );
+
 const initialize = Effect.fn("StackShadow.initialize")(function* (
   stack: Stack,
   runtime: Runtime,
+  version: string,
   input: ShadowSetupInput<unknown>,
   opts: ShadowOptions,
 ) {
@@ -97,7 +110,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
     stack.services.create({
       service: "database",
       config: {
-        version: String(input.setup.majorVersion),
+        version,
         databasePassword: Redacted.make(input.password),
         jwtSecret: Redacted.make(input.jwtSecret),
         jwtExpiry: input.jwtExpiry,
@@ -113,6 +126,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
   const cacheResolution = yield* Effect.result(
     stackShadowCacheEntry(
       input,
+      version,
       runtime,
       runtimeInfo.platform,
       runtimeInfo.arch,
@@ -218,7 +232,7 @@ const initialize = Effect.fn("StackShadow.initialize")(function* (
     host: conn.host,
     port: conn.port,
     runtime,
-    version: String(input.setup.majorVersion),
+    version,
     snapshotKey,
     restoredFromSnapshot: restored,
   } satisfies StackShadowAcquiredHandle;
@@ -233,6 +247,7 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   opts: ShadowOptions = {},
 ) {
   const output = yield* Output;
+  const version = yield* shadowDatabaseVersion(input);
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
       Effect.flatMap((result) =>
@@ -248,7 +263,7 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
       ),
     ),
   );
-  return yield* initialize(namespace.stack, namespace.runtime, input, opts);
+  return yield* initialize(namespace.stack, namespace.runtime, version, input, opts);
 }, Effect.mapError(shadowError));
 
 /** Runs a command against a fresh shadow, then destroys its owned namespace. */

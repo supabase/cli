@@ -189,6 +189,24 @@ const postgresPlannerFixture = `const workloadCatalog = {
 };
 `;
 
+/** `postgresPlannerFixture` plus a resolved OrioleDB line beside stock 17. */
+const postgresOrioleFixture = postgresPlannerFixture.replace(
+  `        natives: {},
+      },
+    },
+  ),`,
+  `        natives: {},
+      },
+      "17.11.0.002-orioledb": {
+        upstreamVersion: "17.11.0.002-orioledb",
+        revision: 0,
+        image: "ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r0@sha256:5555555555555555555555555555555555555555555555555555555555555",
+        natives: {},
+      },
+    },
+  ),`,
+);
+
 describe("validateSlimReleasePublishedPayload", () => {
   test("rejects a newline injected into upstream_version", () => {
     expect(() =>
@@ -499,6 +517,69 @@ describe("planSlimUpdates", () => {
         toUpstream: "17.11.0.002",
         toRelease: "17.11.0.002-r0",
       },
+    ]);
+  });
+
+  test("postgres: the first OrioleDB release adds its own line and never moves stock 17", () => {
+    const { updates, warnings } = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgres-17.11.0.002-orioledb-r0",
+      "postgres-17.11.0.002-orioledb-r1",
+      "postgres-17.4.1.030-orioledb",
+    ]);
+
+    expect(warnings).toEqual([]);
+    expect(updates).toEqual([
+      {
+        kind: "add",
+        line: "17-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
+        title: "chore(stack): add postgres 17.11.0.002-orioledb-r1",
+        toUpstream: "17.11.0.002-orioledb",
+        toRelease: "17.11.0.002-orioledb-r1",
+      },
+    ]);
+  });
+
+  test("postgres: OrioleDB and stock 17 hotfix and upgrade independently", () => {
+    const { updates, warnings } = planSlimUpdates(postgresOrioleFixture, "postgres", [
+      "postgres-17.6.1.168-r2",
+      "postgres-17.11.0.002-orioledb-r1",
+      "postgres-17.12.0.001-orioledb-r0",
+    ]);
+
+    expect(updates).toEqual([
+      {
+        kind: "hotfix",
+        line: "17",
+        branch: "slim-hotfix/postgres-17",
+        title: "chore(stack): pin postgres 17.6.1.168-r2",
+        fromRelease: "17.6.1.168-r1",
+        toUpstream: "17.6.1.168",
+        toRelease: "17.6.1.168-r2",
+      },
+      {
+        kind: "upgrade",
+        line: "17-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
+        title: "chore(stack): bump postgres to 17.12.0.001-orioledb-r0",
+        fromRelease: "17.11.0.002-orioledb-r0",
+        toUpstream: "17.12.0.001-orioledb",
+        toRelease: "17.12.0.001-orioledb-r0",
+      },
+    ]);
+    expect(warnings).toEqual([
+      "::warning ::postgres 17.11.0.002-orioledb-r1 hotfix skipped because this line is upgrading to 17.12.0.001-orioledb-r0; run --service postgres --release 17.11.0.002-orioledb-r1 to pin the hotfix alone.",
+    ]);
+  });
+
+  test("postgres: an OrioleDB release for a major the catalog does not carry is ignored and warned about", () => {
+    const { updates, warnings } = planSlimUpdates(postgresPlannerFixture, "postgres", [
+      "postgres-18.0.0.001-orioledb-r0",
+    ]);
+
+    expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgres 18.0.0.001-orioledb is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-18.0.0.001-orioledb-r0.",
     ]);
   });
 
@@ -1062,6 +1143,64 @@ describe("refreshCatalogPin", () => {
   });
 });
 
+describe("refreshCatalogPin adds the OrioleDB line", () => {
+  const orioleIo = (revision: number, seed: string): RevisionIo => {
+    const release = `17.11.0.002-orioledb-r${revision}`;
+    const digests = nativeDigests(seed);
+    return {
+      listReleaseTags: async () =>
+        Array.from({ length: revision + 1 }, (_, n) => `postgres-17.11.0.002-orioledb-r${n}`),
+      fetchChecksums: async () => checksumsFor("postgres", release, digests),
+      imageDigest: async () => digest(seed),
+      s3Sha256: matchingS3("postgres", release, digests),
+      fetchManifest: manifestWithUpstreamImage("supabase/postgres:17.11.0.002-orioledb"),
+      fetchProvenance: unusedFetchProvenance,
+    };
+  };
+
+  test("inserts the first OrioleDB pin beside stock 17 and 15, then hotfixes it after formatting", async () => {
+    const added = await refreshCatalogPin({
+      catalog: fixture,
+      service: "postgres",
+      release: "17.11.0.002-orioledb-r0",
+      io: orioleIo(0, "oriole-0"),
+    });
+
+    expect(added.update).toEqual({
+      service: "postgres",
+      version: "17.11.0.002-orioledb",
+      revision: 0,
+      target: "additional",
+    });
+    expect(added.source).toContain(postgres17Image);
+    expect(added.source).toContain('"15.14.1.168": { upstreamVersion: "15.14.1.168"');
+    expect(added.source).toContain(
+      '"17.11.0.002-orioledb": { upstreamVersion: "17.11.0.002-orioledb"',
+    );
+
+    const formatted = await formatWithOxfmt(added.source);
+    const hotfixed = await refreshCatalogPin({
+      catalog: formatted,
+      service: "postgres",
+      release: "17.11.0.002-orioledb-r1",
+      io: orioleIo(1, "oriole-1"),
+    });
+
+    expect(hotfixed.update).toEqual({
+      service: "postgres",
+      version: "17.11.0.002-orioledb",
+      revision: 1,
+      previousVersion: "17.11.0.002-orioledb",
+      target: "additional",
+    });
+    expect(hotfixed.source).toContain(postgres17Image);
+    expect(hotfixed.source).toContain(
+      `"ghcr.io/supabase/cli/postgres:17.11.0.002-orioledb-r1@${digest("oriole-1")}"`,
+    );
+    expect(hotfixed.source).not.toContain(digest("oriole-0"));
+  });
+});
+
 describe("resolveRevisionPin waits for the S3 mirror", () => {
   test("waits while one S3 object is missing, then resolves once it appears", async () => {
     const digests = nativeDigests("s3-wait");
@@ -1366,5 +1505,36 @@ describe("against the real catalog", () => {
     expect(refreshed.source).toContain("revision: 1");
     expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
     expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
+  });
+
+  test("the OrioleDB line and stock 17 update independently", async () => {
+    const catalog = await Bun.file(CATALOG_PATH).text();
+    expect(
+      planSlimUpdates(catalog, "postgres", [
+        "postgres-17.11.0.002-r0",
+        "postgres-17.11.0.003-r0",
+        "postgres-17.11.0.002-orioledb-r0",
+        "postgres-17.11.0.002-orioledb-r1",
+      ]).updates,
+    ).toEqual([
+      {
+        kind: "upgrade",
+        line: "17",
+        branch: "slim-bump/postgres-17",
+        title: "chore(stack): bump postgres to 17.11.0.003-r0",
+        fromRelease: "17.11.0.002-r0",
+        toUpstream: "17.11.0.003",
+        toRelease: "17.11.0.003-r0",
+      },
+      {
+        kind: "hotfix",
+        line: "17-orioledb",
+        branch: "slim-hotfix/postgres-17-orioledb",
+        title: "chore(stack): pin postgres 17.11.0.002-orioledb-r1",
+        fromRelease: "17.11.0.002-orioledb-r0",
+        toUpstream: "17.11.0.002-orioledb",
+        toRelease: "17.11.0.002-orioledb-r1",
+      },
+    ]);
   });
 });

@@ -1484,6 +1484,71 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  for (const target of [
+    {
+      name: "[db] orioledb_version when a saved stock stack switches to OrioleDB",
+      before: "",
+      after: '[db]\norioledb_version = "17.11.0.002"\n',
+      env: undefined,
+      changes: "[db] orioledb_version: saved unset, requested 17.11.0.002",
+      revert: "Revert [db] orioledb_version to its saved value",
+    },
+    {
+      name: "[db] orioledb_version when a saved OrioleDB stack switches back to stock",
+      before: '[experimental]\norioledb_version = "17.11.0.002"\n',
+      after: "",
+      env: undefined,
+      changes: "[db] orioledb_version: saved 17.11.0.002, requested unset",
+      revert: "Revert [db] orioledb_version to its saved value",
+    },
+    {
+      name: "both [db] major_version and [db] orioledb_version when stock 15 becomes OrioleDB 17",
+      before: "[db]\nmajor_version = 15\n",
+      after: '[db]\norioledb_version = "17.11.0.002"\n',
+      env: undefined,
+      changes:
+        "[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested 17.11.0.002",
+      revert: "Revert the settings listed to their saved values",
+    },
+    {
+      name: "SUPABASE_DB_ORIOLEDB_VERSION when it switches a saved stock stack to OrioleDB",
+      before: "",
+      after: "",
+      env: "17.11.0.002",
+      changes: "SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested 17.11.0.002",
+      revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
+    },
+  ])
+    it.live(`names ${target.name}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-orioledb-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        const configPath = `${root}/supabase/config.toml`;
+        yield* fs.writeFileString(configPath, `project_id = "orioledb"\n${target.before}`);
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(configPath, `project_id = "orioledb"\n${target.after}`);
+        yield* fixture.stack.composition.stop;
+        const restart = stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+        const error = yield* target.env === undefined
+          ? restart
+          : withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", target.env, restart);
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: `The saved stack cannot adopt these changes: ${target.changes}`,
+          suggestion: expect.stringContaining(
+            `${target.revert} to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\``,
+          ),
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
+
   it.live(
     "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
     () =>

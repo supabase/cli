@@ -134,14 +134,17 @@ enabled = false
     }),
   );
 
-  it.live("rejects the existing OrioleDB environment override", () =>
+  it.live("applies the OrioleDB environment override before checking the catalog", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "stack-config-env-orioledb"\n');
-      const exit = yield* withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", "15.1.1.14", load(root)).pipe(
+      const exit = yield* withEnvVar("SUPABASE_DB_ORIOLEDB_VERSION", "17.0.0.000", load(root)).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("db.orioledb_version");
+      if (Exit.isFailure(exit))
+        expect(String(exit.cause)).toContain(
+          "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact",
+        );
     }),
   );
 });

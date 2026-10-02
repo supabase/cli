@@ -22,8 +22,17 @@ const DROP_IMAGE_DEFAULT_EXTENSION: Record<(typeof IMAGE_DEFAULT_EXTENSIONS)[num
   "uuid-ossp": 'DROP EXTENSION IF EXISTS "uuid-ossp"',
 };
 
+/**
+ * Image-installed extensions that stay in the shadow: tables already use their access method, so
+ * they cannot be dropped for replay and their declarations load as `IF NOT EXISTS`.
+ */
+const IMAGE_KEPT_EXTENSIONS = new Set(["orioledb"]);
+
 const CREATE_EXTENSION_RE =
-  /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
+  /\b(CREATE\s+EXTENSION\s+)(IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
+
+const createExtensionName = (match: RegExpMatchArray): string =>
+  (match[3] ?? match[4] ?? "").toLowerCase();
 
 /** Blank comments and simple strings; keep offsets for locateSignature line mapping. */
 export const maskSqlComments = (sql: string): string =>
@@ -37,7 +46,7 @@ export const declaredSqlExtensions = (
   const declared = new Set<string>();
   for (const file of files) {
     for (const match of maskSqlComments(file.sql).matchAll(CREATE_EXTENSION_RE)) {
-      const name = (match[1] ?? match[2] ?? "").toLowerCase();
+      const name = createExtensionName(match);
       if (name !== "") declared.add(name);
     }
   }
@@ -77,14 +86,33 @@ const declarativeBaselinePrepStatements = (
   return statements;
 };
 
-/** Recreate image pgjwt after a pgcrypto-only drop so omit still means keep. */
+const keepImageExtensionCreates = (sql: string): string => {
+  let kept = "";
+  let cursor = 0;
+  for (const match of maskSqlComments(sql).matchAll(CREATE_EXTENSION_RE)) {
+    if (match[2] !== undefined || !IMAGE_KEPT_EXTENSIONS.has(createExtensionName(match))) continue;
+    const insertAt = match.index + (match[1] ?? "").length;
+    kept += `${sql.slice(cursor, insertAt)}IF NOT EXISTS `;
+    cursor = insertAt;
+  }
+  return cursor === 0 ? sql : kept + sql.slice(cursor);
+};
+
+/**
+ * Shadow-load view of the declarations: kept image extensions load idempotently, and image pgjwt
+ * is recreated after a pgcrypto-only drop so omit still means keep.
+ */
 export const filesForDeclarativeShadowLoad = (
   files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
   restorePgjwt: boolean,
 ): ReadonlyArray<{ readonly name: string; readonly sql: string }> => {
-  if (!restorePgjwt) return files;
+  const loaded = files.map((file) => {
+    const sql = keepImageExtensionCreates(file.sql);
+    return sql === file.sql ? file : { ...file, sql };
+  });
+  if (!restorePgjwt) return loaded;
   return [
-    ...files,
+    ...loaded,
     {
       name: "_cli/restore-pgjwt.sql",
       sql: "CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;\n",

@@ -5,7 +5,11 @@ import {
 } from "@supabase/stack/internal/artifacts";
 import { Effect, Result } from "effect";
 import { loadLocalProjectContext } from "../../command-internal/local-project-context.ts";
-import { envOverrideMajorVersion } from "../../command-internal/local-config-values.ts";
+import {
+  envOverride,
+  envOverrideMajorVersion,
+} from "../../command-internal/local-config-values.ts";
+import { stackDatabaseVersion } from "../../command-internal/stack-database-version.ts";
 import { upstreamVersionFromTag } from "../../shared/services/services.shared.ts";
 import type { ServiceVersionRow } from "../../shared/services/services.shared.ts";
 import type { RemoteServiceName } from "../../shared/services/services.shared.ts";
@@ -23,31 +27,36 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
 ) {
   const context = yield* loadLocalProjectContext(workdir, (message) => message).pipe(Effect.result);
   let configError: string | undefined;
-  let major: number | undefined;
+  let databaseVersion: string | undefined;
   if (Result.isFailure(context)) configError = context.failure;
   else {
-    const resolvedMajor = yield* Effect.try({
+    const { config, projectEnvValues } = context.success;
+    const resolved = yield* Effect.try({
       try: () => {
-        const value = envOverrideMajorVersion(
-          context.success.config.db.major_version,
-          context.success.projectEnvValues,
-        );
+        const value = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
         if (value !== 15 && value !== 17)
           throw new Error(`unsupported PostgreSQL major version: ${value}`);
-        return value;
+        return stackDatabaseVersion({
+          major_version: value,
+          orioledb_version: envOverride(
+            "SUPABASE_DB_ORIOLEDB_VERSION",
+            config.db.orioledb_version,
+            projectEnvValues,
+          ),
+        });
       },
       catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-    }).pipe(Effect.result);
-    if (Result.isFailure(resolvedMajor)) configError = resolvedMajor.failure;
-    else major = resolvedMajor.success;
+    }).pipe(Effect.flatMap(Effect.fromResult), Effect.result);
+    if (Result.isFailure(resolved)) configError = resolved.failure;
+    else databaseVersion = resolved.success;
   }
   yield* Effect.annotateCurrentSpan({ "config.load_failed": configError !== undefined });
   return yield* Effect.forEach(artifactServiceKinds(), (service) =>
     Effect.gen(function* () {
       const artifact = yield* resolveArtifact({
         service,
-        ...(service === "database" && major !== undefined
-          ? { version: postgresVersion(String(major)) }
+        ...(service === "database" && databaseVersion !== undefined
+          ? { version: postgresVersion(databaseVersion) }
           : {}),
       });
       const name = artifact.image.split("@")[0]?.replace(/:[^/:]+$/, "") ?? artifact.image;

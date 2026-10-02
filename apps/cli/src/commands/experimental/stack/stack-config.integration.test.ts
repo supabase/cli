@@ -65,6 +65,7 @@ enabled = true
       expect(keys.gotrueJwtKeys).toBeUndefined();
       expect(keys.publicSigningKeys).toBeUndefined();
       const database = recipes.get("database");
+      expect(database?.service === "database" ? database.config.version : undefined).toBe("17");
       expect(
         database?.service === "database" ? database.config.rootKey : undefined,
       ).toBeUndefined();
@@ -343,35 +344,38 @@ s3_secret_key = "env(S3_SECRET_KEY)"
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.live("rejects OrioleDB and ignores its inactive S3 settings", () =>
-    Effect.gen(function* () {
-      const orioledb = yield* project(`project_id = "stack-config-orioledb"
+  it.live(
+    "fails closed on an unpublished OrioleDB version and ignores its inactive S3 settings",
+    () =>
+      Effect.gen(function* () {
+        const unpublished =
+          "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact; supported OrioleDB versions:";
+        const orioledb = yield* project(`project_id = "stack-config-orioledb"
 [experimental]
-orioledb_version = "15.1.1.14"
+orioledb_version = "17.0.0.000"
 `);
-      const orioledbExit = yield* load(orioledb).pipe(Effect.exit);
-      expect(Exit.isFailure(orioledbExit)).toBe(true);
-      if (Exit.isFailure(orioledbExit))
-        expect(String(orioledbExit.cause)).toContain("db.orioledb_version");
+        const orioledbExit = yield* load(orioledb).pipe(Effect.exit);
+        expect(Exit.isFailure(orioledbExit)).toBe(true);
+        if (Exit.isFailure(orioledbExit)) expect(String(orioledbExit.cause)).toContain(unpublished);
 
-      // The same rejection applies to the canonical `[db]` location, not just the deprecated
-      // `[experimental]` alias.
-      const orioledbCanonical = yield* project(`project_id = "stack-config-orioledb-db"
+        // The same check applies to the canonical `[db]` location, not just the deprecated
+        // `[experimental]` alias.
+        const orioledbCanonical = yield* project(`project_id = "stack-config-orioledb-db"
 [db]
-orioledb_version = "15.1.1.14"
+orioledb_version = "17.0.0.000"
 `);
-      const orioledbCanonicalExit = yield* load(orioledbCanonical).pipe(Effect.exit);
-      expect(Exit.isFailure(orioledbCanonicalExit)).toBe(true);
-      if (Exit.isFailure(orioledbCanonicalExit))
-        expect(String(orioledbCanonicalExit.cause)).toContain("db.orioledb_version");
+        const orioledbCanonicalExit = yield* load(orioledbCanonical).pipe(Effect.exit);
+        expect(Exit.isFailure(orioledbCanonicalExit)).toBe(true);
+        if (Exit.isFailure(orioledbCanonicalExit))
+          expect(String(orioledbCanonicalExit.cause)).toContain(unpublished);
 
-      const s3 = yield* project(`project_id = "stack-config-experimental-s3"
+        const s3 = yield* project(`project_id = "stack-config-experimental-s3"
 [experimental]
 s3_host = "s3.example.test"
 `);
-      const s3Config = yield* load(s3);
-      expect(s3Config.source.experimental.s3_host).toBe("s3.example.test");
-    }).pipe(Effect.provide(BunServices.layer)),
+        const s3Config = yield* load(s3);
+        expect(s3Config.source.experimental.s3_host).toBe("s3.example.test");
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("records OrioleDB selection on the command event before rejecting it", () =>

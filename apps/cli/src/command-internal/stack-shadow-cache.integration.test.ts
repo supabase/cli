@@ -66,19 +66,27 @@ describe("stack shadow cache entry", () => {
       yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
 
       const base = input(fs, path, root);
-      const first = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const first = yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config");
       if (first === undefined) return yield* Effect.die("cache entry unexpectedly disabled");
 
       yield* fs.writeFileString(
         path.join(root, "supabase", "roles.sql"),
         "CREATE ROLE cache_probe;\n",
       );
-      const withRoles = yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config");
+      const withRoles = yield* stackShadowCacheEntry(
+        base,
+        "17",
+        "native",
+        "darwin",
+        "arm64",
+        "config",
+      );
       if (withRoles === undefined) return yield* Effect.die("roles entry unexpectedly disabled");
       expect(withRoles.key).not.toBe(first.key);
 
       const withWebhooks = yield* stackShadowCacheEntry(
         input(fs, path, root, { webhooksEnabled: true }),
+        "17",
         "native",
         "darwin",
         "arm64",
@@ -90,6 +98,7 @@ describe("stack shadow cache entry", () => {
 
       const withPassword = yield* stackShadowCacheEntry(
         input(fs, path, root, {}, { password: "rotated-password" }),
+        "17",
         "native",
         "darwin",
         "arm64",
@@ -100,17 +109,38 @@ describe("stack shadow cache entry", () => {
       expect(withPassword.key).not.toBe(withRoles.key);
 
       expect(
-        yield* stackShadowCacheEntry(base, "native", "darwin", "arm64", "config", true),
+        yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config", true),
       ).toBeUndefined();
       expect(
         yield* stackShadowCacheEntry(
           input(fs, path, root, { projectEnvValues: { SUPABASE_SHADOW_CACHE: "0" } }),
+          "17",
           "native",
           "darwin",
           "arm64",
           "config",
         ),
       ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("keys on the database version the shadow runs, not the configured major", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-cache-version-" });
+      const base = input(fs, path, root);
+
+      const stock = yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config");
+      const other = yield* stackShadowCacheEntry(base, "15", "native", "darwin", "arm64", "config");
+      expect(stock?.key).toBeDefined();
+      expect(other?.key).toBeDefined();
+      expect(other?.key).not.toBe(stock?.key);
+
+      const unpinned = yield* Effect.flip(
+        stackShadowCacheEntry(base, "17.0.0.000-orioledb", "native", "darwin", "arm64", "config"),
+      );
+      expect(unpinned.message).toContain("17.0.0.000-orioledb");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });
