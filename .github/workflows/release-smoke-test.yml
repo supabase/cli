@@ -1,6 +1,9 @@
 name: Release Smoke Test
 
 on:
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       version:
@@ -18,6 +21,10 @@ on:
           - beta
         default: beta
 
+concurrency:
+  group: release-smoke-test-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   # release-shared.yml declares privileged publish jobs. They are gated by
   # dry_run here, but GitHub validates nested-workflow permissions at startup.
@@ -29,10 +36,11 @@ permissions:
 jobs:
   smoke:
     name: Run release smoke tests
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'hotfix/')
     uses: ./.github/workflows/release-shared.yml
     with:
-      version: ${{ inputs.version }}
-      npm_tag: ${{ inputs.npm_tag }}
+      version: ${{ inputs.version || '0.0.0-smoke' }}
+      npm_tag: ${{ inputs.npm_tag || 'beta' }}
       channel: beta
       prerelease: true
       dry_run: true
