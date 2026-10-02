@@ -209,11 +209,39 @@ export const readSpans = Effect.fnUntraced(function* (file: string) {
   return { spans, skippedLines };
 });
 
-const USAGE = "usage: bun scripts/trace-report.ts <trace-file> [--top N] [--json]";
+const USAGE = "usage: bun scripts/trace-report.ts <trace-file> [--top N] [--trace-id ID] [--json]";
+
+/** One trace from a file that may hold several runs: `traceId`, or else the one that ended last. */
+export function selectTrace(
+  spans: ReadonlyArray<ReportSpan>,
+  traceId: string | undefined,
+):
+  | {
+      readonly traceId: string;
+      readonly traceCount: number;
+      readonly spans: ReadonlyArray<ReportSpan>;
+    }
+  | undefined {
+  const byTrace = new Map<string, Array<ReportSpan>>();
+  for (const span of spans) {
+    const group = byTrace.get(span.traceId) ?? [];
+    group.push(span);
+    byTrace.set(span.traceId, group);
+  }
+  const lastEnd = (group: ReadonlyArray<ReportSpan>) =>
+    Math.max(...group.map((span) => span.endMs));
+  const chosen =
+    traceId ?? [...byTrace].sort(([, a], [, b]) => lastEnd(b) - lastEnd(a)).map(([id]) => id)[0];
+  const group = chosen === undefined ? undefined : byTrace.get(chosen);
+  return chosen === undefined || group === undefined
+    ? undefined
+    : { traceId: chosen, traceCount: byTrace.size, spans: group };
+}
 
 export interface TraceReportOptions {
   readonly file: string;
   readonly top: number;
+  readonly traceId: string | undefined;
   readonly json: boolean;
 }
 
@@ -224,11 +252,15 @@ export function parseTraceReportArgs(args: ReadonlyArray<string>): TraceReportOp
   if (!Number.isInteger(top) || top < 1) {
     throw new Error("--top must be a positive integer");
   }
-  const file = args.find(
-    (arg, index) => !arg.startsWith("--") && (topIndex === -1 || index !== topIndex + 1),
-  );
+  const traceIdIndex = args.indexOf("--trace-id");
+  const traceId = traceIdIndex === -1 ? undefined : args[traceIdIndex + 1];
+  if (traceIdIndex !== -1 && (traceId === undefined || traceId.startsWith("--"))) {
+    throw new Error("--trace-id needs a trace id");
+  }
+  const valueIndexes = new Set([topIndex, traceIdIndex].filter((i) => i !== -1).map((i) => i + 1));
+  const file = args.find((arg, index) => !arg.startsWith("--") && !valueIndexes.has(index));
   if (file === undefined) throw new Error(USAGE);
-  return { file, top, json: args.includes("--json") };
+  return { file, top, traceId, json: args.includes("--json") };
 }
 
 const main = Effect.gen(function* () {
@@ -254,8 +286,25 @@ const main = Effect.gen(function* () {
   if (skippedLines > 0) {
     yield* Console.error(`warning: skipped ${skippedLines} trace line(s) that did not decode`);
   }
-  const report = analyzeTrace(spans, options.top);
-  yield* Console.log(options.json ? JSON.stringify(report, null, 2) : formatReport(report));
+  const trace = selectTrace(spans, options.traceId);
+  if (trace === undefined) {
+    yield* Console.error(
+      options.traceId === undefined
+        ? "no spans in the trace file"
+        : `trace ${options.traceId} is not in the trace file`,
+    );
+    yield* Effect.sync(() => {
+      process.exitCode = 1;
+    });
+    return;
+  }
+  const report = analyzeTrace(trace.spans, options.top);
+  const header = `trace: ${trace.traceId}${trace.traceCount > 1 ? ` (latest of ${trace.traceCount}; choose one with --trace-id)` : ""}`;
+  yield* Console.log(
+    options.json
+      ? JSON.stringify({ traceId: trace.traceId, traceCount: trace.traceCount, ...report }, null, 2)
+      : `${header}\n${formatReport(report)}`,
+  );
 });
 
 if (import.meta.main) {

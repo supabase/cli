@@ -146,6 +146,28 @@ describe("withTraceExport with a trace file", () => {
     }).pipe(Effect.provide(runtime)),
   );
 
+  it.live("ignores global OTEL_RESOURCE_ATTRIBUTES, even malformed ones", () =>
+    Effect.gen(function* () {
+      const tracePath = yield* traceFilePath;
+
+      yield* Effect.void.pipe(
+        withTraceExport(fileSink(tracePath), {}),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              OTEL_RESOURCE_ATTRIBUTES: "team=%,telemetry.sdk.name=injected",
+            }),
+          ),
+        ),
+      );
+
+      const text = yield* (yield* FileSystem.FileSystem).readFileString(tracePath);
+      expect(spansOf(yield* readBatches(tracePath)).map((span) => span.name)).toEqual(["cli.run"]);
+      expect(text).not.toContain("team");
+      expect(text).not.toContain("injected");
+    }).pipe(Effect.provide(runtime)),
+  );
+
   it.live("records the run under an unsampled TRACEPARENT", () =>
     Effect.gen(function* () {
       const tracePath = yield* traceFilePath;

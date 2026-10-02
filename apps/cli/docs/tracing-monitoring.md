@@ -43,7 +43,8 @@ bun apps/cli/scripts/trace-report.ts /tmp/supabase-trace.jsonl
 The report prints the heaviest path from `cli.run`, the top span names by self time, repeated span
 names with counts and total time, and failed spans. Docker and Podman spans are labeled with their
 verb, such as `ContainerCli.spawn (run)`. Pass `--top N` to change list lengths and
-`--json` for machine-readable output. The file appends across runs; delete it to start fresh.
+`--json` for machine-readable output. The file appends across runs; the report covers the run that
+ended last, or the one passed with `--trace-id`.
 
 ## Benchmarking
 

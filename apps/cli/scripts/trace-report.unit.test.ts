@@ -6,6 +6,7 @@ import {
   parseTraceReportArgs,
   readSpans,
   reportSpanName,
+  selectTrace,
   type ReportSpan,
 } from "./trace-report.ts";
 
@@ -149,5 +150,30 @@ describe("readSpans", () => {
 
     expect(result.spans.map((span) => span.name)).toEqual(["cli.run"]);
     expect(result.skippedLines).toBe(1);
+  });
+});
+
+describe("selectTrace", () => {
+  const twoRuns = [
+    { ...span("a1", undefined, "cli.run", 0, 100), traceId: "first" },
+    { ...span("b1", undefined, "cli.run", 200, 260), traceId: "second" },
+    { ...span("b2", "b1", "Db.query", 210, 250), traceId: "second" },
+  ];
+
+  it("reports the run that ended last unless a trace id is given", () => {
+    expect(selectTrace(twoRuns, undefined)).toMatchObject({
+      traceId: "second",
+      traceCount: 2,
+      spans: [{ spanId: "b1" }, { spanId: "b2" }],
+    });
+    expect(selectTrace(twoRuns, "first")?.spans.map((s) => s.spanId)).toEqual(["a1"]);
+    expect(selectTrace(twoRuns, "missing")).toBeUndefined();
+  });
+
+  it("parses --trace-id without mistaking its value for the file", () => {
+    expect(parseTraceReportArgs(["--trace-id", "abc", "trace.jsonl"])).toMatchObject({
+      file: "trace.jsonl",
+      traceId: "abc",
+    });
   });
 });

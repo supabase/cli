@@ -1,4 +1,13 @@
-import { Effect, FileSystem, Layer, Option, PlatformError, Redacted, Semaphore } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  PlatformError,
+  Redacted,
+  Semaphore,
+} from "effect";
 import type { Crypto, Scope, Tracer } from "effect";
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
@@ -42,7 +51,11 @@ export const makeOtlpTracer = (options: {
       attributes: { ...options.resource.attributes },
     },
     shutdownTimeout: EXPORT_TIMEOUT_MS,
-  }).pipe(Effect.provide(Layer.mergeAll(OtlpExporter.layerFlusher, sanitizingSerialization)));
+  }).pipe(
+    Effect.provide(Layer.mergeAll(OtlpExporter.layerFlusher, sanitizingSerialization)),
+    // The exporter otherwise reads global `OTEL_*` settings such as `OTEL_RESOURCE_ATTRIBUTES`.
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({})),
+  );
 
 /**
  * Transport that appends each batch as one JSON line and always answers 2xx, so the exporter
