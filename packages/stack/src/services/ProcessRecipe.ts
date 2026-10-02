@@ -20,9 +20,9 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as Net from "node:net";
 import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
-import { accepts } from "../Ports.ts";
+import { accepts, type NativePortReservation, type PortError } from "../Ports.ts";
+import type * as State from "../State.ts";
 import {
   type ContainerError,
   type ContainerProcess,
@@ -56,7 +56,6 @@ import {
   removeOwnedInstanceRoot,
 } from "./InstanceRoot.ts";
 import {
-  CatalogError,
   type CatalogOptions,
   type ProcessRecipeResult,
   type RecipeCreation,
@@ -169,19 +168,17 @@ export interface ProcessDependencies {
   readonly client: HttpClient.HttpClient;
   readonly spawner: ChildProcessSpawnerService["Service"];
   readonly container: ContainerRuntime | undefined;
+  readonly readPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>;
+  readonly reserveNativePort: (
+    key: string,
+    claims: ReadonlyArray<State.StackClaims>,
+    excluded: ReadonlySet<number>,
+  ) => Effect.Effect<NativePortReservation, PortError, Scope.Scope>;
 }
 
 const serviceError = mapToServiceError;
 
 const describeProcessExit = (code: number) => `Process exited with ${code}`;
-
-const catalogError = (operation: string, message: string, service?: ServiceKind, cause?: unknown) =>
-  new CatalogError({
-    operation,
-    message,
-    ...(service === undefined ? {} : { service }),
-    ...(cause === undefined ? {} : { cause }),
-  });
 
 const processExit = (
   exitCode: Effect.Effect<number, { readonly message: string }>,
@@ -196,50 +193,6 @@ const runtimeFromNative = (process: NativeProcess): RuntimeSession => ({
   stop: process.kill.pipe(Effect.mapError((cause) => serviceError("stop", cause))),
   remove: Effect.void,
 });
-
-interface NativePortReservation {
-  readonly port: number;
-  readonly server: Net.Server;
-}
-
-const closeNativePort = (server: Net.Server): Effect.Effect<void> =>
-  Effect.callback<void, never>((resume) => {
-    if (!server.listening) {
-      resume(Effect.void);
-      return Effect.void;
-    }
-    server.close(() => resume(Effect.void));
-    return Effect.void;
-  });
-
-const reserveNativePort = Effect.fn("ProcessRecipe.reserveNativePort")(
-  (requested: number): Effect.Effect<NativePortReservation, CatalogError, Scope.Scope> =>
-    Effect.acquireRelease(
-      Effect.callback<NativePortReservation, CatalogError>((resume) => {
-        const server = Net.createServer((socket) => socket.destroy());
-        const onError = (cause: Error) =>
-          resume(
-            Effect.fail(
-              catalogError("launch", "Unable to reserve native service port", undefined, cause),
-            ),
-          );
-        server.once("error", onError);
-        server.listen({ host: "127.0.0.1", port: requested }, () => {
-          const address = server.address();
-          if (address === null || typeof address === "string") {
-            onError(new Error("Native service port reservation returned no address"));
-          } else {
-            resume(Effect.succeed({ port: address.port, server }));
-          }
-        });
-        return Effect.sync(() => {
-          server.off("error", onError);
-          if (server.listening) server.close();
-        });
-      }),
-      ({ server }) => closeNativePort(server),
-    ),
-);
 
 const startupTimeoutSeconds = 60;
 const nativeLaunchAttempts = 3;
@@ -488,13 +441,26 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           return yield* serviceError("launch", "Artifact was not prepared");
         if (artifactRoot === undefined)
           return yield* serviceError("launch", "Artifact root was not prepared");
+        const keyFor = (name: string) => `${options.instanceId}:${context.id}:${name}`;
+        // A port a prior attempt lost stays excluded so a retry advances instead of repeating it.
+        const excludedByKey = yield* Ref.make<ReadonlyMap<string, ReadonlySet<number>>>(new Map());
         const reserveEndpoints = Effect.fn("ProcessRecipe.reserveEndpoints")(function* (
           parent: Scope.Closeable,
         ) {
           const portScope = yield* Scope.fork(parent, "sequential");
-          const reservations = yield* Effect.forEach(portNames, () => reserveNativePort(0), {
-            concurrency: 1,
-          }).pipe(
+          const excluded = yield* Ref.get(excludedByKey);
+          // Read once and share across this batch; a later retry attempt re-reads it.
+          const claims = yield* deps.readPortClaims.pipe(
+            Effect.mapError((cause) => serviceError("launch", cause)),
+          );
+          const reservations = yield* Effect.forEach(
+            portNames,
+            ([name]) =>
+              deps.reserveNativePort(keyFor(name), claims, excluded.get(keyFor(name)) ?? new Set()),
+            // Each reservation holds its bound probe listener until the batch releases, so two
+            // endpoints never settle on the same port even when reserved concurrently.
+            { concurrency: "unbounded" },
+          ).pipe(
             Scope.provide(portScope),
             Effect.mapError((cause) => serviceError("launch", cause)),
           );
@@ -714,6 +680,15 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               (!(yield* Deferred.isDone(attempt.output.bindReady)) &&
                 (yield* anotherListenerHolds(attempt.selected))));
           if (!collided) return yield* settleFailure(failure);
+          yield* Ref.update(excludedByKey, (current) => {
+            const next = new Map(current);
+            for (const [name, endpoint] of attempt.selected) {
+              if (endpoint.kind !== "tcp") continue;
+              const key = keyFor(name);
+              next.set(key, new Set([...(next.get(key) ?? []), endpoint.port]));
+            }
+            return next;
+          });
           return yield* new NativePortCollision({
             failure: serviceError(
               "launch",

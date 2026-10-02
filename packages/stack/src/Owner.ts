@@ -333,16 +333,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (
   });
 
   const recipeFor = (creation: ServiceCreation, id: string) =>
-    makeServiceRecipe(creation, {
-      stackId,
-      instanceId: id,
-      project,
-      root: options.root,
-      cacheRoot: options.cacheRoot,
-      runtime,
-      helpers,
-      ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
-    }).pipe(Effect.provideContext(services));
+    makeServiceRecipe(
+      creation,
+      {
+        stackId,
+        instanceId: id,
+        project,
+        root: options.root,
+        cacheRoot: options.cacheRoot,
+        runtime,
+        helpers,
+        ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+      },
+      options.state.claims,
+    ).pipe(Effect.provideContext(services));
 
   const persistCreation = (
     entry: Pick<Entry, "id" | "creation">,

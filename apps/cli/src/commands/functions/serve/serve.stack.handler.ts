@@ -14,7 +14,7 @@ import { stackOpenReadyProject } from "../../../command-internal/stack-local-dat
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import type { FunctionsServeFlags } from "../../../shared/functions/serve.ts";
-import { logEvent, markerText } from "../../experimental/stack/logs/logs.format.ts";
+import { logEvent, markerText } from "../../../command-internal/stack-log-events.ts";
 import { FunctionsServeStackError } from "./serve.errors.ts";
 
 type Instance = Effect.Success<ReturnType<Stack["services"]["get"]>>;
