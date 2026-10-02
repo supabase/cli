@@ -279,6 +279,37 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
+  it.live("starts --since start at each instance's saved launch, even before it logged", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [
+          { ...mail("mail-a"), launchId: 3 },
+          { ...mail("mail-b"), launchId: 2 },
+        ],
+        members: ["mail-a", "mail-b"],
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 2),
+        line(t0 + 1, "stdout", "a previous launch", 2),
+      ]);
+      yield* f.writeSegment("mail", "mail-b", [
+        launch(t0 + 2, 1),
+        line(t0 + 3, "stdout", "b previous launch", 1),
+        launch(t0 + 4, 2),
+        line(t0 + 5, "stdout", "b current launch", 2),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(
+        output.events.map(({ instance_id, kind, line: text }) => [instance_id, kind ?? text]),
+      ).toEqual([
+        ["mail-b", "launch"],
+        ["mail-b", "b current launch"],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
   it.live("tails by record time when an older partial line was flushed last", () =>
     Effect.gen(function* () {
       const f = yield* fixture({ instances: [mail("mail-a")], members: ["mail-a"] });
@@ -506,6 +537,70 @@ describe("stack logs", () => {
       expect(output.events).toEqual([
         expect.objectContaining({ service: "gateway", line: request, source: "live" }),
       ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("keeps every owner run's gateway requests with --since start", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture({
+        instances: [{ ...mail("mail-a"), launchId: 2 }],
+        members: ["mail-a"],
+        ports: apiPort,
+      });
+      yield* f.writeSegment("mail", "mail-a", [
+        launch(t0, 1),
+        line(t0 + 1, "stdout", "mail old", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 11, "stdout", "mail new", 2),
+      ]);
+      yield* f.writeSegment("gateway", "gateway", [
+        launch(t0),
+        line(t0 + 2, "stdout", "first run request"),
+        launch(t0 + 10),
+        line(t0 + 12, "stdout", "second run request"),
+      ]);
+
+      const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
+
+      expect(eventLines(output.events)).toEqual([
+        "first run request",
+        "mail new",
+        "second run request",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(live)),
+  );
+
+  it.live("follows --since start without delayed records of an earlier launch", () =>
+    Effect.gen(function* () {
+      const record = (offset: number, launchId: number, text: string): LogRecord => ({
+        kind: "stdout",
+        timestamp: iso(t0 + offset),
+        launchId,
+        text,
+        position: { generation: 1, byteOffset: offset },
+      });
+      const f = yield* fixture({
+        instances: [{ ...mail("mail-a"), launchId: 3 }],
+        members: ["mail-a"],
+        running: true,
+        handles: () => [
+          followingMail("mail-a", () =>
+            Stream.make(
+              record(0, 3, "current launch"),
+              record(1, 2, "delayed earlier launch"),
+              record(2, 4, "newer launch"),
+            ),
+          ),
+        ],
+      });
+
+      const { exit, output } = yield* f.run(
+        { follow: true, since: Option.some("start") },
+        "stream-json",
+      );
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(eventLines(output.events)).toEqual(["current launch", "newer launch"]);
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 

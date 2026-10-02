@@ -119,7 +119,7 @@ const remaps: Record<ShippedService, (event: LogflareEvent) => LogflareEvent> = 
           status: Number(request[5]),
         },
       };
-    const match = /^(.*): (.*)$/u.exec(event.event_message);
+    const match = /^(.*?): (.*)$/u.exec(event.event_message);
     const timestamp = match === null ? undefined : parseLogTime(match[1] ?? "");
     return match === null || timestamp === undefined
       ? event

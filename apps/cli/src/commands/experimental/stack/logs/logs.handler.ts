@@ -21,6 +21,7 @@ import { StackCommandLogsError } from "./logs.errors.ts";
 import type { StackLogsFlags } from "./logs.command.ts";
 import {
   isAfter,
+  isFromLaunch,
   logEvent,
   makeHistoryCollector,
   makeTextFormatter,
@@ -43,19 +44,21 @@ type SavedInstance = SavedStack["instances"][number];
 interface Selected {
   readonly id: string;
   readonly service: string;
+  readonly launchId: number | undefined;
 }
 
 const select = (
   definition: SavedStack,
   requested: ReadonlyArray<string>,
 ): Effect.Effect<ReadonlyArray<Selected>, StackCommandLogsError> => {
-  const subject = ({ id, creation }: SavedInstance): Selected => ({
+  const subject = ({ id, creation, launchId }: SavedInstance): Selected => ({
     id,
     service: creation.service,
+    launchId,
   });
   // The owner records the shared API listener's requests once the stack has claimed its port.
   const gateway: ReadonlyArray<Selected> = definition.ports.some(({ key }) => key === "api")
-    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service }]
+    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service, launchId: undefined }]
     : [];
   if (requested.length === 0) {
     const members = new Set(definition.composition.members.map(({ id }) => id));
@@ -148,7 +151,16 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
     const sinceTime = since?.kind === "time" ? { since: since.iso } : {};
-    const collector = makeHistoryCollector(flags.tail, since?.kind === "start");
+    const collector = makeHistoryCollector(
+      flags.tail,
+      since?.kind === "start"
+        ? new Map(
+            selected.flatMap(({ id, launchId }) =>
+              launchId === undefined ? [] : [[id, launchId] as const],
+            ),
+          )
+        : undefined,
+    );
     if (flags.tail > 0)
       yield* streamStackLogs({
         stateRoot: locations.stateRoot,
@@ -159,7 +171,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
         Stream.mapError(logsError),
         Stream.runForEach((record) => Effect.sync(() => collector.push(record))),
       );
-    const { window, positions: printed } = collector.finish();
+    const { window, positions: printed, launches } = collector.finish();
 
     if (output.format === "json")
       return yield* output.result(window.records.map((record) => logEvent(record, "history")));
@@ -214,7 +226,9 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
           const start = flags.tail === 0 ? { tail: 0 } : from === undefined ? {} : { from };
           return [
             readLogs({ follow: true, ...start, ...sinceTime }).pipe(
-              Stream.filter((record) => isAfter(record, from)),
+              Stream.filter(
+                (record) => isAfter(record, from) && isFromLaunch(record, launches.get(id)),
+              ),
               Stream.map((record): StackLogRecord => ({ ...record, service, instanceId: id })),
             ),
           ];

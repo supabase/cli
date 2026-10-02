@@ -28,8 +28,10 @@ service configuration, artifacts, logs, or data are changed.
 `--tail N` (default 200, 0 prints none) keeps the newest N output lines across
 the selected services, with the `launch` and `lost` markers between them.
 `--since` accepts a duration before now (`30s`, `10m`, `1h30m`, `2d`), an
-ISO-8601 time, or `start`, which keeps the records of each instance's highest
-launch id, which keeps increasing across owner restarts (all of them when
+ISO-8601 time, or `start`, which keeps the records of each instance's current
+launch and later ones, in history and while following. The current launch is the
+launch id saved in the stack definition, which keeps increasing across owner
+restarts, or else the highest launch record in history (all records when
 retention removed that launch record). Records are
 ordered by timestamp, service, instance, and file position. Timestamps are the
 owner's clock at each line's first byte. Lines end at `\n`, `\r\n`, or a lone

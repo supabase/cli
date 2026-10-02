@@ -19,7 +19,7 @@ import type { CompositionConfig } from "../Orchestrator.ts";
 import type { ServiceObservation } from "../Service.ts";
 import type { ServiceCreation } from "../services/Catalog.ts";
 import type { CatalogError, ServiceEndpoint } from "../services/Recipe.ts";
-import { writeFileAtomically } from "../State.ts";
+import { reapStaleWrites, writeFileAtomically } from "../State.ts";
 import {
   isShippedService,
   logflareEvent,
@@ -90,8 +90,8 @@ const cursorFile = "cursor.json";
 const encoder = new TextEncoder();
 const decodeCursor = Schema.decodeUnknownEffect(Schema.fromJsonString(LogPosition));
 const encodeCursor = Schema.encodeEffect(Schema.fromJsonString(LogPosition));
-/** Delivery is idempotent per event id, so a body that did not settle is posted again. */
-const redeliverSchedule = Schedule.exponential("250 millis", 2).pipe(
+/** Delivery is idempotent per event id, so an unsettled body or a failed log read is retried. */
+const retrySchedule = Schedule.exponential("250 millis", 2).pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(10))),
   ),
@@ -312,7 +312,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
             ),
       ),
       Effect.retry({
-        schedule: redeliverSchedule,
+        schedule: retrySchedule,
         while: (error) => error._tag !== "StaleTarget" && !isBodyRejection(error),
       }),
       Effect.catch((error) =>
@@ -324,7 +324,12 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   });
 
   /** Ships one instance's records from its cursor until the target changes. */
-  const session = (instanceId: string, service: ShippedService, current: Target) =>
+  const session = (
+    instanceId: string,
+    service: ShippedService,
+    current: Target,
+    failing: Ref.Ref<boolean>,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
         const directory = yield* options.logs.directory(instanceId);
@@ -362,6 +367,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
               for (const { body, last } of bodies(pending)) {
                 yield* deliver(current, source, body);
                 yield* Ref.set(cursor, last.position);
+                yield* Ref.set(failing, false);
                 // Detaching waits for a started write instead of leaving files in the directory.
                 yield* writeCursor(directory, last.position).pipe(
                   Effect.catch((error) =>
@@ -391,15 +397,27 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
     Effect.gen(function* () {
       while (true) {
         const current = yield* serving;
-        // A stopped target pauses shipping; the cursor keeps the position to resume from.
-        const detached = yield* session(id, service, current).pipe(
-          Effect.as(true),
-          Effect.catch((error) =>
-            (error._tag === "StaleTarget"
+        const failing = yield* Ref.make(false);
+        // A stopped or refused target pauses shipping until it changes; a failed log read resumes
+        // from the cursor after a backoff.
+        const detached = yield* session(id, service, current, failing).pipe(
+          Effect.tapError((error) =>
+            error._tag === "StaleTarget"
               ? Effect.void
-              : Effect.logWarning(`Log shipping of ${id} paused`, error)
-            ).pipe(Effect.andThen(retargeted(current)), Effect.as(false)),
+              : Ref.getAndSet(failing, true).pipe(
+                  Effect.flatMap((already) =>
+                    already
+                      ? Effect.void
+                      : Effect.logWarning(`Reading ${id} logs to ship failed; retrying`, error),
+                  ),
+                ),
           ),
+          Effect.retry({
+            schedule: retrySchedule,
+            while: (error) => error._tag !== "StaleTarget",
+          }),
+          Effect.as(true),
+          Effect.catch(() => retargeted(current).pipe(Effect.as(false))),
           Effect.raceFirst(retargeted(current).pipe(Effect.as(false))),
         );
         if (detached) return yield* Effect.logDebug(`Log shipping of ${id} stopped with its logs`);
@@ -412,7 +430,12 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
   ) {
     if (instance.service === "analytics")
       yield* FiberMap.run(followers, instance.id, trackTarget(instance));
-    else if (isShippedService(instance.service))
+    else if (isShippedService(instance.service)) {
+      // A cursor write cut short by a crash leaves its temporary directory behind.
+      yield* options.logs.directory(instance.id).pipe(
+        Effect.flatMap((directory) => reapStaleWrites(fs, path, directory)),
+        Effect.ignore,
+      );
       yield* FiberMap.run(
         followers,
         instance.id,
@@ -422,6 +445,7 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           "observation" in instance ? unregistered(instance) : Effect.never,
         ),
       );
+    }
   });
 
   return {

@@ -48,7 +48,14 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
       if (saved === undefined) return true;
       const dataRoot = path.join(yield* fs.realPath(options.stateRoot), id, "data");
       yield* Owner.sweepContainers(saved, dataRoot);
-      yield* state.migrate(id);
+      // Reading drops saved Vector instances, so destroying does not depend on the migration.
+      yield* state
+        .migrate(id)
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`Unable to migrate the saved state of stack ${id}`, error),
+          ),
+        );
       if (saved.lifetime === "session")
         yield* destroyStack(state, saved, dataRoot, options.cacheRoot);
       return true;

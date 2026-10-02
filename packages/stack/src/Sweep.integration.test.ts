@@ -11,12 +11,14 @@ import {
   Layer,
   Option,
   Path,
+  Schema,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import * as State from "./State.ts";
+import { reclaimStack } from "./Sweep.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
@@ -207,4 +209,40 @@ it.live.skipIf(process.platform === "win32")(
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
+);
+
+it.live("destroys a dead session stack whose saved Vector instance fails to migrate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-migrate-" });
+      const real = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+      const state: State.Interface = {
+        ...real,
+        migrate: () =>
+          Effect.fail(new State.StateError({ operation: "lock", message: "registry is busy" })),
+      };
+      const id = "session-vector";
+      yield* fs.makeDirectory(path.join(stateRoot, id), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(stateRoot, id, "state.json"),
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+          ...saved(id, path.join(stateRoot, "project"), "native", "session"),
+          instances: [{ id: "vector", creation: { service: "vector", config: {} } }],
+          composition: { members: [{ id: "vector", activation: "eager" }], dependencies: [] },
+        }),
+      );
+
+      const reclaimed = yield* reclaimStack({
+        state,
+        stateRoot,
+        cacheRoot: path.join(stateRoot, "cache"),
+        id,
+      });
+
+      expect(reclaimed).toBe(true);
+      expect(yield* real.read(id)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

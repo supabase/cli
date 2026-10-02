@@ -679,7 +679,9 @@ direct backend (never the proxy, so shipping neither wakes it nor counts as acti
 at most 256 events and 1 MiB. Each instance reads from `cursor.json` in its logs directory, the
 position of its last shipped record, written atomically after each body settles: a missing cursor
 or unreadable cursor starts at the oldest retained segment, and a cursor in a deleted segment
-resumes at the next retained one. Bodies of an instance are sequential. Event ids
+resumes at the next retained one. A failed log read restarts the instance from its cursor after a
+capped backoff, and attaching an instance removes temporary cursor writes a dead owner left behind.
+Bodies of an instance are sequential. Event ids
 derive from the instance and record position, and Logflare keeps the first row per id, so a failed
 body is posted again until it settles or the target changes. A 401, 403 or 404 response pauses the
 instance with its cursor until the target changes; any other 4xx except 408 and 429 skips the body. The target is re-selected when the composition or Analytics' health changes.
