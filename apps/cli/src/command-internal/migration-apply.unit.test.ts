@@ -15,6 +15,7 @@ import { DbConnectError } from "./db-connection.errors.ts";
 import type { DbBatchStatement, DbSession } from "./db-connection.service.ts";
 import {
   applyMigrationFile,
+  applyMigrations,
   applySchemaFiles,
   hasTransactionControl,
   isPipelineIncompatible,
@@ -870,6 +871,8 @@ describe("hasTransactionControl", () => {
       "START TRANSACTION ISOLATION LEVEL SERIALIZABLE",
       "BEGIN/* authored */",
       "COMMIT-- authored",
+      "COMMIT AND CHAIN",
+      "ROLLBACK PREPARED 'prepared'",
       "START/* scoped */TRANSACTION",
       "PREPARE\f/* scoped */TRANSACTION 'prepared'",
     ]) {
@@ -878,6 +881,7 @@ describe("hasTransactionControl", () => {
     expect(
       hasTransactionControl("CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql"),
     ).toBe(false);
+    expect(hasTransactionControl("PREPARE statement AS SELECT 1")).toBe(false);
   });
 
   it("distinguishes transaction rollback from savepoint rollback", () => {
@@ -1160,6 +1164,84 @@ describe("seedGlobals", () => {
     );
   });
 });
+
+for (const runner of ["migrations", "globals", "schema"] as const) {
+  for (const [name, openingSql, warningFile] of [
+    ["open transaction", "BEGIN;", undefined],
+    ["warning before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN;", "open.sql"],
+    ["closed transaction", "BEGIN; COMMIT;", "close.sql"],
+  ] as const) {
+    it.effect(`tracks authored scope across ${runner} files with ${name}`, () => {
+      const dir = mkdtempSync(join(tmpdir(), "cross-file-scope-"));
+      const opening = join(dir, "20240101000000_open.sql");
+      const middle = join(dir, "20240102000000_middle.sql");
+      const empty = join(dir, "20240103000000_empty.sql");
+      const closing = join(dir, "20240104000000_close.sql");
+      writeFileSync(opening, openingSql);
+      writeFileSync(middle, "SELECT 42;");
+      writeFileSync(empty, "");
+      writeFileSync(closing, "SET LOCAL lock_timeout = '1s'; SELECT 1; COMMIT;");
+      const { session, calls } = fakeSession();
+      const out = mockOutput();
+      const mapError = (message: string) => new TestError({ message });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        if (runner === "migrations") {
+          yield* applyMigrations(session, fs, path, [opening, middle, empty, closing], mapError);
+        } else if (runner === "globals") {
+          yield* seedGlobals(session, fs, path, [opening, middle, empty, closing], mapError);
+        } else {
+          yield* applySchemaFiles(session, fs, path, dir, ["*.sql"], mapError);
+        }
+        const warnings = out.rawChunks.filter((chunk) => chunk.text.includes("uses SET LOCAL"));
+        expect(warnings).toHaveLength(warningFile === undefined ? 0 : 1);
+        if (warningFile !== undefined) expect(warnings[0]?.text).toContain(warningFile);
+        expect(executedSql(calls)).toContain("SELECT 42");
+        expect(executedSql(calls)).toContain("SELECT 1");
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+        Effect.provide(BunServices.layer),
+        Effect.provide(out.layer),
+      );
+    });
+  }
+}
+
+for (const fileKind of ["globals", "schema"] as const) {
+  it.effect(`uses SQL-file guidance when splitting a ${fileKind} file`, () => {
+    const dir = mkdtempSync(join(tmpdir(), "sql-file-guidance-"));
+    const file = join(dir, "schema.sql");
+    writeFileSync(file, "VACUUM;");
+    const { session, calls } = fakeSession();
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (fileKind === "globals") {
+        yield* seedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      } else {
+        yield* applySchemaFiles(
+          session,
+          fs,
+          path,
+          dir,
+          ["schema.sql"],
+          (message) => new TestError({ message }),
+        );
+      }
+      expect(out.stderrText).toContain("this SQL file");
+      expect(out.stderrText).toContain("-- pg-delta: transaction=false");
+      expect(out.stderrText).not.toContain("migration file");
+      expect(out.stderrText).not.toContain("Migration history");
+      expect(executedSql(calls)).toContain("VACUUM");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+      Effect.provide(BunServices.layer),
+      Effect.provide(out.layer),
+    );
+  });
+}
 
 describe("applySchemaFiles", () => {
   it.effect(

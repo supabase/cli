@@ -78,10 +78,17 @@ export const migrateAndSeed = (
       const pending = yield* loadPartialMigrations(fs, path, migrationsDir, version).pipe(
         Effect.mapError((cause) => new MigrationApplyError({ message: cause.message })),
       );
+      const transactionScope = { inAuthoredTransaction: false };
       for (const migrationPath of pending) {
         yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-        yield* applyMigrationFile(session, fs, path, migrationPath, (message, dbError) =>
-          migrationApplyError(message, dbError, config.localDatabaseWebhooksEnabled),
+        yield* applyMigrationFile(
+          session,
+          fs,
+          path,
+          migrationPath,
+          (message, dbError) =>
+            migrationApplyError(message, dbError, config.localDatabaseWebhooksEnabled),
+          transactionScope,
         );
       }
     }

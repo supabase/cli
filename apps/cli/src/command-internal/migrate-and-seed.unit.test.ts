@@ -112,6 +112,45 @@ const run = (
     return yield* migrateAndSeed(session, fs, path, workdir, version, config);
   }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
 
+describe("migrateAndSeed migration transaction scope", () => {
+  for (const [name, openingSql, warningFile] of [
+    ["open transaction", "BEGIN;", undefined],
+    ["warning before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN;", "open.sql"],
+    ["closed transaction", "BEGIN; COMMIT;", "close.sql"],
+  ] as const) {
+    it.effect(`tracks authored scope across migration files with ${name}`, () => {
+      const workdir = makeWorkdir();
+      writeFile(workdir, "supabase/migrations/20240101000000_open.sql", openingSql);
+      writeFile(workdir, "supabase/migrations/20240102000000_middle.sql", "SELECT 42;");
+      writeFile(workdir, "supabase/migrations/20240103000000_empty.sql", "");
+      writeFile(
+        workdir,
+        "supabase/migrations/20240104000000_close.sql",
+        "SET LOCAL lock_timeout = '1s'; SELECT 1; COMMIT;",
+      );
+      const { session, execs } = fakeSession();
+      const out = mockOutput();
+      const provisionedSession: DbSession = {
+        ...session,
+        query: (sql) =>
+          Effect.succeed(sql.includes(" AS provisioned FROM") ? [{ provisioned: true }] : []),
+      };
+      return run(workdir, "", baseConfig, provisionedSession, out).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const warnings = out.rawChunks.filter((chunk) => chunk.text.includes("uses SET LOCAL"));
+            expect(warnings).toHaveLength(warningFile === undefined ? 0 : 1);
+            if (warningFile !== undefined) expect(warnings[0]?.text).toContain(warningFile);
+            expect(execs).toContain("SELECT 42");
+            expect(execs).toContain("SELECT 1");
+          }),
+        ),
+        Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
+      );
+    });
+  }
+});
+
 describe("migrateAndSeed experimental declarative-schema branch", () => {
   it.effect(
     "applies schema_paths files instead of migrations when experimental is on, pg-delta is off, and version is empty",

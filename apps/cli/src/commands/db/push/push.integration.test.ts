@@ -413,6 +413,7 @@ describe("db push", () => {
         expect(warnings[0]).toContain("20240101000000_test.sql");
         expect(warnings[0]).toContain("partially applied");
         expect(warnings[0]).toContain("Migration history is recorded only after full success");
+        expect(warnings[0]).toContain("their own migration file");
         expect(warnings[0]).toContain("-- pg-delta: transaction=false");
         expect(out.stdoutText).not.toContain("Warning:");
         expect(conn.execs).toContain("CREATE INDEX CONCURRENTLY first_idx ON t(id)");
@@ -456,6 +457,41 @@ describe("db push", () => {
     [
       "comment-separated transaction keywords",
       "START/* scoped */TRANSACTION; SET LOCAL lock_timeout = '1s'; COMMIT/* authored */;",
+      false,
+    ],
+    ["SET LOCAL before BEGIN", "SET LOCAL lock_timeout = '1s'; BEGIN; SELECT 1; COMMIT;", true],
+    ["SET LOCAL after COMMIT", "BEGIN; SELECT 1; COMMIT; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after ROLLBACK", "BEGIN; SELECT 1; ROLLBACK; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after END", "BEGIN; SELECT 1; END; SET LOCAL lock_timeout = '1s';", true],
+    ["SET LOCAL after ABORT", "BEGIN; SELECT 1; ABORT; SET LOCAL lock_timeout = '1s';", true],
+    [
+      "SET LOCAL after PREPARE TRANSACTION",
+      "BEGIN; SELECT 1; PREPARE TRANSACTION 'test'; SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "chained transaction",
+      "BEGIN; COMMIT/* boundary */WORK AND/* option */CHAIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "chained rollback",
+      "BEGIN; ROLLBACK TRANSACTION AND CHAIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "unchained transaction",
+      "BEGIN; COMMIT WORK AND NO CHAIN; SET LOCAL lock_timeout = '1s';",
+      true,
+    ],
+    [
+      "savepoint rollback",
+      "BEGIN; SAVEPOINT point; ROLLBACK WORK TO SAVEPOINT point; SET LOCAL lock_timeout = '1s'; COMMIT;",
+      false,
+    ],
+    [
+      "directive with an authored transaction",
+      "-- pg-delta: transaction=false\nBEGIN; SET LOCAL lock_timeout = '1s'; COMMIT;",
       false,
     ],
     [

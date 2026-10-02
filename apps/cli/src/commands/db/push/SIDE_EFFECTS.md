@@ -125,11 +125,13 @@ stdout is payload-only. A single `result` object is emitted:
 - **Migration transaction guidance**: the per-file pipeline does not add `BEGIN` or
   `COMMIT`. A SQLSTATE 25P01 failure retains its statement context and recommends
   authored `BEGIN; ... COMMIT;` around statements such as `LOCK TABLE`. A top-level
-  `SET LOCAL` without authored transaction control emits one warning per file that
+  `SET LOCAL` outside an authored transaction block emits one warning per file that
   its setting may have no effect. Authored transaction controls execute as written.
 - Automatic splitting of pipeline-incompatible statements still applies, with one
   warning per file explaining possible partial application and recommending a
-  separate migration file starting with `-- pg-delta: transaction=false`. SQLSTATE
+  separate migration file starting with `-- pg-delta: transaction=false`. For
+  globals and schema files without migration history, the warning recommends
+  starting the current SQL file with that directive. SQLSTATE
   25001 failures recommend that directive without an authored transaction block.
   The directive matches the exact first line, allowing a UTF-8 BOM and LF/CRLF;
   marked files execute one statement at a time and record history only after full
