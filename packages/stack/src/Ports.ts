@@ -2,9 +2,9 @@ import { Cause, Crypto, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import * as Net from "node:net";
 import type * as State from "./State.ts";
 
-const portBase = 20000;
+export const portBase = 20000;
 /** Stays below the Linux ephemeral range, per the [architecture ADR](../../../docs/adr/0017-simplified-managed-stack-architecture.md). */
-const portSpan = 12768;
+export const portSpan = 12768;
 /** Co-prime with the span, so the scan visits every port once and steps past reserved ranges. */
 const portStride = 257;
 

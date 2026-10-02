@@ -1,4 +1,4 @@
-import { NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
+import { NodeCrypto, NodeHttpClient, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -25,10 +25,14 @@ import * as Functions from "./Functions.ts";
 
 // No saved stacks to consult; this test never launches the native backend it configures.
 const testReadPortClaims = Effect.succeed([]);
-const testReserveNativePort =
-  (crypto: Crypto.Crypto) =>
-  (key: string, claims: ReadonlyArray<State.StackClaims>, excluded: ReadonlySet<number>) =>
-    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded);
+const testReserveNativePort = (
+  key: string,
+  claims: ReadonlyArray<State.StackClaims>,
+  excluded: ReadonlySet<number>,
+) =>
+  Effect.flatMap(Crypto.Crypto, (crypto) =>
+    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+  ).pipe(Effect.provide(NodeCrypto.layer));
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -550,7 +554,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           },
         },
       };
-      const crypto = yield* Crypto.Crypto;
       const recipe = yield* Functions.makeRecipe(
         creation,
         {
@@ -563,12 +566,12 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         {
           fs: yield* FileSystem.FileSystem,
           path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
-          crypto,
+          crypto: yield* Crypto.Crypto,
           client: yield* HttpClient.HttpClient,
           spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
           container,
           readPortClaims: testReadPortClaims,
-          reserveNativePort: testReserveNativePort(crypto),
+          reserveNativePort: testReserveNativePort,
         },
       );
       const scope = yield* Scope.make();
