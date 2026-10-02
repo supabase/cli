@@ -237,7 +237,8 @@ const localTime = (iso: string) =>
     },
   });
 
-const markerText = (record: LogRecord) => {
+/** The text of a launch or lost marker, as `stack logs` prints it. */
+export const markerText = (record: LogRecord) => {
   if (record.kind === "launch")
     return record.launchId === undefined ? "--- launch ---" : `--- launch ${record.launchId} ---`;
   if (record.count === undefined) return "--- older records were removed by retention ---";
