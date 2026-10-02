@@ -111,6 +111,10 @@ const runExec = (
 ): Effect.Effect<string, DirectoryCopyError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
+      yield* Effect.annotateCurrentSpan({
+        "process.executable.name": command,
+        "process.arg_count": args.length,
+      });
       const child = yield* ChildProcess.make(command, [...args], {
         stdin: "ignore",
         stdout: "pipe",
@@ -125,12 +129,13 @@ const runExec = (
         { concurrency: 3 },
       ).pipe(Effect.mapError((cause) => errorFor(operation, source, destination, cause)));
       const status = Number(exitCode);
+      yield* Effect.annotateCurrentSpan("process.exit_code", status);
       if (status !== 0 && !acceptStatus(status)) {
         return yield* errorFor(operation, source, destination, new Error(stderr));
       }
       return text;
     }),
-  );
+  ).pipe(Effect.withSpan("DirectoryCopy.exec"));
 
 const findUnsupportedEntry = (
   source: string,

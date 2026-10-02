@@ -84,7 +84,7 @@ export interface DbPushCoreInput {
   readonly emitStructuredResult: boolean;
 }
 
-export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
+export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreInput) {
   const output = yield* Output;
   const dbConn = yield* DbConnection;
   const fs = yield* FileSystem.FileSystem;
@@ -183,6 +183,14 @@ export const dbPushCore = Effect.fnUntraced(function* (input: DbPushCoreInput) {
         );
         if (exists) globals.push(CUSTOM_ROLES_PATH);
       }
+
+      yield* Effect.annotateCurrentSpan({
+        "db.is_local": isLocal,
+        "db.push.dry_run": dryRun,
+        "migration.count": pending.length,
+        "seed.count": seeds.length,
+        "role_file.count": globals.length,
+      });
 
       if (pending.length === 0 && seeds.length === 0 && globals.length === 0) {
         if (output.format === "text") {

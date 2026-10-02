@@ -66,7 +66,7 @@ function applyFunctionOverride(
   };
 }
 
-export const inferFunctionsManifest = Effect.fnUntraced(function* (
+export const inferFunctionsManifest = Effect.fn("FunctionsManifest.infer")(function* (
   options: InferFunctionsManifestOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;

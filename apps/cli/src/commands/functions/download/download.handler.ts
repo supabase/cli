@@ -73,6 +73,7 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
     if (flags.legacyBundle) {
       return;
     }
+    yield* Effect.annotateCurrentSpan("function.count", result.slugs.length);
 
     if (result.empty) {
       if (output.format === "text") {
@@ -105,7 +106,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
       Effect.suspend(() =>
         Option.match(resolvedProjectRef, {
           onNone: () => Effect.void,
-          onSome: (ref) => linkedProjectCache.cache(ref),
+          onSome: (ref) =>
+            Effect.annotateCurrentSpan("project.ref", ref).pipe(
+              Effect.andThen(linkedProjectCache.cache(ref)),
+            ),
         }),
       ),
     ),

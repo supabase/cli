@@ -1,3 +1,4 @@
+import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
   Crypto,
@@ -295,6 +296,11 @@ export const makeContainerRuntime = (options: {
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
     ) {
+      yield* Effect.annotateCurrentSpan({
+        "process.executable.name": options.engine,
+        "process.arg_count": args.length,
+        "container.command": args[0] ?? "",
+      });
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const child = yield* spawner.spawn(command(args));
@@ -310,6 +316,7 @@ export const makeContainerRuntime = (options: {
             [tail(child.stdout), tail(child.stderr), child.exitCode],
             { concurrency: "unbounded" },
           );
+          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
           if (Number(code) !== 0)
             return yield* errorFor(
               args[0] ?? "command",
@@ -470,6 +477,11 @@ export const makeContainerRuntime = (options: {
     ) {
       const owner = yield* Scope.Scope;
       const image = (yield* Ref.get(mirrored)).get(spec.image) ?? spec.image;
+      yield* Effect.annotateCurrentSpan({
+        "image.name": image,
+        ...(spec.service === undefined ? {} : { "container.service": spec.service }),
+        "container.ports": spec.ports ?? [],
+      });
       for (const [key, value] of Object.entries(spec.env)) {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) || /[\0\r\n]/u.test(value)) {
           return yield* errorFor(
@@ -604,30 +616,36 @@ export const makeContainerRuntime = (options: {
           const reconcileAbsent = Effect.fn("Container.reconcileAbsent")(function* (
             failure: ContainerError,
           ) {
-            const probe = run(
-              [
-                "ps",
-                "--all",
-                "--no-trunc",
-                "--filter",
-                // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
-                `name=^/?${name.replaceAll(".", "\\.")}$`,
-                "--format",
-                "{{.State}}",
-              ],
-              { timeout: "5 seconds" },
-            ).pipe(
-              Effect.map((output) =>
-                output === ""
-                  ? ("absent" as const)
-                  : output === "removing"
-                    ? "removing"
-                    : "present",
+            const probe = withAttemptCount(
+              run(
+                [
+                  "ps",
+                  "--all",
+                  "--no-trunc",
+                  "--filter",
+                  // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+                  `name=^/?${name.replaceAll(".", "\\.")}$`,
+                  "--format",
+                  "{{.State}}",
+                ],
+                { timeout: "5 seconds" },
+              ).pipe(
+                Effect.map((output) =>
+                  output === ""
+                    ? ("absent" as const)
+                    : output === "removing"
+                      ? "removing"
+                      : "present",
+                ),
               ),
-              Effect.repeat({
-                schedule: Schedule.spaced("250 millis"),
-                while: (state) => state === "removing",
-              }),
+              (counted) =>
+                counted.pipe(
+                  Effect.repeat({
+                    schedule: Schedule.spaced("250 millis"),
+                    while: (state) => state === "removing",
+                  }),
+                ),
+            ).pipe(
               Effect.timeout("10 seconds"),
               Effect.mapError((error) =>
                 error instanceof ContainerError ? error : errorFor("cleanup", error),

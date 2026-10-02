@@ -36,7 +36,9 @@ export interface MigrationFetchOutcome {
   readonly files: ReadonlyArray<string>;
 }
 
-export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFetchInput) {
+export const runMigrationFetch = Effect.fn("MigrationFetch.run")(function* (
+  input: MigrationFetchInput,
+) {
   const { flags, target, assumeYes } = input;
   const output = yield* Output;
   const resolver = yield* DbConfigResolver;
@@ -56,6 +58,7 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
   }
 
   const connType = target.connType ?? "linked"; // fetch defaults to `--linked`.
+  yield* Effect.annotateCurrentSpan("db.conn_type", connType);
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target — see push.handler.ts's identical guard
@@ -178,6 +181,7 @@ export const runMigrationFetch = Effect.fnUntraced(function* (input: MigrationFe
       );
       written.push(filePath);
     }
+    yield* Effect.annotateCurrentSpan("migration.count", written.length);
 
     return { files: written } satisfies MigrationFetchOutcome;
   });

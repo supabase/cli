@@ -358,7 +358,7 @@ const fetchText = Effect.fnUntraced(function* (
   return yield* response.text;
 });
 
-const fetchPostgrestVersion = Effect.fnUntraced(function* (
+const fetchPostgrestVersion = Effect.fn("Services.fetchPostgrestVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
@@ -380,10 +380,12 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
     return yield* new ServiceVersionNotFoundError({ service: "postgrest" });
   }
 
-  return tagForServiceVersion("postgrest", normalized);
+  const tag = tagForServiceVersion("postgrest", normalized);
+  yield* Effect.annotateCurrentSpan({ "service.version": tag });
+  return tag;
 });
 
-const fetchAuthVersion = Effect.fnUntraced(function* (
+const fetchAuthVersion = Effect.fn("Services.fetchAuthVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
@@ -395,10 +397,11 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
     return yield* new ServiceVersionNotFoundError({ service: "auth" });
   }
 
+  yield* Effect.annotateCurrentSpan({ "service.version": version });
   return version;
 });
 
-const fetchStorageVersion = Effect.fnUntraced(function* (
+const fetchStorageVersion = Effect.fn("Services.fetchStorageVersion")(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
   accessKey: Redacted.Redacted<string>,
@@ -408,7 +411,9 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
     return yield* new ServiceVersionNotFoundError({ service: "storage" });
   }
 
-  return tagForServiceVersion("storage", version);
+  const tag = tagForServiceVersion("storage", version);
+  yield* Effect.annotateCurrentSpan({ "service.version": tag });
+  return tag;
 });
 
 const fetchOptionalVersion = <E>(
@@ -420,7 +425,9 @@ const fetchOptionalVersion = <E>(
     Effect.map((exit) => ({ service, exit }) as const),
   );
 
-const makeConfiguredApiClient = Effect.fnUntraced(function* (input: ServiceFetchConfig) {
+const makeConfiguredApiClient = Effect.fn("Services.buildApiClient")(function* (
+  input: ServiceFetchConfig,
+) {
   return (
     input.api ??
     (yield* makeApiClient({
@@ -556,5 +563,9 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
       return versions;
     }).pipe(Effect.exit);
     return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
-  });
+  }).pipe(
+    Effect.withSpan("Services.fetchLinkedVersions", {
+      attributes: { "project.ref": input.projectRef },
+    }),
+  );
 }

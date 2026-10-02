@@ -118,6 +118,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
 
   // Abort on a bad config before wiping the local database.
   yield* checkDbToml(fs, path, workdir);
+  yield* Effect.annotateCurrentSpan("stack.backend", backend.kind);
 
   if (backend.kind === "stack") {
     const opened = yield* stackOpenReadyProject;
@@ -156,18 +157,20 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         )
       : catalogDatabaseServices(members);
     yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");
-    yield* opened.value.stack.composition.stop.pipe(
-      Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),
-    );
-    yield* opened.value.database.resetData.pipe(
-      Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
-    );
-    yield* opened.value.database.start.pipe(
-      Effect.mapError((cause) => resetFailed(`failed to start local database: ${cause.message}`)),
-    );
-    yield* opened.value.database.ready.pipe(
-      Effect.mapError((cause) => resetFailed(`failed to ready local database: ${cause.message}`)),
-    );
+    yield* Effect.gen(function* () {
+      yield* opened.value.stack.composition.stop.pipe(
+        Effect.mapError((cause) => resetFailed(`failed to stop local stack: ${cause.message}`)),
+      );
+      yield* opened.value.database.resetData.pipe(
+        Effect.mapError((cause) => resetFailed(`failed to reset local database: ${cause.message}`)),
+      );
+      yield* opened.value.database.start.pipe(
+        Effect.mapError((cause) => resetFailed(`failed to start local database: ${cause.message}`)),
+      );
+      yield* opened.value.database.ready.pipe(
+        Effect.mapError((cause) => resetFailed(`failed to ready local database: ${cause.message}`)),
+      );
+    }).pipe(Effect.withSpan("DbBootstrap.resetStackDatabase"));
     yield* initializeStackDatabase({
       target: {
         stack: opened.value.stack,
@@ -237,7 +240,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         projectEnvValues: projectEnv,
         workdir,
       });
-    }).pipe(Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))));
+    }).pipe(
+      Effect.catch((error) => skipSeeding(error.message, suggestionOf(error))),
+      Effect.withSpan("DbBootstrap.seedStorageBuckets"),
+    );
     const branch = yield* detectGitBranch(workdir);
     yield* output.raw(
       `Finished ${aqua("supabase db reset")}${branchClause(branch, aqua)}.\n`,
@@ -312,8 +318,10 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
 
   // Seed objects from supabase/buckets when storage is up; summary is suppressed since reset
   // emits its own result. See docs/stack-commands.md#storage-and-bucket-seeding.
-  const storageReady = yield* awaitStorageReady(spawner, projectId);
-  if (storageReady) {
+  yield* Effect.gen(function* () {
+    const storageReady = yield* awaitStorageReady(spawner, projectId);
+    yield* Effect.annotateCurrentSpan("storage.ready", storageReady);
+    if (!storageReady) return;
     // Non-interactive: overwrite/prune confirmations never open a TTY prompt. In text mode
     // each still prints its label and scans one stdin line (bounded) — a parsed y/n answer
     // wins, otherwise its default applies (overwrite → yes, prune → no); machine formats take
@@ -343,7 +351,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         ),
       ),
     );
-  }
+  }).pipe(Effect.withSpan("DbBootstrap.seedStorageBuckets"));
 
   const branch = yield* detectGitBranch(workdir);
   yield* output.raw(

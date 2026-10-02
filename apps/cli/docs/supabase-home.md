@@ -53,7 +53,6 @@ Managed stack documents and runtime artifacts are shared through the global CLI 
 <SUPABASE_HOME>/
   access-token
   telemetry.json
-  traces/
   bin/
   stacks/
     <stack-id>/

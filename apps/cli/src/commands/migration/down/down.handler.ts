@@ -117,6 +117,11 @@ const runDown = Effect.fnUntraced(function* (
 
         const version = remote[total - flags.last - 1]!;
         yield* output.raw(`Resetting database to version: ${version}\n`, "stderr");
+        yield* Effect.annotateCurrentSpan({
+          "db.is_local": cfg.isLocal,
+          "migration.version": version,
+          "migration.last": flags.last,
+        });
         yield* dropUserSchemas(session);
         yield* upsertVaultSecrets(session, toml.vault);
         yield* migrateAndSeed(session, fs, path, cliSettings.workdir, version, {

@@ -58,12 +58,16 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
     const remotePath = yield* parseStorageUrlEffect(Option.getOrElse(flags.path, () => "ss:///"));
 
     const paths: Array<string> = [];
+    let count = 0;
     const callback = (objectPath: string) =>
-      output.format === "text"
-        ? output.raw(`${objectPath}\n`, "stdout")
-        : Effect.sync(() => {
-            paths.push(objectPath);
-          });
+      Effect.suspend(() => {
+        count++;
+        return output.format === "text"
+          ? output.raw(`${objectPath}\n`, "stdout")
+          : Effect.sync(() => {
+              paths.push(objectPath);
+            });
+      });
 
     yield* connectStorageGateway(
       { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
@@ -72,6 +76,8 @@ export const storageLs = Effect.fn("storage.ls")(function* (flags: StorageLsFlag
           ? iterateStoragePathsAll(gateway, output, remotePath, callback)
           : iterateStoragePaths(gateway, output, remotePath, callback),
     );
+
+    yield* Effect.annotateCurrentSpan({ "file.count": count });
 
     if (output.format !== "text") {
       yield* output.success("", { paths });

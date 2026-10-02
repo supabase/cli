@@ -142,6 +142,10 @@ export const startDatabase = <E>(
     // guard below is about to reject.
     const isFreshVolume = !(yield* volumeExists(spawner, input.dbContainerId));
     const fromBackup = input.postgresSpec.fromBackup;
+    yield* Effect.annotateCurrentSpan({
+      "db.fresh_volume": isFreshVolume,
+      "db.from_backup": fromBackup !== undefined,
+    });
 
     if (!isFreshVolume && fromBackup !== undefined) {
       // Refused before any container or network is created, and before freshness is published,
@@ -226,4 +230,8 @@ export const startDatabase = <E>(
     // Reached on every path that doesn't already return or fail above: a fresh volume, a
     // non-fresh restart, and a swallowed `fromBackup` health-check timeout.
     yield* startInitCurrentBranch(input.fs, input.path, input.workdir);
-  });
+  }).pipe(
+    Effect.withSpan("DbBootstrap.startDatabase", {
+      attributes: { "db.major_version": input.setup.majorVersion },
+    }),
+  );

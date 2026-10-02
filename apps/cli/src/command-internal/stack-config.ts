@@ -956,6 +956,7 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
               yield* resolveRemoteJwks(issuer).pipe(
                 Effect.provide(FetchHttpClient.layer),
                 Effect.mapError((cause) => new StackConfigError({ message: cause.message })),
+                Effect.withSpan("StackConfig.fetchRemoteJwks"),
               ),
             );
       });

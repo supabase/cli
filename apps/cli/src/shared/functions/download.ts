@@ -881,7 +881,7 @@ function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: st
 // `deno_version = 1` pins the older `DENO1_EDGE_RUNTIME_VERSION`; anything
 // else (including unset) uses the project's configured/default tag.
 // Resolved once per invocation by the caller, not once per slug.
-const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+const resolveEdgeRuntimeImage = Effect.fn("functions.download.resolveEdgeRuntimeImage")(function* (
   dependencies: EdgeRuntimeImageDependencies,
   projectRef: string,
 ) {
@@ -927,7 +927,7 @@ interface PulledEdgeRuntimeImage extends EdgeRuntimeImage {
 // Downloads the function body as an eszip, writes it to a temp file, then
 // runs the edge-runtime image's `unbundle` subcommand against it, mounting
 // the shared `supabase/functions` directory (not the slug's own subdirectory).
-const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
+const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle")(function* (
   dependencies: DownloadDockerRuntimeDependencies,
   edgeRuntimeImage: PulledEdgeRuntimeImage,
   projectRef: string,
@@ -1064,7 +1064,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   return yield* extract.pipe(Effect.ensuring(cleanupEszip));
 });
 
-const downloadSingle = Effect.fnUntraced(function* (
+const downloadSingle = Effect.fn("functions.download.single")(function* (
   dependencies: DownloadRuntimeDependencies,
   projectRef: string,
   slug: string,
@@ -1251,6 +1251,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     if (output.format === "text" && Option.isNone(flags.functionName)) {
       yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
     }
+    yield* Effect.annotateCurrentSpan({ "function.count": slugs.length });
 
     // Resolved once for the whole invocation, not once per slug — see
     // `PulledEdgeRuntimeImage`'s own doc comment. The `--legacy-bundle`
@@ -1294,11 +1295,14 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
           downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));
         }
         downloadedPaths.push(resolve(dependencies.projectRoot, "supabase", "functions", slug));
-      }).pipe(Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)));
+      }).pipe(
+        Effect.mapError((error) => attachDownloadWrittenSoFar(error, downloadedPaths)),
+        Effect.withSpan("functions.download.function"),
+      );
     }
 
     // The standalone `functionsDownload` handler emits the final summary;
     // this only computes and returns the result.
     return { projectRef, slugs: downloaded, empty: false };
-  });
+  }).pipe(Effect.withSpan("functions.download"));
 }

@@ -40,7 +40,7 @@ The core pieces are:
 for the running effect scope.
 
 [`withCommandTelemetry(...)`](../src/telemetry/command-telemetry.ts) wraps command handlers and
-installs per-invocation tracing plus the per-invocation analytics context:
+installs the command span plus the per-invocation analytics context:
 
 - `command_run_id`
 - `command`

@@ -50,4 +50,7 @@ const makeCliSettings = Effect.gen(function* () {
   });
 });
 
-export const cliSettingsLayer = Layer.effect(CliSettings, makeCliSettings);
+export const cliSettingsLayer = Layer.effect(
+  CliSettings,
+  makeCliSettings.pipe(Effect.withSpan("CliSettings.load")),
+);

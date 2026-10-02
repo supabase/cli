@@ -17,6 +17,7 @@ import {
   Stdio,
 } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CLI_VERSION } from "./version.ts";
 import type { CliProjectHome } from "../config/cli-project-home.service.ts";
@@ -50,7 +51,11 @@ import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import type { TelemetryRuntime } from "../telemetry/runtime.service.ts";
-import { tracingLayer } from "../telemetry/tracing.layer.ts";
+import {
+  resolveTraceSettings,
+  withDebugConsole,
+  withTraceExport,
+} from "../telemetry/trace-export.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { GLOBAL_VALUE_FLAG_TOKENS } from "./cobra-flag-groups.ts";
 import {
@@ -601,7 +606,7 @@ function cliProgramFor<
   ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
-    Effect.provide(tracingLayer),
+    withDebugConsole,
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliSettingsLayerFor(runtimeLayer)),
     Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
@@ -614,6 +619,16 @@ function cliProgramFor<
   );
 }
 
+/**
+ * Marks `cli.run` failed for a non-zero exit, after the outcome is already rendered and reported.
+ * It is recovered to the exit code right outside the span, so it is a span signal, not a CLI error.
+ */
+class CliNonZeroExit {
+  readonly _tag = "CliNonZeroExit";
+  readonly name = "CliNonZeroExit";
+  constructor(readonly code: number) {}
+}
+
 export async function runCli<
   Name extends string,
   Input,
@@ -621,6 +636,7 @@ export async function runCli<
   E,
   R extends AllowedRunCliServices,
 >(rootCommand: Command.Command<Name, Input, ContextInput, E, R>, options: RunCliOptions) {
+  const bootMs = Math.round(performance.now());
   const args = await Effect.runPromise(
     Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
@@ -679,9 +695,7 @@ export async function runCli<
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
 
-  const handledProgram = <A, E, R>(
-    program: Effect.Effect<A, E, R>,
-  ): Effect.Effect<never, unknown, never> =>
+  const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const goProxyInvocation = yield* GoProxyInvocation;
@@ -730,23 +744,49 @@ export async function runCli<
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
         yield* afterSuccess(exitCode, true);
-        return yield* processControl.exit(exitCode);
+        return exitCode;
       }
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
-      return yield* processControl.exit(exitCode ?? 0);
+      return exitCode ?? 0;
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
       Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
       Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
       Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
-      Effect.provide(processControlLayer),
-      Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),
-      Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),
+    );
+
+  // The exit code is resolved inside the traced scope so its flush completes before
+  // `processControl.exit`, which skips finalizers.
+  const handledProgram = <A, E, R>(
+    program: Effect.Effect<A, E, R>,
+  ): Effect.Effect<never, unknown, never> =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const exitCode = yield* resolveTraceSettings.pipe(
+        Effect.flatMap((settings) =>
+          withTraceExport(settings, { "process.boot_ms": bootMs })(
+            runToExitCode(program).pipe(
+              Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
+              Effect.flatMap((code) =>
+                code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
+              ),
+            ),
+          ),
+        ),
+        Effect.catchTag("CliNonZeroExit", (failure) => Effect.succeed(failure.code)),
+      );
+      return yield* processControl.exit(exitCode);
+    }).pipe(
+      Effect.withTracerEnabled(false),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+      Effect.provide(processControlLayer),
+      Effect.provide(runtimeInfoLayer),
+      Effect.provide(BunServices.layer),
       Effect.provide(cliConfigProviderLayer),
     );
 

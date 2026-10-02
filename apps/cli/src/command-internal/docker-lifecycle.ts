@@ -12,6 +12,7 @@ import {
   describeContainerCliFailure,
   spawnContainerCli,
 } from "./container-cli.ts";
+import { ChildTracePropagation } from "../shared/telemetry/spans.ts";
 import { CLI_WORKDIR_LABEL } from "./docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -190,6 +191,7 @@ export const listContainerIdsAndNames = (
  * Inspects a container's state via `docker container inspect <id> --format {{json .State}}`.
  * A missing container isn't special-cased — every non-zero exit, including "no such container",
  * propagates as {@link DockerLifecycleInspectError} carrying the real Docker stderr text.
+ * Emits no spans: wait loops poll it, and their wait span records the attempt count.
  */
 export const inspectContainerState = (spawner: Spawner, containerId: string) =>
   Effect.scoped(
@@ -243,7 +245,7 @@ export const inspectContainerState = (spawner: Spawner, containerId: string) =>
       }
       return parseContainerState(stdout);
     }),
-  );
+  ).pipe(Effect.withTracerEnabled(false), Effect.provideService(ChildTracePropagation, false));
 
 function parseContainerState(stdout: string): {
   readonly running: boolean;

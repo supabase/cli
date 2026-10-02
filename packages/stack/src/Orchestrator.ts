@@ -250,6 +250,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
   const node = Effect.fn("Orchestrator.node")(function* (
     id: string,
   ): Effect.fn.Return<Entry, OrchestratorError> {
+    yield* Effect.annotateCurrentSpan({ instance_id: id });
     const nodes = yield* Ref.get(registry);
     const value = nodes.get(id);
     if (value === undefined) return yield* graphError("register", `Unknown instance ${id}`);
@@ -765,8 +766,9 @@ export const make = Effect.fn("Orchestrator.make")(function* <
 
   const orchestrator: Interface<Entry> = {
     admissionFor,
-    register: Effect.fn("Orchestrator.register")((instance) =>
-      withGraph(
+    register: Effect.fn("Orchestrator.register")(function* (instance) {
+      yield* Effect.annotateCurrentSpan({ instance_id: instance.id });
+      return yield* withGraph(
         Effect.gen(function* () {
           const values = yield* Ref.get(registry);
           if (values.has(instance.id))
@@ -815,8 +817,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <
             owner,
           );
         }),
-      ),
-    ),
+      );
+    }),
     get: Effect.fn("Orchestrator.get")((id) => node(id)),
     composition: Ref.get(composition),
     configure: <E = never>(configuration: CompositionConfig, persist?: Effect.Effect<void, E>) =>
@@ -847,6 +849,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
       ).pipe(Effect.withSpan("Orchestrator.configure")),
     start: Effect.fn("Orchestrator.start")((id) =>
       Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ instance_id: id });
         const plan = yield* snapshotPlan(id);
         for (const member of plan.order) yield* (yield* node(member)).bind;
         yield* startNode(id, false, false, plan);
@@ -854,6 +857,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
     ),
     stop: Effect.fn("Orchestrator.stop")((id) =>
       Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ instance_id: id });
         const instance = yield* node(id);
         yield* instance.core.stop;
         yield* instance.close;
@@ -862,6 +866,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
     ),
     restart: Effect.fn("Orchestrator.restart")((id, config) =>
       Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ instance_id: id });
         const plan = yield* snapshotPlan(id);
         for (const member of plan.order) yield* (yield* node(member)).bind;
         for (const member of plan.order.slice(0, -1)) {
@@ -883,7 +888,9 @@ export const make = Effect.fn("Orchestrator.make")(function* <
         yield* instance.bind;
       }),
     ),
-    destroy: Effect.fn("Orchestrator.destroy")((id) => destroyNode(id)),
+    destroy: Effect.fn("Orchestrator.destroy")((id) =>
+      Effect.annotateCurrentSpan({ instance_id: id }).pipe(Effect.andThen(destroyNode(id))),
+    ),
     startComposition: startComposition(),
     stopComposition: stopComposition(),
     restartComposition: restartComposition(),
@@ -891,6 +898,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <
     destroyNamespace: destroyNamespace(),
     acquire: Effect.fn("Orchestrator.acquire")((id, awaitReady = true, trigger) =>
       Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan({ instance_id: id });
         const instance = yield* node(id);
         const scope = yield* Scope.Scope;
         const now = yield* Clock.currentTimeMillis;

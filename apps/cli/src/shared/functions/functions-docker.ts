@@ -250,7 +250,7 @@ export function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
+export const ensureDockerNetwork = Effect.fn("FunctionsDocker.ensureNetwork")(function* (
   networkMode: string,
   projectId: string,
 ) {
@@ -262,6 +262,7 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
+  yield* Effect.annotateCurrentSpan({ "docker.network.exists": inspect.exitCode === 0 });
   if (inspect.exitCode === 0) {
     return;
   }
@@ -288,7 +289,7 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
   }
 });
 
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+export const ensureDockerNamedVolume = Effect.fn("FunctionsDocker.ensureVolume")(function* (
   volumeName: string,
   projectId: string,
   projectEnvValues?: Readonly<Record<string, string>>,
@@ -319,12 +320,14 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   }
 });
 
-export const isDockerRunning = Effect.fnUntraced(function* () {
+export const isDockerRunning = Effect.fn("FunctionsDocker.isRunning")(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
+  const running = result.exitCode === 0;
+  yield* Effect.annotateCurrentSpan({ "docker.running": running });
+  return running;
 });
 
 /**
@@ -357,12 +360,14 @@ export function resolveEdgeRuntimeVersion(
  * answered. Shared by every `functions` Docker path (`deploy`, `download`,
  * `serve`).
  */
-export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
+export const resolveFunctionsDockerImage = Effect.fn("FunctionsDocker.resolveImage")(function* (
   image: string,
   projectEnvValues?: Readonly<Record<string, string>>,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  return yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  const resolved = yield* makeDockerImageResolver(spawner, projectEnvValues)(image);
+  yield* Effect.annotateCurrentSpan({ "docker.image.resolved": resolved });
+  return resolved;
 });
 
 /** Retains native failure diagnostics while exposing a typed Effect failure. */

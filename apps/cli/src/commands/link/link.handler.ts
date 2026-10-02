@@ -139,7 +139,7 @@ function linkBranchNotFoundMessage(
  * Uses the list endpoint (`GET /v1/projects/{ref}/branches`) rather than a single-branch lookup
  * so the full list can power the available-branches error enrichment below.
  */
-const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
+const resolveLinkBranchRef = Effect.fn("link.resolveBranch")(function* (value: string) {
   const output = yield* Output;
   const api = yield* CommandPlatformApi;
 
@@ -168,6 +168,10 @@ const resolveLinkBranchRef = Effect.fnUntraced(function* (value: string) {
     Effect.catch(mapBranchListError),
   );
   yield* task?.clear ?? Effect.void;
+  yield* Effect.annotateCurrentSpan({
+    "project.parent_ref": parentRef,
+    "branch.count": branches.length,
+  });
 
   const found: LinkBranch | undefined = branches.find(
     // UUID matching is case-insensitive (canonical ids are lowercase hex, but uppercase input
@@ -241,6 +245,10 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
 
     const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
     resolvedRef = ref;
+    yield* Effect.annotateCurrentSpan({
+      "project.ref": ref,
+      "link.via_branch": Option.isSome(branchResolution),
+    });
     const paths = tempPaths(path, cliSettings.workdir);
 
     const writeTempFile: WriteTempFile = (filePath, content) =>
@@ -252,6 +260,10 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     const project = yield* api.v1
       .getProject({ ref })
       .pipe(Effect.asSome, Effect.catch(classifyProjectError));
+    yield* Effect.annotateCurrentSpan(
+      "project.status",
+      Option.isSome(project) ? project.value.status : "not_found",
+    );
 
     if (Option.isSome(project)) {
       const status = project.value.status;
@@ -394,6 +406,7 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
           Effect.orElseSucceed(() => false),
           Effect.ensuring(correlating?.clear ?? Effect.void),
+          Effect.tap((result) => Effect.annotateCurrentSpan("link.parent_verified", result)),
         );
         if (!verified) {
           yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);

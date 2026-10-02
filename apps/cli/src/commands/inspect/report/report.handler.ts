@@ -124,18 +124,25 @@ const runInspectReport = Effect.fnUntraced(function* (
       const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       if (isText) yield* output.raw("Running queries...\n", "stderr");
       for (const { fileName, sql } of REPORT_QUERIES) {
-        const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
-        const filePath = path.join(outDir, `${fileName}.csv`);
-        yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
-          Effect.mapError(
-            (error) =>
-              new InspectReportWriteError({
-                message: `failed to create output file: ${error}`,
-              }),
-          ),
+        yield* Effect.gen(function* () {
+          const bytes = yield* session.copyToCsv(wrapReportQuery(sql, ignoreSchemas, dbLiteral));
+          yield* Effect.annotateCurrentSpan({ "csv.bytes": bytes.length });
+          const filePath = path.join(outDir, `${fileName}.csv`);
+          yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
+            Effect.mapError(
+              (error) =>
+                new InspectReportWriteError({
+                  message: `failed to create output file: ${error}`,
+                }),
+            ),
+          );
+          csvByFile.set(`${fileName}.csv`, bytes);
+          files.push({ name: fileName, path: filePath });
+        }).pipe(
+          Effect.withSpan("inspect.report.runQuery", {
+            attributes: { "inspect.query.name": fileName },
+          }),
         );
-        csvByFile.set(`${fileName}.csv`, bytes);
-        files.push({ name: fileName, path: filePath });
       }
     }),
   );

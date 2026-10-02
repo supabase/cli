@@ -153,6 +153,15 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
       Effect.ensuring(
         Effect.suspend(() => cleanupStartSecrets(removedContainers, cliSettings.workdir)),
       ),
+      Effect.tap(() =>
+        Effect.annotateCurrentSpan({ "container.removed_count": removedContainers.length }),
+      ),
+      Effect.withSpan("stop.removeContainers", {
+        attributes: {
+          "stop.all_projects": searchProjectIdFilter.length === 0,
+          "stop.delete_volumes": deleteVolumes,
+        },
+      }),
     );
 
     if (output.format === "text") {
@@ -170,6 +179,8 @@ export const stop = Effect.fn("stop")(function* (flags: StopFlags) {
     if (output.format === "text") {
       const remainingVolumes = yield* listVolumesByLabel(spawner, filterValue).pipe(
         Effect.orElseSucceed(() => []),
+        Effect.tap((volumes) => Effect.annotateCurrentSpan({ "volume.count": volumes.length })),
+        Effect.withSpan("stop.listRemainingVolumes"),
       );
       if (remainingVolumes.length > 0) {
         const listVolumeCommand =

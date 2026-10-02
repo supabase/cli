@@ -15,6 +15,7 @@ export const migrationFetch = Effect.fn("migration.fetch")(function* (flags: Mig
   const outcome = yield* runMigrationFetch({ flags, target, assumeYes: undefined }).pipe(
     Effect.ensuring(telemetryState.flush),
   );
+  yield* Effect.annotateCurrentSpan({ "file.count": outcome.files.length });
 
   // Silent on success in text mode.
   if (output.format !== "text") {

@@ -365,6 +365,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         (args: ReadonlyArray<string>): Effect.Effect<string, DockerDatabaseStorageError> =>
           Effect.scoped(
             Effect.gen(function* () {
+              yield* Effect.annotateCurrentSpan({
+                "process.executable.name": options.runtime,
+                "process.arg_count": args.length,
+              });
               const child = yield* options.spawner
                 .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
                 .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
@@ -388,6 +392,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 ],
                 { concurrency: "unbounded" },
               );
+              yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
               if (Number(code) !== 0)
                 return yield* errorFor(
                   "engine",

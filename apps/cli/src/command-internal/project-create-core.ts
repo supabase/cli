@@ -68,7 +68,9 @@ function printKeyValue(key: string, value: string): string {
  * (the standalone command's own pre-run does that) and does not write the linked-project
  * cache (the caller owns that via `Effect.ensuring`).
  */
-export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCreateInput) {
+export const projectCreateCore = Effect.fn("ProjectCreate.run")(function* (
+  input: ProjectCreateInput,
+) {
   const output = yield* Output;
   const goOutputFlag = yield* OutputFlag;
   const api = yield* CommandPlatformApi;
@@ -143,6 +145,7 @@ export const projectCreateCore = Effect.fnUntraced(function* (input: ProjectCrea
   yield* creating?.clear ?? Effect.void;
 
   const id = readProjectField(created, "id");
+  yield* Effect.annotateCurrentSpan("project.ref", id);
 
   // Printed to stderr for every output format.
   const projectUrl = `${dashboardUrlForProfile(cliSettings.profile)}/project/${id}`;

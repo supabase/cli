@@ -26,20 +26,22 @@ ADR 0001 Pillar 5 and ADR 0002 share infrastructure. No separate metrics SDK and
                    │
      ┌─────────────┼─────────────┐
      ▼             ▼             ▼
-Local file      --debug       Remote
-state root/     output        export
-traces/         (always)      (opt-in)
-(always)           │               │
+Trace file or   Span console  Remote
+own OTLP        on stderr     export
+collector       (opt-in)      (opt-in)
+(opt-in)           │               │
      │             │         ┌─────┴─────┐
      ▼             ▼         ▼           ▼
 Observability  Observability Sentry    Grafana
-(ADR 0001      (ADR 0001    (Phase 1) (Phase 2,
- Pillar 5)      Pillar 5)             future)
+(ADR 0027)     (ADR 0027)   (Phase 1) (Phase 2,
+                                       future)
 ```
 
 Sentry receives every command span via its native OpenTelemetry integration and powers error diagnostics, performance monitoring, and product analytics dashboards for all 5 metric categories from ADR 0002. In Phase 2, spans will also be exported to a company-owned Grafana instance via OTLP for long-term retention and custom analytics. The CLI code does not change between phases — only the exporter configuration.
 
-In the diagram, "state root" means `<SUPABASE_HOME or ~/.supabase>`.
+The trace file and user-owned OTLP collector are chosen per run with `SUPABASE_TRACE_FILE` or
+`SUPABASE_OTLP_ENDPOINT`, and the span console with `SUPABASE_DEBUG=1` or
+`SUPABASE_TELEMETRY_DEBUG=1`; see [ADR 0027](adr/0027-cli-tracing-conventions.md).
 
 ## Collection Architecture
 
@@ -156,15 +158,14 @@ Privacy guarantees:
 | OS and architecture                       | Environment variables                  |
 | Stack traces (via span.recordException()) | Email, name, or other profile data     |
 
-## Local Storage
+## Local Traces
 
-NDJSON files in `<SUPABASE_HOME or ~/.supabase>/traces/`:
-
-- One file per day: `2025-01-15.ndjson`
-- 7-day automatic retention (older files deleted on CLI startup)
-- Always written regardless of consent — this is the user's own machine
-- Powers `--debug` output and local diagnostics (ADR 0001 Pillar 5)
-- Same span attribute format as remote export
+Local traces are opt-in per run: `SUPABASE_TRACE_FILE` appends sanitized OTLP/JSON batches to a
+file, `SUPABASE_OTLP_ENDPOINT` sends them to a collector the user runs, and `SUPABASE_DEBUG=1` or
+`SUPABASE_TELEMETRY_DEBUG=1` prints the top of the span tree and every failed span to stderr.
+`--debug` does not print spans. The CLI no longer writes `<SUPABASE_HOME or ~/.supabase>/traces/`. See
+the [tracing how-to](../apps/cli/docs/tracing-monitoring.md) and
+[ADR 0027](adr/0027-cli-tracing-conventions.md).
 
 ## Remote Export
 
@@ -247,8 +248,7 @@ span.setAttributes({
 span.setStatus({ code: SpanStatusCode.OK });
 span.end();
 
-// 5. Always: append to local trace file
-// <SUPABASE_HOME or ~/.supabase>/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
+// 5. Only when SUPABASE_TRACE_FILE is set: append the sanitized OTLP batch to that file
 
 // 6. If consent === "granted": Sentry SDK exports the span
 // Non-blocking — SDK batches internally
@@ -287,7 +287,7 @@ span.setStatus({
 });
 span.end();
 
-// 5. Always: append to local trace file (same as success)
+// 5. Only when SUPABASE_TRACE_FILE is set: append the sanitized OTLP batch (same as success)
 
 // 6. If consent === "granted": Sentry SDK exports the error span
 // Sentry alerts if AUTH_TOKEN_EXPIRED spikes across devices
@@ -327,7 +327,7 @@ rootSpan.end();
 // Sentry receives a full trace with parent + child spans:
 // enables per-phase latency dashboards (e.g. "p95 cli.phase.docker.start duration")
 
-// Local trace file shows the same data via `supabase dev --debug`:
+// SUPABASE_TRACE_FILE or SUPABASE_OTLP_ENDPOINT captures the same tree locally:
 //   supabase dev (total: 1.2s)
 //   ├── config.load: 12ms
 //   ├── docker.start: 890ms
@@ -424,7 +424,6 @@ Performance impact:
 | Operation                 | Cost      |
 | ------------------------- | --------- |
 | Span construction         | < 0.1ms   |
-| Local NDJSON write        | < 0.5ms   |
 | Sentry SDK export (async) | < 0.1ms   |
 | **Total per command**     | **< 1ms** |
 
@@ -436,7 +435,7 @@ Performance impact:
 | ConsentState      | 2-state (`"granted" \| "denied"`)        | 3-state (`"pending" \| "granted" \| "denied"`) |
 | Default consent   | `"granted"` when no config exists        | `"denied"` for non-TTY; prompt for TTY         |
 | API metrics       | Fields in type but not collected         | Collect from injected API client               |
-| Remote export     | None (local NDJSON + debug only)         | Sentry SDK (Phase 1)                           |
+| Remote export     | None (opt-in trace file or collector)    | Sentry SDK (Phase 1)                           |
 | PII filtering     | None                                     | `beforeSend` hooks in Sentry config            |
 | `cli_version`     | Hardcoded `"0.1.0"`                      | Read from package.json or build constant       |
 | Child spans       | Not implemented                          | Per-phase spans for workflow commands          |
