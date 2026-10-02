@@ -1,7 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Clock,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -10,11 +12,16 @@ import {
   Option,
   Path,
   Predicate,
+  Queue,
+  Ref,
+  Schema,
   Sink,
   Stdio,
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as TestClock from "effect/testing/TestClock";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
@@ -35,9 +42,11 @@ import {
   shouldChmodBundleOutputDirectory,
 } from "../../../shared/functions/deploy.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
+import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
+  FunctionAssetOutsideRootError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
@@ -47,6 +56,7 @@ import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
 
 const tempRoot = useTempWorkdir("supabase-functions-deploy-legacy-");
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 const baseFlags: FunctionsDeployFlags = {
   functionNames: ["hello-world"],
@@ -837,7 +847,7 @@ describe("functions deploy", () => {
       const error = yield* functionsDeploy({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(ConflictingFunctionDeployFlagsError);
-      if (!(error instanceof ConflictingFunctionDeployFlagsError)) {
+      if (!Schema.is(ConflictingFunctionDeployFlagsError)(error)) {
         throw new Error(`unexpected error: ${String(error)}`);
       }
       expect(error.message).toBe(
@@ -1145,7 +1155,7 @@ describe("functions deploy", () => {
         const error = yield* deployNoFunctions.pipe(Effect.flip);
 
         expect(error).toBeInstanceOf(NoFunctionsToDeployError);
-        if (!(error instanceof NoFunctionsToDeployError)) {
+        if (!Schema.is(NoFunctionsToDeployError)(error)) {
           throw new Error(`unexpected error: ${String(error)}`);
         }
         expect(error.message).toBe(
@@ -1780,4 +1790,431 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
+
+  it.live(
+    "does not retry a create response whose success status decodes to a malformed body",
+    () => {
+      const out = mockOutput({ format: "text" });
+      let createCalls = 0;
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }
+          createCalls += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("not valid json", {
+                status: 201,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          );
+        },
+      });
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          useApi: false,
+          useDocker: true,
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(FunctionsApiStatusError);
+        if (!(error instanceof FunctionsApiStatusError)) {
+          throw new Error(`unexpected error: ${String(error)}`);
+        }
+        expect(error.message).toContain("failed to read function response:");
+        // Exactly one create request: a malformed success body is terminal, not retried.
+        expect(createCalls).toBe(1);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  describe("transient API retries (Schedule-based backoff)", () => {
+    // `it.effect` (not `it.live`): the local filesystem setup below runs to completion with real
+    // I/O before `functionsDeploy` is forked, so nothing timed races against real I/O once
+    // `TestClock` takes over. The underlying `@supabase/api` client retries a transient response
+    // immediately (no delay — see `packages/api/src/internal/client.ts`'s `applySupabaseRetryPolicy`,
+    // `maxRetries` defaulting to 5, i.e. 6 raw requests per logical call), so each of
+    // `listRemoteFunctions`'s own 4 attempts produces 6 requests; only its own 1s/2s/4s
+    // `Schedule.exponential` backoff between attempts actually sleeps.
+    it.effect(
+      "gives up listing remote functions after exhausting the retry bound on persistent 5xx, " +
+        "honoring the exponential backoff and the API client's own transient retry",
+      () =>
+        Effect.gen(function* () {
+          const out = mockOutput({ format: "text" });
+          const requestCount = yield* Ref.make(0);
+          // Offered by the fake handler itself on every raw GET, so the test can wait on an
+          // observable signal instead of polling real time or guessing how many scheduler ticks
+          // a response takes to decode.
+          const requestSeen = yield* Queue.unbounded<void>();
+          const api = mockCommandPlatformApi({
+            handler: (request) => {
+              if (request.method === "GET") {
+                return Ref.update(requestCount, (n) => n + 1).pipe(
+                  Effect.andThen(Queue.offer(requestSeen, undefined)),
+                  Effect.as(jsonResponse(request, 503, { message: "unavailable" })),
+                );
+              }
+              return Effect.succeed(jsonResponse(request, 201, {}));
+            },
+          });
+          const layer = Layer.mergeAll(
+            buildTestRuntime({
+              out,
+              api,
+              cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+              runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+            }),
+            Layer.succeed(YesFlag, false),
+            Stdio.layerTest({
+              args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+            }),
+          );
+
+          yield* writeCliConfig(tempRoot.current).pipe(Effect.provide(layer));
+          yield* writeLocalFunction(tempRoot.current, "hello-world").pipe(Effect.provide(layer));
+
+          // `TestClock.adjust` doesn't wait for the response decode, so advance only after the
+          // backoff sleep is registered: the immediate fork records it before it can suspend.
+          const sleepRegistered = yield* Queue.unbounded<void>();
+          const realClock = yield* Effect.clockWith(Effect.succeed);
+          const instrumentedClock: Clock.Clock = {
+            ...realClock,
+            sleep: (duration) =>
+              Effect.gen(function* () {
+                const sleeping = yield* realClock
+                  .sleep(duration)
+                  .pipe(Effect.forkChild({ startImmediately: true }));
+                yield* Queue.offer(sleepRegistered, undefined);
+                yield* Fiber.join(sleeping);
+              }),
+          };
+
+          const fiber = yield* functionsDeploy(baseFlags).pipe(
+            Effect.flip,
+            Effect.provide(layer),
+            Effect.provideService(Clock.Clock, instrumentedClock),
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          // Waits for the API client's own 6-request transient retry to fully land before
+          // trusting `requestCount`: each `Queue.take` suspends until the handler's offer for
+          // that raw request has actually been processed, so this also drains the real, unmocked
+          // filesystem reads the config/discovery steps ahead of the first attempt perform —
+          // no real-timer polling or `TestClock` involved yet.
+          const awaitRequestBatch = Effect.all(
+            Array.from({ length: 6 }, () => Queue.take(requestSeen)),
+            { discard: true },
+          );
+
+          yield* awaitRequestBatch;
+          expect(yield* Ref.get(requestCount)).toBe(6);
+
+          // Each subsequent attempt is gated by `listRemoteFunctions`'s own exponential delay.
+          // `TestClock.adjust` only runs fibers whose wake time has been reached: stopping 1ms
+          // short of each deadline and asserting the count is still unchanged tells 1s/2s/4s
+          // backoff apart from any other interval (e.g. 0.5s/1s/2s would have already fired).
+          let expectedCount = 6;
+          for (const delayMs of [1_000, 2_000, 4_000]) {
+            yield* Queue.take(sleepRegistered);
+            yield* TestClock.adjust(Duration.millis(delayMs - 1));
+            expect(yield* Ref.get(requestCount)).toBe(expectedCount);
+            yield* TestClock.adjust(Duration.millis(1));
+            yield* awaitRequestBatch;
+            expectedCount += 6;
+            expect(yield* Ref.get(requestCount)).toBe(expectedCount);
+          }
+          expect(expectedCount).toBe(24);
+
+          const error = yield* Fiber.join(fiber);
+          if (!(error instanceof FunctionsApiStatusError)) {
+            throw new Error(`unexpected error: ${String(error)}`);
+          }
+          expect(error.message).toBe(
+            'unexpected list functions status 503: {"message":"unavailable"}',
+          );
+        }).pipe(Effect.ensuring(removeTempRoot)),
+    );
+  });
+
+  it.live("rejects a static file outside the source root with the existing message", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outsideDir = yield* fs.makeTempDirectoryScoped({ prefix: "deploy-outside-" });
+      const outsideFile = path.join(outsideDir, "secret.txt");
+      yield* fs.writeFileString(outsideFile, "do not upload\n");
+
+      yield* writeCliConfig(
+        tempRoot.current,
+        `project_id = "test-project"\n\n[functions.hello-world]\nstatic_files = ["${outsideFile}"]\n`,
+      );
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(Schema.is(FunctionAssetOutsideRootError)(error)).toBe(true);
+      if (!Schema.is(FunctionAssetOutsideRootError)(error)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      expect(error.message).toBe(`refusing to upload asset outside source root: ${outsideFile}`);
+    }).pipe(Effect.provide(layer), Effect.scoped, Effect.ensuring(removeTempRoot));
+  });
+
+  const functionDeployResponseBody = {
+    id: "function-id",
+    slug: "hello-world",
+    name: "hello-world",
+    status: "ACTIVE",
+    version: 2,
+    created_at: 1_687_423_025_152,
+    updated_at: 1_687_423_025_152,
+    verify_jwt: true,
+    import_map: true,
+    entrypoint_path: "functions/hello-world/index.ts",
+    import_map_path: "functions/hello-world/deno.json",
+  };
+
+  // A chmod 000 directory is a no-op under root, which would make the glob resolve normally
+  // instead of exercising the failure this test targets.
+  it.live.skipIf(isRoot)(
+    "warns with the real filesystem error and continues past an unreadable nested directory under a static_files glob",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }
+          return Effect.succeed(jsonResponse(request, 201, functionDeployResponseBody));
+        },
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const staticRoot = path.join(tempRoot.current, "supabase", "static");
+        const lockedDir = path.join(staticRoot, "locked");
+        yield* fs.makeDirectory(lockedDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staticRoot, "visible.txt"), "visible\n");
+        yield* fs.writeFileString(path.join(lockedDir, "secret.txt"), "secret\n");
+        // Only the nested directory is unreadable — a reader can still list `static/` itself, so
+        // a bypassed chmod (not expected here, guarded by `skipIf(isRoot)`) would surface as an
+        // actual upload of both files rather than a silent pass.
+        yield* Effect.acquireRelease(fs.chmod(lockedDir, 0o000), () =>
+          fs.chmod(lockedDir, 0o700).pipe(Effect.orDie),
+        );
+
+        yield* writeCliConfig(
+          tempRoot.current,
+          'project_id = "test-project"\n\n[functions.hello-world]\nstatic_files = ["static/**/*.txt"]\n',
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(out.stderrText).toContain(`WARN: EACCES: permission denied, open '${lockedDir}'`);
+        expect(stripControlSequences(out.stdoutText)).toContain("Deployed Functions on project");
+      }).pipe(Effect.provide(layer), Effect.scoped, Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.live(
+    "warns and continues past a static_files glob that is not a valid regular expression",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(jsonResponse(request, 200, []));
+          }
+          return Effect.succeed(jsonResponse(request, 201, functionDeployResponseBody));
+        },
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        // `[z-a]` is a glob bracket expression with an out-of-order range: valid Deno/Go glob
+        // syntax, but `new RegExp(...)` rejects it as an invalid character class.
+        yield* writeCliConfig(
+          tempRoot.current,
+          'project_id = "test-project"\n\n[functions.hello-world]\nstatic_files = ["[z-a].txt"]\n',
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* functionsDeploy(baseFlags);
+
+        expect(out.stderrText).toContain("WARN:");
+        expect(stripControlSequences(out.stdoutText)).toContain("Deployed Functions on project");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.live("deploys a function whose import map is a commented deno.jsonc", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(jsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          jsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "functions/hello-world/index.ts",
+            import_map_path: "functions/hello-world/deno.jsonc",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+      yield* fs.makeDirectory(functionDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(functionDir, "index.ts"),
+        "Deno.serve(() => new Response())\n",
+      );
+      // Only a `.jsonc` import map exists (no `deno.json`), so discovery must fall through to it.
+      yield* fs.writeFileString(
+        path.join(functionDir, "deno.jsonc"),
+        ["// top-level comment", "{", "  // nested comment", '  "imports": {}', "}", ""].join("\n"),
+      );
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(stripControlSequences(out.stdoutText)).toContain("Deployed Functions on project");
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live(
+    "fails with the pre-refactor raw-errno message for a dangling symlink inside an import-map scope target",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeCliConfig(tempRoot.current);
+        const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+        yield* fs.writeFileString(
+          path.join(functionDir, "deno.json"),
+          '{"imports":{},"scopes":{"x/":{"y":"./vendor/"}}}',
+        );
+        const vendorDir = path.join(functionDir, "vendor");
+        yield* fs.makeDirectory(vendorDir, { recursive: true });
+        const danglingLink = path.join(vendorDir, "dangling.ts");
+        yield* fs.symlink(path.join(vendorDir, "does-not-exist.ts"), danglingLink);
+
+        const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+        if (!(error instanceof Error)) {
+          throw new Error(`unexpected error: ${String(error)}`);
+        }
+        // Matches the message `git show ec079c9b3:apps/cli/src/shared/functions/deploy.ts`
+        // produces for this exact fixture: Node's own raw ENOENT text from `stat`, not a
+        // reformatted `PlatformError` message.
+        expect(error.message).toBe(`ENOENT: no such file or directory, stat '${danglingLink}'`);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
 });

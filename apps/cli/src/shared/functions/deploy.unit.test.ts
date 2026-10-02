@@ -120,9 +120,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -146,7 +144,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       let caught: unknown;
       try {
         await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-          onWarning: async () => {},
+          onWarning: () => Effect.void,
         });
       } catch (error) {
         caught = error;
@@ -176,9 +174,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("extra.ts"))).toBe(false);
@@ -201,9 +197,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -223,9 +217,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       const matches = warnings.filter(
@@ -255,9 +247,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs/core"))).toBe(false);
@@ -298,9 +288,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs"))).toBe(false);
@@ -331,9 +319,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       const warnings: Array<string> = [];
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
         skipMissingImportMapTargets: true,
       });
 
@@ -359,9 +345,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
         skipMissingImportMapTargets: true,
       });
 
@@ -420,9 +404,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       await writeFile(scopeDependency, 'export const util = "thing";\n');
 
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
       const hostPaths = binds.map((bind) => bind.hostPath);
 
@@ -461,9 +443,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       try {
         const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-          onWarning: async (message) => {
-            warnings.push(message);
-          },
+          onWarning: (message) => Effect.sync(() => warnings.push(message)),
         });
         const functionsBinds = binds.filter((bind) => bind.containerPath === resolve(functionsDir));
 
@@ -495,9 +475,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(warnings).toEqual([]);
@@ -521,9 +499,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
@@ -551,9 +527,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(binds.some((bind) => bind.hostPath === modPath)).toBe(true);
@@ -582,9 +556,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
         skipMissingImportMapTargets: true,
       });
 
@@ -617,9 +589,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       await runBuildDockerBinds("test-project", functionsDir, outputDir, config, {
-        onWarning: async (message) => {
-          warnings.push(message);
-        },
+        onWarning: (message) => Effect.sync(() => warnings.push(message)),
       });
 
       expect(warnings.some((warning) => warning.includes("nested"))).toBe(false);

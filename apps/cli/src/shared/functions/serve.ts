@@ -1694,7 +1694,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
         skipMissingImportMapTargets: true,
         onWarning: (message) => {
           bindWarnings.push(message);
-          return Promise.resolve();
+          return Effect.void;
         },
       })) {
         binds.add(formatDockerBind(bind));
@@ -1787,7 +1787,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         skipMissingImportMapTargets: true,
         onWarning: (message) => {
           bindWarnings.push(message);
-          return Promise.resolve();
+          return Effect.void;
         },
       })) {
         const key = formatDockerBind(bind);
