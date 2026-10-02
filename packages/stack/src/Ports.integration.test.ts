@@ -1,7 +1,18 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Ref, Scope } from "effect";
-import { makePorts, PortError, reserveNativePort } from "./Ports.ts";
+import {
+  Cause,
+  Context,
+  Crypto,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Ref,
+  Scope,
+} from "effect";
+import { makePorts, PortError, randomPortSpanStart, reserveNativePort } from "./Ports.ts";
 import * as State from "./State.ts";
 
 const makeTestState = (root: string) =>
@@ -425,6 +436,11 @@ it.live("lets exactly one of two stacks sharing a saved port bind it when both s
 // Fixed so a test can force two reservations to the same candidate; production uses randomPortSpanStart.
 const fixedStart = Effect.succeed(0);
 
+// Mirrors Ports.ts's below-ephemeral span (see the architecture ADR), for fixtures that need a
+// candidate in that range without depending on its private constants.
+const belowEphemeralBase = 20000;
+const belowEphemeralSpan = 12768;
+
 it.live("skips a native backend port claimed by another saved stack", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -451,17 +467,24 @@ it.live("skips a native backend port claimed by another saved stack", () =>
 it.live("skips a native backend port a wildcard listener holds", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const probeScope = yield* Scope.make();
-      const probe = yield* reserveNativePort([], "pooler", fixedStart).pipe(
-        Effect.provideService(Scope.Scope, probeScope),
-      );
-      yield* Scope.close(probeScope, Exit.void);
+      // Binds the blocking wildcard listener directly, retrying over candidates, instead of
+      // discovering a port with a probe and releasing it first: the port is never unowned.
+      const start = yield* randomPortSpanStart(yield* Crypto.Crypto);
+      let blocked: number | undefined;
+      for (let offset = 0; offset < 50 && blocked === undefined; offset++) {
+        const port = belowEphemeralBase + ((start + offset) % belowEphemeralSpan);
+        const result = yield* Effect.exit(bind("0.0.0.0", port));
+        if (Exit.isSuccess(result)) blocked = port;
+      }
+      if (blocked === undefined) return yield* Effect.die("no candidate port available for test");
 
       // A wildcard bind is reachable through loopback, so a loopback-only probe would miss it.
-      yield* bind("0.0.0.0", probe.port);
-
-      const reserved = yield* reserveNativePort([], "pooler", fixedStart);
-      expect(reserved.port).not.toBe(probe.port);
+      const reserved = yield* reserveNativePort(
+        [],
+        "pooler",
+        Effect.succeed(blocked - belowEphemeralBase),
+      );
+      expect(reserved.port).not.toBe(blocked);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -493,17 +516,13 @@ it.live("skips a public auto candidate a loopback listener already holds", () =>
       const request = { stackId: "stack", key: "api", host: "0.0.0.0", port: "auto" as const };
       const accept = (_host: string, port: number) => Effect.succeed(port);
 
-      const probeScope = yield* Scope.make();
-      const probe = yield* ports
-        .acquire(request, accept)
-        .pipe(Effect.provideService(Scope.Scope, probeScope));
-      yield* Scope.close(probeScope, Exit.void);
+      // Binds the initial loopback listener during acquisition and keeps it alive while
+      // releasing the saved claim, so the port is never unowned afterward.
+      const held = yield* ports.acquire({ ...request, host: "127.0.0.1" }, bind);
       yield* ports.release("stack", "api");
 
-      yield* bind("127.0.0.1", probe.port);
-
       const acquired = yield* ports.acquire(request, accept);
-      expect(acquired.port).not.toBe(probe.port);
+      expect(acquired.port).not.toBe(held.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

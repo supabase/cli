@@ -24,10 +24,8 @@ import { systemError } from "effect/PlatformError";
 import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only candidate start, not the injected Crypto service.
-import { randomInt as nodeRandomInt } from "node:crypto";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
-import { reserveNativePort } from "../Ports.ts";
+import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import type * as State from "../State.ts";
 import {
   makeArtifactStore,
@@ -104,12 +102,17 @@ const isPortOccupied = (port: number): Effect.Effect<boolean> =>
 
 // No saved stacks to consult outside the claim-interaction test below.
 const testReadPortClaims = Effect.succeed([]);
-const testRandomStart = Effect.sync(() => nodeRandomInt(0, 1_000_000));
-const testReserveNativePort = (
+const testReserveNativePort =
+  (crypto: Crypto.Crypto) =>
+  (key: string, claims: ReadonlyArray<State.StackClaims>, excluded: ReadonlySet<number>) =>
+    reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded);
+// Shares one start across every call so concurrent reservations must contend for the same
+// candidate and skip each other's held listener, instead of each drawing its own random start.
+const contendingReserveNativePort = (
   key: string,
   claims: ReadonlyArray<State.StackClaims>,
   excluded: ReadonlySet<number>,
-) => reserveNativePort(claims, key, testRandomStart, excluded);
+) => reserveNativePort(claims, key, Effect.succeed(0), excluded);
 
 describe("ProcessRecipe launch cleanup", () => {
   for (const scenario of [
@@ -194,15 +197,16 @@ describe("ProcessRecipe launch cleanup", () => {
                 return makeProcess("service", Effect.never);
               }),
           };
+          const crypto = yield* Crypto.Crypto;
           const dependencies = {
             fs: yield* FileSystem.FileSystem,
             path: yield* Path.Path,
-            crypto: yield* Crypto.Crypto,
+            crypto,
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
           const service = yield* makeService(recipe.definition, {
@@ -291,7 +295,7 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           readPortClaims: testReadPortClaims,
-          reserveNativePort: testReserveNativePort,
+          reserveNativePort: testReserveNativePort(crypto),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -403,7 +407,7 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           readPortClaims: testReadPortClaims,
-          reserveNativePort: testReserveNativePort,
+          reserveNativePort: testReserveNativePort(crypto),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -461,6 +465,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     service: "realtime",
     config: { databaseUrl: "postgresql://postgres:postgres@host.docker.internal:54322/postgres" },
   };
+  const crypto = yield* Crypto.Crypto;
   const recipe = yield* makeProcessRecipe(
     creation,
     {
@@ -473,12 +478,12 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     {
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
+      crypto,
       client: yield* HttpClient.HttpClient,
       spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       container,
       readPortClaims: testReadPortClaims,
-      reserveNativePort: testReserveNativePort,
+      reserveNativePort: testReserveNativePort(crypto),
     },
     Realtime.makeSpec(),
   );
@@ -684,7 +689,7 @@ const nativeRestRecipe = Effect.fn(function* (
       spawner,
       container: undefined,
       readPortClaims: testReadPortClaims,
-      reserveNativePort: testReserveNativePort,
+      reserveNativePort: testReserveNativePort(crypto),
     },
     {
       ...spec,
@@ -962,7 +967,7 @@ describe("process recipe startup", () => {
             spawner: interceptingSpawner,
             container: undefined,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           },
           Pooler.makeSpec(),
         );
@@ -1036,7 +1041,7 @@ describe("process recipe startup", () => {
               spawner,
               container: undefined,
               readPortClaims: testReadPortClaims,
-              reserveNativePort: testReserveNativePort,
+              reserveNativePort: contendingReserveNativePort,
             },
             Pooler.makeSpec(),
           );
@@ -1050,12 +1055,13 @@ describe("process recipe startup", () => {
           yield* runtime.health;
           const endpoints = yield* Ref.get(recipe.endpoints);
           const endpoint = endpoints.get("http");
-          // A backend chosen from this range (Ports.ts's below-ephemeral 20000..32767 span)
-          // can never coincide with an OS-auto-assigned ephemeral port, so releasing the probe
-          // before the child binds cannot race an unrelated outgoing connection for the number.
+          // This below-ephemeral range (Ports.ts's 20000..32767 span) sits below Linux's default
+          // ephemeral range, but a custom host dynamic-port range can still overlap it (the
+          // architecture ADR excludes relying on non-default ranges).
           expect(endpoint?.port).toBeGreaterThanOrEqual(20000);
           expect(endpoint?.port).toBeLessThan(32768);
-          // Pooler reserves "http" and "sql" concurrently; they must never settle on the same port.
+          // Pooler reserves "http" and "sql" concurrently from the same forced start; they must
+          // contend for the candidate and still never settle on the same port.
           const sql = endpoints.get("sql");
           expect(sql?.port).toBeDefined();
           expect(sql?.port).not.toBe(endpoint?.port);
@@ -1106,7 +1112,7 @@ describe("process recipe startup", () => {
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches, true),
             container: undefined,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           },
           Pooler.makeSpec(),
         );
@@ -1242,7 +1248,7 @@ describe("process recipe startup", () => {
             spawner: deadlineSpawner,
             container: undefined,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           },
           Pooler.makeSpec(),
         );
@@ -1306,7 +1312,7 @@ describe("process recipe startup", () => {
             spawner: countingSpawner(spawner, mainLaunches, startupLaunches),
             container: undefined,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           },
           Pooler.makeSpec(),
         );
@@ -1412,7 +1418,7 @@ describe("process recipe startup", () => {
             spawner: failingSpawner,
             container: undefined,
             readPortClaims: testReadPortClaims,
-            reserveNativePort: testReserveNativePort,
+            reserveNativePort: testReserveNativePort(crypto),
           },
           Pooler.makeSpec(),
         );

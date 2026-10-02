@@ -300,7 +300,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         helpers,
         ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       },
-      options.state,
+      options.state.claims,
     ).pipe(Effect.provideContext(services));
 
   const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>

@@ -41,6 +41,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const database = yield* makeService(databaseRecipe.definition, {
             id: "database",
@@ -70,6 +71,7 @@ describe("service catalog", () => {
                   },
                 },
                 runtime === "native" ? options(root) : dockerOptions(root),
+                Effect.succeed([]),
               );
               const pooler = yield* makeService(poolerRecipe.definition, {
                 id: `pooler-${runtime}-${poolMode}`,

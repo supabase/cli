@@ -300,7 +300,11 @@ const databaseRecipe = (
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
-  (input: unknown, options: CatalogOptions, state?: State.Interface) =>
+  (
+    input: unknown,
+    options: CatalogOptions,
+    readPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>,
+  ) =>
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
@@ -360,7 +364,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         client,
         spawner,
         container,
-        readPortClaims: state?.claims ?? Effect.succeed([]),
+        readPortClaims,
         reserveNativePort: (key, claims, excluded) =>
           reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
       };
