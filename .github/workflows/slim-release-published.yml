@@ -118,6 +118,7 @@ jobs:
           UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
           REVISION: ${{ steps.validate.outputs.revision }}
           RELEASE_VERSION: ${{ steps.validate.outputs.release_version }}
+          REPLAY: ${{ github.event.client_payload.replay }}
           BASE_SHA: ${{ steps.base.outputs.sha }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
@@ -199,12 +200,18 @@ jobs:
                 echo "::warning ::${branch} was held by a merge-queued pull request; a pending ${SERVICE} run re-plans from ${DEFAULT_BRANCH}."
                 exit 0
               fi
+              # `replay` counts consecutive re-sends; anything but 0-2 stops the chain.
+              if ! [[ "${REPLAY:-0}" =~ ^[0-2]$ ]]; then
+                echo "::error ::Stopped re-dispatching after repeated merge-queue rejections of ${branch}. ${manual_steps}"
+                exit 1
+              fi
               if ! GH_TOKEN="$APP_TOKEN" gh api "repos/${GITHUB_REPOSITORY}/dispatches" \
                 -f event_type=slim-release-published \
                 -f "client_payload[service]=${SERVICE}" \
                 -f "client_payload[upstream_version]=${UPSTREAM_VERSION}" \
                 -f "client_payload[revision]=${REVISION}" \
-                -f "client_payload[release_version]=${RELEASE_VERSION}"; then
+                -f "client_payload[release_version]=${RELEASE_VERSION}" \
+                -f "client_payload[replay]=$((${REPLAY:-0} + 1))"; then
                 echo "::error ::Failed to re-dispatch slim-release-published for ${SERVICE} ${RELEASE_VERSION}. Re-run this job."
                 exit 1
               fi
