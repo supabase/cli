@@ -5,7 +5,7 @@
 # a catalog update. Everything else in this file (this comment, kong, pg14, the one-shot job
 # images) is hand- or Dependabot-managed.
 FROM supabase/postgres:17.11.0.002 AS pg
-FROM supabase/postgres:15.19.0.002 AS pg15
+FROM supabase/postgres:15.19.0.003 AS pg15
 # Postgres 14 has no slim build; bumped by hand (Dependabot ignores supabase/postgres).
 FROM supabase/postgres:14.1.0.89 AS pg14
 # New always-on service alias: extend SERVICE_IMAGE_ALIASES in
