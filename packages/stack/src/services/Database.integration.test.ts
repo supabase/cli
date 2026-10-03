@@ -5,8 +5,10 @@ import {
   Context,
   Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
+  Option,
   Path,
   Predicate,
   Redacted,
@@ -206,6 +208,58 @@ describe("database component", { timeout: 180_000 }, () => {
         expect(
           yield* query(yield* database.endpoint, rotated, "SELECT 1 AS ok", "postgres", "postgres"),
         ).toEqual([{ ok: 1 }]);
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("runs scheduled pg_cron jobs on the native socket-only server", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-cron-" });
+        const database = yield* makeDatabase({
+          stackId: "stack-integration",
+          instanceId: "cron",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeService(database.definition, { id: "database:cron", config });
+        yield* service.start;
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        const firstRun = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const services = yield* Layer.build(
+              PgClient.layer({
+                host: endpoint.kind === "unix" ? endpoint.path : endpoint.host,
+                port: endpoint.port,
+                database: "postgres",
+                username: "supabase_admin",
+                password: config.databasePassword,
+              }),
+            );
+            const sql = Context.get(services, PgClient.PgClient);
+            yield* sql.unsafe(`
+              CREATE EXTENSION pg_cron;
+              CREATE FUNCTION report_cron_run() RETURNS trigger LANGUAGE plpgsql AS $$
+              BEGIN
+                PERFORM pg_notify('cron_runs', NEW.status || ': ' || coalesce(NEW.return_message, ''));
+                RETURN NEW;
+              END $$;
+              CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
+                FOR EACH ROW WHEN (NEW.status IN ('succeeded', 'failed'))
+                EXECUTE FUNCTION report_cron_run();
+            `);
+            const settled = yield* sql
+              .listen("cron_runs")
+              .pipe(Stream.runHead, Effect.forkScoped({ startImmediately: true }));
+            yield* sql.unsafe("SELECT cron.schedule('probe', '1 seconds', 'SELECT 1')");
+            return yield* Fiber.join(settled).pipe(Effect.timeout("60 seconds"));
+          }),
+        );
+        expect(firstRun).toEqual(Option.some("succeeded: SELECT 1"));
         yield* service.destroy;
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

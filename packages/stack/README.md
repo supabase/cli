@@ -87,7 +87,7 @@ The effective root key is supplied through a stack-owned file for both native an
 
 Native PostgreSQL refuses to run as uid 0. When the stack runs as root inside a detected agent sandbox (Claude Code, Modal Sandbox), or `SUPABASE_NATIVE_POSTGRES_USER=<name>` names a non-root system user, only the PostgreSQL process runs as that user: the instance data directory, root key file, socket directory, and the bundle's `pgsodium_getkey.sh` are chowned to it, and the instance directory, the PostgreSQL bundle directory, and their ancestors receive traverse-only (`o+x`) permission, which the artifact cache and stack state keep when they restrict their roots to the owner. Running as root elsewhere fails before PostgreSQL launches.
 
-Native PostgreSQL listens only on its socket and reads a stack-generated HBA file, written to the socket directory on every launch, instead of `PGDATA/pg_hba.conf`. It trusts `supabase_admin`, including through the proxied loopback database port, and requires `scram-sha-256` passwords from every other role.
+Native PostgreSQL listens only on its socket and reads a stack-generated HBA file, written to the socket directory on every launch, instead of `PGDATA/pg_hba.conf`. It trusts `supabase_admin`, including through the proxied loopback database port, and requires `scram-sha-256` passwords from every other role. pg_cron runs jobs in background workers instead of loopback TCP sessions, so at most five jobs run at once by default; `max_worker_processes` defaults to 17 to leave room for them beside the resident and parallel query workers.
 
 ## Composition and operation scope
 

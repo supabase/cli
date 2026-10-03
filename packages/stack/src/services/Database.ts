@@ -443,6 +443,10 @@ const nativeProcess = (
         `unix_socket_directories=${paths.socketPath}`,
         "-c",
         `hba_file=${paths.hbaPath}`,
+        "-c",
+        "cron.use_background_workers=on",
+        "-c",
+        "max_worker_processes=17",
         ...settings,
       ],
       env: {
