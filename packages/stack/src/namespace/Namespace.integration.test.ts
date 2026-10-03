@@ -1001,51 +1001,54 @@ describe("publication", () => {
     ),
   );
 
-  it.effect("fails publication when the directory fsync reports EIO", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const eio = (method: string, file: string) =>
-          PlatformError.systemError({
-            _tag: "Unknown",
-            module: "FileSystem",
-            method,
-            pathOrDescriptor: file,
-            cause: Object.assign(new Error("injected directory fsync failure"), { code: "EIO" }),
-          });
-        // Covers both ways opening the directory for its own fsync can report EIO: the `open`
-        // call itself failing, and `open` succeeding but the handle's own `sync` failing. The
-        // second case is backed by a real regular-file handle (scoped like any other), not the
-        // real directory: opening a directory for `sync` hits Windows's own supported `EISDIR`
-        // path instead of ever reaching the injected failure.
-        for (const mode of ["open", "sync"] as const) {
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-fsync-eio-" });
-          const directory = path.join(root, initial.id);
-          const syncProbe = path.join(root, ".sync-probe");
-          yield* fs.writeFileString(syncProbe, "");
-          const failingFs = Layer.succeed(FileSystem.FileSystem, {
-            ...fs,
-            open: (file: string, options?: Parameters<FileSystem.FileSystem["open"]>[1]) => {
-              if (file !== directory || options?.flag !== "r") return fs.open(file, options);
-              if (mode === "open") return Effect.fail(eio("open", file));
-              return fs
-                .open(syncProbe, options)
-                .pipe(
-                  Effect.map((handle) => ({ ...handle, sync: Effect.fail(eio("fsync", file)) })),
-                );
-            },
-          });
-          const store = yield* Layer.build(
-            StackNamespace.layer({ root }).pipe(Layer.provide(failingFs)),
-          ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
-          const failure = yield* store.save(initial).pipe(Effect.flip);
-          expect(failure, mode).toBeInstanceOf(StackNamespace.NamespaceError);
-          expect(failure.operation, mode).toBe("publish");
-          expect(errorCode(failure.cause), mode).toBe("EIO");
-        }
-      }),
-    ),
+  // Windows has no directory fsync to fail.
+  it.effect.skipIf(process.platform === "win32")(
+    "fails publication when the directory fsync reports EIO",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const eio = (method: string, file: string) =>
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method,
+              pathOrDescriptor: file,
+              cause: Object.assign(new Error("injected directory fsync failure"), { code: "EIO" }),
+            });
+          // Covers both ways opening the directory for its own fsync can report EIO: the `open`
+          // call itself failing, and `open` succeeding but the handle's own `sync` failing. The
+          // second case is backed by a real regular-file handle (scoped like any other), not the
+          // real directory: opening a directory for `sync` hits Windows's own supported `EISDIR`
+          // path instead of ever reaching the injected failure.
+          for (const mode of ["open", "sync"] as const) {
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-fsync-eio-" });
+            const directory = path.join(root, initial.id);
+            const syncProbe = path.join(root, ".sync-probe");
+            yield* fs.writeFileString(syncProbe, "");
+            const failingFs = Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              open: (file: string, options?: Parameters<FileSystem.FileSystem["open"]>[1]) => {
+                if (file !== directory || options?.flag !== "r") return fs.open(file, options);
+                if (mode === "open") return Effect.fail(eio("open", file));
+                return fs
+                  .open(syncProbe, options)
+                  .pipe(
+                    Effect.map((handle) => ({ ...handle, sync: Effect.fail(eio("fsync", file)) })),
+                  );
+              },
+            });
+            const store = yield* Layer.build(
+              StackNamespace.layer({ root }).pipe(Layer.provide(failingFs)),
+            ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+            const failure = yield* store.save(initial).pipe(Effect.flip);
+            expect(failure, mode).toBeInstanceOf(StackNamespace.NamespaceError);
+            expect(failure.operation, mode).toBe("publish");
+            expect(errorCode(failure.cause), mode).toBe("EIO");
+          }
+        }),
+      ),
   );
 
   it.effect("leaves no staging file after a partial write fails with ENOSPC", () =>

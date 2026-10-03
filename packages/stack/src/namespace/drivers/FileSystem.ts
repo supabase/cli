@@ -2,7 +2,7 @@ import { Effect, FileSystem, Path, Predicate } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
-import { errorCode, namespaceError, type NamespaceError } from "../Capabilities.ts";
+import { namespaceError, type NamespaceError } from "../Capabilities.ts";
 
 /** Removes a directory only if it is already empty; any other failure propagates. */
 export const removeEmptyDirectory = (directory: string): Effect.Effect<void, NamespaceError> =>
@@ -25,18 +25,14 @@ export const fsyncFile = (
 ): Effect.Effect<void, PlatformError> =>
   Effect.scoped(fs.open(target, { flag: "r+" }).pipe(Effect.flatMap((file) => file.sync)));
 
-/** Node reports opening a directory with `fs.open` this way only on Windows. */
-const directoriesUnopenable = (error: PlatformError) =>
-  process.platform === "win32" && errorCode(error) === "EISDIR";
-
-/** Flushes a directory's own metadata; fails except for Windows's documented EISDIR limitation. */
+/** Flushes a directory's own metadata; a no-op on Windows, which can't open or fsync directories. */
 export const fsyncDirectory = (
   fs: FileSystem.FileSystem,
   directory: string,
 ): Effect.Effect<void, PlatformError> =>
-  Effect.scoped(fs.open(directory, { flag: "r" }).pipe(Effect.flatMap((file) => file.sync))).pipe(
-    Effect.catchIf(directoriesUnopenable, () => Effect.void),
-  );
+  process.platform === "win32"
+    ? Effect.void
+    : Effect.scoped(fs.open(directory, { flag: "r" }).pipe(Effect.flatMap((file) => file.sync)));
 
 let probeCounter = 0;
 
