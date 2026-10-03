@@ -1,6 +1,7 @@
 import { expect } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Ref, Schema } from "effect";
+import { Cause, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { open } from "../../src/effect.ts";
+import { runDocker } from "../docker-fixture.ts";
 import {
   allMembers,
   clearStackOwner,
@@ -28,6 +29,13 @@ import { subscribeRealtime } from "./websocket.ts";
 import { watchRecoveryMail } from "./realtime-mail.ts";
 import { assertWorkloadsGone, captureWorkloads } from "./workloads.ts";
 import { assertOwnerExited, captureOwnerPid } from "../owner.ts";
+import {
+  assertConfinedTo,
+  diffTrees,
+  proveConfinementDetectsViolations,
+  snapshotTree,
+  withSandboxEnvironment,
+} from "./confinement.ts";
 
 const withFixture = <A, E, R>(
   runtime: Runtime,
@@ -524,5 +532,91 @@ export const parallel = (runtime: Runtime) =>
         }),
       );
       yield* exerciseStack(right, "parallel-right-after");
+    }),
+  );
+
+/**
+ * The real environment's own docker endpoint, read here (not through the owner's own pinned-target
+ * resolution) purely so {@link writeConfinement} can hand the sandboxed owner a `DOCKER_HOST` that
+ * works without its own `~/.docker` client state.
+ */
+const resolveRealDockerHost = Effect.gen(function* () {
+  // oxlint-disable-next-line effecttsgo/process-env-in-effect -- reads the real environment before it is sandboxed below.
+  const configured = process.env.DOCKER_HOST;
+  if (configured !== undefined && configured.length > 0) return configured;
+  const name = (yield* runDocker(["context", "show"])).output.trim();
+  const host = (yield* runDocker([
+    "context",
+    "inspect",
+    name,
+    "--format",
+    "{{.Endpoints.docker.Host}}",
+  ])).output.trim();
+  if (host.length === 0) return yield* Effect.die(`Context ${name} has no docker endpoint`);
+  return host;
+});
+
+/**
+ * Proves a running stack writes only inside its state root and artifact cache (plus the project
+ * directory it was handed): points HOME, TMPDIR/TMP/TEMP and the XDG roots at fresh, empty
+ * directories for the stack and its detached owner, then diffs those directories before and after
+ * a full start/exercise/stop/destroy cycle.
+ */
+export const writeConfinement = (runtime: Runtime) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const arena = yield* fs.makeTempDirectoryScoped({ prefix: "stack-confinement-arena-" });
+      const home = path.join(arena, "home");
+      const tmp = path.join(arena, "tmp");
+      // Bun's own transpile cache is a test-harness concern, not a stack confinement one: it gets
+      // its own allowed root under `tmp` rather than being allow-listed inside `home`.
+      const bunTranspilerCache = path.join(tmp, "bun-transpiler-cache");
+      yield* fs.makeDirectory(home, { recursive: true });
+      yield* fs.makeDirectory(bunTranspilerCache, { recursive: true });
+      // Resolved against the real environment before HOME below points at the empty sandbox: the
+      // owner's own `DOCKER_HOST`-pinned resolution then skips the engine's context store
+      // entirely, so it never needs `~/.docker` under the sandbox. The docker CLI's own client
+      // state (config, credential helpers) is outside this test's confinement contract; narrowing
+      // the sandboxed owner to a `DOCKER_HOST` pin instead of its real context is an accepted
+      // tradeoff for that, not something this test tries to confine.
+      const dockerHost = runtime === "docker" ? yield* resolveRealDockerHost : undefined;
+      yield* withSandboxEnvironment(
+        {
+          HOME: home,
+          TMPDIR: tmp,
+          TMP: tmp,
+          TEMP: tmp,
+          XDG_CACHE_HOME: path.join(home, ".cache"),
+          XDG_CONFIG_HOME: path.join(home, ".config"),
+          XDG_DATA_HOME: path.join(home, ".local", "share"),
+          XDG_STATE_HOME: path.join(home, ".local", "state"),
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: bunTranspilerCache,
+          DOCKER_HOST: dockerHost ?? "",
+        },
+        Effect.gen(function* () {
+          const beforeHome = yield* snapshotTree(home);
+          const beforeTmp = yield* snapshotTree(tmp);
+          const fixture = yield* wholeStack(runtime);
+          yield* clearIdleTimers(fixture);
+          yield* fixture.stack.composition.start;
+          yield* exerciseStack(fixture, "confinement");
+          // Allowed roots the named entries below cover; add one line here to extend them.
+          const allowedRoots = [fixture.root, fixture.locations.cacheRoot, bunTranspilerCache];
+          // While the stack is still running, after it has been exercised: a before/after-only
+          // check misses anything a service writes and removes again before shutdown.
+          const duringHome = yield* snapshotTree(home);
+          const duringTmp = yield* snapshotTree(tmp);
+          assertConfinedTo(diffTrees(beforeHome, duringHome), allowedRoots);
+          assertConfinedTo(diffTrees(beforeTmp, duringTmp), allowedRoots);
+          yield* proveConfinementDetectsViolations(home, duringHome, allowedRoots);
+          yield* stopWithDiagnostics(fixture);
+          yield* fixture.stack.destroy;
+          yield* clearStackOwner(fixture);
+          assertConfinedTo(diffTrees(beforeHome, yield* snapshotTree(home)), allowedRoots);
+          assertConfinedTo(diffTrees(beforeTmp, yield* snapshotTree(tmp)), allowedRoots);
+        }),
+      );
     }),
   );

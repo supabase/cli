@@ -458,14 +458,13 @@ describe("stack shadow databases", () => {
   );
 
   it.live(
-    "prints the cleanup commands when a shadow's destroy skips its engine",
+    "warns that a shadow's engine cleanup is pending when destroy skips its engine",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-skipped-" });
         const output = mockOutput();
-        const cleanupCommand = "docker rm --force $(docker ps --all --quiet)";
         // A real registration whose database creation fails fast and whose destroy reports skipped cleanup.
         const api = Layer.effect(
           StackApi,
@@ -485,7 +484,6 @@ describe("stack shadow databases", () => {
                     destroy: Effect.succeed({
                       runtimeCleanup: "skipped",
                       engine: "docker",
-                      cleanupCommands: [cleanupCommand],
                     } as const),
                   })),
                 ),
@@ -510,7 +508,7 @@ describe("stack shadow databases", () => {
         );
 
         expect(output.stderrText).toMatch(
-          /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Once it is running, remove them with:\n {2}docker rm --force \$\(docker ps --all --quiet\)\n/u,
+          /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Restore Docker and run "supabase stack destroy" again to finish removing it\.\n/u,
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,

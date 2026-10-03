@@ -3,8 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { makeContainerRuntime } from "./Container.ts";
+import { makeContainerRuntime, type EngineTarget } from "./Container.ts";
+import { noContainerClaims } from "../../tests/claims.ts";
 
+// An unpinned target: these tests exercise image mirroring, not endpoint pinning.
+const dockerTarget: EngineTarget = { engine: "docker", argv: [], daemonId: "test-daemon-id" };
 const primary = "ghcr.io/supabase/cli/postgrest:v16.2";
 const mirror = "public.ecr.aws/supabase/cli/postgrest:v16.2";
 const secondMirror = "registry.test/supabase/cli/postgrest:v16.2";
@@ -45,6 +48,9 @@ const fakeEngine = (options: {
     const args = [...command.args];
     commands.push(args);
     const ref = args.at(-1) ?? "";
+    // Resolved once before any container is created; this stand-in always reports one so launch
+    // never fails at that earlier step for reasons unrelated to what each test exercises.
+    if (args[0] === "info") return Effect.succeed(handle(0, "fake-daemon-id"));
     if (args[0] === "image") return Effect.succeed(handle(0, local.has(ref) ? "sha256:1" : ""));
     if (args[0] === "pull") {
       const queued = failures.get(ref);
@@ -79,7 +85,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [mirror] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
@@ -97,7 +104,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [secondMirror] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror, secondMirror] : []),
       });
@@ -116,7 +124,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [mirror] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
@@ -133,7 +142,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [mirror] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
@@ -150,7 +160,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
@@ -168,7 +179,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [primary, mirror] });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });
@@ -181,7 +193,11 @@ describe("container image mirror", () => {
   it.effect("retries a rate-limited pull with backoff until the registry accepts it", () => {
     const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 2 } });
     return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        claims: noContainerClaims,
+        target: dockerTarget,
+        root: ".",
+      });
       const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
       yield* TestClock.adjust("1 minute");
       yield* Fiber.join(prepared);
@@ -198,7 +214,11 @@ describe("container image mirror", () => {
       },
     });
     return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        claims: noContainerClaims,
+        target: dockerTarget,
+        root: ".",
+      });
       const prepared = yield* runtime.prepare(primary).pipe(Effect.forkChild);
       yield* TestClock.adjust("1 minute");
       yield* Fiber.join(prepared);
@@ -220,7 +240,11 @@ describe("container image mirror", () => {
         failures: { [primary]: [message] },
       });
       return Effect.gen(function* () {
-        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        const runtime = yield* makeContainerRuntime({
+          claims: noContainerClaims,
+          target: dockerTarget,
+          root: ".",
+        });
         const failed = yield* runtime.prepare(primary).pipe(Effect.exit);
         const error = Exit.isFailure(failed)
           ? Option.getOrUndefined(Cause.findErrorOption(failed.cause))
@@ -234,7 +258,11 @@ describe("container image mirror", () => {
   it.effect("reports the rate limit after five throttled attempts", () => {
     const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 10 } });
     return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        claims: noContainerClaims,
+        target: dockerTarget,
+        root: ".",
+      });
       const prepared = yield* runtime.prepare(primary).pipe(Effect.exit, Effect.forkChild);
       yield* TestClock.adjust("5 minutes");
       const failed = yield* Fiber.join(prepared);
@@ -249,7 +277,11 @@ describe("container image mirror", () => {
   it.effect("stops pulling once a concurrent prepare lands the image during backoff", () => {
     const engine = fakeEngine({ pullable: [primary], throttled: { [primary]: 1 } });
     return Effect.gen(function* () {
-      const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+      const runtime = yield* makeContainerRuntime({
+        claims: noContainerClaims,
+        target: dockerTarget,
+        root: ".",
+      });
       const throttled = yield* runtime.prepare(primary).pipe(Effect.forkChild);
       yield* TestClock.adjust("1 millis");
       yield* runtime.prepare(primary);
@@ -263,7 +295,8 @@ describe("container image mirror", () => {
     const engine = fakeEngine({ pullable: [mirror], throttled: { [primary]: 10 } });
     return Effect.gen(function* () {
       const runtime = yield* makeContainerRuntime({
-        engine: "docker",
+        claims: noContainerClaims,
+        target: dockerTarget,
         root: ".",
         imageMirrors: (image) => (image === primary ? [mirror] : []),
       });

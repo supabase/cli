@@ -38,10 +38,12 @@ import {
   type HostEndpoint,
   type ShutdownFailure,
 } from "./HostProcess.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
+import * as Claims from "./namespace/Claims.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
-import { makeHostGateway } from "./runtime/Container.ts";
+import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
@@ -433,14 +435,32 @@ export const runStackHost = Effect.fn("StackHost.run")(
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
           const dataRoot = yield* fs.realPath(dataRootPath);
           const project = projectSegmentFor(saved.identity, path);
-          yield* Owner.sweepContainers(saved, dataRoot).pipe(
-            Effect.mapError((cause) =>
-              hostError(
-                "startup-cleanup",
-                cause,
-                cause.reason === "engine-unavailable" ? "runtime-unavailable" : undefined,
-              ),
-            ),
+          const asHostError = (cause: unknown) =>
+            hostError(
+              "startup-cleanup",
+              cause,
+              cause instanceof Object && "reason" in cause && cause.reason === "engine-unavailable"
+                ? "runtime-unavailable"
+                : undefined,
+            );
+          // Resolved once, here, for this owner's whole lifetime: the container runtime, the
+          // storage helpers, the host-gateway probes and reconcile below all share this one
+          // target instead of each resolving (and so potentially disagreeing on) their own.
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const engineTarget =
+            saved.runtime === "native"
+              ? undefined
+              : yield* resolveEngineTarget(spawner).pipe(
+                  Effect.mapError((cause) =>
+                    hostError(
+                      "startup-cleanup",
+                      cause,
+                      engineUnreachable(cause) ? "runtime-unavailable" : undefined,
+                    ),
+                  ),
+                );
+          yield* Owner.sweepContainers(state, saved, dataRoot, engineTarget).pipe(
+            Effect.mapError(asHostError),
           );
           const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(
@@ -450,6 +470,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 hostGateway,
+                engineTarget,
               }),
               CommandRunner.layer({
                 stackId: saved.id,
@@ -457,7 +478,9 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
+                claims: Claims.forStack(state, saved.id).containers,
                 hostGateway,
+                engineTarget,
               }),
             ).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           );

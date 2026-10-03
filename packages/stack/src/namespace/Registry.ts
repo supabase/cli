@@ -7,6 +7,8 @@ import {
   transientRetrySchedule,
   type NamespaceError,
 } from "./Capabilities.ts";
+import { CLAIMS_FILE } from "./Claims.ts";
+import { CONTAINER_ENV_DIRNAME } from "./Paths.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
@@ -73,7 +75,7 @@ export const SavedStack = Schema.Struct({
     branchContext: Schema.String,
     stackName: Schema.String,
   }),
-  runtime: Schema.Literals(["native", "docker", "podman"]),
+  runtime: Schema.Literals(["native", "docker"]),
   instances: Schema.Array(SavedInstance).check(
     Schema.makeFilter((instances) =>
       new Set(instances.map(({ id }) => id)).size === instances.length
@@ -214,10 +216,19 @@ export const make = (
         statePath(id),
         path.join(stackRoot(id), "owner.json"),
         path.join(stackRoot(id), "owner.log"),
+        path.join(stackRoot(id), CLAIMS_FILE),
       ])
         yield* fs
           .remove(file, { force: true })
           .pipe(Effect.mapError((cause) => namespaceError("remove", cause)));
+      // Namespace-owned scratch space, never user data, so a forced recursive removal here (and
+      // only here) doesn't mask a service that failed to clean up its own owned root.
+      yield* fs
+        .remove(path.join(stackRoot(id), "data", CONTAINER_ENV_DIRNAME), {
+          recursive: true,
+          force: true,
+        })
+        .pipe(Effect.mapError((cause) => namespaceError("remove", cause)));
       yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
       yield* removeEmptyDirectory(stackRoot(id));
     });

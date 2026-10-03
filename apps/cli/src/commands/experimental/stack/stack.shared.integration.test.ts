@@ -18,7 +18,7 @@ type TargetInput = {
   readonly projectRoot: string;
   readonly name?: string;
   readonly id?: string;
-  readonly runtime: "auto" | "docker" | "podman" | "native";
+  readonly runtime: "auto" | "docker" | "native";
 };
 
 const workspace = Effect.gen(function* () {
@@ -136,17 +136,6 @@ describe("stack target resolver", () => {
       const target = yield* resolve({ projectRoot: root, runtime: "docker" });
 
       expect(target).toEqual({ projectRoot: root, runtime: "docker", hostRunning: false });
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("carries an explicit Podman runtime onto a new stack target", () =>
-    Effect.gen(function* () {
-      const { root, resolve } = yield* workspace;
-
-      const target = yield* resolve({ projectRoot: root, runtime: "podman" });
-
-      expect(target).toMatchObject({ runtime: "podman", hostRunning: false });
-      expect(target.id).toBeUndefined();
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

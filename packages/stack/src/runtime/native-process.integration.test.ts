@@ -10,6 +10,7 @@ import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import { execFileSync, spawn as spawnProcess } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The test waits for actual inherited-fd and process events.
 import { once } from "node:events";
+import type { NativeEnvironment } from "../namespace/Environment.ts";
 import {
   defaultNativeProcessLauncher,
   spawnNativeProcess,
@@ -18,6 +19,21 @@ import {
 } from "./NativeProcess.ts";
 
 const targetPid = 87_035;
+
+/** These tests exercise process lifecycle, not confinement; the paths need not exist. */
+const testEnvironment: NativeEnvironment = {
+  values: {
+    HOME: "/tmp/native-process-test-home",
+    TMPDIR: "/tmp/native-process-test-home/tmp",
+    TMP: "/tmp/native-process-test-home/tmp",
+    TEMP: "/tmp/native-process-test-home/tmp",
+    XDG_CACHE_HOME: "/tmp/native-process-test-home/.cache",
+    XDG_CONFIG_HOME: "/tmp/native-process-test-home/.config",
+    XDG_DATA_HOME: "/tmp/native-process-test-home/.local/share",
+    XDG_STATE_HOME: "/tmp/native-process-test-home/.local/state",
+    DENO_DIR: "/tmp/native-process-test-home/.cache/deno",
+  },
+};
 
 interface FakeProcessOptions {
   readonly groupOutput?: string;
@@ -133,7 +149,7 @@ const makeSpawner = (options: FakeProcessOptions) => {
   return spawner;
 };
 
-const spec: NativeProcessSpec = { executable: "test-native-process" };
+const spec: NativeProcessSpec = { executable: "test-native-process", environment: testEnvironment };
 
 // Intercepts every signal sent to the positive launcher pid and its negative
 // group so tests using a placeholder pid never reach a real OS process, for
@@ -246,6 +262,7 @@ const descendantSpec = (): NativeProcessSpec => {
   return {
     executable: process.execPath,
     args: ["--input-type=module", "-e", workloadCode],
+    environment: testEnvironment,
   };
 };
 
@@ -468,6 +485,7 @@ describe("native process group cleanup", () => {
         Effect.gen(function* () {
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             stdin: "pipe",
             args: [
               "--input-type=module",
@@ -500,6 +518,7 @@ describe("native process group cleanup", () => {
         Effect.gen(function* () {
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             args: [
               "--input-type=module",
               "-e",
@@ -717,6 +736,7 @@ describe("native process group cleanup", () => {
           const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
+            environment: testEnvironment,
             args: [
               "--input-type=module",
               "-e",
@@ -793,7 +813,10 @@ describe("native process group cleanup", () => {
 
   it.live("reports a native launcher startup failure when workload spawn fails", () =>
     Effect.scoped(
-      spawnNativeProcess({ executable: "/definitely/missing/native-workload" }).pipe(Effect.exit),
+      spawnNativeProcess({
+        executable: "/definitely/missing/native-workload",
+        environment: testEnvironment,
+      }).pipe(Effect.exit),
     ).pipe(
       Effect.provide(NodeServices.layer),
       Effect.tap((result) =>
@@ -936,6 +959,7 @@ describe("native process group cleanup", () => {
               spawnNativeProcess(
                 {
                   executable: process.execPath,
+                  environment: testEnvironment,
                   args: [
                     "-e",
                     "process.on('SIGTERM', () => {}); process.stdout.write('native-workload-ready\\n'); setInterval(() => {}, 1000)",

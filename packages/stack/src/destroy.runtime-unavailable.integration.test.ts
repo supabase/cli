@@ -1,37 +1,81 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Path } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { create, discover } from "./effect.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
-const shimDocker = Effect.fn("shimDocker")(function* (
-  root: string,
-  script: string,
-  engine: "docker" | "podman" = "docker",
-) {
+// Strips the pinned `--host <endpoint>` prefix every invocation now carries, so a shim's own
+// `"$1"` checks see the real command unchanged; `DOCKER_HOST` below makes that prefix constant.
+const stripPinPrefix = 'if [ "$1" = "--host" ]; then shift 2; fi\n';
+
+const shimDocker = Effect.fn("shimDocker")(function* (root: string, script: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const binDir = path.join(root, "bin");
   yield* fs.makeDirectory(binDir, { recursive: true });
-  const dockerShim = path.join(binDir, engine);
-  yield* fs.writeFileString(dockerShim, script);
+  const dockerShim = path.join(binDir, "docker");
+  yield* fs.writeFileString(
+    dockerShim,
+    script.replace("#!/bin/sh\n", `#!/bin/sh\n${stripPinPrefix}`),
+  );
   yield* fs.chmod(dockerShim, 0o755);
   // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
   const originalPath = process.env.PATH;
   // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
   process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+  // Fixes the pinned endpoint to a dummy socket, so resolving it never needs `context show`/
+  // `context inspect`, which these minimal shims don't answer.
+  // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+  const originalDockerHost = process.env.DOCKER_HOST;
+  // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+  process.env.DOCKER_HOST = "unix:///var/run/shimmed-docker.sock";
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => {
       // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
       process.env.PATH = originalPath;
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+      if (originalDockerHost === undefined) delete process.env.DOCKER_HOST;
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+      else process.env.DOCKER_HOST = originalDockerHost;
     }),
   );
 });
 
+/** Opens the real namespace at `stateRoot`, bypassing any owner, to seed or read claims directly. */
+const withNamespace = <A, E, R>(
+  stateRoot: string,
+  use: (state: StackNamespace.Interface) => Effect.Effect<A, E, R>,
+) =>
+  Effect.scoped(
+    Layer.build(StackNamespace.layer({ root: stateRoot })).pipe(
+      Effect.flatMap((context) => use(Context.get(context, StackNamespace.Service))),
+    ),
+  );
+
+/** Records a container claim as if a now-dead owner had created it before being interrupted. */
+const seedContainerClaim = (
+  stateRoot: string,
+  id: string,
+  containerId: string,
+  daemonId?: string,
+) =>
+  withNamespace(stateRoot, (state) =>
+    state.claim(id, {
+      kind: "container",
+      id: containerId,
+      ...(daemonId === undefined ? {} : { daemonId }),
+    }),
+  );
+
+const readClaimIds = (stateRoot: string, id: string) =>
+  withNamespace(stateRoot, (state) => state.readClaims(id)).pipe(
+    Effect.map((claims) => claims.map((claim) => claim.id)),
+  );
+
 it.live(
-  "removes a stack's registration and data when destroy finds no owner and its engine is unreachable",
+  "keeps a stack's registration and claims when destroy finds no owner and its engine is unreachable, then finishes the cleanup once a later owner can start",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -48,36 +92,35 @@ it.live(
         runtime: "docker",
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
-      const dataRoot = `${options.stateRoot}/${stack.id}/data`;
-      yield* fs.makeDirectory(`${dataRoot}/db-instance`, { recursive: true });
-      yield* fs.writeFileString(
-        `${dataRoot}/db-instance/.supabase-database-storage.json`,
-        `{"backend":"docker","volume":"supabase-db-0123456789abcdef","namespace":"instance-${stack.id}-db-instance","cacheNamespace":"cache-${"0".repeat(32)}","daemonId":"daemon","initialized":true}`,
+      // Recorded against the daemon the engine will report once it is back: the second destroy
+      // attempt below, once the engine is reachable again, is expected to finish the cleanup.
+      yield* seedContainerClaim(
+        options.stateRoot,
+        stack.id,
+        "offline0000000000000000000000000001",
+        "fake-daemon-id",
       );
-      const resolvedDataRoot = yield* fs.realPath(dataRoot);
 
       const result = yield* stack.destroy;
-      expect(result).toEqual({
-        runtimeCleanup: "skipped",
-        engine: "docker",
-        cleanupCommands: [
-          `sh -c 'ids=$(docker ps --all --quiet --no-trunc --filter '\\''label=com.supabase.stack=${stack.id}'\\'' --filter '\\''label=com.supabase.stack-root=${resolvedDataRoot}'\\'') && { [ -z "$ids" ] || docker rm --force $ids; }'`,
-          expect.stringMatching(
-            new RegExp(
-              `^docker run --rm --mount 'type=volume,src=supabase-db-0123456789abcdef,dst=/store' '[^']+' /bin/sh -c 'rm -rf /store/instance-${stack.id}-db-instance'$`,
-              "u",
-            ),
-          ),
-        ],
-      });
+      expect(result).toEqual({ runtimeCleanup: "skipped", engine: "docker" });
+      expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
+      expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
+        "offline0000000000000000000000000001",
+      ]);
 
+      // The engine is back: destroy retried finishes the exact claimed cleanup automatically.
+      yield* shimDocker(
+        root,
+        '#!/bin/sh\nif [ "$1" = "info" ]; then\n  echo \'fake-daemon-id\'\nfi\nexit 0\n',
+      );
+      const second = yield* stack.destroy;
+      expect(second).toEqual({ runtimeCleanup: "complete" });
       expect(yield* discover({ stateRoot: options.stateRoot })).toEqual([]);
-      const stackDirExit = yield* Effect.exit(fs.access(`${options.stateRoot}/${stack.id}`));
-      expect(Exit.isFailure(stackDirExit)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  30_000,
 );
 
-it.live("removes a stack offline when Windows reports its Docker daemon pipe is missing", () =>
+it.live("keeps a stack registered when Windows reports its Docker daemon pipe is missing", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-windows-" });
@@ -92,15 +135,16 @@ it.live("removes a stack offline when Windows reports its Docker daemon pipe is 
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
+    yield* seedContainerClaim(stateRoot, stack.id, "windows000000000000000000000000001");
 
     const result = yield* stack.destroy;
 
     expect(result.runtimeCleanup).toBe("skipped");
-    expect(yield* discover({ stateRoot })).toEqual([]);
+    expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("removes a stack offline when its engine CLI is not installed", () =>
+it.live("keeps a stack registered when its engine CLI is not installed", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-no-cli-" });
@@ -111,6 +155,7 @@ it.live("removes a stack offline when its engine CLI is not installed", () =>
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
+    yield* seedContainerClaim(stateRoot, stack.id, "nocli00000000000000000000000000001");
     yield* fs.makeDirectory(`${root}/empty-bin`);
     // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
     const originalPath = process.env.PATH;
@@ -126,11 +171,11 @@ it.live("removes a stack offline when its engine CLI is not installed", () =>
     const result = yield* stack.destroy;
 
     expect(result.runtimeCleanup).toBe("skipped");
-    expect(yield* discover({ stateRoot })).toEqual([]);
+    expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("removes a stack offline when Docker reports its API socket is missing", () =>
+it.live("keeps a stack registered when Docker reports its API socket is missing", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-missing-socket-" });
@@ -145,109 +190,13 @@ it.live("removes a stack offline when Docker reports its API socket is missing",
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
+    yield* seedContainerClaim(stateRoot, stack.id, "socket0000000000000000000000000001");
 
     const result = yield* stack.destroy;
 
     expect(result.runtimeCleanup).toBe("skipped");
-    expect(yield* discover({ stateRoot })).toEqual([]);
-  }).pipe(Effect.scoped, Effect.provide(layer)),
-);
-
-it.live(
-  "prints a container cleanup command that fails while the engine is down and removes every listed container once it is back",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-command-" });
-      const unreachable =
-        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?' >&2\nexit 1\n";
-      yield* shimDocker(root, unreachable);
-      const stack = yield* create({
-        projectRoot: root,
-        stateRoot: `${root}/state`,
-        cacheRoot: `${root}/cache`,
-        runtime: "docker",
-      });
-      const result = yield* stack.destroy;
-      if (result.runtimeCleanup !== "skipped") return yield* Effect.die("cleanup was not skipped");
-      const [containerCommand] = result.cleanupCommands;
-      if (containerCommand === undefined) return yield* Effect.die("container command missing");
-      const run = Effect.scoped(
-        spawner
-          .spawn(ChildProcess.make("/bin/sh", ["-c", containerCommand]))
-          .pipe(Effect.flatMap((child) => child.exitCode)),
-      );
-
-      expect(Number(yield* run)).not.toBe(0);
-      yield* fs.writeFileString(
-        `${root}/bin/docker`,
-        '#!/bin/sh\nif [ "$1" = "ps" ]; then exit 0; fi\necho "docker rm requires at least 1 argument" >&2\nexit 1\n',
-      );
-      expect(Number(yield* run)).toBe(0);
-      // Removal succeeds only when both listed IDs arrive as separate arguments.
-      yield* fs.writeFileString(
-        `${root}/bin/docker`,
-        '#!/bin/sh\nif [ "$1" = "ps" ]; then printf "aaa111\\nbbb222\\n"; exit 0; fi\nif [ "$1" = "rm" ] && [ "$2" = "--force" ] && [ "$#" -eq 4 ] && [ "$3" = "aaa111" ] && [ "$4" = "bbb222" ]; then exit 0; fi\necho "unexpected arguments: $*" >&2\nexit 1\n',
-      );
-      expect(Number(yield* run)).toBe(0);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
-);
-
-it.live("keeps a stack registered when Podman rejects its credentials", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-podman-auth-" });
-    yield* shimDocker(
-      root,
-      "#!/bin/sh\necho 'Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM' >&2\necho 'Error: unable to connect to Podman socket: ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey], no supported methods remain' >&2\nexit 125\n",
-      "podman",
-    );
-    const stateRoot = `${root}/state`;
-    const stack = yield* create({
-      projectRoot: root,
-      stateRoot,
-      cacheRoot: `${root}/cache`,
-      runtime: "podman",
-    });
-
-    const destroyFailure = yield* Effect.flip(stack.destroy);
-
-    expect(destroyFailure.message).toContain("unable to authenticate");
     expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
-);
-
-it.live.skipIf(process.getuid?.() === 0)(
-  "keeps a stack and its data when offline destroy cannot remove container-owned host data",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-host-data-" });
-      yield* shimDocker(
-        root,
-        "#!/bin/sh\necho 'Cannot connect to the Docker daemon at tcp://127.0.0.1:1. Is the docker daemon running?' >&2\nexit 1\n",
-      );
-      const stateRoot = `${root}/state`;
-      const stack = yield* create({
-        projectRoot: root,
-        stateRoot,
-        cacheRoot: `${root}/cache`,
-        runtime: "docker",
-      });
-      // Stands in for PostgreSQL files a container wrote as its own user.
-      const instanceRoot = `${stateRoot}/${stack.id}/data/db-instance`;
-      yield* fs.makeDirectory(`${instanceRoot}/data`, { recursive: true });
-      yield* fs.writeFileString(`${instanceRoot}/owned-file`, "owned data");
-      yield* fs.chmod(`${instanceRoot}/data`, 0o000);
-      yield* Effect.addFinalizer(() => fs.chmod(`${instanceRoot}/data`, 0o755).pipe(Effect.ignore));
-
-      const destroyFailure = yield* Effect.flip(stack.destroy);
-
-      expect(destroyFailure.message).toContain("start Docker and run destroy again");
-      expect(yield* discover({ stateRoot })).toHaveLength(1);
-      expect(yield* fs.exists(`${instanceRoot}/owned-file`)).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.live("keeps a stack registered when its container engine rejects the listing", () =>
@@ -266,11 +215,17 @@ it.live("keeps a stack registered when its container engine rejects the listing"
       runtime: "docker",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
+    yield* seedContainerClaim(options.stateRoot, stack.id, "permission00000000000000000000001");
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
+    // The socket itself refuses the owner's own startup, resolving its pinned engine target:
+    // the owner never starts, so the stack stays registered for a later retry.
     expect(destroyFailure.message).toContain("permission denied");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
+    expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
+      "permission00000000000000000000001",
+    ]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -282,13 +237,13 @@ it.live("keeps a stack registered when its container engine is reachable but cle
       root,
       [
         "#!/bin/sh",
-        'if [ "$1" = "ps" ]; then',
-        '  echo "abc123def456"',
-        "  exit 0",
-        "fi",
         'if [ "$1" = "rm" ]; then',
         "  echo 'docker: Error response from daemon: container removal failed' >&2",
         "  exit 1",
+        "fi",
+        // The daemon is reachable and identifiable; only the targeted removal fails.
+        'if [ "$1" = "info" ]; then',
+        "  echo 'fake-daemon-id'",
         "fi",
         "exit 0",
         "",
@@ -302,10 +257,22 @@ it.live("keeps a stack registered when its container engine is reachable but cle
       runtime: "docker",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
+    // Recorded against the daemon this reconcile run will match: the engine is reachable and
+    // identifiable here, so only the targeted removal itself is expected to fail.
+    yield* seedContainerClaim(
+      options.stateRoot,
+      stack.id,
+      "cleanupfail0000000000000000000001",
+      "fake-daemon-id",
+    );
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     expect(destroyFailure.message).toContain("container removal failed");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
+    // Cleanup authority never transferred away from the claim, so a later retry can still finish it.
+    expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
+      "cleanupfail0000000000000000000001",
+    ]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );

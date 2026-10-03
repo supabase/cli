@@ -1,5 +1,6 @@
 import { Effect, type FileSystem, type Path, Schema } from "effect";
 import { ServiceError } from "../Service.ts";
+import { writeOwnedFile } from "../namespace/Paths.ts";
 import { type CatalogOptions, EndpointIntent, serviceCreation } from "./Recipe.ts";
 import { requiredInput } from "./ServiceConfig.ts";
 import {
@@ -58,34 +59,27 @@ const defaultPipelineConfig = [
 
 const containerPipelinePath = "/etc/vector/vector.yaml";
 const containerApiPath = "/etc/supabase/vector-api.yaml";
-const temporaryPrefix = ".vector-write-";
 
-const writeAtomically = Effect.fn("Vector.writeAtomically")(
-  function* (fs: FileSystem.FileSystem, path: Path.Path, target: string, content: string) {
-    const directory = path.dirname(target);
-    yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
-    yield* Effect.acquireUseRelease(
-      fs.makeTempDirectory({ directory, prefix: temporaryPrefix }),
-      (temporaryDirectory) =>
-        Effect.gen(function* () {
-          const temporary = path.join(temporaryDirectory, path.basename(target));
-          yield* fs.writeFileString(temporary, content, { mode: 0o644 });
-          yield* fs.rename(temporary, target);
-        }),
-      (temporaryDirectory) =>
-        fs
-          .remove(temporaryDirectory, { recursive: true, force: true })
-          .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-    );
-  },
-  Effect.mapError(
-    (cause) =>
-      new ServiceError({ operation: "prepare", message: "Unable to write Vector config", cause }),
-  ),
-);
+const writeAtomically = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  target: string,
+  content: string,
+) =>
+  writeOwnedFile(
+    fs,
+    path,
+    target,
+    content,
+    (operation, cause) =>
+      new ServiceError({
+        operation,
+        message: "Unable to write Vector config",
+        cause,
+      }),
+  );
 
 const makeSpec = (
-  instanceId: string,
   instanceRoot: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -97,10 +91,6 @@ const makeSpec = (
   /** What Vector actually loads: a caller's file is rendered to a recipe-owned copy first. */
   const resolvedPipelinePath = (creation: Creation) =>
     creation.config.configPath === undefined ? defaultPipelinePath : renderedPipelinePath;
-  const ownedInstance = (operation: string) =>
-    /^[a-zA-Z0-9_-]+$/u.test(instanceId)
-      ? Effect.void
-      : Effect.fail(new ServiceError({ operation, message: "Invalid Vector instance identity" }));
   return {
     service: "vector",
     executable: "bin/vector",
@@ -124,6 +114,7 @@ const makeSpec = (
             : `${context.container ? "0.0.0.0" : "127.0.0.1"}:${http.port}`;
         yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(address));
         if (creation.config.configPath !== undefined) {
+          // Validated by `callerPaths` before prepare ran: read-only, no delete authority over it.
           const source = yield* fs.readFileString(creation.config.configPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -152,80 +143,18 @@ const makeSpec = (
     startupCommands: [],
     prepare: (creation) =>
       Effect.gen(function* () {
-        yield* ownedInstance("prepare");
         const callerPath = creation.config.configPath;
-        if (callerPath !== undefined) {
-          const canonical = (file: string) =>
-            fs
-              .exists(file)
-              .pipe(
-                Effect.flatMap((exists) =>
-                  exists ? fs.realPath(file) : Effect.succeed(path.resolve(file)),
-                ),
-              );
-          const caller = yield* fs.realPath(callerPath).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServiceError({
-                  operation: "prepare",
-                  message: "Unable to read Vector configPath",
-                  cause,
-                }),
-            ),
-          );
-          const owned = yield* Effect.all([
-            canonical(apiConfigPath),
-            canonical(defaultPipelinePath),
-            canonical(renderedPipelinePath),
-          ]).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServiceError({
-                  operation: "prepare",
-                  message: "Unable to resolve Vector config paths",
-                  cause,
-                }),
-            ),
-          );
-          if (owned.includes(caller))
-            return yield* new ServiceError({
-              operation: "prepare",
-              message: "Vector configPath must not point at a stack-owned Vector config file",
-            });
-        }
         // A safe placeholder until `args` writes the real address — the listening port isn't
         // known until endpoints are reserved for an actual launch, which happens after `prepare`.
         yield* writeAtomically(fs, path, apiConfigPath, apiConfigFor(undefined));
         if (callerPath === undefined)
           yield* writeAtomically(fs, path, defaultPipelinePath, defaultPipelineConfig);
       }),
-    // A caller configPath may live anywhere under the instance root, so only recipe files and empty directories go.
-    removeData: () =>
-      Effect.gen(function* () {
-        yield* ownedInstance("destroy");
-        yield* fs.remove(apiConfigPath, { force: true });
-        yield* fs.remove(defaultPipelinePath, { force: true });
-        yield* fs.remove(renderedPipelinePath, { force: true });
-        if (yield* fs.exists(configRoot))
-          for (const entry of yield* fs.readDirectory(configRoot))
-            if (entry.startsWith(temporaryPrefix))
-              yield* fs.remove(path.join(configRoot, entry), { recursive: true, force: true });
-        for (const directory of [configRoot, path.dirname(configRoot), instanceRoot]) {
-          if (!(yield* fs.exists(directory))) continue;
-          if ((yield* fs.readDirectory(directory)).length > 0) return;
-          yield* fs.remove(directory, { recursive: true });
-        }
-      }).pipe(
-        Effect.mapError((cause) =>
-          cause instanceof ServiceError
-            ? cause
-            : new ServiceError({
-                operation: "destroy",
-                message: "Unable to remove Vector config",
-                cause,
-              }),
-        ),
-      ),
+    // No removeData: configRoot lives under instanceRoot, which ProcessRecipe's destroyOwnedRoot
+    // already removes recursively; a caller's borrowed config sits outside it by construction,
+    // validated by callerPaths against the whole stack data root, not just this instance root.
+    callerPaths: (creation) =>
+      creation.config.configPath === undefined ? [] : [creation.config.configPath],
   };
 };
 
@@ -235,11 +164,6 @@ export const makeRecipe = Effect.fn("Vector.makeRecipe")(
       creation,
       options,
       deps,
-      makeSpec(
-        options.instanceId,
-        deps.path.join(options.root, options.instanceId),
-        deps.fs,
-        deps.path,
-      ),
+      makeSpec(deps.path.join(options.root, options.instanceId), deps.fs, deps.path),
     ),
 );

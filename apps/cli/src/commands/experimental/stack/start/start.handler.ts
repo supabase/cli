@@ -14,6 +14,7 @@ import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
   selectStackRuntime,
+  type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
@@ -121,7 +122,7 @@ const dockerUnavailableSuggestion = (
 const stackAcquireError = (
   cause: StackError,
   runtimeContext: {
-    readonly selectedRuntime: "native" | "docker" | "podman";
+    readonly selectedRuntime: StackRuntime;
     readonly runtime: { readonly platform: string; readonly arch: string };
     readonly creating: boolean;
   },

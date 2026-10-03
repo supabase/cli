@@ -67,16 +67,11 @@ export const stackApiLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
-/** Describes the engine resources a destroy left behind and the commands that remove them. */
+/** Describes why a destroy left engine resources behind, without promising automatic cleanup. */
 export const skippedRuntimeCleanupWarning = (
   subject: string,
-  result: Extract<DestroyResult, { readonly runtimeCleanup: "skipped" }>,
-): string => {
-  const engineName = result.engine === "docker" ? "Docker" : "Podman";
-  return [
-    `${engineName} was unavailable, so ${engineName} resources for ${subject} were not removed. Once it is running, remove them with:`,
-    ...result.cleanupCommands.map((command) => `  ${command}`),
-  ].join("\n");
-};
+  _result: Extract<DestroyResult, { readonly runtimeCleanup: "skipped" }>,
+): string =>
+  `Docker was unavailable, so Docker resources for ${subject} were not removed. Restore Docker and run "supabase stack destroy" again to finish removing it.`;
 
 export type { Stack };

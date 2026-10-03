@@ -38,11 +38,11 @@ use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project dir
 `supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
-Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
-probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
-asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
-saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
-runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+native on Linux x64/arm64 and macOS arm64. The probe is bounded by 10 seconds. Without a reachable
+engine on other platforms, the command fails and asks the user to start Docker. When auto selection
+skips Docker, an info line names the saved native runtime and how to switch to Docker. An existing
+stack keeps its saved runtime and runs no probe. Explicit `--runtime docker` or `native` has no
+fallback.
 When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
 Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
 `--runtime native` on a platform with no native artifacts fails before creating a stack.

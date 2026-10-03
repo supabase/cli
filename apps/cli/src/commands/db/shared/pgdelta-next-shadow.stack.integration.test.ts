@@ -92,7 +92,7 @@ describe("pg-delta next stack shadow provisioning", () => {
         );
 
         const stateRoot = `${root}/stacks`;
-        const engines = containerEngineSpawner({ docker: "missing", podman: "missing" });
+        const engines = containerEngineSpawner({ docker: "missing" });
         const settings = mockCommandSettings({ workdir: root, supabaseHome: root });
         const output = mockOutput().layer;
         const apiLayer = stackApiLayer.pipe(
@@ -155,7 +155,7 @@ describe("pg-delta next stack shadow provisioning", () => {
             ).toEqual([{ table_name: null }]);
             const api = yield* StackApi;
             expect(yield* api.discover({ stateRoot })).toHaveLength(2);
-            expect(engines.spawned.map(({ command }) => command)).toEqual(["docker", "podman"]);
+            expect(engines.spawned.map(({ command }) => command)).toEqual(["docker"]);
             return plan;
           }).pipe(Effect.provide(services)),
         );

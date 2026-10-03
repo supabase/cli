@@ -46,6 +46,7 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -73,6 +74,8 @@ const options: CatalogOptions = {
   root: "/tmp/process-recipe-test",
   cacheRoot: "/tmp/process-recipe-test-cache",
   runtime: "docker",
+  containerClaims: noContainerClaims,
+  directoryClaims: noDirectoryClaims,
 };
 
 const spec: ProcessRecipeSpec<TestCreation> = {
@@ -188,6 +191,7 @@ describe("ProcessRecipe launch cleanup", () => {
             client: yield* HttpClient.HttpClient,
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
           const service = yield* makeService(recipe.definition, {
@@ -275,6 +279,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -385,6 +390,7 @@ describe("ProcessRecipe launch cleanup", () => {
           client,
           spawner,
           container: undefined,
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -445,6 +451,8 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   const recipe = yield* makeProcessRecipe(
     creation,
     {
+      containerClaims: noContainerClaims,
+      directoryClaims: noDirectoryClaims,
       stackId: "process-recipe-test",
       instanceId: "instance",
       root: "/unused",
@@ -452,6 +460,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
       runtime: "docker",
     },
     {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
       crypto: yield* Crypto.Crypto,
@@ -655,7 +664,15 @@ const nativeRestRecipe = Effect.fn(function* (
       runtime: "native",
       platform: { os: process.platform, arch: process.arch },
     },
-    { fs, path, crypto, client, spawner, container: undefined },
+    {
+      borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+      fs,
+      path,
+      crypto,
+      client,
+      spawner,
+      container: undefined,
+    },
     {
       ...spec,
       env: (_creation, endpoints) =>
@@ -917,6 +934,8 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             stackId: "process-recipe-port-race",
             instanceId: "instance",
             root,
@@ -924,7 +943,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: interceptingSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: interceptingSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
@@ -984,6 +1011,8 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             stackId: "process-recipe-port-exhaustion",
             instanceId: "instance",
             root,
@@ -992,6 +1021,7 @@ describe("process recipe startup", () => {
             platform: { os: process.platform, arch: process.arch },
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
@@ -1118,6 +1148,8 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             stackId: "process-recipe-deadline",
             instanceId: "instance",
             root,
@@ -1125,7 +1157,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: deadlineSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: deadlineSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
@@ -1173,6 +1213,8 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             stackId: "process-recipe-unrelated-failure",
             instanceId: "instance",
             root,
@@ -1181,6 +1223,7 @@ describe("process recipe startup", () => {
             platform: { os: process.platform, arch: process.arch },
           },
           {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
             fs,
             path,
             crypto,
@@ -1277,6 +1320,8 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             stackId: "process-recipe-exit-failure",
             instanceId: "instance",
             root,
@@ -1284,7 +1329,15 @@ describe("process recipe startup", () => {
             runtime: "native",
             platform: { os: process.platform, arch: process.arch },
           },
-          { fs, path, crypto, client, spawner: failingSpawner, container: undefined },
+          {
+            borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            fs,
+            path,
+            crypto,
+            client,
+            spawner: failingSpawner,
+            container: undefined,
+          },
           Pooler.makeSpec(),
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);

@@ -10,9 +10,10 @@ import {
   ownerExitProbe,
   waitForOwnerExit,
 } from "./HostProcess.ts";
-import { makeContainerRuntime } from "./runtime/Container.ts";
+import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner } from "../tests/owner.ts";
+import { noContainerClaims } from "../tests/claims.ts";
 
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -66,18 +67,6 @@ const removeContainers = (stackId: string, dataRoot: string) =>
     ),
   );
 
-const createOwnedContainer = (name: string, stackId: string, dataRoot: string) =>
-  docker([
-    "create",
-    "--name",
-    name,
-    "--label",
-    `com.supabase.stack=${stackId}`,
-    "--label",
-    `com.supabase.stack-root=${dataRoot}`,
-    helperImage,
-  ]);
-
 const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projectRoot: string) =>
   Effect.gen(function* () {
     const state = yield* stateFor(stateRoot);
@@ -114,7 +103,13 @@ it.live.skipIf(process.platform === "win32")(
         const rootA = path.dirname(path.dirname(dataA));
         const rootB = path.dirname(path.dirname(dataB));
         const cacheRoot = `${base}/cache`;
-        const helper = yield* makeContainerRuntime({ engine: "docker", root: dataA });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const target = yield* resolveEngineTarget(spawner);
+        const helper = yield* makeContainerRuntime({
+          claims: noContainerClaims,
+          target,
+          root: dataA,
+        });
         yield* helper.prepare(helperImage);
         let activeA: { readonly pid: number; readonly port: number } | undefined;
         let activeB: { readonly pid: number; readonly port: number } | undefined;
@@ -141,41 +136,16 @@ it.live.skipIf(process.platform === "win32")(
             yield* removeContainers(stackId, dataB).pipe(Effect.ignore);
           }),
         );
-        const staleAtStartup = yield* createOwnedContainer(
-          `stack-stale-${stackId}-startup`,
-          stackId,
-          dataA,
-        );
         const accessA = yield* startHost(rootA, cacheRoot, stackId, `${base}/project-a`);
         const endpointA = accessA.endpoint;
         activeA = endpointA;
         stoppedA = false;
-        expect(staleAtStartup.length).toBeGreaterThan(0);
-        expect(
-          yield* containers(stackId, dataA),
-          "startup sweep removes A stale container",
-        ).toEqual([]);
-        const staleForA = yield* createOwnedContainer(
-          `stack-stale-${stackId}-parallel`,
-          stackId,
-          dataA,
-        );
-        const staleForB = yield* createOwnedContainer(
-          `stack-stale-${stackId}-other-root`,
-          stackId,
-          dataB,
-        );
         const accessB = yield* startHost(rootB, cacheRoot, stackId, `${base}/project-b`);
         const endpointB = accessB.endpoint;
         activeB = endpointB;
         stoppedB = false;
-        expect(staleForA.length).toBeGreaterThan(0);
-        expect(staleForB.length).toBeGreaterThan(0);
-        expect(yield* containers(stackId, dataA)).toEqual([staleForA]);
-        expect(
-          yield* containers(stackId, dataB),
-          "startup sweep removes B stale container",
-        ).toEqual([]);
+        expect(yield* containers(stackId, dataA)).toEqual([]);
+        expect(yield* containers(stackId, dataB)).toEqual([]);
 
         const clientA = yield* ownerClient(accessA);
         const clientB = yield* ownerClient(accessB);

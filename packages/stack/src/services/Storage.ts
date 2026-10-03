@@ -124,4 +124,5 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   mounts: (creation, _context) =>
     Effect.succeed([{ source: creation.config.filePath, target: "/mnt", readOnly: false }]),
   startupCommands: [initializationCommand],
+  callerPaths: (creation) => [creation.config.filePath],
 });

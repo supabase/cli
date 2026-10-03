@@ -32,6 +32,7 @@ import {
   makeContainerRuntime,
   type ContainerProcess,
   type ContainerRuntime,
+  type EngineTarget,
   type HostGateway,
 } from "../runtime/Container.ts";
 import { DatabaseBootstrapError, runDatabaseBootstrap } from "../runtime/DatabaseBootstrap.ts";
@@ -59,17 +60,16 @@ import {
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
 import {
+  acquireNativeRuntimeRoot,
   handOverNativePostgresFiles,
   openNativePostgresInstance,
   resolveNativePostgresUser,
   type PasswdEntry,
 } from "../runtime/postgres-user.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import {
-  containerInstancePath,
-  ensureOwnedInstanceRoot,
-  removeOwnedInstanceRoot,
-} from "./InstanceRoot.ts";
+import type * as Claims from "../namespace/Claims.ts";
+import * as Environment from "../namespace/Environment.ts";
+import { containerInstancePath, destroyOwnedRoot } from "../namespace/Paths.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import {
   instanceSnapshotsDirectory,
@@ -99,7 +99,7 @@ export const DatabaseConfig = Schema.Struct({
 
 const DatabaseReadyMarker = Schema.Struct({
   version: Schema.String,
-  runtime: Schema.Literals(["native", "docker", "podman"]),
+  runtime: Schema.Literals(["native", "docker"]),
   profile: Schema.Literal("supabase"),
 });
 
@@ -113,7 +113,7 @@ export interface DatabaseEndpoints extends Schema.Schema.Type<typeof DatabaseEnd
 export const DatabaseCreation = serviceCreation("database", DatabaseConfig, DatabaseEndpoints);
 export interface DatabaseCreation extends Schema.Schema.Type<typeof DatabaseCreation> {}
 
-export type DatabaseRuntime = "native" | "docker" | "podman";
+export type DatabaseRuntime = "native" | "docker";
 
 export type BackendEndpoint =
   | { readonly kind: "unix"; readonly path: string; readonly port: 5432 }
@@ -142,6 +142,12 @@ export interface DatabaseOptions {
   readonly helpers?: DockerHelperRegistry;
   /** Shares one host-gateway probe across this host's container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
+  readonly engineTarget?: EngineTarget;
+  /** Journals this database's container before it is created, for the namespace's reconcile loop. */
+  readonly containerClaims: Claims.ContainerClaims;
+  /** Journals the native socket directory this database creates under `/tmp`, outside its data root. */
+  readonly directoryClaims: Claims.DirectoryClaims;
 }
 
 export interface DatabaseComponent {
@@ -197,61 +203,66 @@ export const processExit = <E extends { readonly message: string }>(
 ): Effect.Effect<Exit.Exit<void, ServiceError>> =>
   sharedProcessExit(exitCode, describePostgresExit, stderr);
 
-const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(function* (
-  engine: "docker" | "podman",
-  id: string,
-  password: Redacted.Redacted<string>,
-  spawner: ChildProcessSpawnerService["Service"],
-) {
-  const args = [
-    "exec",
-    "-i",
-    id,
-    "/opt/postgres/bin/psql",
-    "-h",
-    "/tmp",
-    "-p",
-    "5432",
-    "-U",
-    "supabase_admin",
-    "-d",
-    "postgres",
-    "-X",
-    "-v",
-    "ON_ERROR_STOP=1",
-  ];
-  yield* Effect.annotateCurrentSpan({
-    "process.executable.name": engine,
-    "process.arg_count": args.length,
-  });
-  // Each retry overwrites `process.exit_code`, so the span reports the last attempt's status.
-  return yield* withAttemptCount(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const child = yield* spawner.spawn(ChildProcess.make(engine, args, { stdin: "pipe" }));
-        const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
-        const [, , , code] = yield* Effect.all(
-          [
-            Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
-            child.stdout.pipe(Stream.runDrain),
-            child.stderr.pipe(Stream.runDrain),
-            child.exitCode,
-          ],
-          { concurrency: "unbounded" },
-        );
-        yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
-        if (Number(code) !== 0)
-          return yield* errorFor("health", "Local database credential setup has not succeeded");
-      }),
-    ),
-    (counted) =>
-      counted.pipe(
-        Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
-        Effect.retry(Schedule.spaced("250 millis")),
+/** Exported for the cross-cutting pin test in {@link "../runtime/Container.integration.test.ts"}. */
+export const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(
+  function* (
+    target: EngineTarget,
+    id: string,
+    password: Redacted.Redacted<string>,
+    spawner: ChildProcessSpawnerService["Service"],
+  ) {
+    const args = [
+      "exec",
+      "-i",
+      id,
+      "/opt/postgres/bin/psql",
+      "-h",
+      "/tmp",
+      "-p",
+      "5432",
+      "-U",
+      "supabase_admin",
+      "-d",
+      "postgres",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+    ];
+    yield* Effect.annotateCurrentSpan({
+      "process.executable.name": target.engine,
+      "process.arg_count": args.length,
+    });
+    // Each retry overwrites `process.exit_code`, so the span reports the last attempt's status.
+    return yield* withAttemptCount(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(target.engine, [...target.argv, ...args], { stdin: "pipe" }),
+          );
+          const statement = `BEGIN; SET LOCAL log_statement = 'none'; SET LOCAL log_min_error_statement = 'panic'; SET LOCAL log_min_duration_statement = -1; SET LOCAL log_min_duration_sample = -1; SET LOCAL standard_conforming_strings = on; ALTER ROLE supabase_admin PASSWORD '${Redacted.value(password).replaceAll("'", "''")}'; COMMIT;`;
+          const [, , , code] = yield* Effect.all(
+            [
+              Stream.make(new TextEncoder().encode(statement)).pipe(Stream.run(child.stdin)),
+              child.stdout.pipe(Stream.runDrain),
+              child.stderr.pipe(Stream.runDrain),
+              child.exitCode,
+            ],
+            { concurrency: "unbounded" },
+          );
+          yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+          if (Number(code) !== 0)
+            return yield* errorFor("health", "Local database credential setup has not succeeded");
+        }),
       ),
-    { traced: true },
-  );
-});
+      (counted) =>
+        counted.pipe(
+          Effect.mapError(() => errorFor("health", "Local database credential setup failed")),
+          Effect.retry(Schedule.spaced("250 millis")),
+        ),
+      { traced: true },
+    );
+  },
+);
 
 /** Idempotent readiness reconciliation, so a session also re-runs it as its probe. */
 const health = Effect.fn("Database.health")(function* (
@@ -365,53 +376,6 @@ const publishLogs = publishProcessLogs;
 const runtimeFromContainer = (process: ContainerProcess, discard: boolean): RuntimeSession =>
   runtimeSessionFromContainer(process, describePostgresExit, { discard });
 
-const databaseOwnerFileName = ".supabase-database-owner.json";
-
-const ensureOwnedRoot = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  parentRoot: string,
-  stackId: string,
-  instanceId: string,
-): Effect.Effect<void, DatabaseError> =>
-  ensureOwnedInstanceRoot(
-    {
-      fs,
-      path,
-      parentRoot,
-      stackId,
-      instanceId,
-      ownerFileName: databaseOwnerFileName,
-      label: "Database root",
-    },
-    databaseError,
-  );
-
-const removeOwnedRoot = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  parentRoot: string,
-  stackId: string,
-  instanceId: string,
-  removeData: Effect.Effect<void, ServiceError>,
-  /** Root entries kept with the owner marker; when empty the root itself is removed. */
-  keep: ReadonlyArray<string> = [],
-): Effect.Effect<void, ServiceError> =>
-  removeOwnedInstanceRoot(
-    {
-      fs,
-      path,
-      parentRoot,
-      stackId,
-      instanceId,
-      ownerFileName: databaseOwnerFileName,
-      label: "Database root",
-    },
-    removeData,
-    errorFor,
-    keep,
-  );
-
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
   config: DatabaseConfig,
@@ -427,6 +391,7 @@ const nativeProcess = (
   instanceId: string,
   spawner: ChildProcessSpawnerService["Service"],
   user: PasswdEntry | undefined,
+  environment: Environment.NativeEnvironment,
 ): Effect.Effect<NativeProcess, ServiceError> =>
   spawnNativeProcess(
     {
@@ -446,13 +411,13 @@ const nativeProcess = (
         ...settings,
       ],
       env: {
-        ...(user === undefined ? {} : { HOME: user.home }),
         PGDATA: paths.dataPath,
         PGSODIUM_KEY_FILE: paths.rootKeyPath,
         POSTGRES_USER: "supabase_admin",
         POSTGRES_DB: "postgres",
         POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
       },
+      environment,
       gracefulStopSignal: "SIGINT",
       gracefulStopTimeout: "15 seconds",
     },
@@ -488,24 +453,31 @@ export const makeDatabase = (
     const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))
       return yield* databaseError("identity", "Invalid stack id");
-    yield* ensureOwnedRoot(fs, path, options.root, String(options.stackId), options.instanceId);
+    // Ownership is by location: instanceRoot is owned simply by being under options.root, with no
+    // separate marker to establish or verify. Still created eagerly here, since the storage
+    // marker write below assumes the directory exists rather than creating it itself.
     const instanceRoot = path.join(options.root, options.instanceId);
+    yield* fs
+      .makeDirectory(instanceRoot, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError((cause) => databaseError("root", cause)));
     const container: ContainerRuntime | undefined =
-      options.runtime === "native"
+      options.engineTarget === undefined
         ? undefined
         : yield* makeContainerRuntime({
-            engine: options.runtime,
+            target: options.engineTarget,
             root: options.root,
             imageMirrors: slimImageMirrors,
             ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+            claims: options.containerClaims,
             // PostgreSQL's outbound HTTP falls back across address families.
             awaitHostGateway: false,
           });
     const storage: DockerDatabaseStorage | undefined =
-      options.runtime === "native"
+      options.engineTarget === undefined
         ? undefined
         : yield* makeDockerDatabaseStorage({
             runtime: options.runtime,
+            target: options.engineTarget,
             stackId: String(options.stackId),
             instanceId: options.instanceId,
             ...(options.project === undefined ? {} : { project: options.project }),
@@ -518,6 +490,7 @@ export const makeDatabase = (
             container,
             spawner,
             ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
+            claims: options.containerClaims,
           }).pipe(Effect.mapError((cause) => databaseError("storage", cause)));
 
     const snapshots = (version: string) =>
@@ -811,6 +784,13 @@ export const makeDatabase = (
               stepDownUser === undefined
                 ? instanceRoot
                 : yield* asRoot(openNativePostgresInstance(stepDownUser, instanceRoot));
+            // A dedicated subdirectory, never the owned root itself, so a step-down chown of it
+            // never touches `nativeRoot`'s own root-only ownership that the next launch verifies.
+            const environment = yield* Environment.confine(
+              fs,
+              path,
+              path.join(nativeRoot, "home"),
+            ).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
             const dataPath = path.join(nativeRoot, "data");
             yield* fs
               .makeDirectory(dataPath, { recursive: true, mode: 0o700 })
@@ -819,13 +799,34 @@ export const makeDatabase = (
             yield* fs
               .writeFileString(rootKeyPath, Redacted.value(config.rootKey), { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-            // PostgreSQL limits Unix socket paths to 103 bytes, independently of the user's state root.
-            const socketPath = yield* Effect.acquireRelease(
-              fs.makeTempDirectory({ directory: "/tmp", prefix: "supabase-pg-" }),
-              (directory) =>
-                fs
-                  .remove(directory, { recursive: true, force: true })
-                  .pipe(Effect.catch((cause) => Effect.logError(cause))),
+            // PostgreSQL limits Unix socket paths to 103 bytes, so this directory nests under the
+            // short per-uid native runtime root (acquired and validated below) rather than under
+            // instanceRoot. Ownership by location there keeps a foreign uid from ever creating or
+            // replacing it, and keeps recovery from ever having to delete outside it.
+            // The pathname is picked and journaled before the directory exists, so a SIGKILL
+            // between the claim and the create always leaves reconcile a recoverable claim.
+            // An existing path is never ours, so a failed exclusive create drops the claim.
+            const runtimeRoot = yield* asRoot(acquireNativeRuntimeRoot());
+            const socketSuffix = yield* crypto.randomUUIDv4.pipe(
+              Effect.map((uuid) => uuid.replaceAll("-", "")),
+              Effect.mapError((cause) => errorFor("launch", cause)),
+            );
+            const socketPath = path.join(runtimeRoot, `pg-${socketSuffix}`);
+            yield* Effect.acquireRelease(
+              options.directoryClaims
+                .claim(socketPath)
+                .pipe(
+                  Effect.andThen(
+                    fs
+                      .makeDirectory(socketPath, { mode: 0o700 })
+                      .pipe(Effect.tapError(() => options.directoryClaims.unclaim(socketPath))),
+                  ),
+                ),
+              () =>
+                fs.remove(socketPath, { recursive: true, force: true }).pipe(
+                  Effect.andThen(options.directoryClaims.unclaim(socketPath)),
+                  Effect.catch((cause) => Effect.logError(cause)),
+                ),
             ).pipe(
               Scope.provide(context.scope),
               Effect.mapError((cause) => errorFor("launch", cause)),
@@ -844,8 +845,10 @@ export const makeDatabase = (
                   rootKeyPath,
                   socketPath,
                   hbaPath,
+                  runtimeRoot,
                   bundleRoot: artifact.root,
                   executable: artifact.executable,
+                  environmentHome: environment.values.HOME,
                 }),
               );
             const process = yield* nativeProcess(
@@ -858,6 +861,7 @@ export const makeDatabase = (
               options.instanceId,
               spawner,
               stepDownUser,
+              environment,
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",
@@ -898,15 +902,13 @@ export const makeDatabase = (
           yield* Ref.set(endpoint, selectedEndpoint);
           yield* publishLogs(launched, logs, context.scope);
           const session = runtimeFromContainer(launched, config.stopGraceSeconds === 0);
+          const engineTarget = options.engineTarget;
+          if (engineTarget === undefined)
+            return yield* errorFor("launch", "Container runtime is unavailable");
           const setup = health(
             selectedEndpoint,
             config,
-            reconcileContainerPassword(
-              options.runtime,
-              launched.id,
-              config.databasePassword,
-              spawner,
-            ),
+            reconcileContainerPassword(engineTarget, launched.id, config.databasePassword, spawner),
             {
               fs,
               instanceRoot,
@@ -933,20 +935,17 @@ export const makeDatabase = (
       prepare,
       launch,
       removeData: (context) =>
-        removeOwnedRoot(
+        destroyOwnedRoot(
           fs,
           path,
+          instanceRoot,
           options.root,
-          String(options.stackId),
-          options.instanceId,
-          Effect.gen(function* () {
-            if (storage !== undefined) {
-              yield* storage.destroyData(postgresVersion(context.config.version));
-              return;
-            }
-            if (container === undefined || !(yield* fs.exists(path.join(instanceRoot, "data"))))
-              return;
-          }).pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
+          storage === undefined
+            ? Effect.void
+            : storage
+                .destroyData(postgresVersion(context.config.version))
+                .pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
+          errorFor,
         ),
     };
     const resetData = Effect.fn("Database.resetData")((
@@ -954,22 +953,11 @@ export const makeDatabase = (
     ) => {
       const clear: Effect.Effect<void, ServiceError | DockerDatabaseStorageError> =
         storage === undefined
-          ? removeOwnedRoot(
-              fs,
-              path,
-              options.root,
-              String(options.stackId),
-              options.instanceId,
-              Effect.void,
-              [instanceSnapshotsDirectory],
-            )
+          ? destroyOwnedRoot(fs, path, instanceRoot, options.root, Effect.void, errorFor, [
+              instanceSnapshotsDirectory,
+            ])
           : storage.removeData(postgresVersion(context.config.version));
-      return clear.pipe(
-        Effect.andThen(
-          ensureOwnedRoot(fs, path, options.root, String(options.stackId), options.instanceId),
-        ),
-        Effect.mapError((cause) => errorFor("reset", cause)),
-      );
+      return clear.pipe(Effect.mapError((cause) => errorFor("reset", cause)));
     });
     return {
       definition,

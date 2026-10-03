@@ -9,7 +9,6 @@ import {
   Layer,
   Option,
   Redacted,
-  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -37,9 +36,6 @@ import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 // Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
 const FIXED_API_PORT = 24_393;
-const databaseOwnerMarker = Schema.fromJsonString(
-  Schema.Struct({ stackId: Schema.String, instanceId: Schema.String }),
-);
 
 it.live("registers and discovers saved definitions without inventing live observations", () =>
   Effect.gen(function* () {
@@ -175,12 +171,11 @@ it.live(
           },
         });
         const dataRoot = `${options.stateRoot}/${stack.id}/data/${instance.id}`;
-        const marker = `${dataRoot}/.supabase-database-owner.json`;
-        yield* fs.makeDirectory(dataRoot, { recursive: true });
-        const writeMarker = Schema.encodeEffect(databaseOwnerMarker);
-        yield* writeMarker({ stackId: "another-stack", instanceId: instance.id }).pipe(
-          Effect.flatMap((value) => fs.writeFileString(marker, value)),
-        );
+        // Ownership is by location: a root that is a symlink (not a real owned directory, perhaps
+        // tampered with) is refused rather than traversed or removed.
+        yield* fs.remove(dataRoot, { recursive: true, force: true });
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "destroy-failure-outside-" });
+        yield* fs.symlink(outside, dataRoot);
         const running = yield* discover(options);
         expect(running).toHaveLength(1);
         expect(running[0]?.host).toBeDefined();
@@ -196,19 +191,17 @@ it.live(
               {
                 id: instance.id,
                 succeeded: false,
-                error: expect.stringContaining("Database root belongs to another instance"),
+                error: expect.stringContaining("is a symlink"),
               },
             ],
           });
         }
-        expect(yield* fs.readFileString(marker)).toContain("another-stack");
+        expect(yield* fs.readLink(dataRoot).pipe(Effect.isSuccess)).toBe(true);
         const retained = yield* discover(options);
         expect(retained).toHaveLength(1);
         expect(retained[0]?.host).toBeUndefined();
 
-        yield* writeMarker({ stackId: stack.id, instanceId: instance.id }).pipe(
-          Effect.flatMap((value) => fs.writeFileString(marker, value)),
-        );
+        yield* fs.remove(dataRoot, { force: true });
         yield* stack.destroy;
         expect(yield* discover(options)).toHaveLength(0);
       }),

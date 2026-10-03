@@ -5,6 +5,7 @@ import { systemError } from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { postgres } from "../Commands.ts";
 import * as CommandRunner from "./CommandRunner.ts";
+import { noContainerClaims } from "../../tests/claims.ts";
 
 it.live.skipIf(process.platform === "win32")(
   "retries failed native workload cleanup when the stack runner is cleaned up",
@@ -53,6 +54,7 @@ it.live.skipIf(process.platform === "win32")(
           }),
         );
         const layer = CommandRunner.layer({
+          claims: noContainerClaims,
           stackId: "native-cleanup-test",
           root,
           cacheRoot,

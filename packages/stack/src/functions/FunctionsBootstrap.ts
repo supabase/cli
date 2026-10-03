@@ -1,6 +1,4 @@
 import { Crypto, Data, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
-import { rmdir } from "node:fs/promises";
 import { StackIdSchema, type StackId } from "../identity/StackId.ts";
 
 export class FunctionsBootstrapError extends Data.TaggedError("FunctionsBootstrapError")<{
@@ -14,8 +12,6 @@ export interface FunctionsBootstrapOwner {
   readonly write: (input: {
     readonly content: string;
   }) => Effect.Effect<string, FunctionsBootstrapError>;
-  /** Removes only this stack's functions bootstrap root. */
-  readonly cleanupAll: Effect.Effect<void, FunctionsBootstrapError>;
 }
 
 export interface FunctionsBootstrapOwnerOptions {
@@ -46,22 +42,6 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
   if (!/^[a-zA-Z0-9_-]+$/u.test(options.instanceId))
     return yield* failure("Invalid Functions instance identity");
   const root = path.join(options.root, options.instanceId, "runtime", "functions");
-  const removeEmptyDirectory = (directory: string) =>
-    Effect.tryPromise({
-      try: () => rmdir(directory),
-      catch: (cause) =>
-        failure("Unable to clean Functions parent directory", { path: directory, cause }),
-    }).pipe(
-      Effect.catch((cause) => {
-        const code =
-          typeof cause.cause === "object" && cause.cause !== null && "code" in cause.cause
-            ? cause.cause.code
-            : undefined;
-        return code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST"
-          ? Effect.void
-          : Effect.fail(cause);
-      }),
-    );
 
   const write = Effect.fn("FunctionsBootstrap.write")(function* (input: {
     readonly content: string;
@@ -124,14 +104,5 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
     });
   });
 
-  const cleanupAll = mapFs(
-    root,
-    "clean functions bootstrap files",
-    fs.remove(root, { recursive: true, force: true }),
-  ).pipe(
-    Effect.andThen(removeEmptyDirectory(path.dirname(root))),
-    Effect.andThen(removeEmptyDirectory(path.dirname(path.dirname(root)))),
-    Effect.withSpan("FunctionsBootstrap.cleanupAll"),
-  );
-  return { write, cleanupAll };
+  return { write };
 });

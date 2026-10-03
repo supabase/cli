@@ -3,10 +3,11 @@ import type { Stream } from "effect";
 import type { Effect, Ref } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
 import type { ServiceDefinition } from "../Service.ts";
-import type { HostGateway } from "../runtime/Container.ts";
+import type { ContainerClaims, DirectoryClaims } from "../namespace/Claims.ts";
+import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
-type CatalogRuntime = "native" | "docker" | "podman";
+type CatalogRuntime = "native" | "docker";
 
 export class CatalogError extends Data.TaggedError("CatalogError")<{
   readonly operation: string;
@@ -56,6 +57,12 @@ export interface CatalogOptions {
   readonly helpers?: DockerHelperRegistry;
   /** Shares one host-gateway probe across this host's container runtimes. */
   readonly hostGateway?: HostGateway;
+  /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
+  readonly engineTarget?: EngineTarget;
+  /** Journals this service's containers before they are created, for the namespace's reconcile loop. */
+  readonly containerClaims: ContainerClaims;
+  /** Journals directories a service creates outside its data root (for example under `/tmp`). */
+  readonly directoryClaims: DirectoryClaims;
 }
 
 export interface CatalogLog {

@@ -7,6 +7,8 @@ import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-auth-storage",
@@ -14,11 +16,14 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  containerClaims: noContainerClaims,
+  directoryClaims: noDirectoryClaims,
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
+  engineTarget: dockerEngineTarget,
 });
 
 describe("service catalog", () => {
@@ -30,6 +35,11 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-auth-storage-");
+          // Ownership is by location: Storage's filePath is a caller path and must live outside
+          // the stack's data root, not merely outside the service's own instance root.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-auth-storage-caller-",
+          });
           const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -93,7 +103,7 @@ describe("service catalog", () => {
           )(loginBody);
           expect(loginToken.access_token.length).toBeGreaterThan(0);
 
-          const storageRoot = `${root}/storage`;
+          const storageRoot = `${callerRoot}/storage`;
           yield* fs.makeDirectory(storageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: storageRoot } },

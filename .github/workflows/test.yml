@@ -162,6 +162,7 @@ jobs:
           src/Ports.integration.test.ts
           src/storage/DirectoryCopy.integration.test.ts
           src/namespace/Namespace.integration.test.ts
+          src/namespace/Paths.integration.test.ts
           src/HostProcess.integration.test.ts
           src/Network.integration.test.ts
           src/Proxy.integration.test.ts

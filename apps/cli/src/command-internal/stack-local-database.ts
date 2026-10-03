@@ -127,7 +127,7 @@ const RUNTIME_UNAVAILABLE = new StackRuntimeUnavailableError({
 });
 
 export const stackRequireProjectRuntime: Effect.Effect<
-  "native" | "docker" | "podman",
+  "native" | "docker",
   StackRuntimeUnavailableError,
   CommandSettings | StackApi | Path.Path
 > = stackProjectRuntime.pipe(

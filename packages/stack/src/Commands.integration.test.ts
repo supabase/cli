@@ -25,6 +25,8 @@ import { makeDatabase } from "./services/Database.ts";
 import { makeService } from "./Service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { noContainerClaims, noDirectoryClaims } from "../tests/claims.ts";
+import { dockerEngineTarget } from "../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -36,11 +38,15 @@ const makeTestCommandRunner = (options: {
   readonly stackId: string;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: "native" | "docker";
 }) =>
-  Layer.build(CommandRunner.layer(options)).pipe(
-    Effect.map((context) => Context.get(context, CommandRunner.Service)),
-  );
+  Layer.build(
+    CommandRunner.layer({
+      ...options,
+      claims: noContainerClaims,
+      ...(options.runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+    }),
+  ).pipe(Effect.map((context) => Context.get(context, CommandRunner.Service)));
 
 const runPostgres = (
   runner: CommandRunner.Interface,
@@ -84,11 +90,14 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               ? yield* makeDockerDatabaseRoot("stack-tools-", stackId)
               : yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const database = yield* makeDatabase({
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
             root,
             cacheRoot,
             stackId,
             instanceId: "database",
             runtime,
+            ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
           });
           const service = yield* makeService(database.definition, {
             id: "database",
@@ -234,11 +243,14 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 ? yield* makeDockerDatabaseRoot(`stack-pgprove-${major}-`, stackId)
                 : yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const database = yield* makeDatabase({
+              containerClaims: noContainerClaims,
+              directoryClaims: noDirectoryClaims,
               root,
               cacheRoot,
               stackId,
               instanceId: "database",
               runtime,
+              ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
             });
             const service = yield* makeService(database.definition, {
               id: "database",
@@ -270,8 +282,12 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               PGPASSWORD: `pgprove-${runtime}-${major}-password`,
               PGDATABASE: "postgres",
             };
-            const tests = `${root}/tests`;
-            yield* fs.makeDirectory(tests, { recursive: true });
+            // Ownership is by location: pg_prove's mount source is a caller path and must
+            // live outside the stack's data root, not merely outside the database's own
+            // instance root.
+            const tests = yield* fs.makeTempDirectoryScoped({
+              prefix: `stack-pgprove-${major}-tests-`,
+            });
             yield* fs.writeFileString(`${tests}/main.sql`, "\\ir included.sql\n");
             yield* fs.writeFileString(`${tests}/included.sql`, "\\i nested.sql\n");
             yield* fs.writeFileString(

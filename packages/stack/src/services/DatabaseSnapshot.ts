@@ -17,6 +17,7 @@ import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { postgresVersion } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
+import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
 
@@ -100,7 +101,7 @@ export interface SnapshotBackend {
 /** Cache-scoped entries kept besides the one just saved; instance-scoped checkpoints are never pruned. */
 const retainedPrevious = 2;
 const format = "supabase-database-snapshot-v1" as const;
-const runtimes = Schema.Literals(["native", "docker", "podman"]);
+const runtimes = Schema.Literals(["native", "docker"]);
 const SnapshotIdentity = Schema.Struct({
   format: Schema.Literal(format),
   version: Schema.String,
@@ -411,7 +412,7 @@ const makeNativeSnapshotBackend = Effect.fnUntraced(function* (options: {
         fs.makeDirectory(directory, { recursive: true, mode: 0o700 }).pipe(Effect.as(proceed)),
       Clear: ({ directory }) =>
         Effect.gen(function* () {
-          if (yield* fs.readLink(directory).pipe(Effect.isSuccess))
+          if ((yield* lstatPath(directory))?.type === "SymbolicLink")
             return yield* errorFor("clear", `${directory} is a symbolic link`);
           yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
           for (const name of yield* fs.readDirectory(directory))

@@ -218,17 +218,14 @@ const makeSpec = (
           }),
       ),
     ),
-  removeData: () =>
-    bootstrap.cleanupAll.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServiceError({
-            operation: "destroy",
-            message: "Unable to remove Functions bootstrap",
-            cause,
-          }),
-      ),
-    ),
+  // No removeData: the bootstrap directory lives under instanceRoot, which ProcessRecipe's
+  // destroyOwnedRoot already removes as a single recursive delete starting from a root it has
+  // just confirmed is real; a selective removeData reaching into a nested path on its own could
+  // instead follow a symlink an attacker (or a race) planted there, deleting outside it.
+  callerPaths: (creation) =>
+    creation.config.filesRoot === undefined
+      ? [creation.config.functionsRoot]
+      : [creation.config.functionsRoot, creation.config.filesRoot],
 });
 
 export const makeRecipe = Effect.fn("Functions.makeRecipe")(

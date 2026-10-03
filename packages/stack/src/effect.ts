@@ -2,7 +2,6 @@ import {
   Cause,
   Context,
   Crypto,
-  DateTime,
   Deferred,
   Effect,
   Exit,
@@ -38,8 +37,6 @@ import {
   type PlannedInstance,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
-import { removeStackContainersCommand } from "./runtime/Container.ts";
-import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -96,7 +93,7 @@ export interface StackLocations {
 export interface CreateOptions extends StackLocations {
   readonly projectRoot: string;
   readonly name?: string;
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: "native" | "docker";
   /**
    * A `session` stack starts its owner at creation and is destroyed when the creating handle's
    * scope closes or its process exits; a `detached` stack (the default) outlives its creator.
@@ -188,18 +185,14 @@ export type ServiceInstances = {
 };
 type AnyInstance = ServiceInstances[Kind];
 /**
- * The outcome of {@link Stack.destroy}. `skipped` means the stack's registration and host data
- * were removed without its container engine, because the engine was unreachable; its containers
- * and any database data in engine volumes remain, and `cleanupCommands` remove them once the
- * engine is running.
+ * The outcome of {@link Stack.destroy}. `skipped` means the stack's container engine was
+ * unreachable, so nothing was confirmed removed: its registration, data and claimed resources all
+ * stay in place. Recovery means calling destroy again once the engine is reachable; reopening the
+ * stack does not clean this up on its own.
  */
 export type DestroyResult =
   | { readonly runtimeCleanup: "complete" }
-  | {
-      readonly runtimeCleanup: "skipped";
-      readonly engine: "docker" | "podman";
-      readonly cleanupCommands: ReadonlyArray<string>;
-    };
+  | { readonly runtimeCleanup: "skipped"; readonly engine: "docker" };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -302,85 +295,26 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
-/** Finds a directory below `directory` that the current user cannot empty and delete. */
-const firstUnremovableDirectory = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  directory: string,
-): Effect.Effect<string | undefined> =>
-  Effect.gen(function* () {
-    const entries = yield* fs.readDirectory(directory).pipe(Effect.option);
-    const writable = yield* fs.access(directory, { writable: true }).pipe(Effect.isSuccess);
-    if (Option.isNone(entries) || !writable) return directory;
-    for (const entry of entries.value) {
-      const child = path.join(directory, entry);
-      const info = yield* fs.stat(child).pipe(Effect.option);
-      if (Option.isNone(info) || info.value.type !== "Directory") continue;
-      if (yield* fs.readLink(child).pipe(Effect.isSuccess)) continue;
-      const blocked = yield* firstUnremovableDirectory(fs, path, child);
-      if (blocked !== undefined) return blocked;
-    }
-    return undefined;
-  });
-
 /**
- * Destroys a stack whose owner cannot start because its container engine is unreachable: under
- * the stack's lease it removes the registration and host data, and returns the commands that
- * remove the containers and engine-volume data left behind.
+ * Destroys a stack whose owner cannot start because its container engine is unreachable: since
+ * nothing can be confirmed removed, registration, data and claims all stay exactly as they are.
+ * The next lease acquisition's reconcile loop (and, once an owner can start, the stack's normal
+ * destroy path) finishes the cleanup once the engine is reachable again.
  */
-const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
-  state: StackNamespace.Interface,
-  saved: SavedStack,
-  locations: StackLocations,
-  engine: "docker" | "podman",
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const id = saved.id;
-  const dataRoot = path.join(locations.stateRoot, id, "data");
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      const lease = yield* state
-        .acquireLease(id)
-        .pipe(
-          Effect.catchTag("Namespace.LeaseHeldError", () =>
-            failure("destroy", "An owner for this stack started during destroy; run destroy again"),
-          ),
-        );
-      yield* Effect.addFinalizer(() => lease.retractHolder.pipe(Effect.ignore));
-      yield* lease.publishHolder({
-        role: "sweeper",
-        pid: process.pid,
-        startedAt: DateTime.formatIso(yield* DateTime.now),
-      });
-      const current = yield* state.read(id);
-      // Container-written host data, such as database files below Docker 26, can belong to the
-      // container user; only the engine can delete it, so refuse before deleting anything.
-      const blocked =
-        current !== undefined && (yield* fs.exists(dataRoot))
-          ? yield* firstUnremovableDirectory(fs, path, dataRoot)
-          : undefined;
-      if (blocked !== undefined) {
-        const engineName = engine === "docker" ? "Docker" : "Podman";
-        return yield* failure(
-          "destroy",
-          `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
-        );
-      }
-      // Containers are labelled with the resolved data root the owner ran with.
-      const root = yield* fs.realPath(dataRoot).pipe(Effect.orElseSucceed(() => dataRoot));
-      const cleanupCommands = [
-        removeStackContainersCommand({ engine, stackId: id, root }),
-        ...(yield* volumeDataCleanupCommands({ engine, root, fs, path })),
-      ];
-      if (current !== undefined) {
-        yield* fs.remove(dataRoot, { recursive: true, force: true });
-        yield* state.withLock(state.remove(id));
-      }
-      return { runtimeCleanup: "skipped", engine, cleanupCommands } as const;
-    }),
-  ).pipe(Effect.mapError((cause) => failure("destroy", cause)));
-});
+const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(
+  function* (state: StackNamespace.Interface, saved: SavedStack, engine: "docker") {
+    const id = saved.id;
+    if (yield* state.leased(id))
+      return yield* failure(
+        "destroy",
+        "An owner for this stack started during destroy; run destroy again",
+      );
+    const current = yield* state.read(id);
+    if (current === undefined) return { runtimeCleanup: "complete" } as const;
+    return { runtimeCleanup: "skipped", engine } as const;
+  },
+  Effect.mapError((cause) => failure("destroy", cause)),
+);
 
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
@@ -590,7 +524,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       Effect.mapError((cause) => failure(operation, cause)),
     );
     if (engineUnavailable && engine !== undefined)
-      return yield* destroyWithoutEngine(state, saved, locations, engine).pipe(
+      return yield* destroyWithoutEngine(state, saved, engine).pipe(
         Effect.provideContext(services),
       );
     if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;

@@ -1,9 +1,24 @@
-import { Config, Effect, FileSystem, Option, Path } from "effect";
+import { Config, Context, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { PlatformError } from "effect/PlatformError";
+import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { ServiceError } from "../Service.ts";
 
 /** Names the non-root system user that runs native PostgreSQL when the stack itself runs as root. */
 export const NATIVE_POSTGRES_USER_ENV = "SUPABASE_NATIVE_POSTGRES_USER";
+
+/**
+ * Base directory of the per-uid native runtime root. Always the system `/tmp` outside tests: its
+ * protection is the administrator's, so no user-chosen base widens what recovery may delete.
+ */
+export const NativeRuntimeRootBase = Context.Reference<string>(
+  "@supabase/stack/NativeRuntimeRootBase",
+  { defaultValue: () => "/tmp" },
+);
+
+/** The per-uid private root every native socket directory nests under. */
+export const nativeRuntimeRootPath = (path: Path.Path, base: string, uid: number): string =>
+  path.join(base, `supabase-${uid}`);
 
 export interface PasswdEntry {
   readonly name: string;
@@ -122,6 +137,102 @@ const ancestorsOf = (path: Path.Path, start: string): ReadonlyArray<string> => {
   return parent === start ? [start] : [start, ...ancestorsOf(path, parent)];
 };
 
+const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag === "AlreadyExists";
+
+/**
+ * Confirms `target`'s unresolved state (one `lstat`, so a symlink is never followed) is a
+ * directory worth trusting: owned by `uid`, or by root when `allowRootOwner`, and never writable by
+ * group or others unless `allowStickyWritable` and the sticky bit guard it, as `/tmp` itself is.
+ */
+const confirmPrivateDirectory = Effect.fn("NativePostgresUser.confirmPrivateDirectory")(function* (
+  target: string,
+  uid: number,
+  policy: { readonly allowRootOwner: boolean; readonly allowStickyWritable: boolean },
+) {
+  const info = yield* lstatPath(target).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServiceError({ operation: "launch", message: `Unable to inspect ${target}`, cause }),
+    ),
+  );
+  if (info?.type === "SymbolicLink")
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `${target} is a symlink; refusing to use it for the native runtime root`,
+    });
+  if (info === undefined || info.type !== "Directory")
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `${target} is not a directory; refusing to use it for the native runtime root`,
+    });
+  if (info.uid !== uid && !(policy.allowRootOwner && info.uid === 0))
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `${target} belongs to uid ${String(info.uid)}, not the current user; refusing to use it for the native runtime root`,
+    });
+  const writable = (info.mode & 0o022) !== 0;
+  const sticky = (info.mode & 0o1000) !== 0;
+  if (writable && !(policy.allowStickyWritable && sticky))
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `${target} is writable by group or others${policy.allowStickyWritable ? " without the sticky bit" : ""}; refusing to use it for the native runtime root`,
+    });
+  return info;
+});
+
+/**
+ * Resolves and confirms the per-uid root native socket directories nest under: the configured base,
+ * canonicalized with `realPath` so a symlink or replacement planted after this check can't retarget
+ * it, then its `supabase-<uid>` leaf, confirmed owned by this uid alone with no write bit at all.
+ * `create` additionally makes the leaf (mode 0700) first, tolerating a race with another of our own
+ * processes.
+ */
+const resolveNativeRuntimeRoot = (create: boolean) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const base = yield* NativeRuntimeRootBase;
+    const uid = process.getuid?.() ?? 0;
+    const canonicalBase = yield* fs
+      .realPath(base)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServiceError({ operation: "launch", message: `Unable to resolve ${base}`, cause }),
+        ),
+      );
+    // Every ancestor is checked too: a writable non-sticky one would let another uid rename the tree.
+    for (const directory of ancestorsOf(path, canonicalBase))
+      yield* confirmPrivateDirectory(directory, uid, {
+        allowRootOwner: true,
+        allowStickyWritable: true,
+      });
+    const root = nativeRuntimeRootPath(path, canonicalBase, uid);
+    if (create)
+      yield* fs.makeDirectory(root, { mode: 0o700 }).pipe(
+        Effect.catchIf(isAlreadyExists, () => Effect.void),
+        Effect.mapError(
+          (cause) =>
+            new ServiceError({ operation: "launch", message: `Unable to create ${root}`, cause }),
+        ),
+      );
+    yield* confirmPrivateDirectory(root, uid, {
+      allowRootOwner: false,
+      allowStickyWritable: false,
+    });
+    return root;
+  });
+
+/** Acquires this process's native runtime root for a launch, creating the leaf if missing. */
+export const acquireNativeRuntimeRoot = Effect.fn("NativePostgresUser.acquireRuntimeRoot")(() =>
+  resolveNativeRuntimeRoot(true),
+);
+
+/** Resolves the native runtime root for recovery's containment check, without creating it. */
+export const resolveNativeRuntimeRootForRecovery = Effect.fn(
+  "NativePostgresUser.resolveRuntimeRootForRecovery",
+)(() => resolveNativeRuntimeRoot(false));
+
 /**
  * Restricts a directory to its owner but keeps an existing traverse-only grant, because a
  * stepped-down PostgreSQL resolves bundle and data paths through the cache and state roots while it runs.
@@ -191,7 +302,36 @@ export const openNativePostgresInstance = Effect.fn("NativePostgresUser.openInst
 /** The bundle's first-boot init runs `chmod +x` on this script, which only its owner may do. */
 const GETKEY_SCRIPT = "share/supabase-cli/config/pgsodium_getkey.sh";
 
-/** Hands the instance data, key, socket, HBA file, and the bundle's getkey script to the PostgreSQL user. */
+/** `chown -R -P uid:gid target`, failing with a message naming `target` and the recipient user. */
+const chownRecursive = Effect.fn("NativePostgresUser.chownRecursive")(function* (
+  user: PasswdEntry,
+  target: string,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // -P never follows symlinks inside the tree, and directories change owner after their contents.
+  const chownArgs = ["-R", "-P", `${user.uid}:${user.gid}`, target];
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": "chown",
+    "process.arg_count": chownArgs.length,
+  });
+  const status = yield* spawner.exitCode(
+    ChildProcess.make("chown", chownArgs, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+  );
+  yield* Effect.annotateCurrentSpan("process.exit_code", Number(status));
+  if (Number(status) !== 0)
+    return yield* new ServiceError({
+      operation: "launch",
+      message: `chown exited with ${String(status)} while handing ${target} to '${user.name}'`,
+    });
+});
+
+/**
+ * Hands the instance data, key, socket, HBA file, the bundle's getkey script, and a confined
+ * native `environmentHome` (if any) to the PostgreSQL user, each with its own `chown -R -P` call
+ * so a nested directory is never also listed as a separate, redundant target. `runtimeRoot` and its
+ * ancestors only gain traverse, so the step-down user reaches its socket directory under a
+ * restrictive configured base without write access to any of them.
+ */
 export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOverFiles")(function* (
   user: PasswdEntry,
   paths: {
@@ -199,13 +339,15 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
     readonly rootKeyPath: string;
     readonly socketPath: string;
     readonly hbaPath: string;
+    readonly runtimeRoot: string;
     readonly bundleRoot: string;
     readonly executable: string;
+    /** A confined native environment root (HOME); chowned on its own, never as a nested target. */
+    readonly environmentHome?: string;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const getkey = path.join(paths.bundleRoot, GETKEY_SCRIPT);
   const hasGetkey = yield* fs.exists(getkey);
   const targets = [paths.dataPath, paths.rootKeyPath, paths.socketPath, paths.hbaPath];
@@ -213,26 +355,19 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
     yield* requireOwnedByRootOr(user, getkey);
     targets.push(getkey);
   }
-  // -P never follows symlinks inside the tree, and directories change owner after their contents.
-  const chownArgs = ["-R", "-P", `${user.uid}:${user.gid}`, ...targets];
-  yield* Effect.annotateCurrentSpan({
-    "process.executable.name": "chown",
-    "process.arg_count": chownArgs.length,
-  });
-  const status = yield* spawner.exitCode(
-    ChildProcess.make("chown", chownArgs, {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    }),
-  );
-  yield* Effect.annotateCurrentSpan("process.exit_code", Number(status));
-  if (Number(status) !== 0)
-    return yield* new ServiceError({
-      operation: "launch",
-      message: `chown exited with ${String(status)} while handing files to '${user.name}'`,
-    });
+  for (const target of targets) yield* chownRecursive(user, target);
+  if (paths.environmentHome !== undefined) {
+    // A prior launch's confined HOME could have been replaced by a symlink or junction between
+    // runs; refuse to chown through it rather than trust reuse.
+    if ((yield* lstatPath(paths.environmentHome))?.type === "SymbolicLink")
+      return yield* new ServiceError({
+        operation: "launch",
+        message: `${paths.environmentHome} is a symlink; refusing to hand it to '${user.name}'`,
+      });
+    yield* chownRecursive(user, paths.environmentHome);
+  }
   yield* allowTraverse(user, [
+    ...ancestorsOf(path, paths.runtimeRoot),
     ...ancestorsOf(path, path.dirname(paths.executable)),
     ...(hasGetkey ? ancestorsOf(path, path.dirname(getkey)) : []),
   ]);

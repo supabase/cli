@@ -16,7 +16,9 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
-import type { ContainerRuntime } from "../runtime/Container.ts";
+import type * as Claims from "../namespace/Claims.ts";
+import * as Publication from "../namespace/Publication.ts";
+import type { ContainerRuntime, EngineTarget } from "../runtime/Container.ts";
 import { composeProjectFor } from "../runtime/ContainerName.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 import {
@@ -120,6 +122,8 @@ const testRunLabelArgs = Effect.fn("DockerDatabaseStorage.testRunLabelArgs")(fun
 export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")(
   (options: {
     readonly runtime: DatabaseRuntime;
+    /** The engine endpoint and identity the owner resolved once at startup. */
+    readonly target: EngineTarget;
     readonly stackId: string;
     readonly instanceId: string;
     readonly project?: string;
@@ -132,9 +136,18 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
     readonly container: ContainerRuntime | undefined;
     readonly spawner: ChildProcessSpawnerService["Service"];
     readonly helpers?: DockerHelperRegistry;
+    /** Journals each helper container before it is created, for the namespace's reconcile loop. */
+    readonly claims: Claims.ContainerClaims;
   }): Effect.Effect<DockerDatabaseStorage, DockerDatabaseStorageError, Scope.Scope> =>
     Effect.gen(function* () {
       const markerPath = options.path.join(options.instanceRoot, ".supabase-database-storage.json");
+      // Atomic (stage, fsync, rename, fsync the directory), so a kill mid-write leaves the prior
+      // marker fully decodable rather than a partially written one.
+      const publishMarker = (content: string) =>
+        Publication.publish(options.fs, options.path, {
+          target: markerPath,
+          content,
+        }).pipe(Effect.mapError((cause) => errorFor("marker", cause)));
       const composeHelperLabels = [
         "--label",
         `com.docker.compose.project=${composeProjectFor(options.stackId, options.project)}`,
@@ -202,45 +215,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 cacheNamespace: "native",
                 initialized: false,
               };
-            if (options.runtime !== "docker") {
-              const present = yield* options.fs
-                .exists(markerPath)
-                .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-              yield* options.fs
-                .makeDirectory(options.cacheRoot, { recursive: true })
-                .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-              const cacheRoot = yield* options.fs
-                .realPath(options.cacheRoot)
-                .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
-              const cacheNamespace = `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`;
-              if (present) {
-                const marker = yield* options.fs.readFileString(markerPath).pipe(
-                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
-                  Effect.flatMap(validateMarker),
-                  Effect.mapError((cause) => errorFor("marker", cause)),
-                );
-                if (marker.cacheNamespace !== cacheNamespace) {
-                  const updated = { ...marker, cacheNamespace };
-                  yield* options.fs
-                    .writeFileString(markerPath, yield* encodeMarker(updated), { mode: 0o600 })
-                    .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-                  return updated;
-                }
-                return marker;
-              }
-              yield* rejectUnmarkedData;
-              const value: Marker = {
-                backend: "host",
-                namespace: dataNamespace,
-                cacheNamespace,
-                initialized: false,
-              };
-              const encoded = yield* encodeMarker(value);
-              yield* options.fs
-                .writeFileString(markerPath, encoded, { mode: 0o600 })
-                .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
-              return value;
-            }
             let resolved = yield* resolveDaemon(false);
             const markerPresent = yield* options.fs
               .exists(markerPath)
@@ -305,10 +279,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                       ...validMarker,
                       cacheNamespace: `cache-${resolved.cacheDigest.slice(0, 32)}`,
                     };
-              if (updated !== validMarker)
-                yield* options.fs
-                  .writeFileString(markerPath, yield* encodeMarker(updated), { mode: 0o600 })
-                  .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+              if (updated !== validMarker) yield* publishMarker(yield* encodeMarker(updated));
               return updated;
             }
             yield* rejectUnmarkedData;
@@ -351,9 +322,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 Effect.asVoid,
               );
             }
-            yield* options.fs
-              .writeFileString(markerPath, yield* encodeMarker(value), { mode: 0o600 })
-              .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+            yield* publishMarker(yield* encodeMarker(value));
             return value;
           });
           yield* Ref.set(selectedCache, value);
@@ -370,7 +339,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "process.arg_count": args.length,
               });
               const child = yield* options.spawner
-                .spawn(ChildProcess.make(options.runtime, args, { stdin: "ignore" }))
+                .spawn(
+                  ChildProcess.make(options.runtime, [...options.target.argv, ...args], {
+                    stdin: "ignore",
+                  }),
+                )
                 .pipe(Effect.mapError((cause) => errorFor("engine", cause)));
               const [stdout, stderr, code] = yield* Effect.all(
                 [
@@ -414,9 +387,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               : Effect.fail(cause),
           ),
         );
-      const probeDaemonIdentity: Effect.Effect<DaemonIdentity, DockerDatabaseStorageError> =
+      // The daemon id is the owner's own pinned target, resolved once at startup; only the
+      // version, which that target's identity says nothing about, still needs the daemon itself.
+      const probeDaemonVersion: Effect.Effect<DaemonIdentity, DockerDatabaseStorageError> =
         Effect.gen(function* () {
-          const daemonId = (yield* engineCommand(["info", "--format", "{{.ID}}"])).trim();
+          const daemonId = options.target.daemonId;
           const version = yield* engineCommand([
             "version",
             "--format",
@@ -425,7 +400,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           const [clientVersion, serverVersion] = version.split("|");
           const clientMajor = parseMajor(clientVersion ?? "");
           const serverMajor = parseMajor(serverVersion ?? "");
-          if (daemonId.length === 0 || clientMajor === undefined || serverMajor === undefined)
+          if (clientMajor === undefined || serverMajor === undefined)
             return yield* errorFor("engine", "Docker returned an invalid version");
           const identity = { daemonId, clientMajor, serverMajor };
           // The next process, including a shadow diff, reuses this instead of asking the daemon.
@@ -486,7 +461,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               }
             }
           }
-          const resolved = yield* describe(yield* probeDaemonIdentity, true, false);
+          const resolved = yield* describe(yield* probeDaemonVersion, true, false);
           yield* Ref.set(daemonIdentityRef, resolved);
           return resolved;
         });
@@ -546,6 +521,11 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   /no such container/iu.test(cause.message) ? Effect.void : Effect.fail(cause),
                 ),
               );
+              // Cleanup authority now belongs entirely to this normal teardown; a crash before
+              // this point still leaves the claim for the next owner's reconcile loop.
+              yield* options.claims
+                .unclaim(current)
+                .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
               yield* Ref.set(helperId, undefined);
               yield* Ref.set(helperImage, undefined);
               yield* Ref.set(helperCleanupPending, false);
@@ -603,7 +583,15 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const name = `supabase-db-helper-${token}`;
               const testRunLabel = yield* testRunLabelArgs();
               // Register the deterministic owned name before the remote create starts so an
-              // interrupted docker run can still be removed by the same scope.
+              // interrupted docker run can still be removed by the same scope, and journal it so a
+              // SIGKILL that skips that scope still leaves it recoverable by the next reconcile.
+              // Required, the same as launch: a container must never be created with an
+              // unverifiable daemon identity, since a crashed owner could then leave a claim no
+              // reconcile can ever trust.
+              const resolvedDaemonId = options.target.daemonId;
+              yield* options.claims
+                .claim(name, resolvedDaemonId)
+                .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
               yield* Ref.set(helperId, name);
               yield* Ref.set(helperImage, image);
               const created = yield* engineCommand([
@@ -655,6 +643,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           Effect.catchTag("DockerDatabaseStorageError", (cause) =>
             missingContainer(cause.message) ? Effect.void : Effect.fail(cause),
           ),
+          Effect.andThen(
+            options.claims.unclaim(id).pipe(Effect.mapError((cause) => errorFor("claim", cause))),
+          ),
           Effect.asVoid,
         );
       // A container left in `created` cannot exec; remove it and start another.
@@ -697,6 +688,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             .prepareImage(image)
             .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
           const testRunLabel = yield* testRunLabelArgs();
+          // Journaled before the create starts, so a SIGKILL leaves this shared helper's identity
+          // recoverable by the next reconcile instead of leaked. Required, the same as launch: a
+          // container must never be created with an unverifiable daemon identity, since a crashed
+          // owner could then leave a claim no reconcile can ever trust.
+          const resolvedDaemonId = options.target.daemonId;
+          yield* options.claims
+            .claim(name, resolvedDaemonId)
+            .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
           return yield* Effect.uninterruptible(
             engineCommand([
               "run",
@@ -829,11 +828,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           yield* removeReadyMarker;
         });
       const writeMarker = (marker: Marker) =>
-        encodeMarker(marker).pipe(
-          Effect.flatMap((encoded) =>
-            options.fs.writeFileString(markerPath, encoded, { mode: 0o600 }),
-          ),
-        );
+        encodeMarker(marker).pipe(Effect.flatMap((encoded) => publishMarker(encoded)));
       const setup = Effect.fn("DockerDatabaseStorage.prepare")((version: string) =>
         Effect.gen(function* () {
           yield* selected;
@@ -1095,44 +1090,4 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         restoreSnapshot,
       };
     }),
-);
-
-/** Shell commands that delete the Docker-volume data recorded by the database instances under a stack's data root. */
-export const volumeDataCleanupCommands = Effect.fn(
-  "DockerDatabaseStorage.volumeDataCleanupCommands",
-)(
-  function* (options: {
-    readonly engine: "docker" | "podman";
-    readonly root: string;
-    readonly fs: FileSystem.FileSystem;
-    readonly path: Path.Path;
-  }) {
-    if (!(yield* options.fs.exists(options.root))) return [];
-    const markers: Array<Marker> = [];
-    for (const entry of yield* options.fs.readDirectory(options.root)) {
-      const markerPath = options.path.join(options.root, entry, ".supabase-database-storage.json");
-      if (!(yield* options.fs.exists(markerPath))) continue;
-      const marker = yield* options.fs
-        .readFileString(markerPath)
-        .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))));
-      if (marker.backend !== "docker") continue;
-      if (
-        marker.volume === undefined ||
-        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,254}$/u.test(marker.volume) ||
-        !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(marker.namespace)
-      )
-        return yield* errorFor(
-          "destroy",
-          `Recorded database storage identity is invalid: ${markerPath}`,
-        );
-      markers.push(marker);
-    }
-    if (markers.length === 0) return [];
-    const { image } = yield* resolveArtifact({ service: "database" });
-    return markers.map(
-      (marker) =>
-        `${options.engine} run --rm --mount ${shellQuote(`type=volume,src=${marker.volume},dst=/store`)} ${shellQuote(image)} /bin/sh -c ${shellQuote(`rm -rf /store/${marker.namespace}`)}`,
-    );
-  },
-  Effect.mapError((cause) => errorFor("destroy", cause)),
 );

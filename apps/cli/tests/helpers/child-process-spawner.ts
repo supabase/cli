@@ -106,13 +106,10 @@ export function mockChildProcessSpawner(
 export type ContainerEngineState = "missing" | "stopped" | "running";
 
 /**
- * Spawner for a host whose `docker` and `podman` commands behave as `engines` describe. Other
- * commands fail with `NotFound`, or run on the real spawner through `hidingLayer`.
+ * Spawner for a host whose `docker` command behaves as `engines` describes. Other commands fail
+ * with `NotFound`, or run on the real spawner through `hidingLayer`.
  */
-export function containerEngineSpawner(engines: {
-  readonly docker: ContainerEngineState;
-  readonly podman: ContainerEngineState;
-}) {
+export function containerEngineSpawner(engines: { readonly docker: ContainerEngineState }) {
   const spawned: SpawnRecord[] = [];
   const notFound = (command: string) =>
     PlatformError.systemError({
@@ -125,7 +122,7 @@ export function containerEngineSpawner(engines: {
     ChildProcessSpawner.make((command) => {
       const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
       const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
-      if (cmd !== "docker" && cmd !== "podman")
+      if (cmd !== "docker")
         return delegate === undefined ? Effect.fail(notFound(cmd)) : delegate.spawn(command);
       spawned.push({ command: cmd, args });
       const state = engines[cmd];

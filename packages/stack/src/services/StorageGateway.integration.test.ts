@@ -12,6 +12,7 @@ import * as StackNamespace from "../StackNamespace.ts";
 import type { SavedStack } from "../StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
@@ -31,10 +32,15 @@ const layout = Effect.fnUntraced(function* (runtime: SavedStack["runtime"], stac
   const dataRoot = yield* makeDockerDatabaseRoot("storage-gateway-docker-", stackId).pipe(
     Effect.flatMap(fs.realPath),
   );
+  // Ownership is by location: Storage's filePath is a caller path and must live outside the
+  // stack's data root, not merely outside the service's own instance root.
+  const storageRoot = yield* fs.makeTempDirectoryScoped({
+    prefix: "storage-gateway-docker-caller-",
+  });
   return {
     stateRoot: path.dirname(path.dirname(dataRoot)),
     dataRoot,
-    storageRoot: `${dataRoot}/storage`,
+    storageRoot,
   };
 });
 
@@ -59,7 +65,13 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     StackNamespace.Service,
   );
   yield* state.save(saved);
-  const owner = yield* ownerFor({ saved, state, root: dataRoot, cacheRoot });
+  const owner = yield* ownerFor({
+    saved,
+    state,
+    root: dataRoot,
+    cacheRoot,
+    ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+  });
   yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
   const created = yield* owner.rpc.supabaseComposition({
     services: [

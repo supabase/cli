@@ -22,6 +22,8 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as Net from "node:net";
 import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import * as Environment from "../namespace/Environment.ts";
+import { containerInstancePath, destroyOwnedRoot, type BorrowedPath } from "../namespace/Paths.ts";
 import { accepts } from "../Ports.ts";
 import {
   type ContainerError,
@@ -42,11 +44,6 @@ import {
   runtimeSessionFromContainer,
 } from "../runtime/Session.ts";
 import { ServiceError, ServiceLaunchError, type RuntimeSession } from "../Service.ts";
-import {
-  containerInstancePath,
-  ensureOwnedInstanceRoot,
-  removeOwnedInstanceRoot,
-} from "./InstanceRoot.ts";
 import {
   type CatalogLog,
   CatalogError,
@@ -106,6 +103,11 @@ export interface ProcessRecipeSpec<C extends RecipeCreation<ServiceKind, unknown
   readonly removeData?: (creation: C) => Effect.Effect<void, ServiceError>;
   /** Claims an owned instance directory, mounted at `/instance` in containers. */
   readonly instanceDirectory?: boolean;
+  /**
+   * Every caller-supplied path this recipe reads or mounts, validated against the stack's data
+   * root before `prepare` and launch run (see `namespace/Paths.borrow`).
+   */
+  readonly callerPaths?: (creation: C) => ReadonlyArray<string>;
 }
 
 export interface ResolvedStartupCommand {
@@ -162,6 +164,8 @@ export interface ProcessDependencies {
   readonly client: HttpClient.HttpClient;
   readonly spawner: ChildProcessSpawnerService["Service"];
   readonly container: ContainerRuntime | undefined;
+  /** Validates a caller-supplied path against the stack's data root; see `namespace/Paths.borrow`. */
+  readonly borrowCallerPath: (candidate: string) => Effect.Effect<BorrowedPath, ServiceError>;
 }
 
 const serviceError = mapToServiceError;
@@ -424,23 +428,26 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
     const preparedRoot = yield* Ref.make<string | undefined>(undefined);
     const endpoints = yield* Ref.make<ReadonlyMap<string, ServiceEndpoint>>(new Map());
     const logs = yield* PubSub.sliding<CatalogLog>(256);
+    // Ownership is by location: instanceRoot is owned simply by being under options.root, created
+    // on demand by whatever first writes under it (no separate marker to establish or verify).
     const instanceRoot = deps.path.join(options.root, options.instanceId);
-    const ownedInstanceRoot = {
-      fs: deps.fs,
-      path: deps.path,
-      parentRoot: options.root,
-      stackId: options.stackId,
-      instanceId: options.instanceId,
-      ownerFileName: ".supabase-instance-owner.json",
-      label: "Instance root",
-    };
     const nativeInstanceDir = spec.instanceDirectory === true ? instanceRoot : undefined;
     const containerInstanceDir =
       spec.instanceDirectory === true ? containerInstancePath : undefined;
+    // A dedicated, fully namespace-owned subdirectory for native confinement, so it never mixes
+    // with the recipe's own owned files.
+    const environmentRoot = deps.path.join(instanceRoot, ".supabase-environment");
 
     const prepare = Effect.fn("ProcessRecipe.prepare")(function* (candidate: C) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(options.instanceId))
+        return yield* serviceError("identity", "Instance id is not a safe path segment");
       if (spec.instanceDirectory === true)
-        yield* ensureOwnedInstanceRoot(ownedInstanceRoot, serviceError);
+        yield* deps.fs
+          .makeDirectory(instanceRoot, { recursive: true, mode: 0o700 })
+          .pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
+      if (spec.callerPaths !== undefined)
+        for (const candidatePath of spec.callerPaths(candidate))
+          yield* deps.borrowCallerPath(candidatePath);
       if (spec.prepare !== undefined) yield* spec.prepare(candidate);
       const resolved = yield* resolveArtifact({
         service: candidate.service,
@@ -485,6 +492,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           return yield* serviceError("launch", "Artifact was not prepared");
         if (artifactRoot === undefined)
           return yield* serviceError("launch", "Artifact root was not prepared");
+        const environment = yield* Environment.confine(deps.fs, deps.path, environmentRoot).pipe(
+          Effect.mapError((cause) => serviceError("launch", cause)),
+        );
         const reserveEndpoints = Effect.fn("ProcessRecipe.reserveEndpoints")(function* (
           parent: Scope.Closeable,
         ) {
@@ -537,6 +547,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                 executable: `${artifactRoot}/bin/${command.executable}`,
                 args: command.args,
                 env: command.env,
+                environment,
                 cwd: artifactRoot,
               },
               defaultNativeProcessLauncher(),
@@ -584,6 +595,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               executable,
               args,
               env,
+              environment,
               gracefulStopSignal: "SIGTERM",
               gracefulStopTimeout: "5 seconds",
             },
@@ -874,14 +886,16 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
       definition: {
         prepare,
         launch,
+        // instanceRoot (environmentRoot's parent, and the recipe's own owned files) is removed as
+        // one recursive delete; a recipe with nothing on the host filesystem simply finds it absent.
         removeData: (context) =>
-          (spec.instanceDirectory === true
-            ? removeOwnedInstanceRoot(
-                ownedInstanceRoot,
-                spec.removeData?.(context.config) ?? Effect.void,
-                serviceError,
-              )
-            : (spec.removeData?.(context.config) ?? Effect.void)
+          destroyOwnedRoot(
+            deps.fs,
+            deps.path,
+            instanceRoot,
+            options.root,
+            spec.removeData?.(context.config) ?? Effect.void,
+            serviceError,
           ).pipe(Effect.andThen(Ref.set(endpoints, new Map()))),
       },
       endpoints,

@@ -6,6 +6,8 @@ import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-analytics",
@@ -13,11 +15,14 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  containerClaims: noContainerClaims,
+  directoryClaims: noDirectoryClaims,
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
+  engineTarget: dockerEngineTarget,
 });
 
 describe("service catalog", () => {
@@ -29,6 +34,12 @@ describe("service catalog", () => {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
           const root = yield* makeDockerDatabaseRoot("catalog-optional-data-");
+          // Ownership is by location: Vector's config file and Imgproxy's served directory are
+          // caller paths and must live outside the stack's data root, not merely outside each
+          // service's own instance root.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-optional-data-caller-",
+          });
           const secret = "catalog-optional-data-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {
@@ -79,13 +90,13 @@ describe("service catalog", () => {
               config: {
                 analyticsUrl: `http://${analyticsRelay.host}:${analyticsRelay.port}`,
                 apiKey: "catalog-analytics",
-                configPath: `${root}/vector.yaml`,
+                configPath: `${callerRoot}/vector.yaml`,
               },
             },
             dockerOptions(root),
           );
           yield* fs.writeFileString(
-            `${root}/vector.yaml`,
+            `${callerRoot}/vector.yaml`,
             "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
               "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
           );
@@ -101,7 +112,7 @@ describe("service catalog", () => {
           );
           expect(vectorResponse.status).toBe(200);
 
-          const imageRoot = `${root}/images`;
+          const imageRoot = `${callerRoot}/images`;
           yield* fs.makeDirectory(imageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: imageRoot } },

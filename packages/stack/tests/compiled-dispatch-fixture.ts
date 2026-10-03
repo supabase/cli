@@ -65,6 +65,19 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
             "sh",
             pidMarker,
           ],
+          environment: {
+            values: {
+              HOME: "/tmp",
+              TMPDIR: "/tmp",
+              TMP: "/tmp",
+              TEMP: "/tmp",
+              XDG_CACHE_HOME: "/tmp",
+              XDG_CONFIG_HOME: "/tmp",
+              XDG_DATA_HOME: "/tmp",
+              XDG_STATE_HOME: "/tmp",
+              DENO_DIR: "/tmp",
+            },
+          },
           gracefulStopSignal: "SIGTERM",
           gracefulStopTimeout: "2 seconds",
         });

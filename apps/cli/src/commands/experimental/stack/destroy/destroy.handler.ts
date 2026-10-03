@@ -114,12 +114,16 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     if (result.runtimeCleanup === "skipped")
       yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, result));
     if (output.format !== "text")
-      yield* output.success("", { destroyed: true, id: target.id, ...result });
+      yield* output.success("", {
+        destroyed: result.runtimeCleanup === "complete",
+        id: target.id,
+        ...result,
+      });
     else if (result.runtimeCleanup === "complete")
       yield* output.raw(`Stack ${target.id} destroyed.\n`);
     else
       yield* output.raw(
-        `Stack ${target.id} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`,
+        `Stack ${target.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy" again.\n`,
       );
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

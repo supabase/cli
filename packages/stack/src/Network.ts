@@ -5,7 +5,7 @@ import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
-export type NetworkRuntime = "native" | "docker" | "podman";
+export type NetworkRuntime = "native" | "docker";
 
 type RouteContribution = Pick<
   HttpRoute,
@@ -91,12 +91,7 @@ const makeNetwork = (options: {
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
-    const runtimeAddress =
-      options.runtime === "native"
-        ? "127.0.0.1"
-        : options.runtime === "docker"
-          ? DOCKER_HOST_ALIAS
-          : "host.containers.internal";
+    const runtimeAddress = options.runtime === "native" ? "127.0.0.1" : DOCKER_HOST_ALIAS;
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 

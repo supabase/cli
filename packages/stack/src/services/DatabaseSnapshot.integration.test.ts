@@ -3,12 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Crypto, Data, Effect, Exit, FileSystem, Path, Ref, Schema, Scope, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
-import { makeContainerRuntime } from "../runtime/Container.ts";
+import { makeContainerRuntime, resolveEngineTarget } from "../runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../storage/DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
+import { noContainerClaims } from "../../tests/claims.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
 const version = postgresVersion("17");
@@ -183,7 +184,12 @@ const docker = Effect.fnUntraced(function* () {
   const root = yield* makeDockerDatabaseRoot("database-snapshot-contract-", stackId);
   const cacheRoot = path.resolve(root, "../../../cache");
   const image = (yield* resolveArtifact({ service: "database", version }).pipe(Effect.orDie)).image;
-  const container = yield* makeContainerRuntime({ engine: "docker", root });
+  const target = yield* resolveEngineTarget(spawner);
+  const container = yield* makeContainerRuntime({
+    claims: noContainerClaims,
+    target,
+    root,
+  });
   const helpers = yield* makeDockerHelperRegistry(
     `snapshot-contract-${yield* crypto.randomUUIDv4}`,
   );
@@ -221,8 +227,11 @@ const docker = Effect.fnUntraced(function* () {
       ),
     );
   const partialCopy = rewriting(spawner, (command, args) => {
-    const script = args.at(-1) ?? "";
-    if (command !== "docker" || args[0] !== "exec" || !script.includes("/usr/local/bin/cp"))
+    // Every engine invocation now carries the pinned `target.argv` prefix (e.g. `--host <endpoint>`)
+    // ahead of the real subcommand; skip past it before matching on "exec".
+    const unpinned = args.slice(target.argv.length);
+    const script = unpinned.at(-1) ?? "";
+    if (command !== "docker" || unpinned[0] !== "exec" || !script.includes("/usr/local/bin/cp"))
       return undefined;
     return [
       command,
@@ -239,7 +248,9 @@ const docker = Effect.fnUntraced(function* () {
       const instanceRoot = `${root}/${name}`;
       yield* fs.makeDirectory(instanceRoot, { recursive: true });
       const storage = yield* makeDockerDatabaseStorage({
+        claims: noContainerClaims,
         runtime: "docker",
+        target,
         stackId,
         instanceId: name,
         instanceRoot,

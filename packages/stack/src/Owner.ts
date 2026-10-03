@@ -15,6 +15,7 @@ import {
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { PlatformError } from "effect/PlatformError";
 import type { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
@@ -62,6 +63,11 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import * as Claims from "./namespace/Claims.ts";
+import { namespaceError } from "./namespace/Capabilities.ts";
+import { lstatPath } from "./namespace/drivers/FileSystem.ts";
+import * as Paths from "./namespace/Paths.ts";
+import { resolveNativeRuntimeRootForRecovery } from "./runtime/postgres-user.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -75,6 +81,8 @@ export interface OwnerOptions {
   readonly cacheRoot: string;
   /** Shares one host-gateway probe with the host's other container runtimes. */
   readonly hostGateway?: Container.HostGateway;
+  /** The engine endpoint and identity resolved once at startup; absent for a native stack. */
+  readonly engineTarget?: Container.EngineTarget;
 }
 
 type OwnerRpcs = RpcGroup.Rpcs<typeof OwnerRpc>;
@@ -86,13 +94,67 @@ type Handlers = {
   ) => Rpc.ResultFrom<Current, never>;
 };
 
-/** Removes containers labeled with this stack and data root; native stacks own none. */
+/** True when `target` exists in any form (a real entry or a symlink); lstat-style, never follows. */
+const directoryClaimExists = Effect.fn("Owner.directoryClaimExists")(function* (target: string) {
+  return (yield* lstatPath(target)) !== undefined;
+});
+
+/**
+ * Removes this stack's claimed resources by exact identity, through the owner's pinned engine target.
+ * Container claims from another or unknown daemon, and directory claims outside every owned root,
+ * are kept and reported, so recovery (possibly as root) never deletes what it does not own. A claim
+ * naming a path that no longer exists in any form is simply dropped, nothing left to remove.
+ */
 export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
+  state: StackNamespace.Interface,
   saved: Pick<SavedStack, "id" | "runtime">,
   root: string,
+  target: Container.EngineTarget | undefined,
 ) {
-  if (saved.runtime !== "native")
-    yield* Container.removeStackContainers({ engine: saved.runtime, stackId: saved.id, root });
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Missing, foreign, or symlinked is "no such owned root", not a sweep failure: anything claimed
+  // under it is reported, not deleted through whatever replaced it.
+  const nativeRuntimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
+  const ownedRoots = [root, ...Option.toArray(nativeRuntimeRoot)];
+  yield* Claims.reconcile(
+    state,
+    saved.id,
+    (
+      claim,
+    ): Effect.Effect<
+      "removed" | "kept",
+      Container.ContainerError | PlatformError | StackNamespace.NamespaceError,
+      ChildProcessSpawner.ChildProcessSpawner
+    > => {
+      if (claim.kind === "directory")
+        return directoryClaimExists(claim.id).pipe(
+          Effect.flatMap((present) =>
+            !present
+              ? Effect.succeed("removed" as const)
+              : Paths.isWithinOwnedRoots(fs, path, claim.id, ownedRoots, (_operation, cause) =>
+                  namespaceError("cleanup", cause),
+                ).pipe(
+                  Effect.flatMap((within) =>
+                    within
+                      ? fs
+                          .remove(claim.id, { recursive: true, force: true })
+                          .pipe(Effect.as("removed" as const))
+                      : Effect.logWarning(
+                          `Claimed directory ${claim.id} resolves outside every owned root; keeping it`,
+                        ).pipe(Effect.as("kept" as const)),
+                  ),
+                ),
+          ),
+        );
+      if (target === undefined) return Effect.succeed("kept" as const);
+      if (claim.daemonId === undefined || claim.daemonId !== target.daemonId)
+        return Effect.succeed("kept" as const);
+      return Container.removeContainerById({ target, id: claim.id }).pipe(
+        Effect.as("removed" as const),
+      );
+    },
+  );
 });
 
 type NamespaceError =
@@ -291,6 +353,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     return yield* withCredentials(creation, credentials);
   });
 
+  const claims = Claims.forStack(options.state, stackId);
   const recipeFor = (creation: ServiceCreation, id: string) =>
     makeServiceRecipe(creation, {
       stackId,
@@ -300,7 +363,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
+      containerClaims: claims.containers,
+      directoryClaims: claims.directories,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+      ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));
 
   const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
@@ -675,7 +741,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
   };
 
-  const sweep = sweepContainers(options.saved, options.root).pipe(Effect.provideContext(services));
+  const sweep = sweepContainers(
+    options.state,
+    options.saved,
+    options.root,
+    options.engineTarget,
+  ).pipe(Effect.provideContext(services));
   const getStackCredentials = readSaved.pipe(
     Effect.flatMap(({ credentials }) =>
       credentials === undefined
@@ -699,7 +770,34 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(network.release),
         Effect.andThen(sweep),
-        Effect.andThen(options.state.remove(stackId)),
+        // A claim reconcile deliberately kept (for example one recorded against a different
+        // daemon) must not be lost to a full deregistration; the stack stays registered so a
+        // later acquisition's reconcile, against the right daemon, can still finish it.
+        Effect.andThen(options.state.readClaims(stackId)),
+        Effect.flatMap((remaining) =>
+          remaining.length === 0
+            ? options.state.remove(stackId)
+            : Effect.gen(function* () {
+                const currentDaemonId = options.engineTarget?.daemonId;
+                const claimsPath = path.join(options.state.root, stackId, Claims.CLAIMS_FILE);
+                const listed = remaining
+                  .map(
+                    (claim) =>
+                      `  - ${claim.kind} ${claim.id} (daemon ${claim.daemonId ?? "unknown"})`,
+                  )
+                  .join("\n");
+                return yield* new StackNamespace.NamespaceError({
+                  operation: "destroy",
+                  message: [
+                    `${remaining.length} resource claim(s) could not be reconciled; stack stays registered for retry.`,
+                    listed,
+                    `Current daemon: ${currentDaemonId ?? "unreachable"}.`,
+                    "To recover: stop this owner, confirm the lease is free, then run `supabase stack destroy` again once the original engine is back. " +
+                      `If that engine is permanently gone, remove the listed claim entries from ${claimsPath} and retry.`,
+                  ].join("\n"),
+                });
+              }),
+        ),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),

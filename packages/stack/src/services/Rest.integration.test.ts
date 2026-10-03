@@ -11,6 +11,8 @@ import { makeService } from "../Service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -34,11 +36,14 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
+  containerClaims: noContainerClaims,
+  directoryClaims: noDirectoryClaims,
 });
 
 const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
+  engineTarget: dockerEngineTarget,
 });
 
 describe("service catalog", () => {

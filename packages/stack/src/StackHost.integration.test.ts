@@ -36,6 +36,7 @@ import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import { noContainerClaims } from "../tests/claims.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -142,6 +143,7 @@ const inProcessRuntime = (
     const acquired = yield* bindControl();
     const toolContext = yield* Layer.build(
       CommandRunner.layer({
+        claims: noContainerClaims,
         stackId: "stack",
         root,
         cacheRoot: "/tmp/supabase-stack-artifacts",

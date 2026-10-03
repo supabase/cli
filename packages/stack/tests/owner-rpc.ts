@@ -2,6 +2,7 @@ import { Context, Effect, Layer } from "effect";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "../src/Owner.ts";
 import { OwnerRpc } from "../src/Rpc.ts";
+import type { EngineTarget } from "../src/runtime/Container.ts";
 import { Service as StateService } from "../src/StackNamespace.ts";
 import type { Interface as StateInterface, SavedStack } from "../src/StackNamespace.ts";
 
@@ -11,6 +12,7 @@ export const ownerFor = (options: {
   readonly state: StateInterface;
   readonly root: string;
   readonly cacheRoot: string;
+  readonly engineTarget?: EngineTarget;
 }) =>
   Effect.gen(function* () {
     const { state, ...layerOptions } = options;

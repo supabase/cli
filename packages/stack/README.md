@@ -14,7 +14,7 @@ import { postgres } from "@supabase/stack/commands";
 
 const stack = await create({
   projectRoot: process.cwd(),
-  runtime: "native", // or "docker" / "podman"
+  runtime: "native", // or "docker"
   stateRoot: "/tmp/example-stack/state",
   cacheRoot: "/tmp/example-stack/cache",
 });
@@ -59,11 +59,11 @@ await stack.close(); // disconnects this client
 
 Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid numbers saved by any stack under the same `stateRoot`; a fixed port is decided by binding it, so another stack's saved port blocks only while something listens on it; that conflict names the stack that saved the port. Omitted public endpoints are not exposed.
 
-Native public listeners bind to loopback. Docker and Podman public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
+Native public listeners bind to loopback. Docker public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
 
 Functions use a package-provided, self-contained Edge Runtime main service unless the configuration supplies `bootstrap` source; only an explicit `bootstrap` is saved with the service definition. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
 
-On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker and Podman mount project files at a separate runtime path.
+On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker mounts project files at a separate runtime path.
 
 `open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. It skips each entry that cannot be read or decoded and reports it to `onInvalidState(id, error)`; only a failure to read `stateRoot` itself fails discovery. Port allocation skips the same entries. Offline definitions are not live lifecycle observations.
 
@@ -77,7 +77,7 @@ Pass `startOwner: true` to `open` when live status and other owner-backed operat
 
 `create({ ..., startOwner: true })` starts a detached stack's owner immediately and lets it register the stack under its lease, as a session stack always does. If the owner fails to start or the launch is interrupted before it reports ready, the owner removes that registration and `create` fails with the launch error, so a failed launch leaves no stack behind.
 
-`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` takes the stack's lease, so no owner can start meanwhile, and removes the local registration, port claims and host data anyway and returns `{ runtimeCleanup: "skipped", engine, cleanupCommands }`; its containers and any database data in engine volumes remain, and `cleanupCommands` are the shell commands that remove them once the engine is running. If some host data cannot be deleted by the current user, `destroy` fails before removing anything so it can be retried with the engine running.
+`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` confirms that no owner holds the stack's lease and leaves the registration, port claims and host data untouched, returning `{ runtimeCleanup: "skipped", engine }`. When an owner does run but some claims (for example a container on a different daemon) cannot be reconciled, `destroy` likewise keeps the stack registered and fails, listing the remaining claims and the `claims.json` path to edit if the original engine is permanently gone. Either way, retry `destroy` once the engine is reachable; there is no `cleanupCommands` field.
 
 The stack owns database, Functions bootstrap, and command-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 

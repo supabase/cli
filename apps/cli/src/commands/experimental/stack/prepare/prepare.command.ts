@@ -11,9 +11,9 @@ const config = {
     Flag.withDescription("Open an existing stack by id."),
     Flag.optional,
   ),
-  runtime: Flag.choice("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
+  runtime: Flag.choice("runtime", ["auto", "docker", "native"] as const).pipe(
     Flag.withDescription(
-      "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
+      "Runtime to use for a new stack. auto selects Docker, then native, based on what is available.",
     ),
     Flag.withDefault("auto" as const),
   ),

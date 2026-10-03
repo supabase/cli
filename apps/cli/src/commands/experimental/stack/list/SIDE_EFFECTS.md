@@ -15,8 +15,8 @@ no stack state files are written. Telemetry flushes to
 
 ## Output
 
-Entries contain `id`, `project_root`, `name`, `branch_context`, `runtime` (native,
-docker, or podman), and `owner` (reachable or unavailable). Owner availability is
+Entries contain `id`, `project_root`, `name`, `branch_context`, `runtime` (native
+or docker), and `owner` (reachable or unavailable). Owner availability is
 not service lifecycle or health. Entries sort by project root, name, then ID.
 Text shows NAME, PROJECT, BRANCH, RUNTIME, OWNER, and a compact ID. An empty
 registry prints `No managed stacks found.` Use `--output-format json` to obtain

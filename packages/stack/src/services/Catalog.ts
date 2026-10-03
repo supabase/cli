@@ -30,6 +30,7 @@ import {
   type ProcessRecipeResult,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
+import { borrow } from "../namespace/Paths.ts";
 import { missingInput } from "./ServiceConfig.ts";
 import type { SnapshotScope } from "./DatabaseSnapshot.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
@@ -329,6 +330,9 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           runtime: options.runtime,
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+          ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
+          containerClaims: options.containerClaims,
+          directoryClaims: options.directoryClaims,
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -343,15 +347,29 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         return databaseRecipe(creation, component);
       }
       const container =
-        options.runtime === "native"
+        options.engineTarget === undefined
           ? undefined
           : yield* makeContainerRuntime({
-              engine: options.runtime,
+              target: options.engineTarget,
               root: options.root,
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+              claims: options.containerClaims,
             });
-      const deps: ProcessDependencies = { fs, path, crypto, client, spawner, container };
+      const borrowCallerPath = (candidate: string) =>
+        borrow(fs, path, candidate, options.root, (operation, cause) => {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          return new ServiceError({ operation, message, cause });
+        });
+      const deps: ProcessDependencies = {
+        fs,
+        path,
+        crypto,
+        client,
+        spawner,
+        container,
+        borrowCallerPath,
+      };
       switch (creation.service) {
         case "rest":
           return catalogRecipe(

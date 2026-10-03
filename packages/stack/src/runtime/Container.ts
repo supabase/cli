@@ -1,6 +1,7 @@
 import { withAttemptCount } from "../internal/attempts.ts";
 import {
   Cause,
+  Config,
   Crypto,
   Data,
   Deferred,
@@ -21,6 +22,8 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
+import type * as Claims from "../namespace/Claims.ts";
+import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
 export class ContainerError extends Data.TaggedError("ContainerError")<{
@@ -115,10 +118,10 @@ const transientPullFailure = (error: ContainerError) =>
 
 /**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
- * rejects the caller. Podman's connection wrappers and Windows' `error during connect` also wrap
- * authentication and TLS failures, so only their refused or missing-endpoint causes match.
+ * rejects the caller. Windows' `error during connect` also wraps authentication and TLS failures,
+ * so only its refused or missing-endpoint causes match.
  */
-const engineUnreachable = (error: ContainerError) =>
+export const engineUnreachable = (error: ContainerError) =>
   (error.cause instanceof PlatformError.PlatformError &&
     error.cause.reason._tag === "NotFound" &&
     error.cause.reason.method === "spawn") ||
@@ -126,19 +129,96 @@ const engineUnreachable = (error: ContainerError) =>
     error.message,
   );
 
+/** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
+const runRaw = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  args: ReadonlyArray<string>,
+): Effect.Effect<string, ContainerError> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Number(code) !== 0)
+        return yield* errorFor(args[0] ?? "command", stderr.trim() || `Engine exited with ${code}`);
+      return stdout;
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.mapError((cause) =>
+      cause instanceof ContainerError ? cause : errorFor(args[0] ?? "command", cause),
+    ),
+  );
+
+/**
+ * The engine endpoint and identity an owner resolves once, at startup, and pins for its entire
+ * lifetime: the container runtime, the storage helpers, the host-gateway probes and the
+ * namespace's reconcile loop all share this one target instead of each resolving (and so
+ * potentially disagreeing on) their own. `argv` is the explicit prefix every invocation carries
+ * (`--host <endpoint>`), since the docker CLI gives that priority over `DOCKER_HOST` and context
+ * switches, and since an argument, unlike an environment variable, never leaks to subprocesses a
+ * launched workload spawns.
+ *
+ * `engine` keeps the seam a future Podman driver would plug into; only `"docker"` is resolved
+ * today.
+ */
+export interface EngineTarget {
+  readonly engine: "docker";
+  readonly argv: ReadonlyArray<string>;
+  readonly daemonId: string;
+}
+
+/**
+ * The active context's own name, pinned by name rather than by its endpoint alone: `context show`
+ * honours `DOCKER_CONTEXT` and the config file, and pinning by name keeps that context's own TLS
+ * material (CA, client certificate and key, skip-verify) intact for every later invocation, which
+ * extracting just its endpoint would otherwise drop.
+ */
+const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+  Effect.gen(function* () {
+    const name = (yield* runRaw(spawner, ["context", "show"])).trim();
+    if (name.length === 0) return yield* errorFor("context", "Engine returned no active context");
+    return name;
+  });
+
+/**
+ * Resolves and pins, once for an owner's whole lifetime, the single docker endpoint its commands
+ * target and that endpoint's own identity.
+ */
+export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(function* (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.fn.Return<EngineTarget, ContainerError> {
+  const host = yield* Config.option(Config.string("DOCKER_HOST")).pipe(
+    Effect.map(Option.filter((value) => value.length > 0)),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  const argv: ReadonlyArray<string> = Option.isSome(host)
+    ? ["--host", host.value]
+    : ["--context", yield* resolveContextName(spawner)];
+  const daemonId = (yield* runRaw(spawner, [...argv, "info", "--format", "{{.ID}}"])).trim();
+  if (daemonId.length === 0) return yield* errorFor("identity", "Engine returned an empty id");
+  return { engine: "docker", argv, daemonId };
+});
+
 /** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
 const retryablePull = (error: ContainerError) =>
   (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
-
-const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 const PULL_MAX_RETRIES = 4;
 
 /**
  * Host alias mapped in Docker containers' `/etc/hosts` to the engine's IPv4 host gateway, or to
  * `host-gateway` for runtimes that do not await the probe; Docker Desktop's `host.docker.internal`
- * and `host-gateway` also resolve to an IPv6 address. Engines that reject `host-gateway` get the
- * IPv4 address they map to `host.docker.internal` or `host.containers.internal` instead.
+ * and `host-gateway` also resolve to an IPv6 address. An engine that rejects `host-gateway` gets
+ * the IPv4 address it maps to `host.docker.internal` instead.
  */
 export const DOCKER_HOST_ALIAS = "host.supabase.internal";
 
@@ -147,8 +227,8 @@ const HOST_GATEWAY_PROBE_TIMEOUT: Duration.Input = "15 seconds";
 
 const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
 
-/** Names an engine may write into `/etc/hosts` for its host, such as Podman's compat socket. */
-const ENGINE_HOST_NAMES = ["host.docker.internal", "host.containers.internal"];
+/** The name the engine writes into `/etc/hosts` for its own host. */
+const ENGINE_HOST_NAMES = ["host.docker.internal"];
 
 const firstIpv4For = (hosts: string, names: ReadonlyArray<string>) =>
   hosts
@@ -159,7 +239,7 @@ const firstIpv4For = (hosts: string, names: ReadonlyArray<string>) =>
         IPV4_ADDRESS.test(address ?? "") && mapped.some((name) => names.includes(name)),
     )?.[0];
 
-/** Matches an engine that rejects the `host-gateway` keyword in `--add-host`, such as older Podman. */
+/** Matches an engine that rejects the `host-gateway` keyword in `--add-host`. */
 const rejectsHostGateway = (error: ContainerError) =>
   /(?:invalid|unknown|unsupported|bad)[^\n]*add-host[^\n]*host-gateway/iu.test(error.message);
 
@@ -268,7 +348,7 @@ const mountField = (key: string, value: string) => {
  * with backoff.
  */
 export const makeContainerRuntime = (options: {
-  readonly engine: "docker" | "podman";
+  readonly target: EngineTarget;
   readonly root: string;
   readonly imageMirrors?: (image: string) => ReadonlyArray<string>;
   /** Omitted gives this runtime its own host-gateway probe. */
@@ -278,6 +358,11 @@ export const makeContainerRuntime = (options: {
    * for containers that do not rely on reaching the host over IPv4.
    */
   readonly awaitHostGateway?: boolean;
+  /**
+   * Journals each container's exact identity before it is created, so a crashed owner leaves it
+   * recoverable; required so a container creation that forgets to wire claims does not compile.
+   */
+  readonly claims: Claims.ContainerClaims;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -293,6 +378,9 @@ export const makeContainerRuntime = (options: {
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const stackRoot = path.resolve(options.root);
+    // An owned directory for per-launch environment files, never the real system temp directory.
+    const containerEnvRoot = path.join(stackRoot, CONTAINER_ENV_DIRNAME);
+    const engine = options.target.engine;
 
     const command = (
       args: ReadonlyArray<string>,
@@ -300,14 +388,18 @@ export const makeContainerRuntime = (options: {
         readonly stdin?: "ignore" | "pipe";
         readonly forceKillAfter?: Duration.Input;
       } = {},
-    ) => ChildProcess.make(options.engine, args, { stdin: "ignore", ...commandOptions });
+    ) =>
+      ChildProcess.make(engine, [...options.target.argv, ...args], {
+        stdin: "ignore",
+        ...commandOptions,
+      });
 
     const run = Effect.fn("Container.command")(function* (
       args: ReadonlyArray<string>,
       commandOptions: { readonly timeout?: Duration.Input } = { timeout: "30 seconds" },
     ) {
       yield* Effect.annotateCurrentSpan({
-        "process.executable.name": options.engine,
+        "process.executable.name": engine,
         "process.arg_count": args.length,
         "container.command": args[0] ?? "",
       });
@@ -410,34 +502,69 @@ export const makeContainerRuntime = (options: {
     );
 
     const hostGateway = options.hostGateway ?? (yield* makeHostGateway);
-    /** Reads `/etc/hosts` from a throwaway container of an already present image. */
-    const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
-      testRunLabelArgs.pipe(
-        Effect.flatMap((testRunLabel) =>
-          run(
-            [
-              "run",
-              "--rm",
-              "--pull",
-              "never",
-              ...addHost,
-              // No instance label: `--rm` removal is asynchronous and must not count as an
-              // instance container; the stack labels keep it sweepable.
-              "--label",
-              `com.supabase.stack=${spec.stackId}`,
-              "--label",
-              `com.supabase.stack-root=${stackRoot}`,
-              ...testRunLabel,
-              "--entrypoint",
-              "cat",
-              image,
-              "/etc/hosts",
-            ],
-            { timeout: undefined },
-          ),
-        ),
-        Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT),
+    /** Polls until the engine confirms a `--rm` container's own asynchronous removal finished. */
+    const awaitRemoved = (name: string) =>
+      run(
+        [
+          "ps",
+          "--all",
+          "--no-trunc",
+          "--filter",
+          // Docker matches this as a regex; `.` is the only metacharacter a name can hold.
+          `name=^/?${name.replaceAll(".", "\\.")}$`,
+          "--format",
+          "{{.State}}",
+        ],
+        { timeout: "5 seconds" },
+      ).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("250 millis"),
+          while: (output) => output !== "",
+        }),
+        Effect.timeout("10 seconds"),
+        Effect.asVoid,
       );
+    /** Reads `/etc/hosts` from a throwaway, claimed container of an already present image. */
+    const readProbeHosts = (image: string, spec: ContainerSpec, addHost: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const testRunLabel = yield* testRunLabelArgs;
+        const token = yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => errorFor("identity", cause)),
+        );
+        // Not an instance container: no instance label, so it is never mistaken for one. It is
+        // still named and claimed before the engine creates it, so a crashed owner's reconcile
+        // loop can still find and remove it instead of leaking it.
+        const { name } = identifyContainer(spec, token, true);
+        yield* options.claims
+          .claim(name, options.target.daemonId)
+          .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
+        const hosts = yield* run(
+          [
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--name",
+            name,
+            ...addHost,
+            "--label",
+            `com.supabase.stack=${spec.stackId}`,
+            "--label",
+            `com.supabase.stack-root=${stackRoot}`,
+            ...testRunLabel,
+            "--entrypoint",
+            "cat",
+            image,
+            "/etc/hosts",
+          ],
+          { timeout: undefined },
+        );
+        yield* awaitRemoved(name);
+        yield* options.claims
+          .unclaim(name)
+          .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
+        return hosts;
+      }).pipe(Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT));
     /** Resolves the IPv4 host address the engine writes itself, since it rejects `host-gateway`. */
     const engineHostProbe = (image: string, spec: ContainerSpec, rejection: ContainerError) =>
       readProbeHosts(image, spec, []).pipe(
@@ -453,7 +580,7 @@ export const makeContainerRuntime = (options: {
               ? Effect.fail(
                   new ContainerError({
                     operation: "host-gateway",
-                    message: `The container engine rejects host-gateway in --add-host and maps no IPv4 address to ${ENGINE_HOST_NAMES.join(" or ")}; upgrade Podman or use --runtime podman`,
+                    message: `The container engine rejects host-gateway in --add-host and maps no IPv4 address to ${ENGINE_HOST_NAMES.join(" or ")}`,
                     cause: rejection,
                   }),
                 )
@@ -504,8 +631,11 @@ export const makeContainerRuntime = (options: {
         if (!Number.isInteger(port) || port < 1 || port > 65535)
           return yield* errorFor("ports", "Invalid container port");
       }
+      yield* fs
+        .makeDirectory(containerEnvRoot, { recursive: true, mode: 0o700 })
+        .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       const directory = yield* fs
-        .makeTempDirectoryScoped({ prefix: "supabase-container-" })
+        .makeTempDirectoryScoped({ directory: containerEnvRoot, prefix: "container-" })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       const envPath = path.join(directory, "environment");
       yield* fs
@@ -521,8 +651,14 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
-      const hostAlias =
-        options.engine === "docker" ? yield* hostAliasTarget(image, spec) : undefined;
+      // Journaled before the engine creates anything, so a crashed owner leaves an exact,
+      // recoverable identity instead of one the next owner must guess by label. The daemon id
+      // lets a later reconcile against a different daemon keep this claim rather than remove (or
+      // mistake) an identity that daemon has never heard of.
+      yield* options.claims
+        .claim(name, options.target.daemonId)
+        .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
+      const hostAlias = yield* hostAliasTarget(image, spec);
       const testRunLabel = yield* testRunLabelArgs;
       const createArgs = (target: string | undefined) => [
         "create",
@@ -705,6 +841,11 @@ export const makeContainerRuntime = (options: {
             yield* run(["rm", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
             yield* Ref.set(stopped, true);
             yield* Ref.set(removed, true);
+            // Cleanup authority now belongs entirely to this normal teardown; a crash before this
+            // point still leaves the claim for the next owner's reconcile loop.
+            yield* options.claims
+              .unclaim(name)
+              .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
           });
           yield* Scope.addFinalizer(
             owner,
@@ -836,16 +977,10 @@ export const makeContainerRuntime = (options: {
                 (yield* Effect.gen(function* () {
                   // Released on exit, since a release left for service stop can hit a reused pid.
                   const followerScope = yield* Scope.fork(owner);
-                  const follower = yield* spawner
-                    .spawn(
-                      ChildProcess.make(options.engine, ["logs", "--follow", name], {
-                        stdin: "ignore",
-                      }),
-                    )
-                    .pipe(
-                      Scope.provide(followerScope),
-                      Effect.mapError((cause) => errorFor("logs", cause)),
-                    );
+                  const follower = yield* spawner.spawn(command(["logs", "--follow", name])).pipe(
+                    Scope.provide(followerScope),
+                    Effect.mapError((cause) => errorFor("logs", cause)),
+                  );
                   yield* Effect.forkIn(
                     Effect.exit(follower.exitCode).pipe(
                       Effect.andThen(Scope.close(followerScope, Exit.void)),
@@ -875,102 +1010,46 @@ export const makeContainerRuntime = (options: {
     };
   });
 
-export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
-  (options: {
-    readonly engine: "docker" | "podman";
-    readonly stackId: string;
-    readonly root: string;
-  }) =>
+/**
+ * Removes a container by its exact recorded identity, succeeding when it is already absent. The
+ * namespace's reconcile loop uses this instead of discovering candidates by label, through the
+ * same pinned {@link EngineTarget} it resolved identity through, so a context switch in between
+ * can never split the two.
+ */
+export const removeContainerById = Effect.fn("Container.removeContainerById")(
+  (options: { readonly target: EngineTarget; readonly id: string }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const stackRoot = options.root;
-      const run = Effect.fn("Container.runCleanupCommand")(function* (args: ReadonlyArray<string>) {
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const child = yield* spawner.spawn(
-              ChildProcess.make(options.engine, args, {
-                stdin: "ignore",
-                stdout: "pipe",
-                stderr: "pipe",
-              }),
-            );
-            const [stdout, stderr, code] = yield* Effect.all(
-              [
-                child.stdout.pipe(Stream.decodeText, Stream.mkString),
-                child.stderr.pipe(Stream.decodeText, Stream.mkString),
-                child.exitCode,
-              ],
-              { concurrency: "unbounded" },
-            );
-            if (Number(code) !== 0)
-              return yield* errorFor(
-                args[0] ?? "cleanup",
-                stderr.trim() || `Engine exited with ${code}`,
-              );
-            return stdout.trim();
-          }),
-        ).pipe(
-          Effect.timeout("30 seconds"),
-          Effect.mapError((cause) =>
-            cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
-          ),
-        );
-      });
-      const filters = [
-        "--filter",
-        `label=com.supabase.stack=${options.stackId}`,
-        "--filter",
-        `label=com.supabase.stack-root=${stackRoot}`,
-      ];
-      const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
-      // Only the initial listing can show the engine itself is unreachable; a later `rm` or
-      // leftover check failing is a per-container cleanup problem instead.
-      const ids = (yield* list().pipe(
-        Effect.mapError((cause) =>
-          engineUnreachable(cause)
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const child = yield* spawner.spawn(
+            ChildProcess.make(
+              options.target.engine,
+              [...options.target.argv, "rm", "--force", options.id],
+              { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
+            ),
+          );
+          const [stderr, code] = yield* Effect.all(
+            [child.stderr.pipe(Stream.decodeText, Stream.mkString), child.exitCode],
+            { concurrency: "unbounded" },
+          );
+          // Docker reports this exact phrasing for an id that no longer exists.
+          if (Number(code) !== 0 && !/no such container/iu.test(stderr))
+            return yield* errorFor("cleanup", stderr.trim() || `Engine exited with ${code}`);
+        }),
+      ).pipe(
+        Effect.timeout("30 seconds"),
+        Effect.mapError((cause) => {
+          const error = cause instanceof ContainerError ? cause : errorFor("cleanup", cause);
+          return engineUnreachable(error)
             ? new ContainerError({
-                operation: cause.operation,
-                message: cause.message,
-                cause: cause.cause,
+                operation: error.operation,
+                message: error.message,
+                cause: error.cause,
                 reason: "engine-unavailable",
               })
-            : cause,
-        ),
-      ))
-        .split("\n")
-        .filter((id) => id.length > 0);
-      yield* Effect.forEach(
-        ids,
-        (id) =>
-          run(["rm", "--force", id]).pipe(
-            Effect.catchTag("ContainerError", (failure) =>
-              run(["ps", "--all", "--quiet", "--no-trunc", "--filter", `id=${id}`]).pipe(
-                Effect.flatMap((present) =>
-                  present.length === 0 ? Effect.void : Effect.fail(failure),
-                ),
-              ),
-            ),
-          ),
-        { concurrency: 1, discard: true },
+            : error;
+        }),
       );
-      const remaining = yield* list();
-      if (remaining.length > 0)
-        return yield* errorFor("cleanup", `Stack containers remain: ${remaining}`);
     }),
 );
-
-/** Shell command that removes the same containers as `removeStackContainers`, succeeding when none remain. */
-export const removeStackContainersCommand = (options: {
-  readonly engine: "docker" | "podman";
-  readonly stackId: string;
-  readonly root: string;
-}): string => {
-  const filters = [
-    `label=com.supabase.stack=${options.stackId}`,
-    `label=com.supabase.stack-root=${options.root}`,
-  ]
-    .map((filter) => `--filter ${shellQuote(filter)}`)
-    .join(" ");
-  // `sh -c` keeps POSIX word splitting of `$ids` when pasted into shells like zsh that skip it.
-  return `sh -c ${shellQuote(`ids=$(${options.engine} ps --all --quiet --no-trunc ${filters}) && { [ -z "$ids" ] || ${options.engine} rm --force $ids; }`)}`;
-};

@@ -20,6 +20,8 @@ import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -32,6 +34,7 @@ const options = (root: string) => ({
 const dockerOptions = (root: string) => ({
   ...options(root),
   runtime: "docker" as const,
+  engineTarget: dockerEngineTarget,
 });
 
 const dockerInfo = Effect.scoped(
@@ -55,7 +58,12 @@ describe("service catalog", () => {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-functions-" });
           const stackId = "b".repeat(64);
           const instanceId = "functions-instance";
-          const functionsRoot = root + "/user-functions";
+          // Ownership is by location: a borrowed caller path must live outside the whole stack
+          // data root, so the user's functions project lives in its own, separate tree.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-functions-caller-",
+          });
+          const functionsRoot = callerRoot + "/user-functions";
           yield* fs.makeDirectory(functionsRoot + "/hello", { recursive: true });
           yield* fs.writeFileString(
             functionsRoot + "/hello/index.ts",
@@ -91,7 +99,13 @@ describe("service catalog", () => {
                 inspector: true,
               },
             },
-            { ...dockerOptions(root), stackId, instanceId },
+            {
+              containerClaims: noContainerClaims,
+              directoryClaims: noDirectoryClaims,
+              ...dockerOptions(root),
+              stackId,
+              instanceId,
+            },
           );
           const instance = yield* makeService(recipe.definition, {
             id: instanceId,
@@ -130,6 +144,58 @@ describe("service catalog", () => {
     { timeout: 120_000 },
   );
 
+  it.live("destroy survives a symlink planted where its runtime directory used to be", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "functions-symlink-" });
+        const stackId = "c".repeat(64);
+        const instanceId = "functions-symlink-instance";
+        const callerRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "functions-symlink-caller-",
+        });
+        const functionsRoot = `${callerRoot}/user-functions`;
+        yield* fs.makeDirectory(functionsRoot, { recursive: true });
+        yield* fs.writeFileString(`${functionsRoot}/index.ts`, "export default {};");
+        const recipe = yield* makeServiceRecipe(
+          {
+            service: "functions",
+            config: { functionsRoot, databaseUrl: "postgres://functions-db" },
+          },
+          {
+            containerClaims: noContainerClaims,
+            directoryClaims: noDirectoryClaims,
+            ...options(root),
+            stackId,
+            instanceId,
+          },
+        );
+        const config = recipe.creation;
+        yield* recipe.definition.prepare?.(config) ?? Effect.void;
+        const instanceRoot = path.join(root, instanceId);
+        const runtimeDir = path.join(instanceRoot, "runtime");
+        expect(yield* fs.exists(runtimeDir)).toBe(true);
+        const outside = yield* fs.makeTempDirectoryScoped({
+          prefix: "functions-symlink-outside-",
+        });
+        // The pre-F2 removeData reached for `<runtime>/functions` specifically, not the whole
+        // runtime directory; the sentinel sits exactly there so this test actually proves that
+        // previously endangered data survives, not just the symlink target's top level.
+        const sentinel = path.join(outside, "functions", "sentinel");
+        yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
+        yield* fs.writeFileString(sentinel, "do not remove me");
+        // The planted attack: the recipe's own runtime directory replaced by a symlink.
+        yield* fs.remove(runtimeDir, { recursive: true, force: true });
+        yield* fs.symlink(outside, runtimeDir);
+        const scope = yield* Scope.make();
+        yield* recipe.definition.removeData({ id: instanceId, config, scope });
+        yield* Scope.close(scope, Exit.void);
+        expect(yield* fs.exists(sentinel)).toBe(true);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
   const ancestors = [
     {
       name: "a package.json with an unreadable sibling",
@@ -164,6 +230,11 @@ describe("service catalog", () => {
               prefix: "functions-ancestor-",
             });
             yield* ancestor.setup(fs, root);
+            // Separate from the stack's own data root: this test's ancestor walk needs
+            // functionsRoot nested under `root`, which a borrowed caller path may not be.
+            const stackRoot = yield* fs.makeTempDirectoryScoped({
+              prefix: "functions-ancestor-stack-",
+            });
             const functionsRoot = `${root}/project/supabase/functions`;
             yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
             yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
@@ -188,7 +259,9 @@ describe("service catalog", () => {
                 },
               },
               {
-                ...options(root),
+                containerClaims: noContainerClaims,
+                directoryClaims: noDirectoryClaims,
+                ...options(stackRoot),
                 stackId: "d".repeat(64),
                 instanceId: "ancestor",
                 cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -232,6 +305,9 @@ describe("service catalog", () => {
             directory: temporaryRoot,
             prefix: "functions-deno-config-",
           });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-deno-config-stack-",
+          });
           const functionsRoot = `${root}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
           yield* fs.writeFileString(
@@ -256,7 +332,9 @@ describe("service catalog", () => {
               },
             },
             {
-              ...options(root),
+              containerClaims: noContainerClaims,
+              directoryClaims: noDirectoryClaims,
+              ...options(stackRoot),
               stackId: "e".repeat(64),
               instanceId: "deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -302,6 +380,9 @@ describe("service catalog", () => {
             directory: temporaryRoot,
             prefix: "functions-plain-deno-config-",
           });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "functions-plain-deno-config-stack-",
+          });
           const functionsRoot = `${root}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/hello`, { recursive: true });
           yield* fs.makeDirectory(`${functionsRoot}/_shared`, { recursive: true });
@@ -327,7 +408,9 @@ describe("service catalog", () => {
               },
             },
             {
-              ...options(root),
+              containerClaims: noContainerClaims,
+              directoryClaims: noDirectoryClaims,
+              ...options(stackRoot),
               stackId: "f".repeat(64),
               instanceId: "plain-deno-config",
               cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -389,6 +472,10 @@ for (const runtime of ["native", "docker"] as const) {
             directory: temporaryRoot,
             prefix: "functions-configured-",
           });
+          const stackRoot = yield* fs.makeTempDirectoryScoped({
+            directory: temporaryRoot,
+            prefix: "functions-configured-stack-",
+          });
           const filesRoot = `${root}/project`;
           const functionsRoot = `${filesRoot}/supabase/functions`;
           yield* fs.makeDirectory(`${functionsRoot}/locked`, { recursive: true });
@@ -436,10 +523,13 @@ for (const runtime of ["native", "docker"] as const) {
               },
             },
             {
-              ...options(root),
+              containerClaims: noContainerClaims,
+              directoryClaims: noDirectoryClaims,
+              ...options(stackRoot),
               stackId: "c".repeat(64),
               instanceId: "configured",
               runtime,
+              ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
           );
@@ -539,6 +629,8 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const recipe = yield* Functions.makeRecipe(
         creation,
         {
+          containerClaims: noContainerClaims,
+          directoryClaims: noDirectoryClaims,
           stackId: "e".repeat(64),
           instanceId: "windows",
           root: "C:\\Users\\dev\\stack",
@@ -546,6 +638,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
           runtime: "docker",
         },
         {
+          borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
           fs: yield* FileSystem.FileSystem,
           path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
           crypto: yield* Crypto.Crypto,

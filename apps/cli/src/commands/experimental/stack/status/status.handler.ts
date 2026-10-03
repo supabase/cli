@@ -57,7 +57,7 @@ type StackReport = {
     readonly project_root: string;
     readonly branch_context: string;
   };
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: "native" | "docker";
   readonly owner: "reachable" | "unavailable";
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly readiness: "unavailable" | "starting" | "sleeping" | "stopped" | "ready" | "unhealthy";
@@ -156,7 +156,7 @@ const reportFor = (
       readonly branchContext: string;
       readonly stackName: string;
     };
-    readonly runtime: "native" | "docker" | "podman";
+    readonly runtime: "native" | "docker";
   },
   owner: StackReport["owner"],
   observed: ReadonlyArray<ObservedService>,

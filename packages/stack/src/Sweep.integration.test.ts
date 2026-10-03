@@ -18,10 +18,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
-import { makeContainerRuntime } from "./runtime/Container.ts";
+import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
+import { noContainerClaims } from "../tests/claims.ts";
 
 class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly message: string }> {}
 
@@ -170,7 +171,13 @@ it.live.skipIf(process.platform === "win32")(
         );
         const rootA = path.dirname(path.dirname(dataA));
         const cacheRoot = `${path.dirname(rootA)}/cache`;
-        const helper = yield* makeContainerRuntime({ engine: "docker", root: dataA });
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const target = yield* resolveEngineTarget(spawner);
+        const helper = yield* makeContainerRuntime({
+          claims: noContainerClaims,
+          target,
+          root: dataA,
+        });
         yield* helper.prepare(helperImage);
         const state = Context.get(
           yield* Layer.build(StackNamespace.layer({ root: rootA })),
@@ -181,6 +188,10 @@ it.live.skipIf(process.platform === "win32")(
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))
           .endpoint;
         const orphan = yield* createOwnedContainer(deadId, dataA);
+        // The dead owner claimed this container before it was killed; the reconcile loop that
+        // replaces label-based sweeping only ever acts on recorded claims, never on labels alone.
+        // Recorded against this real daemon's own id: a claim with none is now always kept.
+        yield* state.claim(deadId, { kind: "container", id: orphan, daemonId: target.daemonId });
         const otherRoot = yield* createOwnedContainer(deadId, dataB);
         const deadReleased = yield* watchLeaseRelease(rootA, deadId);
         yield* Effect.sync(() => process.kill(dead.pid, "SIGKILL"));

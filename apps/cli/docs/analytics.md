@@ -90,7 +90,7 @@ Local-runtime commands also carry properties that split error rates by runtime:
 
 - `stack_backend` (`legacy` or `stack`) on commands routed by `experimental.stack`; see
   [backend selection](stack-commands.md)
-- `stack_runtime` (`docker`, `podman`, or `native`): the runtime of the stack a stack-backend
+- `stack_runtime` (`docker` or `native`): the runtime of the stack a stack-backend
   command looked up, which for `--db-url` may be the project stack even when the URL targets
   another database
 - `orioledb` (boolean) once the command resolves local database config, `true` when the project

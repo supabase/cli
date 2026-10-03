@@ -5,6 +5,8 @@ import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
+import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string, runtime: "docker" | "native") => ({
   stackId: "catalog-test",
@@ -12,6 +14,9 @@ const options = (root: string, runtime: "docker" | "native") => ({
   root,
   cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
   runtime,
+  ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+  containerClaims: noContainerClaims,
+  directoryClaims: noDirectoryClaims,
 });
 
 describe("vector recipe", () => {
@@ -45,7 +50,7 @@ describe("vector recipe", () => {
               HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/health`),
             );
             expect(response.status).toBe(200);
-            yield* fs.makeDirectory(`${root}/vector/runtime/vector/.vector-write-interrupted`);
+            yield* fs.makeDirectory(`${root}/vector/runtime/vector/.vector-api.yaml-interrupted`);
             yield* vector.destroy;
             expect(yield* fs.exists(`${root}/vector`)).toBe(false);
           }),
@@ -55,14 +60,18 @@ describe("vector recipe", () => {
   }
 
   it.live(
-    "keeps a caller pipeline stored beside the recipe config on destroy",
+    "leaves a caller pipeline stored outside the owned instance root on destroy",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-caller-" });
-          const pipeline = `${root}/vector/runtime/vector/pipeline.yaml`;
-          yield* fs.makeDirectory(`${root}/vector/runtime/vector`, { recursive: true });
+          // Ownership is by location: a borrowed caller config must live outside the stack's
+          // entire data root, not merely outside this instance's own instanceRoot.
+          const external = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-vector-caller-external-",
+          });
+          const pipeline = `${external}/pipeline.yaml`;
           yield* fs.writeFileString(
             pipeline,
             "sources:\n  s:\n    type: internal_logs\nsinks:\n  d:\n    type: blackhole\n    inputs: [s]\n",
@@ -83,7 +92,7 @@ describe("vector recipe", () => {
           yield* vector.ready;
           yield* vector.destroy;
           expect(yield* fs.exists(pipeline)).toBe(true);
-          expect(yield* fs.exists(`${root}/vector/runtime/vector/vector-api.yaml`)).toBe(false);
+          expect(yield* fs.exists(`${root}/vector`)).toBe(false);
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },
@@ -115,7 +124,9 @@ describe("vector recipe", () => {
             return yield* vector.start.pipe(Effect.flip);
           });
         for (const configPath of [owned, `${root}/alias.yaml`])
-          expect((yield* start(configPath)).message).toContain("stack-owned Vector config file");
+          expect((yield* start(configPath)).message).toContain(
+            "resolves inside the owned data root",
+          );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );

@@ -22,8 +22,9 @@ import {
   shutdownHost,
   waitForOwnerExit,
 } from "../HostProcess.ts";
+import { create, open } from "../effect.ts";
 import * as StackNamespace from "../StackNamespace.ts";
-import { watchLeaseRelease } from "../../tests/owner.ts";
+import { captureOwnerPid, watchLeaseRelease } from "../../tests/owner.ts";
 
 class PublishBarrierError extends Data.TaggedError("PublishBarrierError")<{
   readonly message: string;
@@ -315,4 +316,101 @@ it.live(
       }),
     ).pipe(Effect.provide(testLayer)),
   20_000,
+);
+
+const docker = Effect.fn("Namespace.e2e.docker")((args: ReadonlyArray<string>) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(child.stdout)),
+          Stream.mkString(Stream.decodeText(child.stderr)),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Number(code) !== 0)
+        return yield* Effect.die(`docker ${args.join(" ")} failed: ${stderr}`);
+      return stdout.trim();
+    }),
+  ),
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "removes exactly the containers a SIGKILLed owner's claims recorded, with no manual cleanup",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-e2e-container-" });
+        const stateRoot = `${root}/state`;
+        const cacheRoot = `${root}/cache`;
+        const stack = yield* create({
+          projectRoot: root,
+          stateRoot,
+          cacheRoot,
+          runtime: "docker",
+          startOwner: true,
+        });
+        yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.ignore));
+        const mail = yield* stack.services.create({ service: "mail", config: {} });
+        yield* mail.start;
+        yield* mail.ready;
+
+        const containerIds = (yield* docker([
+          "ps",
+          "--all",
+          "--quiet",
+          "--no-trunc",
+          "--filter",
+          `label=com.supabase.stack=${stack.id}`,
+          "--filter",
+          `label=com.supabase.instance=${mail.id}`,
+        ]))
+          .split("\n")
+          .filter((id) => id.length > 0);
+        expect(containerIds).toHaveLength(1);
+        const [containerId] = containerIds;
+
+        const ownerPid = yield* captureOwnerPid({ stateRoot, cacheRoot }, stack.id);
+        const released = yield* watchLeaseRelease(stateRoot, stack.id);
+        yield* Effect.sync(() => process.kill(ownerPid, "SIGKILL"));
+        yield* released;
+
+        // Killing the owner leaves the container running; nothing in this test removes it.
+        expect(
+          yield* docker(["inspect", "--format", "{{.State.Status}}", String(containerId)]),
+        ).not.toBe("");
+
+        const reopened = yield* open({
+          id: stack.id,
+          stateRoot,
+          cacheRoot,
+          startOwner: true,
+        });
+        yield* Effect.addFinalizer(() => reopened.destroy.pipe(Effect.ignore));
+
+        const remaining = yield* docker([
+          "ps",
+          "--all",
+          "--quiet",
+          "--no-trunc",
+          "--filter",
+          `label=com.supabase.stack=${stack.id}`,
+        ]);
+        expect(remaining).toBe("");
+        const inspectExit = yield* docker([
+          "inspect",
+          "--format",
+          "{{.State.Status}}",
+          String(containerId),
+        ]).pipe(Effect.exit);
+        expect(inspectExit._tag).toBe("Failure");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  120_000,
 );

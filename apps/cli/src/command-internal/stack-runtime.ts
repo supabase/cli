@@ -13,7 +13,7 @@ import { withChildTraceEnv, withProcessSpan } from "../shared/telemetry/spans.ts
 import { recordCommandTelemetry } from "../telemetry/command-telemetry-attributes.ts";
 
 /** Runtime that executes a local stack's services. */
-export type StackRuntime = "native" | "docker" | "podman";
+export type StackRuntime = "native" | "docker";
 
 /** Records the runtime of the stack the enclosing command operates on. */
 export const recordStackRuntimeTelemetry = (runtime: StackRuntime) =>
@@ -32,13 +32,12 @@ export class StackRuntimeSelectionError extends Data.TaggedError("StackRuntimeSe
   }
 }
 
-/** A cold Docker Desktop or Podman machine can take several seconds to answer its first request. */
+/** A cold Docker Desktop machine can take several seconds to answer its first request. */
 const PROBE_TIMEOUT = "10 seconds";
 
-/** Each probe exits non-zero unless the engine's daemon or service answers. */
+/** Each probe exits non-zero unless the engine's daemon answers. */
 const engineProbes = [
   { runtime: "docker", args: ["version", "--format", "{{.Server.Version}}"] },
-  { runtime: "podman", args: ["info", "--format", "{{.Version.Version}}"] },
 ] as const;
 
 const engineReachable = (
@@ -80,12 +79,9 @@ export const automaticRuntimeNotice = (
 ): string | undefined =>
   requested !== undefined || selected === "docker"
     ? undefined
-    : `Docker didn't answer, so this new stack uses the ${selected === "podman" ? "Podman" : "native"} runtime, which is saved with the stack. To use Docker, start it, then run \`supabase stack destroy\` and start again, or choose a different --stack name with --runtime docker.`;
+    : `Docker didn't answer, so this new stack uses the native runtime, which is saved with the stack. To use Docker, start it, then run \`supabase stack destroy\` and start again, or choose a different --stack name with --runtime docker.`;
 
-/**
- * Returns the requested or saved runtime unchanged; otherwise the first of Docker, Podman, or
- * native that is usable on this host.
- */
+/** Returns the requested or saved runtime unchanged; otherwise Docker, or native, if usable. */
 export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
   requested: StackRuntime | undefined,
 ) {
@@ -98,7 +94,7 @@ export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
           reason: "native-unsupported",
           message: `Native artifacts are unsupported on ${platform}/${arch}.`,
           suggestion:
-            "Start Docker or Podman and rerun with --runtime docker or --runtime podman; if this stack already exists as native, run supabase stack destroy first.",
+            "Start Docker and rerun with --runtime docker; if this stack already exists as native, run supabase stack destroy first.",
         });
     }
     return requested;
@@ -111,7 +107,7 @@ export const selectStackRuntime = Effect.fn("StackRuntime.select")(function* (
   if (defaultRuntime({ os: platform, arch }) === "native") return "native";
   return yield* new StackRuntimeSelectionError({
     reason: "engine-unreachable",
-    message: `Neither Docker nor Podman is reachable, and native stacks are not supported on ${platform}/${arch}.`,
-    suggestion: "Start Docker or Podman, then rerun the command.",
+    message: `Docker is not reachable, and native stacks are not supported on ${platform}/${arch}.`,
+    suggestion: "Start Docker, then rerun the command.",
   });
 }, Effect.tap(recordStackRuntimeTelemetry));
