@@ -26,6 +26,7 @@ import {
   prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
+  useNativeArtifact,
   type PreparedNativeArtifact,
 } from "../Artifacts.ts";
 import {
@@ -386,7 +387,7 @@ const nativeProcess = (
     readonly rootKeyPath: string;
   },
   settings: ReadonlyArray<string>,
-  context: ServiceInstanceContext<DatabaseConfig>,
+  scope: Scope.Closeable,
   stackId: string,
   instanceId: string,
   spawner: ChildProcessSpawnerService["Service"],
@@ -396,6 +397,7 @@ const nativeProcess = (
   spawnNativeProcess(
     {
       executable: artifact.executable,
+      artifactLockPath: artifact.lockPath,
       ...(user === undefined ? {} : { uid: user.uid, gid: user.gid, cwd: "/" }),
       args: [
         "-D",
@@ -424,7 +426,7 @@ const nativeProcess = (
     defaultNativeProcessLauncher(),
     { stackId, workloadId: instanceId },
   ).pipe(
-    Scope.provide(context.scope),
+    Scope.provide(scope),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.mapError((cause) => errorFor("launch", cause)),
   );
@@ -450,7 +452,6 @@ export const makeDatabase = (
     const client = yield* HttpClient.HttpClient;
     const logs = yield* PubSub.sliding<DatabaseLog>(256);
     const endpoint = yield* Ref.make<BackendEndpoint | undefined>(undefined);
-    const prepared = yield* Ref.make<ReadonlyMap<string, PreparedNativeArtifact>>(new Map());
     if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/u.test(String(options.stackId)))
       return yield* databaseError("identity", "Invalid stack id");
     // Ownership is by location: instanceRoot is owned simply by being under options.root, with no
@@ -602,15 +603,14 @@ export const makeDatabase = (
           }),
         );
       if (options.runtime === "native")
+        // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
+        // `launch` resolves (or prepares) and pins its own copy right before it spawns.
         return prepareNativeArtifact({ service: "database", version }, options.cacheRoot).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, client),
-          Effect.tap((artifact) =>
-            Ref.update(prepared, (map) => new Map(map).set(version, artifact)),
-          ),
           Effect.asVoid,
           Effect.mapError((cause) => errorFor("prepare", cause)),
         );
@@ -835,9 +835,25 @@ export const makeDatabase = (
             yield* fs
               .writeFileString(hbaPath, NATIVE_HBA_RULES, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
-            const artifact = (yield* Ref.get(prepared)).get(config.version);
-            if (artifact === undefined)
-              return yield* errorFor("launch", `Artifact ${config.version} was not prepared`);
+            // `context.scope` finalizes its direct children in parallel (it is forked "parallel"
+            // in Service.ts), so registering the pin there directly would race its release
+            // against the native process's own cleanup. A "sequential" child scope finalizes
+            // LIFO instead: the pin is registered on it first, and the native process below is
+            // also scoped to it (not to `context.scope`), so closing it always runs the
+            // process's cleanup before releasing the pin.
+            const launchScope = yield* Scope.fork(context.scope, "sequential");
+            const artifact = yield* useNativeArtifact(
+              { service: "database", version: config.version },
+              options.cacheRoot,
+            ).pipe(
+              Scope.provide(launchScope),
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(HttpClient.HttpClient, client),
+              Effect.mapError((cause) => errorFor("launch", cause)),
+            );
             if (stepDownUser !== undefined)
               yield* asRoot(
                 handOverNativePostgresFiles(stepDownUser, {
@@ -856,7 +872,7 @@ export const makeDatabase = (
               config,
               { dataPath, socketPath, hbaPath, rootKeyPath },
               settings,
-              context,
+              launchScope,
               String(options.stackId),
               options.instanceId,
               spawner,

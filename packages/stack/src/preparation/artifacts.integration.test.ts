@@ -3,17 +3,27 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Crypto,
+  Data,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
   FileSystem,
   Layer,
   Option,
-  PlatformError,
-  Schema,
+  Path,
+  Schedule,
+  Scope,
+  Stream,
 } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import * as Environment from "../namespace/Environment.ts";
+import { defaultNativeProcessLauncher, spawnNativeProcess } from "../runtime/NativeProcess.ts";
+import { acquireLock, isBusy, takeExclusiveLock } from "../namespace/drivers/Sqlite.ts";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { makeArtifactStore, type ArtifactRequest, type ArtifactSource } from "./ArtifactStore.ts";
 import { verifySha256 } from "./Integrity.ts";
@@ -33,6 +43,18 @@ const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(layer));
 
+const mapMaterializeError = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.mapError((cause) =>
+      cause instanceof PreparationError || cause instanceof ArtifactIntegrityError
+        ? cause
+        : new PreparationError({
+            message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          }),
+    ),
+  );
+
 const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
   checksum: () => Effect.succeed(archiveSha256),
   materialize: (_request, destination, expectedSha256) =>
@@ -40,45 +62,96 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
       yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-      yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-      yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
+      yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", { mode: 0o755 });
+      yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", { mode: 0o644 });
       const crypto = yield* Crypto.Crypto;
       yield* verifySha256(bytes, expectedSha256).pipe(Effect.provideService(Crypto.Crypto, crypto));
-    }).pipe(
-      Effect.mapError((cause) =>
-        cause instanceof ArtifactIntegrityError
-          ? cause
-          : new PreparationError({
-              message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-              cause,
-            }),
-      ),
-    ),
+    }).pipe(mapMaterializeError),
 });
 
-const replacesMalformedMetadata = (label: string, metadata: string | undefined) =>
-  withPlatform(
+/** A second, sibling digest under the same key: used to force a retirement sweep as a side effect
+ * of an unrelated `prepare`, without redownloading or recreating the generation under test. */
+const archiveAlt = new TextEncoder().encode("archive-alt");
+const archiveAltSha256 = createHash("sha256").update(archiveAlt).digest("hex");
+const sourceWritingAlt = (): ArtifactSource => ({
+  checksum: () => Effect.succeed(archiveAltSha256),
+  materialize: (_request, destination, expectedSha256) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({
-        prefix: `supabase-stack-artifact-${label}-metadata-`,
+      yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+      yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
+      yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres alt", {
+        mode: 0o755,
       });
-      const target = `${root}/${request.key}`;
-      yield* fs.makeDirectory(`${target}/bin`, { recursive: true });
-      yield* fs.writeFileString(`${target}/bin/postgres`, "unverified postgres");
-      if (metadata !== undefined) yield* fs.writeFileString(`${target}/.artifact.json`, metadata);
+      yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config alt", { mode: 0o644 });
+      const crypto = yield* Crypto.Crypto;
+      yield* verifySha256(archiveAlt, expectedSha256).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+      );
+    }).pipe(mapMaterializeError),
+});
 
-      const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-      const prepared = yield* store.prepare(request);
+/** Sets `path`'s mtime 31 days in the past: a legitimate test-only lever on retirement's age fence. */
+const ageLockFile = (fs: FileSystem.FileSystem, path: string) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const aged = DateTime.toDate(DateTime.subtract(now, { days: 31 }));
+    yield* fs.utimes(path, aged, aged);
+  });
 
-      expect(prepared.outcome).toBe("downloaded");
-      expect(yield* fs.readFileString(`${target}/bin/postgres`)).toBe("native postgres");
-      expect(yield* fs.exists(`${target}/.artifact.json`)).toBe(true);
-    }),
+/** Matches a staging token's own lock file, or the rollback journal SQLite leaves transiently. */
+const isStagingLockFile = (name: string) => /\.lock(-journal)?$/u.test(name);
+
+const digestDirectories = (fs: FileSystem.FileSystem, keyRoot: string) =>
+  fs.readDirectory(keyRoot).pipe(
+    Effect.orElseSucceed(() => []),
+    Effect.map((names) => names.filter((name) => /^[0-9a-f]{64}$/u.test(name))),
+  );
+
+const fixturePath = fileURLToPath(
+  new URL("../../tests/artifact-store-fixture.ts", import.meta.url),
+);
+
+const spawnFixture = (args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* spawner.spawn(
+      ChildProcess.make(process.execPath, [fixturePath, ...args], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+        forceKillAfter: "1 second",
+      }),
+    );
+  });
+
+const runToCompletion = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+  Effect.all(
+    [
+      handle.stdout.pipe(Stream.decodeText, Stream.mkString),
+      handle.stderr.pipe(Stream.decodeText, Stream.mkString),
+      handle.exitCode,
+    ],
+    { concurrency: "unbounded" },
+  );
+
+/** Reads the fixture's first stdout line without waiting for it to exit: `use`/`stall` block forever. */
+const firstLine = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+  handle.stdout.pipe(
+    Stream.decodeText,
+    Stream.splitLines,
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+
+const killAndAwaitExit = (handle: ChildProcessSpawner.ChildProcessHandle) =>
+  Effect.sync(() => process.kill(Number(handle.pid), "SIGKILL")).pipe(
+    Effect.andThen(handle.exitCode.pipe(Effect.ignore)),
   );
 
 describe("verified native artifact preparation", () => {
-  it.live("downloads and atomically publishes an executable artifact tree", () =>
+  it.live("downloads and publishes a content-addressed generation", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -86,8 +159,12 @@ describe("verified native artifact preparation", () => {
         const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
         const prepared = yield* store.prepare(request);
         expect(prepared.outcome).toBe("downloaded");
+        expect(prepared.path).toBe(`${yield* fs.realPath(root)}/${request.key}/${archiveSha256}`);
         expect(yield* fs.exists(`${prepared.path}/bin/postgres`)).toBe(true);
-        expect((yield* fs.stat(`${prepared.path}/bin/postgres`)).mode & 0o111).not.toBe(0);
+        expect((yield* fs.stat(prepared.path)).mode & 0o777).toBe(0o755);
+        expect((yield* fs.stat(`${prepared.path}/bin/postgres`)).mode & 0o777).toBe(0o755);
+        expect((yield* fs.stat(`${prepared.path}/etc/postgres.conf`)).mode & 0o777).toBe(0o644);
+        expect(yield* fs.exists(prepared.lockPath)).toBe(true);
       }),
     ),
   );
@@ -142,14 +219,15 @@ describe("verified native artifact preparation", () => {
         const second = yield* store.prepare(request);
         expect(first.outcome).toBe("downloaded");
         expect(second.outcome).toBe("cached");
-        expect(checksumCalls).toBe(1);
+        expect(second.path).toBe(first.path);
+        expect(checksumCalls).toBe(2);
         expect(materializeCalls).toBe(1);
       }),
     ),
   );
 
   it.live(
-    "keeps the published tree and reuses it when required runtime paths expand on the same key",
+    "serves a newly required path already present in the published tree without redownloading",
     () =>
       withPlatform(
         Effect.gen(function* () {
@@ -157,14 +235,9 @@ describe("verified native artifact preparation", () => {
           const root = yield* fs.makeTempDirectoryScoped({
             prefix: "supabase-stack-artifact-paths-expand-",
           });
-          let checksumCalls = 0;
           let materializeCalls = 0;
           const source: ArtifactSource = {
-            checksum: () =>
-              Effect.sync(() => {
-                checksumCalls += 1;
-                return archiveSha256;
-              }),
+            checksum: () => Effect.succeed(archiveSha256),
             materialize: (entry, destination) =>
               Effect.sync(() => {
                 materializeCalls += 1;
@@ -184,230 +257,10 @@ describe("verified native artifact preparation", () => {
           expect(second.path).toBe(first.path);
           expect(stillPublishedIno).toEqual(publishedIno);
           expect(second.requiredRuntimePaths).toEqual([...request.requiredRuntimePaths]);
-          expect(checksumCalls).toBe(1);
           expect(materializeCalls).toBe(1);
-          expect(yield* fs.readFileString(`${second.path}/bin/postgres`)).toBe("native postgres");
-          const metadata = yield* Schema.decodeEffect(
-            Schema.fromJsonString(
-              Schema.Struct({
-                requiredRuntimePaths: Schema.Array(Schema.String),
-                requiredRuntimeKinds: Schema.Record(Schema.String, Schema.String),
-              }),
-            ),
-          )(yield* fs.readFileString(`${second.path}/.artifact.json`));
-          expect(metadata.requiredRuntimePaths).toContain("etc/postgres.conf");
-          expect(metadata.requiredRuntimeKinds["etc/postgres.conf"]).toBe("file");
+          expect(yield* fs.readFileString(`${second.path}/etc/postgres.conf`)).toBe("config");
         }),
       ),
-  );
-
-  it.live("replaces a cached tree with unknown artifact metadata", () =>
-    replacesMalformedMetadata("unknown", '{"format":"supabase-stack-artifact-v0"}'),
-  );
-
-  it.live("replaces a cached tree with missing artifact metadata", () =>
-    replacesMalformedMetadata("missing", undefined),
-  );
-
-  it.live("reuses a cache hit after required file contents are modified", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-tampered-runtime-",
-        });
-        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        const published = yield* store.prepare(request);
-        yield* fs.writeFileString(`${published.path}/bin/postgres`, "tampered executable");
-        const cached = yield* store.prepare(request);
-        expect(cached.outcome).toBe("cached");
-      }),
-    ),
-  );
-
-  it.live("reuses cached directories without hashing their contents", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-directory-runtime-",
-        });
-        const directoryRequest: ArtifactRequest = {
-          ...request,
-          key: "database/postgres-directory-runtime",
-          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
-        };
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination) =>
-            Effect.gen(function* () {
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
-              yield* fs.symlink("config", `${destination}/share/runtime/config-link`);
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const prepared = yield* store.prepare(directoryRequest);
-        expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
-
-        yield* fs.writeFileString(`${prepared.path}/share/runtime/config`, "tampered config");
-        expect((yield* store.prepare(directoryRequest)).outcome).toBe("cached");
-      }),
-    ),
-  );
-
-  it.live("rejects a non-EINVAL readLink failure on a cache hit", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-readlink-error-",
-        });
-        const publisher = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        yield* publisher.prepare(request);
-        const failingFs: FileSystem.FileSystem = {
-          ...fs,
-          readLink: (candidate) =>
-            candidate.endsWith("/bin/postgres")
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "readLink",
-                    pathOrDescriptor: candidate,
-                    cause: { code: "EACCES" },
-                  }),
-                )
-              : fs.readLink(candidate),
-        };
-        const checker = yield* makeArtifactStore({
-          cacheRoot: root,
-          source: sourceWriting(),
-        }).pipe(Effect.provideService(FileSystem.FileSystem, failingFs));
-
-        const exit = yield* checker.prepare(request).pipe(Effect.exit);
-        const error = errorOf(exit);
-
-        expect(error).toBeInstanceOf(ArtifactIntegrityError);
-        expect(error?.message).toContain("Unable to inspect required runtime path");
-      }),
-    ),
-  );
-
-  it.live("does not recursively enumerate required directories on a cache hit", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-no-recursion-",
-        });
-        const directoryRequest: ArtifactRequest = {
-          ...request,
-          key: "database/postgres-cache-no-recursion",
-          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
-        };
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination) =>
-            Effect.gen(function* () {
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/share/runtime/config`, "config");
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const publisher = yield* makeArtifactStore({ cacheRoot: root, source });
-        yield* publisher.prepare(directoryRequest);
-        const guardedFs: FileSystem.FileSystem = {
-          ...fs,
-          readDirectory: (candidate, options) =>
-            candidate.endsWith("/share/runtime")
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "Busy",
-                    module: "FileSystem",
-                    method: "readDirectory",
-                    pathOrDescriptor: candidate,
-                    cause: { code: "EBUSY" },
-                  }),
-                )
-              : fs.readDirectory(candidate, options),
-        };
-        const checker = yield* makeArtifactStore({
-          cacheRoot: root,
-          source,
-        }).pipe(Effect.provideService(FileSystem.FileSystem, guardedFs));
-
-        const cached = yield* checker.prepare(directoryRequest);
-
-        expect(cached.outcome).toBe("cached");
-      }),
-    ),
-  );
-
-  it.live("rejects a missing required path on a cache hit", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-missing-",
-        });
-        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        const published = yield* store.prepare(request);
-        yield* fs.remove(`${published.path}/etc/postgres.conf`);
-
-        const exit = yield* store.prepare(request).pipe(Effect.exit);
-
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-      }),
-    ),
-  );
-
-  it.live("rejects a cache hit whose newly required path is missing from the published tree", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-new-path-missing-",
-        });
-        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        const narrow: ArtifactRequest = { ...request, requiredRuntimePaths: ["bin/postgres"] };
-        const published = yield* store.prepare(narrow);
-        const publishedIno = (yield* fs.stat(published.path)).ino;
-
-        const wider: ArtifactRequest = {
-          ...request,
-          requiredRuntimePaths: ["bin/postgres", "share/missing"],
-        };
-        const exit = yield* store.prepare(wider).pipe(Effect.exit);
-
-        const error = errorOf(exit);
-        expect(error).toBeInstanceOf(ArtifactIntegrityError);
-        expect(error?.message).toContain(`remove ${published.path} to download it again`);
-        expect(yield* fs.exists(published.path)).toBe(true);
-        expect((yield* fs.stat(published.path)).ino).toEqual(publishedIno);
-      }),
-    ),
   );
 
   it.live("rejects a required path whose basic kind changes on a cache hit", () =>
@@ -441,31 +294,8 @@ describe("verified native artifact preparation", () => {
         });
         const outsideExecutable = `${outside}/postgres`;
         yield* fs.writeFileString(outsideExecutable, "outside");
-        const symlinkRequest: ArtifactRequest = {
-          ...request,
-          key: "database/postgres-cache-link",
-        };
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination) =>
-            Effect.gen(function* () {
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres");
-              yield* fs.symlink("postgres.real", `${destination}/bin/postgres`);
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
+        const symlinkRequest: ArtifactRequest = { ...request, key: "database/postgres-cache-link" };
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
         const published = yield* store.prepare(symlinkRequest);
         yield* fs.remove(`${published.path}/bin/postgres`);
         yield* fs.symlink(outsideExecutable, `${published.path}/bin/postgres`);
@@ -477,7 +307,7 @@ describe("verified native artifact preparation", () => {
     ),
   );
 
-  it.live("rejects a checksum mismatch and removes only its temporary tree", () =>
+  it.live("rejects a checksum mismatch and leaves no generation or staging behind", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -490,9 +320,11 @@ describe("verified native artifact preparation", () => {
         });
         const exit = yield* store.prepare(request).pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        const entries = yield* fs.readDirectory(root, { recursive: true });
-        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
-        expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
+        expect(yield* digestDirectories(fs, `${root}/${request.key}`)).toEqual([]);
+        const staging = yield* fs
+          .readDirectory(`${root}/${request.key}/.staging`)
+          .pipe(Effect.orElseSucceed(() => []));
+        expect(staging).toEqual([]);
       }),
     ),
   );
@@ -508,27 +340,17 @@ describe("verified native artifact preparation", () => {
           checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
               yield* fs.makeDirectory(`${destination}/bin/postgres`, { recursive: true });
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
+            }).pipe(mapMaterializeError),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const exit = yield* store.prepare(request).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        const entries = yield* fs.readDirectory(root, { recursive: true });
-        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
-        expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
+        expect(yield* digestDirectories(fs, `${root}/${request.key}`)).toEqual([]);
       }),
     ),
   );
@@ -544,21 +366,17 @@ describe("verified native artifact preparation", () => {
           checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres");
+              yield* fs.writeFileString(`${destination}/bin/postgres.real`, "native postgres", {
+                mode: 0o755,
+              });
               yield* fs.symlink("postgres.real", `${destination}/bin/postgres`);
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
+              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", {
+                mode: 0o644,
+              });
+            }).pipe(mapMaterializeError),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const prepared = yield* store.prepare(request);
@@ -586,123 +404,19 @@ describe("verified native artifact preparation", () => {
           checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
               yield* fs.symlink(outsideExecutable, `${destination}/bin/postgres`);
               yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
+            }).pipe(mapMaterializeError),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const exit = yield* store.prepare(request).pipe(Effect.exit);
 
         expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
         expect(yield* fs.exists(outsideExecutable)).toBe(true);
-        expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("rejects an escaping symlink nested in a fresh required directory", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-nested-link-escape-",
-        });
-        const outside = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-nested-link-outside-",
-        });
-        const outsideConfig = `${outside}/config`;
-        yield* fs.writeFileString(outsideConfig, "outside");
-        const directoryRequest: ArtifactRequest = {
-          ...request,
-          key: "database/postgres-nested-link",
-          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
-        };
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination) =>
-            Effect.gen(function* () {
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
-
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        expect(yield* fs.exists(`${root}/database/postgres-nested-link`)).toBe(false);
-      }),
-    ),
-  );
-
-  it.live("rejects an escaping symlink nested in a newly required directory on a cache hit", () =>
-    withPlatform(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-new-nested-link-escape-",
-        });
-        const outside = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-cache-new-nested-link-outside-",
-        });
-        const outsideConfig = `${outside}/config`;
-        yield* fs.writeFileString(outsideConfig, "outside");
-        const directoryRequest: ArtifactRequest = {
-          ...request,
-          key: "database/postgres-cache-new-nested-link",
-          requiredRuntimePaths: ["bin/postgres", "share/runtime"],
-        };
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination) =>
-            Effect.gen(function* () {
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/share/runtime`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.symlink(outsideConfig, `${destination}/share/runtime/config`);
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
-        };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-        const narrow: ArtifactRequest = {
-          ...directoryRequest,
-          requiredRuntimePaths: ["bin/postgres"],
-        };
-        const published = yield* store.prepare(narrow);
-
-        const exit = yield* store.prepare(directoryRequest).pipe(Effect.exit);
-
-        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
-        expect(yield* fs.exists(published.path)).toBe(true);
+        expect(yield* digestDirectories(fs, `${root}/${request.key}`)).toEqual([]);
       }),
     ),
   );
@@ -719,31 +433,22 @@ describe("verified native artifact preparation", () => {
           checksum: () => Effect.succeed(archiveSha256),
           materialize: (_entry, destination) =>
             Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
               yield* fs.writeFileString(`${destination}/partial`, "partial");
               yield* Deferred.succeed(started, undefined);
               return yield* Effect.never;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
+            }).pipe(mapMaterializeError),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const preparation = yield* Effect.forkChild(store.prepare(request));
         yield* Deferred.await(started);
         yield* Fiber.interrupt(preparation);
-        const entries = yield* fs.readDirectory(root, { recursive: true });
-        expect(entries.some((entry) => entry.endsWith(".tmp"))).toBe(false);
-        expect(yield* fs.exists(`${root}/database/postgres`)).toBe(false);
+        expect(yield* digestDirectories(fs, `${root}/${request.key}`)).toEqual([]);
       }),
     ),
   );
 
-  it.live("allows separate stores to duplicate work and converge safely", () =>
+  it.live("allows separate stores to duplicate work and converge on one published generation", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -756,27 +461,23 @@ describe("verified native artifact preparation", () => {
         let calls = 0;
         const source: ArtifactSource = {
           checksum: () => Effect.succeed(archiveSha256),
-          materialize: (entry, destination) =>
+          materialize: (_entry, destination) =>
             Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
               calls += 1;
               yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
               yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
+              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", {
+                mode: 0o755,
+              });
+              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config", {
+                mode: 0o644,
+              });
               yield* calls === 1
                 ? Deferred.succeed(firstStarted, undefined)
                 : Deferred.succeed(secondStarted, undefined);
               yield* Deferred.await(release);
-              return;
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PreparationError({
-                    message: `materialization failed: ${cause.message}`,
-                    cause,
-                  }),
-              ),
-            ),
+            }).pipe(mapMaterializeError),
         };
         const firstStore = yield* makeArtifactStore({ cacheRoot: root, source });
         const secondStore = yield* makeArtifactStore({ cacheRoot: root, source });
@@ -789,6 +490,10 @@ describe("verified native artifact preparation", () => {
         expect(calls).toBe(2);
         expect(results[0].path).toBe(results[1].path);
         expect(yield* fs.exists(`${results[0].path}/bin/postgres`)).toBe(true);
+        const staging = yield* fs
+          .readDirectory(`${root}/${request.key}/.staging`)
+          .pipe(Effect.orElseSucceed(() => []));
+        expect(staging).toEqual([]);
       }),
     ),
   );
@@ -796,16 +501,13 @@ describe("verified native artifact preparation", () => {
   it.live("rejects traversal in keys and required runtime paths before touching the source", () =>
     withPlatform(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-artifact-path-" });
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-path-",
+        });
         let called = false;
         const source: ArtifactSource = {
           checksum: () => Effect.succeed(archiveSha256),
-          materialize: () =>
-            Effect.sync(() => {
-              called = true;
-              return;
-            }),
+          materialize: () => Effect.sync(() => (called = true)),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const keyExit = yield* store.prepare({ ...request, key: "../escape" }).pipe(Effect.exit);
@@ -831,11 +533,7 @@ describe("verified native artifact preparation", () => {
         let called = false;
         const source: ArtifactSource = {
           checksum: () => Effect.succeed(archiveSha256),
-          materialize: () =>
-            Effect.sync(() => {
-              called = true;
-              return;
-            }),
+          materialize: () => Effect.sync(() => (called = true)),
         };
         const store = yield* makeArtifactStore({ cacheRoot: root, source });
         const exit = yield* store.prepare({ ...request, key: "nested/postgres" }).pipe(Effect.exit);
@@ -848,110 +546,492 @@ describe("verified native artifact preparation", () => {
   );
 });
 
-describe("orphaned temp/quarantine sweep", () => {
-  it.live("removes a prepared key's old leftovers and keeps fresh and unrelated ones", () =>
+describe("a required path missing from the archive", () => {
+  const narrowSource = (): ArtifactSource => ({
+    checksum: () => Effect.succeed(archiveSha256),
+    materialize: (_request, destination, expectedSha256) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
+        yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres", {
+          mode: 0o755,
+        });
+        const crypto = yield* Crypto.Crypto;
+        yield* verifySha256(archive, expectedSha256).pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
+      }).pipe(mapMaterializeError),
+  });
+
+  it.live("fails with a typed error on a cold cache, and leaves the cache unchanged", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-sweep-",
+          prefix: "supabase-stack-artifact-missing-cold-",
         });
-        const now = yield* DateTime.now;
-        const old = DateTime.toDate(DateTime.subtract(now, { hours: 25 }));
-        const recent = DateTime.toDate(DateTime.subtract(now, { hours: 1 }));
-        const parent = `${root}/database`;
-        const oldTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000001.tmp`;
-        const oldQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000002.invalid`;
-        const freshTemp = `${parent}/.postgres.00000000-0000-4000-8000-000000000003.tmp`;
-        const freshQuarantine = `${parent}/.postgres.00000000-0000-4000-8000-000000000004.invalid`;
-        const unrelated = `${parent}/nested/.x.tmp`;
-        const leftovers = [oldTemp, oldQuarantine, freshTemp, freshQuarantine, unrelated];
-        for (const leftover of leftovers) {
-          yield* fs.makeDirectory(leftover, { recursive: true });
-          yield* fs.writeFileString(`${leftover}/marker`, "leftover");
-        }
-        for (const leftover of [oldTemp, oldQuarantine, unrelated])
-          yield* fs.utimes(leftover, old, old);
-        for (const leftover of [freshTemp, freshQuarantine])
-          yield* fs.utimes(leftover, recent, recent);
-
-        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
-        expect(yield* fs.exists(oldTemp), "construction leaves the cache alone").toBe(true);
-        expect((yield* store.prepare(request)).outcome).toBe("downloaded");
-
-        expect(yield* fs.exists(oldTemp)).toBe(false);
-        expect(yield* fs.exists(oldQuarantine)).toBe(false);
-        expect(yield* fs.exists(freshTemp)).toBe(true);
-        expect(yield* fs.exists(freshQuarantine)).toBe(true);
-        expect(yield* fs.exists(unrelated)).toBe(true);
+        const key = "database/postgres-missing-cold";
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: narrowSource() });
+        const wideRequest: ArtifactRequest = { ...request, key };
+        const exit = yield* store.prepare(wideRequest).pipe(Effect.exit);
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(yield* digestDirectories(fs, `${root}/${key}`)).toEqual([]);
       }),
     ),
   );
 
-  it.live("never reaps an in-progress extraction whose source backdated its own destination", () =>
+  it.live("fails with a typed error on a warm cache, and leaves the cache unchanged", () =>
     withPlatform(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const crypto = yield* Crypto.Crypto;
         const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "supabase-stack-artifact-reaper-race-",
+          prefix: "supabase-stack-artifact-missing-warm-",
         });
-        const backdated = yield* Deferred.make<void>();
-        const secondReachedMaterialize = yield* Deferred.make<void>();
-        let materializeCalls = 0;
-        const source: ArtifactSource = {
-          checksum: () => Effect.succeed(archiveSha256),
-          materialize: (_entry, destination, expectedSha256) =>
-            Effect.gen(function* () {
-              materializeCalls += 1;
-              if (materializeCalls > 1) {
-                // The second preparation arrives here after running the reaper; it fails instead
-                // of racing the first to publish, which keeps the interleaving deterministic.
-                yield* Deferred.succeed(secondReachedMaterialize, undefined);
-                return yield* new PreparationError({
-                  message: "the second preparation stops before publishing",
-                });
-              }
-              yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
-              yield* fs.makeDirectory(`${destination}/etc`, { recursive: true });
-              yield* fs.writeFileString(`${destination}/bin/postgres`, "native postgres");
-              yield* fs.writeFileString(`${destination}/etc/postgres.conf`, "config");
-              yield* verifySha256(archive, expectedSha256).pipe(
-                Effect.provideService(Crypto.Crypto, crypto),
-              );
-              // GNU tar sets an extraction destination's own mtime from the archive's `./`
-              // entry; the slim-services archives carry epoch mtimes there.
-              yield* fs.utimes(destination, 0, 0);
-              yield* Deferred.succeed(backdated, undefined);
-              yield* Deferred.await(secondReachedMaterialize);
-            }).pipe(
-              Effect.mapError((cause) =>
-                cause instanceof PreparationError || cause instanceof ArtifactIntegrityError
-                  ? cause
-                  : new PreparationError({
-                      message: `materialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-                      cause,
-                    }),
-              ),
-            ),
+        const key = "database/postgres-missing-warm";
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: narrowSource() });
+        const narrowRequest: ArtifactRequest = {
+          ...request,
+          key,
+          requiredRuntimePaths: ["bin/postgres"],
         };
-        const store = yield* makeArtifactStore({ cacheRoot: root, source });
-
-        const first = yield* Effect.forkChild(store.prepare(request));
-        yield* Deferred.await(backdated);
-
-        // Runs the same leftover reaper the first operation's staging directory is exposed to;
-        // it refuses its own materialization once it gets there, so it can never win a race to
-        // publish and mask a reap that already happened.
-        const second = yield* store.prepare(request).pipe(Effect.exit);
-        expect(Exit.isFailure(second)).toBe(true);
-
-        const published = yield* Fiber.join(first);
+        const published = yield* store.prepare(narrowRequest);
         expect(published.outcome).toBe("downloaded");
-        expect(yield* fs.exists(`${published.path}/bin/postgres`)).toBe(true);
-        expect(yield* fs.readFileString(`${published.path}/bin/postgres`)).toBe("native postgres");
-        expect(yield* fs.readFileString(`${published.path}/etc/postgres.conf`)).toBe("config");
+
+        const wideRequest: ArtifactRequest = { ...request, key };
+        const exit = yield* store.prepare(wideRequest).pipe(Effect.exit);
+        expect(errorOf(exit)).toBeInstanceOf(ArtifactIntegrityError);
+        expect(yield* digestDirectories(fs, `${root}/${key}`)).toEqual([archiveSha256]);
+        expect(yield* fs.exists(published.path)).toBe(true);
       }),
     ),
+  );
+});
+
+describe("concurrent preparers across processes", () => {
+  it.live(
+    "both succeed, exactly one generation is published, and no staging is left",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-cross-process-",
+          });
+          const key = "database/postgres-cross-process";
+          const handles = yield* Effect.all(
+            [spawnFixture(["prepare", root, key]), spawnFixture(["prepare", root, key])],
+            { concurrency: "unbounded" },
+          );
+          const results = yield* Effect.all(handles.map(runToCompletion), {
+            concurrency: "unbounded",
+          });
+          const parsed = results.map(([stdout, stderr, exitCode]) => {
+            expect(Number(exitCode), stderr).toBe(0);
+            const match = /prepared:(\w+):(.+):([0-9a-f]+)/.exec(stdout.trim());
+            if (match === null) throw new Error(`Unparseable fixture output: ${stdout}`);
+            return { outcome: match[1], path: match[2], sha256: match[3] };
+          });
+          expect(parsed[0]?.path).toBe(parsed[1]?.path);
+          expect(parsed[0]?.sha256).toBe(parsed[1]?.sha256);
+          const staging = yield* fs
+            .readDirectory(`${root}/${key}/.staging`)
+            .pipe(Effect.orElseSucceed(() => []));
+          expect(staging).toEqual([]);
+        }),
+      ),
+    20_000,
+  );
+});
+
+describe("lock-guarded staging", () => {
+  it.live(
+    "reaps a SIGKILLed preparer's staging directory on the next preparer, which publishes normally",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-sigkill-reap-",
+          });
+          const key = "database/postgres-sigkill-reap";
+          const handle = yield* spawnFixture(["stall", root, key]);
+          yield* firstLine(handle);
+          const stagingRoot = `${root}/${key}/.staging`;
+          const tokensBefore = (yield* fs.readDirectory(stagingRoot)).filter(
+            (name) => !isStagingLockFile(name),
+          );
+          expect(tokensBefore).toHaveLength(1);
+
+          yield* killAndAwaitExit(handle);
+
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* store.prepare({ ...request, key });
+          expect(prepared.outcome).toBe("downloaded");
+          const tokensAfter = (yield* fs.readDirectory(stagingRoot)).filter(
+            (name) => !isStagingLockFile(name),
+          );
+          expect(tokensAfter).toHaveLength(0);
+        }),
+      ),
+    20_000,
+  );
+
+  it.live(
+    "never touches a live preparer's staging directory while another preparer runs",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-live-stage-",
+          });
+          const key = "database/postgres-live-stage";
+          const handle = yield* spawnFixture(["stall", root, key]);
+          yield* firstLine(handle);
+          const stagingRoot = `${root}/${key}/.staging`;
+          const tokensBefore = (yield* fs.readDirectory(stagingRoot)).filter(
+            (name) => !isStagingLockFile(name),
+          );
+          expect(tokensBefore).toHaveLength(1);
+          const liveToken = tokensBefore[0];
+          if (liveToken === undefined) throw new Error("No live staging token found");
+
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* store.prepare({ ...request, key });
+          expect(prepared.outcome).toBe("downloaded");
+
+          const tokensAfter = yield* fs.readDirectory(stagingRoot);
+          expect(tokensAfter).toEqual(expect.arrayContaining([liveToken, `${liveToken}.lock`]));
+          expect(yield* fs.exists(`${stagingRoot}/${liveToken}/content`)).toBe(true);
+
+          yield* killAndAwaitExit(handle);
+        }),
+      ),
+    20_000,
+  );
+});
+
+describe("pins", () => {
+  it.live(
+    "keeps a generation pinned for one in-process consumer while another releases, and retires it only once both are gone",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-pin-inprocess-",
+          });
+          const key = "database/postgres-pin-inprocess";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+
+          const firstScope = yield* Scope.make();
+          const firstUse = yield* store.use({ ...request, key }).pipe(Scope.provide(firstScope));
+          const secondScope = yield* Scope.make();
+          const secondUse = yield* store.use({ ...request, key }).pipe(Scope.provide(secondScope));
+          expect(firstUse.path).toBe(secondUse.path);
+
+          yield* ageLockFile(fs, firstUse.lockPath);
+          const altStore = yield* makeArtifactStore({
+            cacheRoot: root,
+            source: sourceWritingAlt(),
+          });
+
+          // Sweeping while both consumers hold the pin: busy against this process's own open
+          // connection, so the stale generation survives untouched.
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(firstUse.path)).toBe(true);
+
+          yield* Scope.close(firstScope, Exit.void);
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(firstUse.path)).toBe(true);
+
+          yield* Scope.close(secondScope, Exit.void);
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(firstUse.path)).toBe(false);
+          expect(yield* fs.exists(firstUse.lockPath)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live(
+    "a running native workload's generation survives a concurrent retirement sweep, across processes, until it releases",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-pin-cross-process-",
+          });
+          const key = "database/postgres-pin-cross-process";
+          const handle = yield* spawnFixture(["use", root, key]);
+          const line = yield* firstLine(handle);
+          const match = /^used:(\w+):(.+):(.+)$/.exec(line);
+          if (match === null) throw new Error(`Unparseable fixture output: ${line}`);
+          const generationPath = match[2];
+          const lockPath = match[3];
+          if (generationPath === undefined || lockPath === undefined)
+            throw new Error(`Unparseable fixture output: ${line}`);
+
+          yield* ageLockFile(fs, lockPath);
+          const altStore = yield* makeArtifactStore({
+            cacheRoot: root,
+            source: sourceWritingAlt(),
+          });
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(generationPath)).toBe(true);
+
+          yield* killAndAwaitExit(handle);
+          yield* ageLockFile(fs, lockPath);
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(generationPath)).toBe(false);
+          expect(yield* fs.exists(lockPath)).toBe(true);
+        }),
+      ),
+    20_000,
+  );
+
+  it.live("a retirement sweep that runs between prepare and use cannot break the launch", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-sweep-between-",
+        });
+        const key = "database/postgres-sweep-between";
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const prepared = yield* store.prepare({ ...request, key });
+        expect(prepared.outcome).toBe("downloaded");
+
+        // Ages the generation past the retention window: ahead-of-time `prepare` only pins
+        // itself for its own duration (see `ArtifactStore.prepare`), so by now it is unpinned
+        // and genuinely eligible for retirement, unlike the pinned scenarios covered above.
+        yield* ageLockFile(fs, prepared.lockPath);
+
+        // A sibling digest under the same key forces a sweep as a side effect.
+        const altStore = yield* makeArtifactStore({ cacheRoot: root, source: sourceWritingAlt() });
+        yield* altStore.prepare({ ...request, key });
+        expect(yield* fs.exists(prepared.path)).toBe(false);
+        expect(yield* fs.exists(prepared.lockPath)).toBe(true);
+
+        // `use` transparently re-prepares the now-retired generation instead of failing the
+        // launch, publishing it fresh again at the same content-addressed path.
+        const used = yield* Effect.scoped(store.use({ ...request, key }));
+        expect(used.outcome).toBe("downloaded");
+        expect(used.path).toBe(prepared.path);
+        expect(yield* fs.exists(`${used.path}/bin/postgres`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live(
+    "the native launcher holds its own pin independent of the owner, releasing it only once it reports the workload's exit",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-launcher-pin-",
+          });
+          const key = "database/postgres-launcher-pin";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* store.prepare({ ...request, key });
+
+          const environment = yield* Environment.confine(fs, path, `${root}/home`);
+          const processScope = yield* Scope.make();
+          yield* spawnNativeProcess(
+            {
+              executable: "/bin/sleep",
+              args: ["30"],
+              environment,
+              artifactLockPath: prepared.lockPath,
+              gracefulStopSignal: "SIGTERM",
+              gracefulStopTimeout: "1 second",
+            },
+            defaultNativeProcessLauncher(),
+          ).pipe(Scope.provide(processScope));
+
+          yield* ageLockFile(fs, prepared.lockPath);
+          const altStore = yield* makeArtifactStore({
+            cacheRoot: root,
+            source: sourceWritingAlt(),
+          });
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(prepared.path)).toBe(true);
+
+          yield* Scope.close(processScope, Exit.void);
+          yield* ageLockFile(fs, prepared.lockPath);
+          yield* altStore.prepare({ ...request, key });
+          expect(yield* fs.exists(prepared.path)).toBe(false);
+        }),
+      ),
+    20_000,
+  );
+
+  it.live(
+    "keeps the generation pinned until every process-group member is gone, not only the direct child",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-launcher-group-",
+          });
+          const key = "database/postgres-launcher-group";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* store.prepare({ ...request, key });
+
+          const environment = yield* Environment.confine(fs, path, `${root}/home`);
+          const pidPath = path.join(root, "descendant.pid");
+          const readyPath = path.join(root, "ready");
+          const goPath = path.join(root, "go");
+          const processScope = yield* Scope.make();
+          // The descendant ignores SIGTERM and records its own pid, then the leader signals
+          // readiness and waits for the test's own release file before exiting: only the
+          // group-wide SIGKILL in the launcher's exit handler can end the descendant.
+          yield* spawnNativeProcess(
+            {
+              executable: "/bin/sh",
+              args: [
+                "-c",
+                // `$!` (captured by the leader right after backgrounding) is the descendant's
+                // real pid; `$$` read from inside the backgrounded subshell is unreliable here,
+                // since this shell reuses the leader's own pid for it.
+                '(trap "" TERM; while true; do sleep 1; done) & echo $! > "$1/descendant.pid"; ' +
+                  'touch "$1/ready"; while [ ! -f "$1/go" ]; do sleep 0.05; done',
+                "sh",
+                root,
+              ],
+              environment,
+              artifactLockPath: prepared.lockPath,
+            },
+            defaultNativeProcessLauncher(),
+          ).pipe(Scope.provide(processScope));
+
+          const pollUntil = <A, E>(
+            check: Effect.Effect<A, E>,
+            satisfied: (value: A) => boolean,
+            guard: Duration.Input,
+          ) =>
+            check.pipe(
+              Effect.filterOrFail(satisfied, () => "not yet" as const),
+              Effect.retry({
+                schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ duration: guard })),
+                while: () => true,
+              }),
+            );
+          const isPinBusy = Effect.scoped(
+            acquireLock(prepared.lockPath, "existing").pipe(
+              Effect.flatMap(takeExclusiveLock),
+              Effect.as(false),
+              Effect.catch((error) => Effect.succeed(isBusy(error))),
+            ),
+          );
+          const isESRCH = (cause: unknown): boolean =>
+            typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            cause.code === "ESRCH";
+          class ProcessProbeError extends Data.TaggedError("ProcessProbeError")<{
+            readonly cause: unknown;
+          }> {}
+          // `true` means still alive; ESRCH resolves to `false` (terminated); any other error
+          // (an unexpected probe failure) propagates instead of being read either way.
+          const probeAlive = (pid: number) =>
+            Effect.try({
+              try: (): boolean => {
+                process.kill(pid, 0);
+                return true;
+              },
+              catch: (cause) => new ProcessProbeError({ cause }),
+            }).pipe(
+              Effect.catch((error) =>
+                isESRCH(error.cause) ? Effect.succeed(false) : Effect.fail(error),
+              ),
+            );
+          /**
+           * Totalizes two separately-timed probes against the race where `kill(pid, 0)` finds the
+           * descendant alive but it vanishes before `ps` runs moments later: `ps` finding nothing
+           * (or failing outright) re-checks with `kill` rather than reading empty output as "still
+           * running". An unexpected (non-ESRCH) error from either probe fails the check.
+           */
+          const isDescendantTerminated = (pid: number) =>
+            Effect.gen(function* () {
+              if (!(yield* probeAlive(pid))) return true;
+              const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+              const { output, exitCode } = yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const inspection = yield* ChildProcess.make(
+                    "ps",
+                    ["-o", "stat=", "-p", String(pid)],
+                    {
+                      stdin: "ignore",
+                      stdout: "pipe",
+                      stderr: "ignore",
+                    },
+                  );
+                  const [stdout, exitCode] = yield* Effect.all(
+                    [
+                      inspection.stdout.pipe(Stream.decodeText, Stream.mkString),
+                      inspection.exitCode,
+                    ],
+                    { concurrency: 2 },
+                  );
+                  return { output: stdout.trim(), exitCode: Number(exitCode) };
+                }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+              );
+              if (exitCode === 0 && output.length > 0) return output.startsWith("Z");
+              return !(yield* probeAlive(pid));
+            });
+
+          // Readiness (the descendant's pid recorded, the leader waiting on `go`) is an
+          // observable file, not a fixed delay: polls its existence, bounded by a guard timeout.
+          yield* pollUntil(fs.exists(readyPath), (ready) => ready, "5 seconds");
+          const descendantPid = Number((yield* fs.readFileString(pidPath)).trim());
+
+          expect(yield* isPinBusy).toBe(true);
+
+          yield* fs.writeFileString(goPath, "");
+
+          // Polls the lock's own availability, not a fixed delay, bounded by a guard timeout.
+          yield* pollUntil(isPinBusy, (busy) => !busy, "10 seconds");
+
+          // Correlates the lock's release with the descendant's own termination: a launcher that
+          // released the pin before actually killing the group would still show it running.
+          expect(yield* isDescendantTerminated(descendantPid)).toBe(true);
+
+          yield* Scope.close(processScope, Exit.void);
+        }),
+      ),
+    20_000,
+  );
+});
+
+describe("retirement across release keys", () => {
+  it.live(
+    "retires an older release key's stale, unlocked generation when a newer release key is prepared",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-cross-key-",
+          });
+          // Keys embed a release version (`Artifacts.ts`'s `artifactKey`), so a CLI upgrade
+          // resolves a different key entirely rather than a new digest under the same one.
+          const olderKey = "database/postgres/17.0.0-r0/darwin-arm64";
+          const newerKey = "database/postgres/17.0.1-r0/darwin-arm64";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const older = yield* store.prepare({ ...request, key: olderKey });
+          expect(older.outcome).toBe("downloaded");
+          yield* ageLockFile(fs, older.lockPath);
+
+          yield* store.prepare({ ...request, key: newerKey });
+
+          expect(yield* fs.exists(older.path)).toBe(false);
+          expect(yield* fs.exists(older.lockPath)).toBe(true);
+        }),
+      ),
   );
 });

@@ -18,6 +18,12 @@ export interface NativeProcessSpec {
   /** The owned HOME/TMPDIR/XDG/Deno directories this workload is confined to. */
   readonly environment: Environment.NativeEnvironment;
   readonly cwd?: string;
+  /**
+   * The native artifact generation's digest lock file. The launcher takes its own SHARED pin on
+   * this before spawning the workload, and holds it until the workload's process group has
+   * exited, including the forced-kill path.
+   */
+  readonly artifactLockPath?: string;
   readonly stdin?: "ignore" | "pipe";
   /** Numeric identity the workload runs as; omitted keeps the launcher's identity. */
   readonly uid?: number;
@@ -92,6 +98,7 @@ const encodeSpec = (spec: NativeProcessSpec, env: Readonly<Record<string, string
       cwd: spec.cwd,
       uid: spec.uid,
       gid: spec.gid,
+      ...(spec.artifactLockPath === undefined ? {} : { artifactLockPath: spec.artifactLockPath }),
       ...(Option.isSome(timeout)
         ? {
             gracefulStopSignal: spec.gracefulStopSignal,

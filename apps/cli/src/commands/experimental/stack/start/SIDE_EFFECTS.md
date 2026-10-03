@@ -34,8 +34,9 @@ require template serving and shared external JWKS verification respectively.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
-use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
-`supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+use `$SUPABASE_HOME/cache/stack`, keyed by content digest and retired automatically once unused for
+30 days. Storage files use the caller-owned project directory `supabase/.temp/stack-uploads/<stack-id>/`.
+Functions preparation may build the project's source.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 native on Linux x64/arm64 and macOS arm64. The probe is bounded by 10 seconds. Without a reachable
@@ -50,9 +51,10 @@ Docker, and `--runtime native` for a new stack on platforms that support native.
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
 as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
-`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
-root's home directory. Later commands that restrict the artifact cache and stack state roots to
-their owner keep that grant.
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to the parent directories outside the
+cached artifact (the artifact cache and stack state roots, including root's home directory), which
+stay owner-restricted between launches otherwise. A directory inside the cached artifact itself is
+never chmodded; it keeps the archive's own mode, and startup fails if one is not already traversable.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A

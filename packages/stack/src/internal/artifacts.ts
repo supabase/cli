@@ -7,6 +7,7 @@ export {
   postgresVersion,
   prepareNativeArtifact,
   resolveArtifact,
+  useNativeArtifact,
   type ArtifactPin,
   type NativePin,
   type ServiceKind,

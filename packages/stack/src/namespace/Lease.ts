@@ -8,7 +8,7 @@ import {
 } from "./Capabilities.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
-import { acquireLock, errcode, isBusy, takeLock } from "./drivers/Sqlite.ts";
+import { acquireLock, errcode, isBusy, isMissing, takeLock } from "./drivers/Sqlite.ts";
 
 /** What the current lease holder publishes: an owner's control endpoint, or a sweeper's marker. */
 export const LeaseHolder = Schema.Union([
@@ -86,7 +86,6 @@ export const make = (
     const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(Effect.retry({ schedule: transientRetrySchedule, while: sharingViolation }));
 
-    const isMissing = (error: NamespaceError) => errcode(error.cause, 14);
     /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
     const isMoved = (error: NamespaceError) =>
       errcode(error.cause, 6922) || errcode(error.cause, 1802);

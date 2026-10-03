@@ -21,7 +21,12 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as Net from "node:net";
-import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import {
+  prepareNativeArtifact,
+  resolveArtifact,
+  useNativeArtifact,
+  type ServiceKind,
+} from "../Artifacts.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { containerInstancePath, destroyOwnedRoot, type BorrowedPath } from "../namespace/Paths.ts";
 import { accepts } from "../Ports.ts";
@@ -440,8 +445,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
   spec: ProcessRecipeSpec<C>,
 ): Effect.Effect<ProcessRecipeResult<C>> =>
   Effect.gen(function* () {
-    const prepared = yield* Ref.make<string | undefined>(undefined);
-    const preparedRoot = yield* Ref.make<string | undefined>(undefined);
     const endpoints = yield* Ref.make<ReadonlyMap<string, ServiceEndpoint>>(new Map());
     const logs = yield* PubSub.sliding<CatalogLog>(256);
     // Ownership is by location: instanceRoot is owned simply by being under options.root, created
@@ -470,7 +473,9 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         version: candidate.version,
       }).pipe(Effect.mapError((cause) => serviceError("prepare", cause)));
       if (options.runtime === "native") {
-        const artifact = yield* prepareNativeArtifact(
+        // Ahead-of-time warm-up only: downloads and publishes the generation but pins nothing.
+        // `launch` resolves (or prepares) and pins its own copy right before it spawns.
+        yield* prepareNativeArtifact(
           { service: candidate.service, version: candidate.version },
           options.cacheRoot,
           options.platform,
@@ -482,8 +487,6 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           Effect.provideService(HttpClient.HttpClient, deps.client),
           Effect.mapError((cause) => serviceError("prepare", cause)),
         );
-        yield* Ref.set(prepared, artifact.executable);
-        yield* Ref.set(preparedRoot, artifact.root);
       } else {
         if (deps.container === undefined)
           return yield* serviceError("prepare", "Container runtime unavailable");
@@ -502,12 +505,27 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
         ([name]) => spec.enabledPort === undefined || spec.enabledPort(context.config, name),
       );
       if (options.runtime === "native") {
-        const executable = yield* Ref.get(prepared);
-        const artifactRoot = yield* Ref.get(preparedRoot);
-        if (executable === undefined)
-          return yield* serviceError("launch", "Artifact was not prepared");
-        if (artifactRoot === undefined)
-          return yield* serviceError("launch", "Artifact root was not prepared");
+        // `context.scope` finalizes its direct children in parallel (it is forked "parallel" in
+        // Service.ts), so registering the pin there directly would race its release against the
+        // spawned processes' own cleanup. A "sequential" child scope finalizes LIFO instead: the
+        // pin is registered on it first, every native process scope below forks from it (not from
+        // `context.scope`), so closing it always runs their cleanup before releasing the pin.
+        const launchScope = yield* Scope.fork(context.scope, "sequential");
+        const artifact = yield* useNativeArtifact(
+          { service: context.config.service, version: context.config.version },
+          options.cacheRoot,
+          options.platform,
+        ).pipe(
+          Scope.provide(launchScope),
+          Effect.provideService(FileSystem.FileSystem, deps.fs),
+          Effect.provideService(Path.Path, deps.path),
+          Effect.provideService(Crypto.Crypto, deps.crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deps.spawner),
+          Effect.provideService(HttpClient.HttpClient, deps.client),
+          Effect.mapError((cause) => serviceError("launch", cause)),
+        );
+        const executable = artifact.executable;
+        const artifactRoot = artifact.root;
         const environment = yield* Environment.confine(deps.fs, deps.path, environmentRoot).pipe(
           Effect.mapError((cause) => serviceError("launch", cause)),
         );
@@ -542,7 +560,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             }
           | undefined;
         if (spec.startupCommands.length > 0) {
-          const startupScope = yield* Scope.fork(context.scope, "sequential");
+          const startupScope = yield* Scope.fork(launchScope, "sequential");
           const reservation =
             spec.nativeStartupEnv === undefined
               ? undefined
@@ -565,6 +583,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                 env: command.env,
                 environment,
                 cwd: artifactRoot,
+                artifactLockPath: artifact.lockPath,
               },
               defaultNativeProcessLauncher(),
               {
@@ -597,7 +616,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           readonly portScope: Scope.Closeable;
           readonly endpoints: ReadonlyMap<string, ServiceEndpoint>;
         }) {
-          const scope = yield* Scope.fork(context.scope, "sequential");
+          const scope = yield* Scope.fork(launchScope, "sequential");
           const reservation = held ?? (yield* reserveEndpoints(scope));
           const selected = reservation.endpoints;
           const args = yield* spec.args(context.config, selected, {
@@ -612,6 +631,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
               args,
               env,
               environment,
+              artifactLockPath: artifact.lockPath,
               gracefulStopSignal: "SIGTERM",
               gracefulStopTimeout: "5 seconds",
             },

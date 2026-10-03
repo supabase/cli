@@ -495,15 +495,19 @@ const nativeFixtureArtifact = Effect.fn(function* (
           : undefined;
   if (target === undefined) return yield* Effect.fail(`Unsupported test platform: ${platformName}`);
 
-  const { releaseVersion } = yield* resolveArtifact({ service: artifact.service });
+  const { releaseVersion, natives } = yield* resolveArtifact({ service: artifact.service });
   const request: ArtifactRequest = {
     key: `slim-services/${artifact.name}/${releaseVersion}/${target}`,
     requiredRuntimePaths: Object.keys(artifact.files),
     executablePath: artifact.executablePath,
   };
   const fs = yield* FileSystem.FileSystem;
+  // The generation directory is content-addressed by this digest: it must match what the real
+  // artifact source resolves for this platform, or this fixture is invisible to consumers that
+  // resolve the real catalog source for the same key.
+  const digest = natives[target].archive;
   const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
+    checksum: () => Effect.succeed(digest),
     materialize: (_entry, destination) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });

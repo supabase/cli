@@ -17,9 +17,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import {
   slimImageMirrors,
-  prepareNativeArtifact,
   postgresVersion,
   resolveArtifact,
+  useNativeArtifact,
 } from "../Artifacts.ts";
 import type * as Claims from "../namespace/Claims.ts";
 import * as Environment from "../namespace/Environment.ts";
@@ -184,7 +184,10 @@ const makeCommandRunner = (options: {
             initialization?.version ?? postgresVersion(String(postgresCommand?.command.major));
           const process = yield* Effect.gen(function* () {
             if (container === undefined) {
-              const artifact = yield* prepareNativeArtifact(
+              // Pins the generation for the life of this job's scope, before the spawn below: the
+              // pin is registered ahead of the process, so it releases only after the process's
+              // own cleanup finalizer (added later) has run.
+              const artifact = yield* useNativeArtifact(
                 { service: initialization?.service ?? "database", version },
                 options.cacheRoot,
               ).pipe(
@@ -209,6 +212,7 @@ const makeCommandRunner = (options: {
                   args: postgresCommand?.args ?? initialization?.args ?? [],
                   env: postgresCommand?.env ?? initialization?.env ?? {},
                   environment,
+                  artifactLockPath: artifact.lockPath,
                   cwd:
                     postgresCommand?.pgProve?.cwd ??
                     initialization?.cwd ??

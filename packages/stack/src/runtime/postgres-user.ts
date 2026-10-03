@@ -255,6 +255,25 @@ const allowTraverse = Effect.fn("NativePostgresUser.allowTraverse")(function* (
   }
 });
 
+/**
+ * A directory inside a published artifact generation keeps the archive's own mode for life, so
+ * the step-down handover checks for the traverse bit (o+x) there instead of granting it: granting
+ * it would mutate an already-published, content-addressed generation.
+ */
+const requireTraverse = Effect.fn("NativePostgresUser.requireTraverse")(function* (
+  directories: ReadonlyArray<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  for (const directory of directories) {
+    const { mode } = yield* fs.stat(directory);
+    if ((mode & 0o001) === 0)
+      return yield* new ServiceError({
+        operation: "launch",
+        message: `${directory} is missing its traverse bit (o+x); re-prepare the artifact`,
+      });
+  }
+});
+
 const requireOwnedByRootOr = Effect.fn("NativePostgresUser.requireOwnedByRootOr")(function* (
   user: PasswdEntry,
   target: string,
@@ -330,7 +349,9 @@ const chownRecursive = Effect.fn("NativePostgresUser.chownRecursive")(function* 
  * native `environmentHome` (if any) to the PostgreSQL user, each with its own `chown -R -P` call
  * so a nested directory is never also listed as a separate, redundant target. `runtimeRoot` and its
  * ancestors only gain traverse, so the step-down user reaches its socket directory under a
- * restrictive configured base without write access to any of them.
+ * restrictive configured base without write access to any of them. An ancestor inside the
+ * published generation (the bundle root and anything between it and the executable or getkey)
+ * is only required to already have traverse, never granted it: that generation is immutable.
  */
 export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOverFiles")(function* (
   user: PasswdEntry,
@@ -366,9 +387,17 @@ export const handOverNativePostgresFiles = Effect.fn("NativePostgresUser.handOve
       });
     yield* chownRecursive(user, paths.environmentHome);
   }
+  const insideGeneration = (candidate: string) =>
+    candidate === paths.bundleRoot || candidate.startsWith(`${paths.bundleRoot}${path.sep}`);
+  const executableAncestors = ancestorsOf(path, path.dirname(paths.executable));
+  const getkeyAncestors = hasGetkey ? ancestorsOf(path, path.dirname(getkey)) : [];
+  yield* requireTraverse([
+    ...executableAncestors.filter(insideGeneration),
+    ...getkeyAncestors.filter(insideGeneration),
+  ]);
   yield* allowTraverse(user, [
     ...ancestorsOf(path, paths.runtimeRoot),
-    ...ancestorsOf(path, path.dirname(paths.executable)),
-    ...(hasGetkey ? ancestorsOf(path, path.dirname(getkey)) : []),
+    ...executableAncestors.filter((candidate) => !insideGeneration(candidate)),
+    ...getkeyAncestors.filter((candidate) => !insideGeneration(candidate)),
   ]);
 });

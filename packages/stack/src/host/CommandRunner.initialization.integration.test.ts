@@ -34,14 +34,18 @@ if (authVersion === undefined) {
 const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: string) {
   if (target === undefined) return yield* Effect.fail("Unsupported test platform");
   const fs = yield* FileSystem.FileSystem;
-  const { releaseVersion } = yield* resolveArtifact({ service: "auth" });
+  const { releaseVersion, natives } = yield* resolveArtifact({ service: "auth" });
   const request: ArtifactRequest = {
     key: `slim-services/auth/${releaseVersion}/${target}`,
     requiredRuntimePaths: ["bin/auth"],
     executablePath: "bin/auth",
   };
+  // The generation directory is content-addressed by this digest: it must match what
+  // `CommandRunner`'s own real artifact source resolves for this platform, or the fixture
+  // published here is invisible to it and it downloads the real catalog-pinned binary instead.
+  const digest = natives[target].archive;
   const source: ArtifactSource = {
-    checksum: () => Effect.succeed("0".repeat(64)),
+    checksum: () => Effect.succeed(digest),
     materialize: (_request, destination) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(`${destination}/bin`, { recursive: true });
