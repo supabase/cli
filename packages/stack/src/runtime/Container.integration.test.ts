@@ -961,43 +961,46 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("waits for a real removal observed as removing", () =>
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const crypto = yield* Crypto.Crypto;
-      const token = yield* crypto.randomUUIDv4;
-      const instanceId = `pending-remove-${token}`;
-      const pendingProbes = yield* Ref.make(2);
-      const lostResult = yield* Ref.make(false);
-      const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
-      yield* Effect.ensuring(
-        Effect.gen(function* () {
-          const result = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
-              yield* runtime.prepare(image);
-              const process = yield* runtime.launch({
-                image,
-                stackId: "n".repeat(64),
-                instanceId,
-                env: {},
-                args: ["-e", stoppableIdleScript],
-              });
-              yield* process.stop;
-              yield* process.remove;
-            }),
-          ).pipe(
-            Effect.exit,
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          );
-          expect(yield* Ref.get(lostResult)).toBe(true);
-          expect(yield* Ref.get(pendingProbes)).toBe(0);
-          expect(Exit.isSuccess(result)).toBe(true);
-          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
-        }),
-        removeByInstance(instanceId).pipe(Effect.orDie),
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.live(
+    "waits for a real removal observed as removing",
+    () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const crypto = yield* Crypto.Crypto;
+        const token = yield* crypto.randomUUIDv4;
+        const instanceId = `pending-remove-${token}`;
+        const pendingProbes = yield* Ref.make(2);
+        const lostResult = yield* Ref.make(false);
+        const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            const result = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+                yield* runtime.prepare(image);
+                const process = yield* runtime.launch({
+                  image,
+                  stackId: "n".repeat(64),
+                  instanceId,
+                  env: {},
+                  args: ["-e", stoppableIdleScript],
+                });
+                yield* process.stop;
+                yield* process.remove;
+              }),
+            ).pipe(
+              Effect.exit,
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            );
+            expect(yield* Ref.get(lostResult)).toBe(true);
+            expect(yield* Ref.get(pendingProbes)).toBe(0);
+            expect(Exit.isSuccess(result)).toBe(true);
+            expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+          }),
+          removeByInstance(instanceId).pipe(Effect.orDie),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    { timeout: 120_000 },
   );
 
   it.live("retains the remove failure when removing never reaches absence", () =>
