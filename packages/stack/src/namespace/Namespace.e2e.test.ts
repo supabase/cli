@@ -63,26 +63,38 @@ it.live(
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        // Scoped outside the owners: their scope below must fully close (confirming the second
+        // owner has actually exited, not just acknowledged shutdown) before this directory's own
+        // removal runs, or Windows reports EBUSY on a file the still-exiting owner has open.
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-e2e-sigkill-" });
         const state = yield* makeTestState(root);
         const id = "stack";
         yield* state.save(savedStack(root, id));
         const options = { stateRoot: root, cacheRoot: root, stackId: id, entrypoint: ownerFixture };
 
-        const first = yield* launchHost(state, options);
-        expect(yield* state.leased(id)).toBe(true);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const first = yield* launchHost(state, options);
+            expect(yield* state.leased(id)).toBe(true);
 
-        const released = yield* watchLeaseRelease(root, id);
-        yield* Effect.sync(() => process.kill(first.endpoint.pid, "SIGKILL"));
-        yield* released;
-        expect(yield* state.leased(id)).toBe(false);
+            const released = yield* watchLeaseRelease(root, id);
+            yield* Effect.sync(() => process.kill(first.endpoint.pid, "SIGKILL"));
+            yield* released;
+            expect(yield* state.leased(id)).toBe(false);
 
-        // No file is removed or repaired here; the kernel alone released the dead owner's lease.
-        const second = yield* Effect.acquireRelease(launchHost(state, options), (access) =>
-          shutdownHost(access, true).pipe(Effect.ignore),
+            // No file is removed or repaired here; the kernel alone released the dead owner's lease.
+            const second = yield* Effect.acquireRelease(launchHost(state, options), (access) =>
+              shutdownHost(access, true).pipe(
+                Effect.ignore,
+                Effect.andThen(
+                  waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(Effect.ignore),
+                ),
+              ),
+            );
+            expect(second.endpoint.pid).not.toBe(first.endpoint.pid);
+            expect(yield* connectHost(state, id)).toEqual(second);
+          }),
         );
-        expect(second.endpoint.pid).not.toBe(first.endpoint.pid);
-        expect(yield* connectHost(state, id)).toEqual(second);
       }),
     ).pipe(Effect.provide(testLayer)),
   20_000,
