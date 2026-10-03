@@ -233,6 +233,9 @@ const pullBackoff = Schedule.exponential("2 seconds").pipe(Schedule.jittered);
 /** `docker create` only writes metadata; a healthy daemon answers well within this bound. */
 const CREATE_TIMEOUT: Duration.Input = "2 minutes";
 
+/** A started container's loopback publish can lag under concurrent engine load before landing. */
+const PORT_PUBLISH_TIMEOUT: Duration.Input = "2 minutes";
+
 const PublishedPorts = Schema.Record(
   Schema.String,
   Schema.NullOr(
@@ -244,6 +247,13 @@ const PublishedPorts = Schema.Record(
     ),
   ),
 );
+
+/** The published ports together with the run state they were observed in. */
+const PublicationState = Schema.Struct({
+  Ports: Schema.NullOr(PublishedPorts),
+  Status: Schema.String,
+  ExitCode: Schema.Finite,
+});
 
 const mountField = (key: string, value: string) => {
   const field = `${key}=${value}`;
@@ -759,25 +769,68 @@ export const makeContainerRuntime = (options: {
                 getWaiter,
               ).pipe(Effect.flatMap((fiber) => Fiber.join(fiber)));
               owned = { ...partial, exitCode };
-              const text = yield* run([
-                "inspect",
-                "--format",
-                "{{json .NetworkSettings.Ports}}",
-                name,
-              ]);
-              const bindings = yield* Schema.decodeEffect(Schema.fromJsonString(PublishedPorts))(
-                text,
-              ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
-              const ports: Record<number, number> = {};
-              for (const port of spec.ports ?? []) {
-                const value = bindings[`${port}/tcp`]?.find(
-                  (binding) => binding.HostIp === "127.0.0.1",
-                )?.HostPort;
-                const actual = Number(value);
-                if (!Number.isInteger(actual) || actual < 1 || actual > 65535)
-                  return yield* errorFor("inspect", `No loopback publication for ${port}`);
-                ports[port] = actual;
-              }
+              const requestedPorts = spec.ports ?? [];
+              const inspectPublished = Effect.gen(function* () {
+                const text = yield* run([
+                  "inspect",
+                  "--format",
+                  '{"Ports":{{json .NetworkSettings.Ports}},"Status":{{json .State.Status}},"ExitCode":{{.State.ExitCode}}}',
+                  name,
+                ]);
+                const state = yield* Schema.decodeEffect(Schema.fromJsonString(PublicationState))(
+                  text,
+                ).pipe(Effect.mapError((cause) => errorFor("inspect", cause)));
+                const bindings = state.Ports ?? {};
+                const published: Record<number, number> = {};
+                const pending: Array<number> = [];
+                for (const port of requestedPorts) {
+                  const value = bindings[`${port}/tcp`]?.find(
+                    (binding) => binding.HostIp === "127.0.0.1",
+                  )?.HostPort;
+                  const actual = Number(value);
+                  if (Number.isInteger(actual) && actual >= 1 && actual <= 65535)
+                    published[port] = actual;
+                  else pending.push(port);
+                }
+                if (pending.length > 0 && state.Status !== "running")
+                  return yield* errorFor(
+                    "inspect",
+                    `Container ${state.Status} (exit code ${state.ExitCode}) before publishing ${pending.join(", ")}`,
+                  );
+                return { published, pending };
+              });
+              // The engine can report a container started before its loopback publish lands,
+              // so poll for it instead of trusting a single inspect under load.
+              const awaitPublishedPorts = Effect.fn("Container.awaitPublishedPorts")(function* () {
+                const observed = yield* Ref.make<{
+                  readonly published: Record<number, number>;
+                  readonly pending: ReadonlyArray<number>;
+                }>({ published: {}, pending: requestedPorts });
+                yield* withAttemptCount(
+                  inspectPublished.pipe(Effect.tap((result) => Ref.set(observed, result))),
+                  (counted) =>
+                    counted.pipe(
+                      Effect.repeat({
+                        schedule: Schedule.spaced("250 millis"),
+                        while: (result) => result.pending.length > 0,
+                      }),
+                    ),
+                ).pipe(
+                  Effect.timeout(PORT_PUBLISH_TIMEOUT),
+                  Effect.catchTag("TimeoutError", () =>
+                    Ref.get(observed).pipe(
+                      Effect.flatMap(({ pending }) =>
+                        errorFor(
+                          "inspect",
+                          `No loopback publication for ${pending.join(", ")} after ${PORT_PUBLISH_TIMEOUT}`,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+                return (yield* Ref.get(observed)).published;
+              });
+              const ports = yield* awaitPublishedPorts();
               const logProcess =
                 attached ??
                 (yield* Effect.gen(function* () {
