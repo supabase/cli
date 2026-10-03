@@ -13,7 +13,6 @@ import {
   Path,
   PlatformError,
   Ref,
-  Result,
   Schema,
   Scheduler,
   Scope,
@@ -639,21 +638,21 @@ describe("stack owner lease", () => {
           // finalizer below can only proceed once A's publish has fully released the gate.
           const paused = yield* Deferred.make<void>();
           const entered = yield* Deferred.make<void>();
-          const removeCalls = yield* Ref.make(0);
+          const renameCalls = yield* Ref.make(0);
           const pausingFs = Layer.effect(
             FileSystem.FileSystem,
             Effect.sync(() => ({
               ...fs,
-              remove: (file: string, options?: Parameters<FileSystem.FileSystem["remove"]>[1]) =>
+              rename: (oldPath: string, newPath: string) =>
                 Effect.gen(function* () {
                   const isFirst =
-                    file === ownerJson &&
-                    (yield* Ref.getAndUpdate(removeCalls, (n) => n + 1)) === 0;
+                    newPath === ownerJson &&
+                    (yield* Ref.getAndUpdate(renameCalls, (n) => n + 1)) === 0;
                   if (isFirst) {
                     yield* Deferred.succeed(entered, undefined);
                     yield* Deferred.await(paused);
                   }
-                  return yield* fs.remove(file, options);
+                  return yield* fs.rename(oldPath, newPath);
                 }),
             })),
           );
@@ -866,64 +865,122 @@ describe("stack owner lease", () => {
     ),
   );
 
-  it.live(
-    "publishes successfully and cleans up staging despite a transient staging-removal failure",
-    () =>
-      run(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const id = "flaky-cleanup";
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-publish-cleanup-" });
-          const stackDirectory = path.join(root, id);
-          // A single ignored attempt (the pre-fix behavior) only ever makes one call per site;
-          // three consecutive failures need a real retry loop to still converge.
-          const remaining = yield* Ref.make(3);
-          const flakyFs = Layer.succeed(FileSystem.FileSystem, {
-            ...fs,
-            remove: (file: string, options?: Parameters<FileSystem.FileSystem["remove"]>[1]) =>
-              Effect.gen(function* () {
-                if (
-                  file.startsWith(path.join(stackDirectory, ".owner.json.")) &&
-                  (yield* Ref.get(remaining)) > 0
-                ) {
-                  yield* Ref.update(remaining, (count) => count - 1);
-                  return yield* PlatformError.systemError({
-                    _tag: "Unknown",
-                    module: "FileSystem",
-                    method: "remove",
-                    pathOrDescriptor: file,
-                    cause: Object.assign(new Error("injected transient removal failure"), {
-                      code: "EBUSY",
-                    }),
-                  });
-                }
-                return yield* fs.remove(file, options);
-              }),
-          });
-          const state = Context.get(
-            yield* Layer.build(
-              StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(flakyFs)),
-            ),
-            StackNamespace.Service,
-          );
-          const scope = yield* Scope.make();
-          const lease = yield* state.acquireLease(id).pipe(Scope.provide(scope));
-          const record: StackNamespace.LeaseHolder = {
-            role: "sweeper",
-            pid: process.pid,
-            startedAt: "2026-01-01T00:00:00.000Z",
-          };
-          yield* lease.publishHolder(record);
+  it.live("publishes successfully despite a transient rename failure", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const id = "flaky-cleanup";
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-publish-cleanup-" });
+        const stackDirectory = path.join(root, id);
+        const ownerJson = path.join(stackDirectory, "owner.json");
+        // A single ignored attempt (the pre-fix behavior) only ever makes one call per site;
+        // three consecutive failures need a real retry loop to still converge.
+        const remaining = yield* Ref.make(3);
+        const flakyFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          rename: (oldPath: string, newPath: string) =>
+            Effect.gen(function* () {
+              if (newPath === ownerJson && (yield* Ref.get(remaining)) > 0) {
+                yield* Ref.update(remaining, (count) => count - 1);
+                return yield* PlatformError.systemError({
+                  _tag: "Unknown",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: newPath,
+                  cause: Object.assign(new Error("injected transient rename failure"), {
+                    code: "EBUSY",
+                  }),
+                });
+              }
+              return yield* fs.rename(oldPath, newPath);
+            }),
+        });
+        const state = Context.get(
+          yield* Layer.build(
+            StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(flakyFs)),
+          ),
+          StackNamespace.Service,
+        );
+        const scope = yield* Scope.make();
+        const lease = yield* state.acquireLease(id).pipe(Scope.provide(scope));
+        const record: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* lease.publishHolder(record);
 
-          expect(yield* Ref.get(remaining), "all injected failures were consumed").toBe(0);
-          expect(yield* state.readHolder(id)).toEqual(record);
-          expect(
-            (yield* fs.readDirectory(stackDirectory)).filter((entry) => entry.endsWith(".tmp")),
-          ).toEqual([]);
-          yield* Scope.close(scope, Exit.void);
-        }),
-      ),
+        expect(yield* Ref.get(remaining), "all injected failures were consumed").toBe(0);
+        expect(yield* state.readHolder(id)).toEqual(record);
+        expect(
+          (yield* fs.readDirectory(stackDirectory)).filter((entry) => entry.endsWith(".tmp")),
+        ).toEqual([]);
+        yield* Scope.close(scope, Exit.void);
+      }),
+    ),
+  );
+
+  it.live("never reports a holder record missing while replacing it with a fresh one", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const id = "atomic-replace";
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-atomic-" });
+        const ownerJson = path.join(root, id, "owner.json");
+        const gate = yield* Deferred.make<void>();
+        const entered = yield* Deferred.make<void>();
+        // Only the second publish (the replacement) is gated; the first establishes R1 normally.
+        let publishCount = 0;
+        const gatedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          rename: (oldPath: string, newPath: string) => {
+            if (newPath !== ownerJson) return fs.rename(oldPath, newPath);
+            publishCount++;
+            return publishCount === 2
+              ? Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                  Effect.andThen(fs.rename(oldPath, newPath)),
+                )
+              : fs.rename(oldPath, newPath);
+          },
+        });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root }).pipe(Layer.provide(gatedFs))),
+          StackNamespace.Service,
+        );
+        const scope = yield* Scope.make();
+        const lease = yield* state.acquireLease(id).pipe(Scope.provide(scope));
+        const r1: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* lease.publishHolder(r1);
+        expect(yield* state.readHolder(id)).toEqual(r1);
+
+        const r2: StackNamespace.LeaseHolder = {
+          role: "sweeper",
+          pid: process.pid + 1,
+          startedAt: "2026-01-01T00:00:01.000Z",
+        };
+        const publishing = yield* lease.publishHolder(r2).pipe(Effect.forkScoped);
+        // Runs before the publisher's interruption (reverse order), so a failed assertion can't
+        // leave the uninterruptible publish blocked on the gate during teardown.
+        yield* Effect.addFinalizer(() => Deferred.succeed(gate, undefined));
+        yield* Deferred.await(entered);
+
+        // At the publication gate (the rename not yet landed), a reader must still see the prior
+        // record, never a gap: a remove-then-publish sequence would briefly have no file at all.
+        expect(yield* state.readHolder(id)).toEqual(r1);
+
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(publishing);
+        expect(yield* state.readHolder(id)).toEqual(r2);
+        yield* Scope.close(scope, Exit.void);
+      }),
+    ),
   );
 });
 
@@ -957,50 +1014,6 @@ describe("discovery", () => {
 });
 
 describe("publication", () => {
-  it.effect("rejects a state root without hard-link support before any mutation", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-nolink-" });
-        const noLink = Layer.succeed(FileSystem.FileSystem, {
-          ...fs,
-          link: (_fromPath: string, toPath: string) =>
-            Effect.fail(
-              PlatformError.systemError({
-                _tag: "Unknown",
-                module: "FileSystem",
-                method: "link",
-                pathOrDescriptor: toPath,
-                description: "Hard links are not supported on this filesystem",
-                cause: Object.assign(new Error("link not supported"), { code: "ENOTSUP" }),
-              }),
-            ),
-        });
-        const failure = yield* StackNamespace.Service.pipe(
-          Effect.provide(StackNamespace.layer({ root }).pipe(Layer.provide(noLink))),
-          Effect.flip,
-        );
-        expect(failure).toBeInstanceOf(StackNamespace.NamespaceError);
-        expect(failure.operation).toBe("hardlink-support");
-        expect(yield* fs.readDirectory(root)).toEqual([]);
-      }),
-    ),
-  );
-
-  it.live("accepts a root that supports hard links under concurrent acquisitions", () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-concurrent-acquire-" });
-        const results = yield* Effect.all(
-          Array.from({ length: 10 }, () => makeTestState(root).pipe(Effect.result)),
-          { concurrency: "unbounded" },
-        );
-        expect(results.every(Result.isSuccess)).toBe(true);
-      }),
-    ),
-  );
-
   // Windows has no directory fsync to fail.
   it.effect.skipIf(process.platform === "win32")(
     "fails publication when the directory fsync reports EIO",

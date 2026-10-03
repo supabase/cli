@@ -205,7 +205,6 @@ export const make = (
       yield* Publication.publish(fs, path, {
         target: statePath(state.id),
         content: serialized,
-        mode: "replace",
         platform: options.platform,
       });
     });

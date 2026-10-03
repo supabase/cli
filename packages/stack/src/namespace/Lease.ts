@@ -238,19 +238,15 @@ export const make = (
           const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(LeaseHolder))(
             record,
           ).pipe(Effect.mapError((cause) => namespaceError("encode", cause)));
+          // The lease already guarantees a single writer, so an atomic rename over any existing
+          // record (a live one, or a crashed holder's stale one) is enough: a reader never sees a
+          // gap where the file briefly doesn't exist, unlike a prior remove followed by a publish.
           yield* guarded(
-            // A crashed holder's stale record, if any, must not block this fresh one from publishing.
-            fs.remove(ownerPath(id), { force: true }).pipe(
-              Effect.mapError((cause) => namespaceError("remove", cause)),
-              Effect.andThen(
-                Publication.publish(fs, path, {
-                  target: ownerPath(id),
-                  content: serialized,
-                  mode: "initial",
-                  platform: options.platform,
-                }),
-              ),
-            ),
+            Publication.publish(fs, path, {
+              target: ownerPath(id),
+              content: serialized,
+              platform: options.platform,
+            }),
           );
         }),
         retractHolder: guarded(

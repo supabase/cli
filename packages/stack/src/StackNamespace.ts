@@ -1,6 +1,5 @@
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { namespaceError, type NamespaceError } from "./namespace/Capabilities.ts";
-import * as FsDriver from "./namespace/drivers/FileSystem.ts";
 import * as Lease from "./namespace/Lease.ts";
 import * as Registry from "./namespace/Registry.ts";
 import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
@@ -42,7 +41,6 @@ const make = Effect.fn("Namespace.acquire")(function* (
   yield* restrictDirectoryToOwner(fs, root).pipe(
     Effect.mapError((cause) => namespaceError("root", cause)),
   );
-  yield* FsDriver.assertHardLinkSupport(fs, path, root);
   const registry = yield* Registry.make({
     root,
     platform: options.platform,
