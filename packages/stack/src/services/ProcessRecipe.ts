@@ -59,6 +59,22 @@ interface RecipeMount {
   readonly readOnly: boolean;
 }
 
+/** `uid:gid` a container runs as when it writes into a borrowed host path, so the caller keeps ownership. */
+const hostUser: string | undefined =
+  process.getuid === undefined || process.getgid === undefined
+    ? undefined
+    : `${process.getuid()}:${process.getgid()}`;
+
+/** The host-user override for a launch whose mounts write into one of its recipe's caller paths. */
+const userForMounts = (
+  mounts: ReadonlyArray<RecipeMount>,
+  callerPaths: ReadonlyArray<string>,
+): string | undefined =>
+  hostUser !== undefined &&
+  mounts.some((mount) => !mount.readOnly && callerPaths.includes(mount.source))
+    ? hostUser
+    : undefined;
+
 export interface StartupCommand {
   readonly args: ReadonlyArray<string>;
   readonly nativeExecutable?: string;
@@ -780,6 +796,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             entrypoint: command.entrypoint,
             args: command.args,
             mounts: command.mounts,
+            user: userForMounts(command.mounts, spec.callerPaths?.(context.config) ?? []),
           })
           .pipe(
             Effect.catchTag("ContainerLaunchError", ({ failure, process }) =>
@@ -819,6 +836,12 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             runtime: runtimeFromContainer(startupProcess),
           });
       }
+      const launchMounts = [
+        ...(yield* spec.mounts(context.config, { container: true })),
+        ...(spec.instanceDirectory === true
+          ? [{ source: instanceRoot, target: containerInstancePath, readOnly: false }]
+          : []),
+      ];
       const launched = yield* deps.container
         .launch({
           image: resolved.image,
@@ -829,12 +852,8 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           env: yield* spec.env(context.config, containerDesired, true, containerInstanceDir),
           entrypoint: spec.containerEntrypoint?.(context.config),
           args: yield* spec.args(context.config, containerDesired, { container: true }),
-          mounts: [
-            ...(yield* spec.mounts(context.config, { container: true })),
-            ...(spec.instanceDirectory === true
-              ? [{ source: instanceRoot, target: containerInstancePath, readOnly: false }]
-              : []),
-          ],
+          mounts: launchMounts,
+          user: userForMounts(launchMounts, spec.callerPaths?.(context.config) ?? []),
           ports: [...containerDesired.values()].map((endpoint) => endpoint.port),
         })
         .pipe(

@@ -57,6 +57,8 @@ interface ContainerSpec {
   readonly stopGraceSeconds?: number;
   /** Signal `docker stop` sends first; omitted uses the image's stop signal. */
   readonly stopSignal?: "SIGINT" | "SIGTERM";
+  /** `uid:gid` the container runs as, overriding the image's own user. */
+  readonly user?: string;
 }
 
 export interface ContainerProcess {
@@ -689,6 +691,7 @@ export const makeContainerRuntime = (options: {
         "--label",
         `com.docker.compose.service=${composeService}`,
         ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
+        ...(spec.user === undefined ? [] : ["--user", spec.user]),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [

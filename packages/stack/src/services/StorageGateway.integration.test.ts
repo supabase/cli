@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from "effect";
+import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import {
@@ -98,7 +98,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
   const { url } = yield* owner.rpc.credentials({ id: storage.id, from: "host" });
   if (url === undefined) return yield* Effect.die("Storage gateway URL missing");
   const { serviceRoleKey } = yield* owner.getStackCredentials;
-  return { url, serviceRoleKey };
+  return { url, serviceRoleKey, storageRoot };
 });
 
 for (const runtime of ["native", "docker"] as const)
@@ -108,7 +108,7 @@ for (const runtime of ["native", "docker"] as const)
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* HttpClient.HttpClient;
-          const { url, serviceRoleKey } = yield* serveStorage(runtime);
+          const { url, serviceRoleKey, storageRoot } = yield* serveStorage(runtime);
           const bucket = "gateway";
 
           const createBucket = yield* client.execute(
@@ -162,6 +162,22 @@ for (const runtime of ["native", "docker"] as const)
           );
           expect(patch.status, yield* patch.text).toBe(204);
           expect(patch.headers["upload-offset"]).toBe("5");
+
+          if (runtime === "docker") {
+            // The container writes into storageRoot, a borrowed host directory; the host user
+            // must still own what it created there, not the engine's own root (see Container's
+            // `user` field).
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const entries = yield* fs.readDirectory(storageRoot, { recursive: true });
+            const stats = yield* Effect.forEach(entries, (entry) =>
+              fs.stat(path.join(storageRoot, entry)),
+            );
+            const files = stats.filter((info) => info.type === "File");
+            expect(files.length).toBeGreaterThan(0);
+            for (const info of files)
+              expect(Option.getOrUndefined(info.uid)).toBe(process.getuid?.());
+          }
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 180_000 },

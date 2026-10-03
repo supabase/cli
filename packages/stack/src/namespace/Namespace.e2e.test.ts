@@ -340,7 +340,8 @@ const docker = Effect.fn("Namespace.e2e.docker")((args: ReadonlyArray<string>) =
   ),
 );
 
-it.live.skipIf(process.platform === "win32")(
+// Needs a real Docker daemon, which only the Linux CI runner has.
+it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
   "removes exactly the containers a SIGKILLed owner's claims recorded, with no manual cleanup",
   () =>
     Effect.scoped(
