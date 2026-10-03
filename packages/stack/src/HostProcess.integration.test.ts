@@ -31,7 +31,7 @@ import {
 } from "./HostProcess.ts";
 import { discover } from "./effect.ts";
 import { watchLeaseRelease } from "../tests/owner.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
 
@@ -39,7 +39,7 @@ const fixtureEntrypoint = fileURLToPath(
   new URL("../tests/host-process-fixture.ts", import.meta.url),
 );
 
-const savedStack = (root: string, stackName: string): State.SavedStack => ({
+const savedStack = (root: string, stackName: string): StackNamespace.SavedStack => ({
   id: "stack",
   runtime: "native",
   identity: { projectRoot: root, branchContext: "main", stackName },
@@ -77,9 +77,20 @@ const silentListener = Effect.acquireRelease(
 );
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
+
+/** Writes a holder record directly, simulating a process that published then crashed before retracting. */
+const writeStaleHolder = (root: string, id: string, record: StackNamespace.LeaseHolder) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(StackNamespace.LeaseHolder))(
+      record,
+    );
+    yield* fs.writeFileString(path.join(root, id, "owner.json"), encoded);
+  });
 
 type ChildHandle = {
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -187,7 +198,11 @@ const bestEffortShutdown = (stateRoot: string) => (access: HostAccess) =>
     }),
   ).pipe(Effect.exit, Effect.asVoid);
 
-const bestEffortShutdownByState = (stateRoot: string, state: State.Interface, stackId: string) =>
+const bestEffortShutdownByState = (
+  stateRoot: string,
+  state: StackNamespace.Interface,
+  stackId: string,
+) =>
   Effect.exit(connectHost(state, stackId).pipe(Effect.flatMap(bestEffortShutdown(stateRoot)))).pipe(
     Effect.asVoid,
   );
@@ -330,7 +345,7 @@ it.live("ignores a stale endpoint record once no process holds the lease", () =>
       const state = yield* makeTestState(root);
       yield* state.save(savedStack(root, "local"));
       const unresponsive = yield* silentListener;
-      yield* state.publishHolder("stack", {
+      yield* writeStaleHolder(root, "stack", {
         role: "owner",
         secret: "stale",
         port: unresponsive.port,
@@ -368,8 +383,8 @@ it.live("discovers dead stacks from their free leases without contacting recorde
       const ids = ["dead-a", "dead-b", "dead-c"];
       for (const id of ids) {
         yield* state.save({ ...savedStack(root, id), id });
-        yield* Effect.scoped(state.lease(id));
-        yield* state.publishHolder(id, {
+        yield* Effect.scoped(state.acquireLease(id));
+        yield* writeStaleHolder(root, id, {
           role: "owner",
           secret: "stale",
           port: unresponsive.port,

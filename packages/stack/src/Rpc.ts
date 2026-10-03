@@ -4,7 +4,7 @@ import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
-import { StackKeysInput } from "./State.ts";
+import { StackKeysInput } from "./StackNamespace.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 
 const Outcome = Schema.Struct({

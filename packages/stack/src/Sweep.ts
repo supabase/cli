@@ -1,12 +1,12 @@
 import { Context, DateTime, Effect, FileSystem, Layer, Path } from "effect";
 import { sweepTimeout } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 /** Runs a dead session stack's own destroy path in this process while holding its lease. */
 const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
-  state: State.Interface,
-  saved: State.SavedStack,
+  state: StackNamespace.Interface,
+  saved: StackNamespace.SavedStack,
   dataRoot: string,
   cacheRoot: string,
 ) {
@@ -14,7 +14,7 @@ const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
   yield* fs.makeDirectory(dataRoot, { recursive: true });
   const context = yield* Layer.build(
     Owner.layer({ saved, root: dataRoot, cacheRoot }).pipe(
-      Layer.provide(Layer.succeed(State.Service, state)),
+      Layer.provide(Layer.succeed(StackNamespace.Service, state)),
     ),
   );
   yield* Context.get(context, Owner.Service).namespace.destroy;
@@ -27,7 +27,7 @@ const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
  * another process holds the lease.
  */
 export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: {
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
   readonly stateRoot: string;
   readonly cacheRoot: string;
   readonly id: string;
@@ -37,9 +37,12 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
   const { state, id } = options;
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      if (!(yield* state.lease(id))) return false;
-      yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-      yield* state.publishHolder(id, {
+      const lease = yield* state
+        .acquireLease(id)
+        .pipe(Effect.catchTag("Namespace.LeaseHeldError", () => Effect.void));
+      if (lease === undefined) return false;
+      yield* Effect.addFinalizer(() => lease.retractHolder.pipe(Effect.ignore));
+      yield* lease.publishHolder({
         role: "sweeper",
         pid: process.pid,
         startedAt: DateTime.formatIso(yield* DateTime.now),
@@ -61,7 +64,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
  */
 export const sweepOrphans = Effect.fn("Sweep.orphans")(
   function* (options: {
-    readonly state: State.Interface;
+    readonly state: StackNamespace.Interface;
     readonly stateRoot: string;
     readonly cacheRoot: string;
     readonly ownerId: string;

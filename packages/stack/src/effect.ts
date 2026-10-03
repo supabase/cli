@@ -42,8 +42,8 @@ import { removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
-import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
@@ -74,7 +74,7 @@ export type {
   SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
 export { StackIdSchema as StackId } from "./identity/StackId.ts";
-export type { SavedStack } from "./State.ts";
+export type { SavedStack } from "./StackNamespace.ts";
 export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
 export type {
@@ -84,7 +84,8 @@ export type {
   PostgresCommand,
 } from "./Commands.ts";
 
-const stateFor = (root: string) => State.Service.pipe(Effect.provide(State.layer({ root })));
+const stateFor = (root: string) =>
+  StackNamespace.Service.pipe(Effect.provide(StackNamespace.layer({ root })));
 
 /** Storage locations shared by clients and the detached stack owner. */
 export interface StackLocations {
@@ -100,7 +101,7 @@ export interface CreateOptions extends StackLocations {
    * A `session` stack starts its owner at creation and is destroyed when the creating handle's
    * scope closes or its process exits; a `detached` stack (the default) outlives its creator.
    */
-  readonly lifetime?: State.StackLifetime;
+  readonly lifetime?: StackNamespace.StackLifetime;
   /**
    * Starts the owner at creation and lets it register the stack under its lease, so a failed or
    * interrupted launch leaves no registration behind. Session stacks always do this.
@@ -328,7 +329,7 @@ const firstUnremovableDirectory = (
  * remove the containers and engine-volume data left behind.
  */
 const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
-  state: State.Interface,
+  state: StackNamespace.Interface,
   saved: SavedStack,
   locations: StackLocations,
   engine: "docker" | "podman",
@@ -339,13 +340,15 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
   const dataRoot = path.join(locations.stateRoot, id, "data");
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      if (!(yield* state.lease(id)))
-        return yield* failure(
-          "destroy",
-          "An owner for this stack started during destroy; run destroy again",
+      const lease = yield* state
+        .acquireLease(id)
+        .pipe(
+          Effect.catchTag("Namespace.LeaseHeldError", () =>
+            failure("destroy", "An owner for this stack started during destroy; run destroy again"),
+          ),
         );
-      yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-      yield* state.publishHolder(id, {
+      yield* Effect.addFinalizer(() => lease.retractHolder.pipe(Effect.ignore));
+      yield* lease.publishHolder({
         role: "sweeper",
         pid: process.pid,
         startedAt: DateTime.formatIso(yield* DateTime.now),
@@ -383,7 +386,7 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
 type Reach = "launch" | "attach";
 
 const makeHandle = Effect.fn("Stack.makeHandle")(function* (
-  state: State.Interface,
+  state: StackNamespace.Interface,
   saved: SavedStack,
   locations: StackLocations,
   seed: { readonly access?: HostAccess; readonly creator?: boolean } = {},
@@ -973,12 +976,15 @@ export const open = Effect.fn("Stack.open")(
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
-      readonly onInvalidState?: (id: string, error: State.StateError) => Effect.Effect<void>;
+      readonly onInvalidState?: (
+        id: string,
+        error: StackNamespace.NamespaceError,
+      ) => Effect.Effect<void>;
     },
   ) {
-    const state = yield* State.Service.pipe(
+    const state = yield* StackNamespace.Service.pipe(
       Effect.provide(
-        State.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
+        StackNamespace.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
       ),
     );
     const saved = yield* state.list;

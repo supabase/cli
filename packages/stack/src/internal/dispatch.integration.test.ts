@@ -4,7 +4,7 @@ import { expect, it } from "@effect/vitest";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import { HostEndpoint } from "../HostProcess.ts";
-import * as State from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
 
 const fixturePath = fileURLToPath(
   new URL("../../tests/compiled-dispatch-fixture.ts", import.meta.url),
@@ -56,8 +56,8 @@ it.live("dispatches compiled owner and native launchers through the production b
       yield* compileFixture(executable);
       const stateRoot = path.join(root, "state");
       const cacheRoot = path.join(root, "cache");
-      const stateContext = yield* Layer.build(State.layer({ root: stateRoot }));
-      const state = Context.get(stateContext, State.Service);
+      const stateContext = yield* Layer.build(StackNamespace.layer({ root: stateRoot }));
+      const state = Context.get(stateContext, StackNamespace.Service);
       const stackId = "compiled-dispatch";
       yield* state.save({
         id: stackId,

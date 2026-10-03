@@ -6,7 +6,7 @@ import {
 } from "../Defaults.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import { resolveStackKeys } from "../services/ServiceConfig.ts";
-import type { SavedStack, StackCredentials, StackKeysInput } from "../State.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "../StackNamespace.ts";
 
 export class CredentialError extends Data.TaggedError("CredentialError")<{
   readonly message: string;

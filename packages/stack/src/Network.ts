@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, PortError } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
@@ -69,7 +69,7 @@ const errorFor = (operation: string, cause: unknown) =>
 const makeNetwork = (options: {
   readonly stackId: string;
   readonly runtime: NetworkRuntime;
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -345,7 +345,7 @@ export const layer = (options: { readonly stackId: string; readonly runtime: Net
   Layer.effect(
     Service,
     Effect.gen(function* () {
-      const state = yield* State.Service;
+      const state = yield* StackNamespace.Service;
       return yield* makeNetwork({ ...options, state });
     }).pipe(Effect.map(Service.of)),
   );

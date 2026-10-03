@@ -25,7 +25,7 @@ import { makeContainerRuntime, type HostGateway } from "../runtime/Container.ts"
 import { spawnNativeProcess } from "../runtime/NativeProcess.ts";
 import { awaitCommandOutput, type CommandOutputResult } from "../runtime/CommandOutput.ts";
 import type { CommandInvocation as CommandInvocationType } from "../Commands.ts";
-import type { StackCredentials } from "../State.ts";
+import type { StackCredentials } from "../StackNamespace.ts";
 import { resolveInitializationCommand } from "../services/Initialization.ts";
 
 export class CommandError extends Data.TaggedError("CommandError")<{

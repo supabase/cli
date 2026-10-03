@@ -16,7 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { create, open } from "./effect.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { assertOwnerExited, captureOwnerPid, watchLeaseRelease } from "../tests/owner.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
@@ -30,8 +30,8 @@ const sessionFixture = fileURLToPath(
 );
 
 const stateFor = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 const collect = (child: ChildProcessSpawner.ChildProcessHandle) =>

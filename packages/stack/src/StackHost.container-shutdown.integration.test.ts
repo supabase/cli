@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import {
   hasReason,
   launchHost,
@@ -40,8 +40,8 @@ const docker = Effect.fn("StackHostContainerShutdownTest.docker")((args: Readonl
 );
 
 const stateFor = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 const containers = (stackId: string, dataRoot: string) =>

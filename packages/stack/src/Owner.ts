@@ -64,13 +64,13 @@ import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
-import * as State from "./State.ts";
-import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
 
 export interface OwnerOptions {
   readonly saved: SavedStack;
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
   readonly root: string;
   readonly cacheRoot: string;
   /** Shares one host-gateway probe with the host's other container runtimes. */
@@ -99,12 +99,15 @@ type NamespaceError =
   | Orchestrator.OrchestratorError
   | Orchestrator.LifecycleError
   | Network.NetworkError
-  | State.StateError
+  | StackNamespace.NamespaceError
   | Effect.Error<ReturnType<typeof sweepContainers>>;
 
 export interface Interface {
   readonly handlers: Handlers;
-  readonly getStackCredentials: Effect.Effect<StackCredentials, State.StateError | CredentialError>;
+  readonly getStackCredentials: Effect.Effect<
+    StackCredentials,
+    StackNamespace.NamespaceError | CredentialError
+  >;
   readonly namespace: {
     /** Stops every instance after in-flight definition changes settle, then removes containers. */
     readonly stop: Effect.Effect<void, NamespaceError>;
@@ -222,17 +225,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       }),
     );
 
-  const readSaved = options.state
-    .read(stackId)
-    .pipe(
-      Effect.flatMap((saved) =>
-        saved === undefined
-          ? Effect.fail(
-              new State.StateError({ operation: "read", message: "Saved stack is missing" }),
-            )
-          : Effect.succeed(saved),
-      ),
-    );
+  const readSaved = options.state.read(stackId).pipe(
+    Effect.flatMap((saved) =>
+      saved === undefined
+        ? Effect.fail(
+            new StackNamespace.NamespaceError({
+              operation: "read",
+              message: "Saved stack is missing",
+            }),
+          )
+        : Effect.succeed(saved),
+    ),
+  );
   const updateState = (update: (current: SavedStack) => SavedStack) =>
     options.state.withLock(
       readSaved.pipe(Effect.flatMap((current) => options.state.save(update(current)))),
@@ -709,7 +713,7 @@ export const layer = (options: Omit<OwnerOptions, "state">) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
-      const state = yield* State.Service;
+      const state = yield* StackNamespace.Service;
       return Service.of(yield* makeOwner({ ...options, state }));
     }),
   ).pipe(

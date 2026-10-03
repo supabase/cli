@@ -2,11 +2,11 @@ import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Ref, Scope } from "effect";
 import { makePorts, PortError } from "./Ports.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 const bind = (host: string, port: number) =>
@@ -169,10 +169,10 @@ it.live("names the last bind failure when no public port is available", () =>
 );
 
 const saveStack = (
-  state: State.Interface,
+  state: StackNamespace.Interface,
   root: string,
   id: string,
-  ports: State.SavedStack["ports"] = [],
+  ports: StackNamespace.SavedStack["ports"] = [],
 ) =>
   state.save({
     id,

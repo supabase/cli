@@ -3,7 +3,7 @@ import { postgresVersion } from "../Artifacts.ts";
 import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
-import type { SavedStack, StackKeysInput } from "../State.ts";
+import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
 import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
 

@@ -10,7 +10,7 @@ import {
   type ArtifactSource,
 } from "../preparation/ArtifactStore.ts";
 import { PreparationError } from "../preparation/Errors.ts";
-import type { StackCredentials } from "../State.ts";
+import type { StackCredentials } from "../StackNamespace.ts";
 import * as CommandRunner from "./CommandRunner.ts";
 
 const target =

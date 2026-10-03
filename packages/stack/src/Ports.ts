@@ -1,6 +1,6 @@
 import { Cause, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import * as Net from "node:net";
-import type * as State from "./State.ts";
+import type * as StackNamespace from "./StackNamespace.ts";
 
 const portBase = 20000;
 /** Stays below the Linux ephemeral range, per the [architecture ADR](../../../docs/adr/0017-simplified-managed-stack-architecture.md). */
@@ -22,7 +22,7 @@ export interface PortRequest {
 }
 
 /** Spreads the scan across the span so separate checkouts, stacks, and keys start apart. */
-const scanStart = (stack: State.SavedStack, key: string) =>
+const scanStart = (stack: StackNamespace.SavedStack, key: string) =>
   Math.abs(Hash.string(`${stack.identity.projectRoot}:${stack.id}:${key}`)) % portSpan;
 
 /** A wildcard listener is reachable through loopback, where a same-port loopback listener answers too. */
@@ -52,15 +52,19 @@ const loopbackOccupied = (port: number) =>
     concurrency: "unbounded",
   }).pipe(Effect.map((answers) => answers.some(Boolean)));
 
-const claimantOf = (stacks: ReadonlyArray<State.StackClaims>, stackId: string, port: number) =>
+const claimantOf = (
+  stacks: ReadonlyArray<StackNamespace.StackClaims>,
+  stackId: string,
+  port: number,
+) =>
   stacks.find((other) => other.id !== stackId && other.ports.some((claim) => claim.port === port))
     ?.id;
 
 const resolveRequest = (
-  stack: State.SavedStack,
+  stack: StackNamespace.SavedStack,
   request: PortRequest,
 ): Effect.Effect<
-  { readonly saved: State.PortClaim | undefined; readonly requested: number | "auto" },
+  { readonly saved: StackNamespace.PortClaim | undefined; readonly requested: number | "auto" },
   PortError
 > => {
   const saved = stack.ports.find((entry) => entry.key === request.key);
@@ -89,7 +93,10 @@ const resolveRequest = (
 };
 
 /** Claims steer auto allocation away from saved stacks; live listeners and binds decide conflicts for fixed ports. */
-export const makePorts = (state: State.Interface, platform: NodeJS.Platform = process.platform) =>
+export const makePorts = (
+  state: StackNamespace.Interface,
+  platform: NodeJS.Platform = process.platform,
+) =>
   Effect.sync(() => {
     const describe = (id: string) =>
       state.read(id).pipe(
@@ -101,7 +108,11 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
         Effect.orElseSucceed(() => id),
       );
 
-    const claimedBy = (stacks: ReadonlyArray<State.StackClaims>, stackId: string, port: number) => {
+    const claimedBy = (
+      stacks: ReadonlyArray<StackNamespace.StackClaims>,
+      stackId: string,
+      port: number,
+    ) => {
       const claimant = claimantOf(stacks, stackId, port);
       return claimant === undefined
         ? Effect.succeed("")

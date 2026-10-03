@@ -8,8 +8,8 @@ import {
   DEFAULT_LOCAL_S3_REGION,
   DEFAULT_LOCAL_S3_SECRET_ACCESS_KEY,
 } from "../Defaults.ts";
-import * as State from "../State.ts";
-import type { SavedStack } from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
 
@@ -54,7 +54,10 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     composition: { members: [], dependencies: [] },
     ports: [],
   };
-  const state = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+  const state = Context.get(
+    yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+    StackNamespace.Service,
+  );
   yield* state.save(saved);
   const owner = yield* ownerFor({ saved, state, root: dataRoot, cacheRoot });
   yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));

@@ -11,12 +11,15 @@ import {
   Layer,
   Option,
   Path,
+  Queue,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
+import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
@@ -104,25 +107,42 @@ const awaitDestroyed = (id: string, since: number) =>
     }),
   );
 
-const awaitRemoval = (directory: string, entry: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const target = path.join(directory, entry);
-    yield* fs.watch(directory).pipe(
-      Stream.filter((event) => event.path === entry || event.path === target),
-      Stream.mapEffect(() => fs.exists(target)),
-      Stream.takeUntil((exists) => !exists),
-      Stream.runDrain,
-    );
-  });
+/**
+ * Watches `directory` and waits for `entry`'s removal, scoped to the caller's own fork so the
+ * watcher closes as soon as it returns. `node:fs.watch` itself is synchronous, so acquiring it
+ * directly (rather than through `Stream`, which forks registration through `Stream.callback`,
+ * `Channel.callbackArray`, and `asyncQueue` before it actually attaches) guarantees the watcher is
+ * live before this returns: no canary handshake needed. Node reports non-recursive watch events by
+ * bare filename and sometimes coalesces them, so any event re-checks the real directory instead of
+ * trusting which path it names. The watcher's native resource is torn down whether or not removal
+ * ever arrives, so this never succeeds by a wait simply running out.
+ */
+const awaitRemoval = Effect.fn("SweepTest.awaitRemoval")(function* (
+  directory: string,
+  entry: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = path.join(directory, entry);
+  const queue = yield* Queue.unbounded<string>();
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      nodeWatch(directory, (_event, filename) => {
+        if (filename) Queue.offerUnsafe(queue, filename);
+      }),
+    ),
+    (watcher) => Effect.sync(() => watcher.close()),
+  );
+
+  while (yield* fs.exists(target)) yield* Queue.take(queue);
+});
 
 const saved = (
   id: string,
   projectRoot: string,
-  runtime: State.SavedStack["runtime"],
-  lifetime: State.StackLifetime,
-): State.SavedStack => ({
+  runtime: StackNamespace.SavedStack["runtime"],
+  lifetime: StackNamespace.StackLifetime,
+): StackNamespace.SavedStack => ({
   id,
   runtime,
   lifetime,
@@ -152,7 +172,10 @@ it.live.skipIf(process.platform === "win32")(
         const cacheRoot = `${path.dirname(rootA)}/cache`;
         const helper = yield* makeContainerRuntime({ engine: "docker", root: dataA });
         yield* helper.prepare(helperImage);
-        const state = Context.get(yield* Layer.build(State.layer({ root: rootA })), State.Service);
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: rootA })),
+          StackNamespace.Service,
+        );
 
         yield* state.save(saved(deadId, `${rootA}/dead`, "docker", "detached"));
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))

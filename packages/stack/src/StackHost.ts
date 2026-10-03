@@ -42,7 +42,7 @@ import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
 import { makeHostGateway } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
@@ -52,7 +52,7 @@ export interface StackHostOptions {
   readonly cacheRoot: string;
   readonly stackId: string;
   /** Registers this definition once the owner holds the lease; the stack must not exist. */
-  readonly register?: State.SavedStack;
+  readonly register?: StackNamespace.SavedStack;
   readonly release?: string;
   readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
@@ -393,20 +393,25 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ),
           ),
         );
-        const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
-        const state = Context.get(stateContext, State.Service);
+        const stateContext = yield* Layer.build(StackNamespace.layer({ root: options.stateRoot }));
+        const state = Context.get(stateContext, StackNamespace.Service);
         const id = options.stackId;
         // The lease is released last, after every owned process and listener has closed.
-        if (!(yield* state.lease(id)))
-          return yield* new StackHostError({
-            operation: "lease",
-            message: `Another owner holds the lease of stack ${id}`,
-            reason: "lease-held",
-          });
+        const lease = yield* state.acquireLease(id).pipe(
+          Effect.catchTag(
+            "Namespace.LeaseHeldError",
+            () =>
+              new StackHostError({
+                operation: "lease",
+                message: `Another owner holds the lease of stack ${id}`,
+                reason: "lease-held",
+              }),
+          ),
+        );
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* fs.truncate(state.ownerLog(id)).pipe(Effect.ignore);
-        yield* state.retractHolder(id);
+        yield* lease.retractHolder;
         const register = options.register;
         if (register !== undefined)
           yield* state.withLock(
@@ -454,7 +459,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 runtime: saved.runtime,
                 hostGateway,
               }),
-            ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+            ).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
           const endpoint: HostEndpoint = {
@@ -481,8 +486,8 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ),
           );
           yield* runtime.serve;
-          yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-          yield* state.publishHolder(id, {
+          yield* Effect.addFinalizer(() => lease.retractHolder.pipe(Effect.ignore));
+          yield* lease.publishHolder({
             role: "owner",
             secret,
             port: endpoint.port,

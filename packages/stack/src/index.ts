@@ -12,7 +12,7 @@ export type {
   PostgresCommandOptions,
   Stack,
 } from "./PromiseClient.ts";
-export type { StackCredentials, StackKeysInput } from "./State.ts";
+export type { StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 export { initialization, postgres } from "./Commands.ts";
 export { StackError } from "./Rpc.ts";
 export type { CompositionConfig } from "./Orchestrator.ts";

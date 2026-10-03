@@ -2,15 +2,15 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, FileSystem, Layer, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import * as Owner from "./Owner.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 
 const stateFor = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 
 it.live("retains saved state when destroy sweep fails and retries after engine recovery", () =>
@@ -63,7 +63,7 @@ it.live("retains saved state when destroy sweep fails and retries after engine r
       }).pipe(
         Layer.provide(
           Layer.merge(
-            Layer.succeed(State.Service, state),
+            Layer.succeed(StackNamespace.Service, state),
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, engine),
           ),
         ),

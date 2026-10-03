@@ -31,7 +31,7 @@ import {
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
@@ -41,8 +41,8 @@ class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
 const hostTestError = (cause: unknown) =>
@@ -50,14 +50,14 @@ const hostTestError = (cause: unknown) =>
 
 const ownerFor = (options: {
   readonly saved: Parameters<typeof Owner.layer>[0]["saved"];
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
   readonly root: string;
   readonly cacheRoot: string;
 }) => {
   const { state, ...layerOptions } = options;
   return Effect.gen(function* () {
     const context = yield* Layer.build(
-      Owner.layer(layerOptions).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+      Owner.layer(layerOptions).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
     );
     return Context.get(context, Owner.Service);
   });
@@ -135,7 +135,7 @@ const awaitClosed = (socket: Net.Socket) =>
 
 const inProcessRuntime = (
   owner: Parameters<typeof makeRuntime>[0],
-  state: State.Interface,
+  state: StackNamespace.Interface,
   root: string,
 ) =>
   Effect.gen(function* () {
@@ -812,7 +812,7 @@ const disconnectFixture = (prefix: string) =>
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix });
     const state = yield* stateFor(`${root}/state`);
-    const saved: State.SavedStack = {
+    const saved: StackNamespace.SavedStack = {
       id: "stack",
       runtime: "native",
       identity: { projectRoot: root, branchContext: "main", stackName: prefix },

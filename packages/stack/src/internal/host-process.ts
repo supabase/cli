@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
-import { SavedStack } from "../State.ts";
+import { SavedStack } from "../StackNamespace.ts";
 import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
 
 const writeLine = (value: unknown) =>

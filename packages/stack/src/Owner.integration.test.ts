@@ -7,16 +7,16 @@ import { tmpdir } from "node:os";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "./Owner.ts";
 import { OwnerRpc } from "./Rpc.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
 import { ServiceCreation, type ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
@@ -142,7 +142,7 @@ it.live("forwards and rotates saved identity across composed services in one own
           endpoints: { http: { port: "auto" as const } },
         },
       ];
-      const stackKeys = (suffix: string, gotrueJwtKeys: string): State.StackKeysInput => ({
+      const stackKeys = (suffix: string, gotrueJwtKeys: string): StackNamespace.StackKeysInput => ({
         publishableKey: `publishable-${suffix}`,
         secretKey: `secret-${suffix}`,
         anonKey: `anon-${suffix}`,
@@ -333,7 +333,7 @@ it.effect("publishes service removal and composition pruning together", () =>
       const state = yield* stateFor(`${root}/state`);
       yield* state.save(stack);
       const removalWrite = yield* Ref.make(false);
-      const failingState: State.Interface = {
+      const failingState: StackNamespace.Interface = {
         ...state,
         save: (next) =>
           Ref.get(removalWrite).pipe(
@@ -341,7 +341,10 @@ it.effect("publishes service removal and composition pruning together", () =>
               next.instances.length === 0
                 ? alreadyWritten
                   ? Effect.fail(
-                      new State.StateError({ operation: "write", message: "injected failure" }),
+                      new StackNamespace.NamespaceError({
+                        operation: "write",
+                        message: "injected failure",
+                      }),
                     )
                   : Ref.set(removalWrite, true).pipe(Effect.andThen(state.save(next)))
                 : state.save(next),
@@ -495,7 +498,7 @@ it.effect("isolates owner graphs built in one scope", () =>
             saved,
             root: `${root}/data`,
             cacheRoot,
-          }).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+          }).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           memoMap,
           scope,
         ).pipe(

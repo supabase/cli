@@ -123,6 +123,12 @@ jobs:
       - name: Run integration tests
         run: pnpm run test:integration
 
+      # Not covered by test:integration above (a different vitest project); runs here so the
+      # registry cross-process and publication-crash scenarios run on Linux too.
+      - name: Run stack namespace e2e tests
+        working-directory: packages/stack
+        run: pnpm test:e2e:run src/namespace/Namespace.e2e.test.ts --passWithNoTests=false
+
   test-stack-ports:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
@@ -155,16 +161,24 @@ jobs:
           pnpm test:integration
           src/Ports.integration.test.ts
           src/storage/DirectoryCopy.integration.test.ts
-          src/State.integration.test.ts
-          src/State.windows.integration.test.ts
-          src/State.process.integration.test.ts
+          src/namespace/Namespace.integration.test.ts
           src/HostProcess.integration.test.ts
           src/Network.integration.test.ts
           src/Proxy.integration.test.ts
           src/HttpProxy.integration.test.ts
           --passWithNoTests=false
 
-      # Windows-only CLI subset: paths, PATH lookup, and permission semantics diverge there.
+      - name: Run stack namespace e2e tests
+        working-directory: packages/stack
+        run: pnpm test:e2e:run src/namespace/Namespace.e2e.test.ts --passWithNoTests=false
+
+      # Windows-only: sharing-violation retries and CLI paths, PATH lookup, and permission
+      # semantics that only diverge there.
+      - name: Run stack namespace Windows e2e tests
+        if: runner.os == 'Windows'
+        working-directory: packages/stack
+        run: pnpm test:e2e:run src/namespace/Namespace.windows.e2e.test.ts --passWithNoTests=false
+
       - name: Run CLI integration tests
         if: runner.os == 'Windows'
         working-directory: apps/cli

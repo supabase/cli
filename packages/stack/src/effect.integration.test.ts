@@ -28,7 +28,7 @@ import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
 import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
@@ -439,8 +439,8 @@ it.live("rejects an owner of another release while stop and destroy still reach 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const startForeignOwner = launchHost(state, {
       ...options,
@@ -475,14 +475,14 @@ it.live("treats a sweeper's hold as no owner and starts one once the sweep ends"
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     yield* Effect.ensuring(
       Effect.gen(function* () {
         const sweep = yield* Scope.make();
-        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
-        yield* state.publishHolder(stack.id, {
+        const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
+        yield* lease.publishHolder({
           role: "sweeper",
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
@@ -494,7 +494,7 @@ it.live("treats a sweeper's hold as no owner and starts one once the sweep ends"
         const starting = yield* stack.composition.start.pipe(
           Effect.forkChild({ startImmediately: true }),
         );
-        yield* state.retractHolder(stack.id);
+        yield* lease.retractHolder;
         yield* Scope.close(sweep, Exit.void);
         expect(yield* Fiber.join(starting)).toEqual([]);
         expect((yield* discover(options))[0]?.host).toBeDefined();
@@ -515,14 +515,14 @@ it.live("interrupts a call waiting for an owner while a sweeper holds the stack"
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     yield* Effect.ensuring(
       Effect.gen(function* () {
         const sweep = yield* Scope.make();
-        expect(yield* state.lease(stack.id).pipe(Scope.provide(sweep))).toBe(true);
-        yield* state.publishHolder(stack.id, {
+        const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
+        yield* lease.publishHolder({
           role: "sweeper",
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
@@ -531,7 +531,7 @@ it.live("interrupts a call waiting for an owner while a sweeper holds the stack"
         const waited = yield* stack.composition.start.pipe(Effect.timeoutOption("200 millis"));
 
         expect(Option.isNone(waited), "the wait for the sweeper ends at the timeout").toBe(true);
-        yield* state.retractHolder(stack.id);
+        yield* lease.retractHolder;
         yield* Scope.close(sweep, Exit.void);
         expect(yield* stack.composition.start, "the handle still launches afterwards").toEqual([]);
       }),
@@ -600,8 +600,8 @@ it.live("sends no call to a process that took a dead owner's port", () =>
     const stack = yield* create(options);
     const mail = yield* stack.services.create({ service: "mail", config: {} });
     yield* mail.status;
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const holder = yield* state.readHolder(stack.id);
     if (holder?.role !== "owner") return yield* Effect.die("Expected a live owner record");
@@ -631,8 +631,8 @@ it.live("sends no call to a process that took the port of a replaced owner", () 
     const stack = yield* create(options);
     const mail = yield* stack.services.create({ service: "mail", config: {} });
     yield* mail.status;
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const replaced = yield* state.readHolder(stack.id);
     if (replaced?.role !== "owner") return yield* Effect.die("Expected a live owner record");
@@ -716,8 +716,8 @@ it.live("confirms owner exit after shutdown even while a stray handle keeps its 
       runtime: "native",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     const owner = yield* launchHost(state, {
       ...options,
@@ -745,8 +745,8 @@ it.live("replaces a dead session stack that holds the requested identity", () =>
     } satisfies Parameters<typeof create>[0];
     const identity = yield* resolveStackIdentity(options);
     const id = yield* deriveStackId(identity);
-    const state = yield* State.Service.pipe(
-      Effect.provide(State.layer({ root: options.stateRoot })),
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
     yield* state.save({
       id,

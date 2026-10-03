@@ -31,7 +31,11 @@ import { HOST_PROCESS_DISPATCH_SENTINEL, isBunVirtualPath } from "./internal/dis
 import { failureMessage } from "./internal/failure-message.ts";
 import { stackSourceDigest } from "./internal/release.ts";
 import { StackRpc } from "./Rpc.ts";
-import { SavedStack, type Interface as StateInterface, type StateError } from "./State.ts";
+import {
+  SavedStack,
+  type Interface as StateInterface,
+  type NamespaceError,
+} from "./StackNamespace.ts";
 
 declare const SUPABASE_STACK_BUILD_ID: string | undefined;
 
@@ -259,7 +263,7 @@ export const connectHost = Effect.fn("HostProcess.connectHost")(function* (
   options: ConnectOptions = {},
 ): Effect.fn.Return<
   HostAccess,
-  HostProcessError | StateError,
+  HostProcessError | NamespaceError,
   HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const stack = yield* registered(state, stackId);
@@ -553,7 +557,7 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
   options: LaunchOptions,
 ): Effect.fn.Return<
   HostAccess,
-  HostProcessError | StateError,
+  HostProcessError | NamespaceError,
   Scope.Scope | HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto
 > {
   const entrypoint = options.entrypoint ?? hostEntrypointFor(import.meta.url);

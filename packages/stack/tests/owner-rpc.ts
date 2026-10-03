@@ -2,8 +2,8 @@ import { Context, Effect, Layer } from "effect";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "../src/Owner.ts";
 import { OwnerRpc } from "../src/Rpc.ts";
-import { Service as StateService } from "../src/State.ts";
-import type { Interface as StateInterface, SavedStack } from "../src/State.ts";
+import { Service as StateService } from "../src/StackNamespace.ts";
+import type { Interface as StateInterface, SavedStack } from "../src/StackNamespace.ts";
 
 /** Builds an in-process owner and an RPC client bound to its handlers. */
 export const ownerFor = (options: {

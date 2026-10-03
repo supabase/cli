@@ -6,20 +6,20 @@ import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node
 import { HttpClient } from "effect/unstable/http";
 import * as Network from "./Network.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 
 const makeTestState = (root: string) =>
-  Layer.build(State.layer({ root })).pipe(
-    Effect.map((context) => Context.get(context, State.Service)),
+  Layer.build(StackNamespace.layer({ root })).pipe(
+    Effect.map((context) => Context.get(context, StackNamespace.Service)),
   );
 const makeTestNetwork = (options: {
   readonly stackId: string;
   readonly runtime: Network.NetworkRuntime;
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
 }) =>
   Layer.build(
     Network.layer({ stackId: options.stackId, runtime: options.runtime }).pipe(
-      Layer.provide(Layer.succeed(State.Service, options.state)),
+      Layer.provide(Layer.succeed(StackNamespace.Service, options.state)),
     ),
   ).pipe(Effect.map((context) => Context.get(context, Network.Service)));
 
@@ -260,7 +260,10 @@ it.live("can bind a shared listener after saving its first assignment failed", (
               Effect.flatMap((fail) =>
                 fail
                   ? Effect.fail(
-                      new State.StateError({ operation: "save", message: "write failed" }),
+                      new StackNamespace.NamespaceError({
+                        operation: "save",
+                        message: "write failed",
+                      }),
                     )
                   : state.save(value),
               ),
