@@ -415,7 +415,9 @@ export const makeHttpProxy = (options: {
     );
     const runRequest = yield* FiberSet.makeRuntime();
     const sockets = new Set<Socket>();
-    const server = createServer((request, response) => {
+    // Clients honoring the runtime's 5 s keep-alive drop idle sockets first; the gateway holds them
+    // 75 s like the Docker stack's, so a client stalled past its own timer can still reuse one.
+    const server = createServer({ keepAliveTimeoutBuffer: 70_000 }, (request, response) => {
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {

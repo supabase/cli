@@ -822,6 +822,60 @@ it.live("reuses pooled upstream connections across thousands of concurrent reque
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+/** Runs `send` on a raw client socket and waits for the gateway's next response head. */
+const nextResponseHead = (socket: Socket, send: () => void) =>
+  Effect.callback<string, HttpProxyTestError>((resume) => {
+    let received = "";
+    const cleanup = () => {
+      socket.off("data", onData);
+      socket.off("end", onClosed);
+      socket.off("close", onClosed);
+      socket.off("error", onError);
+    };
+    const settle = (result: Effect.Effect<string, HttpProxyTestError>) => {
+      cleanup();
+      resume(result);
+    };
+    const onData = (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      if (received.includes("\r\n\r\n")) settle(Effect.succeed(received));
+    };
+    const onClosed = () =>
+      settle(Effect.fail(new HttpProxyTestError({ message: "Gateway closed the connection" })));
+    const onError = (cause: Error) =>
+      settle(Effect.fail(new HttpProxyTestError({ message: cause.message, cause })));
+    socket.on("data", onData);
+    socket.once("end", onClosed);
+    socket.once("close", onClosed);
+    socket.once("error", onError);
+    if (socket.destroyed || socket.readableEnded) onClosed();
+    else send();
+    return Effect.sync(cleanup);
+  }).pipe(Effect.timeout("5 seconds"));
+
+it.live(
+  "answers a client that reuses its connection after stalling past the advertised keep-alive",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        const socket = yield* Effect.acquireRelease(
+          // A reset while idle destroys the socket, so the next exchange fails its closed check.
+          Effect.sync(() => new Socket().on("error", () => undefined)),
+          (value) => Effect.sync(() => value.destroy()),
+        );
+        const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        const first = yield* nextResponseHead(socket, () =>
+          socket.connect(proxy.port, "127.0.0.1").write(get),
+        );
+        expect(first).toMatch(/keep-alive: timeout=5\r\n/iu);
+        // The idle gap past the runtime's 6 s close is under test; socket timers cannot be faked.
+        yield* Effect.sleep("7 seconds");
+        expect(yield* nextResponseHead(socket, () => socket.write(get))).toContain("404 Not Found");
+      }),
+    ),
+);
+
 it.live(
   "does not replay a bodyless non-idempotent request when the upstream drops the connection",
   () => {
