@@ -45,7 +45,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
         DB_PASSWORD: db.password ?? "postgres",
         LOGFLARE_SUPABASE_MODE: "true",
         LOGFLARE_SINGLE_TENANT: "true",
-        ...(container ? {} : { LOGFLARE_GRPC_PORT: "0" }),
+        ...(container ? {} : { LOGFLARE_GRPC_PORT: "0", LOGFLARE_GRPC_IP: "127.0.0.1" }),
         ...(creation.config.apiKey === undefined
           ? {}
           : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
