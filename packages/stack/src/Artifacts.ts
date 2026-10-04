@@ -383,22 +383,22 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
     "analytics",
     {
       upstreamVersion: "v1.50.15",
-      revision: 0,
+      revision: 1,
       image:
-        "ghcr.io/supabase/cli/analytics:v1.50.15-r0@sha256:cea1595bafa6ab32df4854d407261ddef6e35394e300ae29770ba48c49c8dc7e",
+        "ghcr.io/supabase/cli/analytics:v1.50.15-r1@sha256:2b03ec3120effe5d33c1e2ec4570a932fb60ce6a6851b4920a22388b4e8356c1",
       upstreamImage: "supabase/logflare:1.50.15",
       natives: {
         "darwin-arm64": {
-          archive: "336c78c501aff270b0fcd2a42229b76d9f2feafa646f49a59c3de29358e3de17",
-          manifest: "d0e1a0c3fa0a4ebfcebbe490f290699424e3b8c92a542f50111ff88d6e47b8b5",
+          archive: "abfc9ba64e354129e8f8b0f38b43747a5dab48785fd3593d11e52cd6e0ff37bf",
+          manifest: "60647643f5521089978dc20c6966b86ed939b9751b187cbb70e0de3fbd2479ac",
         },
         "linux-amd64": {
-          archive: "a699ce1522dac43989987a9d152648ed0506fb887ffedff49c148da02cbbc7e7",
-          manifest: "ba8c55eeb06be91ad582156854babdc6a06d7a26fa6956bc1271eee4cae9d536",
+          archive: "7652456c1a1d73ac6fe10853bd8a38e79139b43fe796caec5725a3d0f225a3d8",
+          manifest: "6c465af69e26ce8a9c15988d5dcbbae069e9a92b697962bfa86c4f3e601b8409",
         },
         "linux-arm64": {
-          archive: "bb977b9cd0623e1b1ece9875377fdf29577f96991d2e5c72a38a1b664c6a7538",
-          manifest: "1739bbd4afb838e62b6191c4de8aa39685df9f5d83e1b7cc303bd096237ba08c",
+          archive: "a75625d7c903d70e749b5ee776e2c5c98d51ee60ff92b28bb6684121fe0f3888",
+          manifest: "ca2569304cf24e6abd4242b55dd0d20338f40532fbe6377a9accdc5d47ea47ab",
         },
       },
     },
