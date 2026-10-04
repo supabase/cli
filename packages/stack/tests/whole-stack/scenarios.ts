@@ -191,7 +191,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
         const email = `whole-${phase}-${fixture.stack.id}@example.test`;
         const password = "whole-stack-password";
         const signup = yield* jsonRequest("POST", `${authUrl}/signup`, { email, password });
-        expect(signup.status).toBe(200);
+        expect(signup.status, signup.body).toBe(200);
         const signupBody = yield* Schema.decodeUnknownEffect(
           Schema.Struct({
             access_token: Schema.String,
@@ -217,12 +217,12 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           { id: rowId, owner_id: signupBody.user.id, value: phase },
           { ...headers, prefer: "return=representation" },
         );
-        expect(insert.status).toBe(201);
+        expect(insert.status, insert.body).toBe(201);
         const read = yield* requestWithHeaders(
           `${restUrl}/whole_stack_items?id=eq.${rowId}`,
           headers,
         );
-        expect(read.status).toBe(200);
+        expect(read.status, read.body).toBe(200);
         const rows = yield* Schema.decodeEffect(
           Schema.fromJsonString(
             Schema.Array(Schema.Struct({ id: Schema.String, value: Schema.String })),
@@ -234,7 +234,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           email: secondEmail,
           password,
         });
-        expect(secondSignup.status).toBe(200);
+        expect(secondSignup.status, secondSignup.body).toBe(200);
         const secondSignupBody = yield* Schema.decodeUnknownEffect(
           Schema.Struct({ access_token: Schema.String }),
         )(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(secondSignup.body));
@@ -242,7 +242,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           authorization: `Bearer ${secondSignupBody.access_token}`,
           apikey: secondSignupBody.access_token,
         });
-        expect(otherRead.status).toBe(200);
+        expect(otherRead.status, otherRead.body).toBe(200);
         expect(
           yield* Schema.decodeEffect(
             Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.String }))),
@@ -263,7 +263,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
               return yield* Effect.die("Mail or Realtime URL missing");
             const watcher = yield* watchRecoveryMail(mailUrl, email);
             const recovery = yield* jsonRequest("POST", `${authUrl}/recover`, { email });
-            expect(recovery.status).toBe(200);
+            expect(recovery.status, recovery.body).toBe(200);
             const mail = yield* watcher.awaitFullMail;
             expect(mail.To.map((recipient) => recipient.Address)).toContain(email);
             const authOrigin = new URL(authUrl).origin;
@@ -288,7 +288,7 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
               { value: `${phase}-realtime` },
               { ...headers, prefer: "return=representation" },
             );
-            expect(update.status).toBe(200);
+            expect(update.status, update.body).toBe(200);
             const change = yield* realtime.nextChange;
             const event = yield* Schema.decodeUnknownEffect(
               Schema.Struct({ record: Schema.Struct({ id: Schema.String, value: Schema.String }) }),
@@ -468,7 +468,7 @@ export const parallel = (runtime: Runtime) =>
         authorization: `Bearer ${leftLedger.accessToken}`,
         apikey: leftLedger.accessToken,
       });
-      expect(crossStack.status).toBe(401);
+      expect(crossStack.status, crossStack.body).toBe(401);
       yield* Effect.scoped(
         Effect.gen(function* () {
           const rightRealtime = yield* subscribeRealtime(
@@ -520,7 +520,7 @@ export const parallel = (runtime: Runtime) =>
               prefer: "return=representation",
             },
           );
-          expect(update.status).toBe(200);
+          expect(update.status, update.body).toBe(200);
           const change = yield* rightRealtime.nextChange;
           const event = yield* Schema.decodeUnknownEffect(
             Schema.Struct({ record: Schema.Struct({ id: Schema.String, value: Schema.String }) }),
