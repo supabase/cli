@@ -251,9 +251,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
 
   const edgeCalls: EdgeRuntimeRunOpts[] = [];
+  const spawnedBeforeEdgeRun: Array<ReadonlyArray<ReadonlyArray<string>>> = [];
   const edge = Layer.succeed(EdgeRuntimeScript, {
     run: (runOpts: EdgeRuntimeRunOpts) => {
       edgeCalls.push(runOpts);
+      spawnedBeforeEdgeRun.push(shadowSpawner.spawned.map((call) => call.args));
       if (opts.oom) {
         return Effect.fail(
           new EdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
@@ -458,6 +460,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     explicitDiffCalls,
     databaseDiffCalls,
     edgeCalls,
+    spawnedBeforeEdgeRun,
     resolverCalls,
     proxyCalls,
     proxyCaptureCalls,
@@ -595,6 +598,40 @@ describe("db diff", () => {
       );
       expect(s.edgeCalls).toHaveLength(1);
       expect(s.edgeCalls[0]?.env).not.toHaveProperty("SUPABASE_SSL_DEBUG");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("creates the labeled Deno-cache volume before the migra run mounts it", () => {
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(s.edgeCalls[0]?.binds).toEqual(["supabase_edge_runtime_test:/root/.cache/deno:rw"]);
+      expect(s.spawnedBeforeEdgeRun[0]).toContainEqual([
+        "volume",
+        "create",
+        "--label",
+        "com.supabase.cli.project=test",
+        "--label",
+        "com.docker.compose.project=test",
+        "supabase_edge_runtime_test",
+      ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("skips creating the Deno-cache volume under Bitbucket Pipelines", () => {
+    const s = setup(tmp.current, {
+      diffSql: "create table players ();\n",
+      files: { "supabase/.env": "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n" },
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags());
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(
+        s.shadowSpawned.filter(
+          (call) => call.args[0] === "volume" && call.args.includes("supabase_edge_runtime_test"),
+        ),
+      ).toEqual([]);
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
 
