@@ -1,4 +1,4 @@
-import { defaultRuntime } from "@supabase/stack/internal/artifacts";
+import { catalogPins, defaultRuntime, postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
   renderStackSummary,
@@ -28,6 +28,7 @@ import {
   type StackError,
 } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import {
   OutputFlag,
   resolveExperimentalWithProjectEnv,
@@ -48,7 +49,13 @@ import {
   seedBucketsRun,
 } from "../../../../command-internal/seed-buckets.ts";
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackEndpointSetting,
+  stackMajorVersionSetting,
+  type StackEndpointSetting,
+} from "../../../../command-internal/stack-config.ts";
+import { envOverride } from "../../../../command-internal/local-config-values.ts";
 import {
   StackApi,
   stackCapabilityForService,
@@ -165,23 +172,454 @@ const sameKinds = (
   return leftKinds.size === rightKinds.size && [...leftKinds].every((kind) => rightKinds.has(kind));
 };
 
-/** Rejects a saved instance whose endpoints or artifact versions the request would change. */
-const incompatibleChange = (planned: PlannedInstance) =>
-  planned.change !== "incompatible"
+/**
+ * Whether this set of requested services would run Studio without the REST API it depends on.
+ * The single source of truth for that dependency: both the real `--exclude` guard and the
+ * incompatible-change suggestion builder (which proposes a candidate exclusion set) validate
+ * against it, so a suggested `--exclude` can never itself fail this check.
+ */
+const studioNeedsRest = (requestedServices: ReadonlyArray<{ readonly service: string }>): boolean =>
+  requestedServices.some(({ service }) => service === "studio") &&
+  !requestedServices.some(({ service }) => service === "rest");
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+const endpointPortLabel = (endpoints: unknown, name: string): string => {
+  const intent = isRecord(endpoints) ? endpoints[name] : undefined;
+  const port = isRecord(intent) ? intent.port : undefined;
+  return port === "auto" ? "automatic" : typeof port === "number" ? String(port) : "unset";
+};
+
+const endpointNamesOf = (endpoints: unknown): ReadonlyArray<string> =>
+  isRecord(endpoints) ? Object.keys(endpoints) : [];
+
+const databaseVersionOf = (
+  creation: ServiceCreation | ServiceCreationInput | undefined,
+): string | undefined => (creation?.service === "database" ? creation.config.version : undefined);
+
+const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
+
+/**
+ * The catalog's default pinned version for a service — what `resolveArtifact` selects when a
+ * creation's own top-level `version` is unset, which every CLI-built creation leaves unset.
+ */
+const defaultArtifactVersion = (service: PlannedInstance["service"]): string | undefined =>
+  catalogPins().find((pin) => pin.service === service && pin.isDefault)?.pin.upstreamVersion;
+
+/** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
+const formatConfigPath = (path: string): string => {
+  const segments = path.split(".");
+  const key = segments.pop();
+  return `[${segments.join(".")}] ${key}`;
+};
+
+/** The display key for a setting: its env var when that's what overrides it, else its config key. */
+const settingKeyLabel = (
+  setting: StackEndpointSetting,
+  projectEnvValues: Readonly<Record<string, string>>,
+): string =>
+  envOverride(setting.envVar, undefined, projectEnvValues) !== undefined
+    ? setting.envVar
+    : formatConfigPath(setting.configPath);
+
+/**
+ * One incompatible path, reported as the JSON/stream-json error envelope's `stack_changes`
+ * entries (contract documented in `SIDE_EFFECTS.md`): one entry per affected service/path pair.
+ * `editable` marks whether `key` is a `config.toml` key or env var the user can revert, or plain
+ * wording for a catalog-pinned artifact, Postgres build, or endpoint presence change.
+ */
+interface StructuredSettingChange {
+  readonly service: string;
+  readonly path: string;
+  readonly key: string;
+  readonly saved: string;
+  readonly requested: string;
+  readonly editable: boolean;
+}
+
+/**
+ * Why a change is non-editable, so the suggestion builder can pick accurate wording instead of
+ * re-deriving it from `StructuredSettingChange`'s display strings. Not part of the public
+ * `stack_changes` contract — only `change` below is.
+ */
+type ChangeReason = "setting" | "artifact" | "pinned-artifact" | "endpoint-presence";
+
+interface DescribedChange {
+  readonly reason: ChangeReason;
+  readonly change: StructuredSettingChange;
+}
+
+const settingChange = (
+  reason: ChangeReason,
+  service: PlannedInstance["service"],
+  path: string,
+  key: string,
+  saved: string,
+  requested: string,
+  editable: boolean,
+): DescribedChange => ({ reason, change: { service, path, key, saved, requested, editable } });
+
+/** Whether a named endpoint is present at all, not what its port is. */
+const endpointPresenceChange = (
+  service: PlannedInstance["service"],
+  name: string,
+  savedCreation: ServiceCreation | undefined,
+  requestedCreation: ServiceCreationInput | undefined,
+): DescribedChange => {
+  const savedExposed = endpointNamesOf(savedCreation?.endpoints).includes(name);
+  const requestedExposed = endpointNamesOf(requestedCreation?.endpoints).includes(name);
+  return settingChange(
+    "endpoint-presence",
+    service,
+    `endpoints.${name}`,
+    `${service} ${name} endpoint`,
+    savedExposed ? "exposed" : "not exposed",
+    requestedExposed ? "exposed" : "not exposed",
+    false,
+  );
+};
+
+/**
+ * Every endpoint added to, or dropped from, the request. The planner's bare `endpoints` path only
+ * says the two endpoint sets differ (e.g. a saved composition created with no public endpoint at
+ * all); this names exactly which endpoint(s) and in which direction, one entry per endpoint.
+ */
+const endpointPresenceChanges = (
+  service: PlannedInstance["service"],
+  savedCreation: ServiceCreation | undefined,
+  requestedCreation: ServiceCreationInput | undefined,
+): ReadonlyArray<DescribedChange> => {
+  const savedNames = endpointNamesOf(savedCreation?.endpoints);
+  const requestedNames = endpointNamesOf(requestedCreation?.endpoints);
+  const differing = [...new Set([...savedNames, ...requestedNames])].filter(
+    (name) => savedNames.includes(name) !== requestedNames.includes(name),
+  );
+  return differing.map((name) =>
+    endpointPresenceChange(service, name, savedCreation, requestedCreation),
+  );
+};
+
+const describeSettingChange = (
+  service: PlannedInstance["service"],
+  path: string,
+  savedCreation: ServiceCreation | undefined,
+  requestedCreation: ServiceCreationInput | undefined,
+  projectEnvValues: Readonly<Record<string, string>>,
+): ReadonlyArray<DescribedChange> => {
+  if (service === "database" && path === "config.version") {
+    // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
+    // composition plan actually compared, so the saved/requested pair reflects what changed.
+    const savedVersion = postgresVersion(databaseVersionOf(savedCreation) ?? "unknown");
+    const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
+    const savedMajor = majorVersionOf(savedVersion);
+    const requestedMajor = majorVersionOf(requestedVersion);
+    // Same major but different pinned build: `major_version` doesn't control this, so reverting
+    // it wouldn't fix anything — name the actual (unpinnable) versions instead.
+    if (savedMajor === requestedMajor)
+      return [
+        settingChange(
+          "artifact",
+          service,
+          path,
+          "Postgres build",
+          savedVersion,
+          requestedVersion,
+          false,
+        ),
+      ];
+    return [
+      settingChange(
+        "setting",
+        service,
+        path,
+        settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
+        savedMajor,
+        requestedMajor,
+        true,
+      ),
+    ];
+  }
+  // The planner reports the bare `endpoints` path when one side has no endpoints object at all
+  // (e.g. a saved composition created with no public endpoint): name which endpoint(s) the
+  // request adds or drops rather than misreporting this as an artifact/version change.
+  if (path === "endpoints") {
+    const presence = endpointPresenceChanges(service, savedCreation, requestedCreation);
+    if (presence.length > 0) return presence;
+    // The planner only reports this path when the endpoint sets genuinely differ; kept as a
+    // defensive fallback in case a future endpoint shape diffs without changing key sets.
+    return [
+      settingChange("artifact", service, path, `${service} endpoints`, "changed", "changed", false),
+    ];
+  }
+  if (path.startsWith("endpoints.")) {
+    const [endpointName, ...rest] = path.split(".").slice(1);
+    if (endpointName === undefined)
+      return [
+        settingChange("artifact", service, path, `${service} ${path}`, "changed", "changed", false),
+      ];
+    if (rest.length === 0)
+      // A two-segment `endpoints.<name>` path (unlike the three-segment `endpoints.<name>.port`
+      // a port-value change produces) means the planner only found one side's endpoint object at
+      // all — this endpoint's presence differs, not its port.
+      return [endpointPresenceChange(service, endpointName, savedCreation, requestedCreation)];
+    const setting = stackEndpointSetting(service, endpointName);
+    if (setting !== undefined)
+      return [
+        settingChange(
+          "setting",
+          service,
+          path,
+          settingKeyLabel(setting, projectEnvValues),
+          endpointPortLabel(savedCreation?.endpoints, endpointName),
+          endpointPortLabel(requestedCreation?.endpoints, endpointName),
+          true,
+        ),
+      ];
+    // A changed endpoint value with no config.toml key or env var override (e.g. `pooler.http`,
+    // `realtime.rpc`, always automatic): name it plainly instead of implying an editable setting.
+    return [
+      settingChange("artifact", service, path, `${service} ${path}`, "changed", "changed", false),
+    ];
+  }
+  if (path === "version") {
+    // CLI-built creations never set a top-level `version`, relying on the catalog's default:
+    // resolve that default for an unset side instead of reporting the raw (always-unset) field.
+    const defaultVersion = defaultArtifactVersion(service);
+    const savedVersion = savedCreation?.version ?? defaultVersion ?? "unknown";
+    const requestedVersion = requestedCreation?.version ?? defaultVersion ?? "unknown";
+    // The saved stack's explicit pin happens to equal what this release would select by default:
+    // there's no real artifact difference, so don't blame "this CLI release".
+    const reason: ChangeReason = savedVersion === requestedVersion ? "pinned-artifact" : "artifact";
+    return [
+      settingChange(
+        reason,
+        service,
+        path,
+        `${service} artifact version`,
+        savedVersion,
+        requestedVersion,
+        false,
+      ),
+    ];
+  }
+  // Unreachable: the planner's own incompatible-path filter only yields "version", "endpoints",
+  // "endpoints.<name>", or (database) "config.version". Kept for exhaustiveness.
+  return [
+    settingChange("artifact", service, path, `${service} ${path}`, "changed", "changed", false),
+  ];
+};
+
+/** Every incompatible path across every rejected saved member, as one structured list. */
+const incompatibleSettingChanges = (
+  planned: ReadonlyArray<PlannedInstance>,
+  savedConfigById: ReadonlyMap<string, ServiceCreation>,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  projectEnvValues: Readonly<Record<string, string>>,
+): ReadonlyArray<DescribedChange> =>
+  planned
+    .filter((entry) => entry.member && entry.change === "incompatible")
+    .flatMap((entry) =>
+      // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
+      entry.change === "incompatible"
+        ? entry.paths.flatMap((path) =>
+            describeSettingChange(
+              entry.service,
+              path,
+              savedConfigById.get(entry.id),
+              requested.find((creation) => creation.service === entry.service),
+              projectEnvValues,
+            ),
+          )
+        : [],
+    );
+
+/** One deduplicated text line per distinct setting change (shared API port lines collapse to one). */
+const settingChangeLines = (
+  changes: ReadonlyArray<StructuredSettingChange>,
+): ReadonlyArray<string> => {
+  const seen = new Set<string>();
+  const lines: Array<string> = [];
+  for (const change of changes) {
+    const line = `${change.key}: saved ${change.saved}, requested ${change.requested}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+};
+
+const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
+
+/**
+ * The exact `supabase stack destroy` invocation that recreates this stack. Always targets
+ * `--stack-id`: a `--stack <name>` destroy re-resolves the name against the caller's current
+ * `--workdir`, which can point at a different project's stack of the same name. Omits `--yes` on
+ * purpose, since destroying deletes local database data (details in `SIDE_EFFECTS.md`).
+ */
+const destroyCommandFor = (id: string): string => `supabase stack destroy --stack-id ${id}`;
+
+/** The revert clause for the editable keys among a rejection's changes, or `undefined` for none. */
+const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =>
+  editableKeys.length === 0
     ? undefined
-    : planned.service === "database" && planned.paths.includes("config.version")
-      ? new StackCommandStartError({
-          reason: "invalid-config",
-          message: "The requested database version does not match the saved stack binding",
-          suggestion:
-            "Keep the saved database version, or run supabase stack destroy to recreate the stack.",
-        })
-      : new StackCommandStartError({
-          reason: "invalid-config",
-          message: `The requested ${planned.service} ${planned.paths.join(", ")} cannot change on the saved stack`,
-          suggestion:
-            "Keep the saved endpoint and version settings, or run supabase stack destroy to recreate the stack.",
-        });
+    : editableKeys.length === 1
+      ? `Revert ${editableKeys[0]} to its saved value`
+      : "Revert the settings listed to their saved values";
+
+/** Whether every one of these services' capabilities can be excluded with `--exclude`. */
+const allExcludable = (services: ReadonlyArray<PlannedInstance["service"]>): boolean =>
+  services.length > 0 &&
+  services.every((service) =>
+    (STACK_START_EXCLUDABLE_CAPABILITIES as ReadonlyArray<string>).includes(
+      stackCapabilityForService(service),
+    ),
+  );
+
+/**
+ * Grows a candidate `--exclude` set until requesting the remaining capabilities would actually
+ * start (validated with `studioNeedsRest`, the same check the real flag goes through), or gives
+ * up once a dependency can't itself be excluded. Bounded by the number of excludable capabilities,
+ * since each iteration adds at least one and today's only dependency (Studio needs REST) can't
+ * cycle back on itself.
+ */
+const resolveExclusionCapabilities = (
+  creations: ReadonlyArray<ServiceCreationInput>,
+  initialExclusions: ReadonlyArray<string>,
+  candidateCapabilities: ReadonlyArray<string>,
+): ReadonlyArray<string> | undefined => {
+  let capabilities = candidateCapabilities;
+  for (let attempt = 0; attempt <= STACK_START_EXCLUDABLE_CAPABILITIES.length; attempt++) {
+    const remaining = selectedCreations(creations, [...initialExclusions, ...capabilities]);
+    if (!studioNeedsRest(remaining)) return capabilities;
+    // Today's only capability dependency: Studio needs REST. Bail if Studio is already in the
+    // set (adding it again wouldn't help) or somehow isn't itself excludable.
+    if (
+      capabilities.includes("studio") ||
+      !(STACK_START_EXCLUDABLE_CAPABILITIES as ReadonlyArray<string>).includes("studio")
+    )
+      return undefined;
+    capabilities = dedupe([...capabilities, "studio"]);
+  }
+  return undefined;
+};
+
+/** Rejects every saved member whose endpoints or artifact versions the request would change. */
+const incompatibleChange = (
+  planned: ReadonlyArray<PlannedInstance>,
+  savedConfigById: ReadonlyMap<string, ServiceCreation>,
+  requested: ReadonlyArray<ServiceCreationInput>,
+  projectEnvValues: Readonly<Record<string, string>>,
+  stackIdentity: { readonly id: string; readonly name?: string },
+  creations: ReadonlyArray<ServiceCreationInput>,
+  currentExclusions: ReadonlyArray<string>,
+):
+  | {
+      readonly error: StackCommandStartError;
+      readonly changes: ReadonlyArray<StructuredSettingChange>;
+      readonly command: string;
+    }
+  | undefined => {
+  const described = incompatibleSettingChanges(
+    planned,
+    savedConfigById,
+    requested,
+    projectEnvValues,
+  );
+  if (described.length === 0) return undefined;
+  const changes = described.map(({ change }) => change);
+  const lines = settingChangeLines(changes);
+  const command = destroyCommandFor(stackIdentity.id);
+  const nameNote = stackIdentity.name === undefined ? "" : ` (stack ${stackIdentity.name})`;
+  const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
+
+  const settingKeys = dedupe(
+    described.filter((d) => d.reason === "setting").map((d) => d.change.key),
+  );
+  const artifactKeys = dedupe(
+    described.filter((d) => d.reason === "artifact").map((d) => d.change.key),
+  );
+  const pinnedKeys = dedupe(
+    described.filter((d) => d.reason === "pinned-artifact").map((d) => d.change.key),
+  );
+  const endpointChanges = described.filter((d) => d.reason === "endpoint-presence");
+  const addedEndpoints = endpointChanges.filter((d) => d.change.requested === "exposed");
+  const removedEndpoints = endpointChanges.filter((d) => d.change.saved === "exposed");
+  const addedEndpointKeys = dedupe(addedEndpoints.map((d) => d.change.key));
+  const removedEndpointKeys = dedupe(removedEndpoints.map((d) => d.change.key));
+
+  const nonEditable =
+    artifactKeys.length > 0 || pinnedKeys.length > 0 || endpointChanges.length > 0;
+  const revert = revertAdvice(settingKeys);
+
+  // Purely editable changes (ports, major_version): the original simple two-way choice.
+  if (!nonEditable && revert !== undefined)
+    return {
+      changes,
+      command,
+      error: new StackCommandStartError({
+        reason: "invalid-config",
+        message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
+        suggestion: `${revert} to keep the stack and its data, or run ${destroyClause}`,
+      }),
+    };
+
+  const sentences: Array<string> = [];
+  if (artifactKeys.length > 0)
+    sentences.push(
+      `This CLI release starts a different ${artifactKeys.join(" and ")} than the saved stack.`,
+    );
+  if (pinnedKeys.length > 0)
+    sentences.push(
+      `The saved stack pins an explicit ${pinnedKeys.join(" and ")} that this release would select by default anyway.`,
+    );
+  if (addedEndpointKeys.length > 0)
+    sentences.push(
+      `This request needs the ${addedEndpointKeys.join(", ")} that the saved stack doesn't have.`,
+    );
+  if (removedEndpointKeys.length > 0)
+    sentences.push(
+      `The saved stack has the ${removedEndpointKeys.join(", ")} that this request no longer needs.`,
+    );
+
+  // Requesting a new endpoint the saved stack never had is sometimes avoidable by excluding the
+  // whole capability instead of destroying the stack — but only when every incompatible change
+  // (not just the endpoint ones) belongs to a service this exclusion would drop from the request;
+  // an unrelated incompatibility elsewhere (e.g. a database major-version change) would still
+  // reject start regardless, so the exclusion would be offered without actually fixing anything.
+  const addedServices = dedupe(addedEndpoints.map((d) => d.change.service)) as ReadonlyArray<
+    PlannedInstance["service"]
+  >;
+  const excludableAddedServices = allExcludable(addedServices)
+    ? new Set<string>(addedServices)
+    : undefined;
+  const canExcludeInstead =
+    excludableAddedServices !== undefined &&
+    described.every((d) => excludableAddedServices.has(d.change.service));
+  // A candidate exclusion that would itself fail to start (e.g. excluding REST while Studio stays
+  // requested) is resolved by pulling in a dependent capability if one is excludable, or dropped.
+  const resolvedCapabilities = canExcludeInstead
+    ? resolveExclusionCapabilities(
+        creations,
+        currentExclusions,
+        dedupe(addedServices.map(stackCapabilityForService)),
+      )
+    : undefined;
+  const exclusionClause =
+    resolvedCapabilities !== undefined
+      ? ` Run the command again with \`--exclude ${resolvedCapabilities.join(",")}\` to open it without requesting ${resolvedCapabilities.length === 1 ? "that capability" : "those capabilities"}, or run ${destroyClause}`
+      : ` Run ${destroyClause}`;
+
+  return {
+    changes,
+    command,
+    error: new StackCommandStartError({
+      reason: "invalid-config",
+      message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
+      suggestion: `${sentences.join(" ")}${exclusionClause}`,
+    }),
+  };
+};
 
 const selectedCreations = (
   creations: ReadonlyArray<ServiceCreationInput>,
@@ -451,10 +889,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           new StackCommandStartError({ reason: "invalid-config", message: cause.message, cause }),
       ),
     );
-    if (
-      requested.some(({ service }) => service === "studio") &&
-      !requested.some(({ service }) => service === "rest")
-    )
+    if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",
         message: "Studio cannot be started without the REST API capability",
@@ -517,9 +952,28 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const initialComposition = composition.members.length === 0;
     const serviceKindsChanged = !sameKinds(currentInstances, requested);
     const planned = yield* stack.composition.plan(requested).pipe(Effect.mapError(stackError));
-    for (const entry of planned) {
-      const rejected = entry.member ? incompatibleChange(entry) : undefined;
-      if (rejected !== undefined) return yield* rejected;
+    const stackIdentity = {
+      id: stack.id,
+      ...(target.name === undefined ? {} : { name: target.name }),
+    };
+    const savedConfigById = new Map(currentStatuses.map(({ id, config: saved }) => [id, saved]));
+    const rejected = incompatibleChange(
+      planned,
+      savedConfigById,
+      requested,
+      config.projectEnvValues,
+      stackIdentity,
+      creations,
+      exclusions,
+    );
+    if (rejected !== undefined) {
+      const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
+      if (Option.isSome(machineErrorContext))
+        yield* machineErrorContext.value.set({
+          stack_changes: rejected.changes,
+          recreate_command: rejected.command,
+        });
+      return yield* rejected.error;
     }
     const reuseIds: Array<string> = planned.filter(({ member }) => member).map(({ id }) => id);
     for (const creation of requested) {
