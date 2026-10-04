@@ -3,12 +3,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
 /**
- * The one-row table a pin's `SELECT` reads, created lazily so a fresh digest lock file works.
- * Checks first and only writes when actually missing: every pin after the first ever one on a
- * digest finds the table and row already there, so it never takes a write-intent lock at all,
- * which would otherwise transiently conflict with another concurrent reader's own no-op check.
+ * The one-row table a pin's `SELECT` reads. It writes only when missing, so later pins never take a
+ * write-intent lock that would conflict with a concurrent reader.
  */
-export const ensurePinTable = (connection: DatabaseSync): void => {
+const ensurePinTable = (connection: DatabaseSync): void => {
   const hasTable = connection
     .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pin'")
     .get();
