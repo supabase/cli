@@ -277,7 +277,9 @@ describe("native process group cleanup", () => {
           try: async () => {
             const launcher = defaultNativeProcessLauncher();
             const workloadMarker = `fd5-workload-${process.pid}`;
-            const child = spawnProcess(launcher.command, launcher.args, {
+            // Carried as a trailing argv entry so the launcher's own command line is checkable
+            // the same way as the workload's, without the launcher reading or acting on it.
+            const child = spawnProcess(launcher.command, [...launcher.args, workloadMarker], {
               detached: true,
               stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "pipe"],
             });
@@ -322,18 +324,40 @@ describe("native process group cleanup", () => {
               }
               return rows;
             };
-            const killGroup = (pid: number | undefined) => {
-              if (pid === undefined) return;
+            // A recycled PID or PGID can belong to an unrelated process group (another user's,
+            // in the EPERM case); only a marker match proves it is still this test's own.
+            const groupCarriesMarker = (groupId: number): boolean => {
               try {
-                process.kill(-pid, "SIGKILL");
+                return execFileSync("ps", ["-axo", "pgid=,command="], { encoding: "utf8" })
+                  .split(/\r?\n/)
+                  .some((line) => {
+                    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+                    return (
+                      match !== null &&
+                      match[1] !== undefined &&
+                      match[2] !== undefined &&
+                      Number(match[1]) === groupId &&
+                      match[2].includes(workloadMarker)
+                    );
+                  });
+              } catch {
+                return false;
+              }
+            };
+            const errorCode = (cause: unknown): string | undefined =>
+              typeof cause === "object" && cause !== null && "code" in cause
+                ? String(cause.code)
+                : undefined;
+            const killGroup = (groupId: number | undefined) => {
+              if (groupId === undefined || !groupCarriesMarker(groupId)) return;
+              try {
+                process.kill(-groupId, "SIGKILL");
               } catch (cause) {
-                if (
-                  typeof cause !== "object" ||
-                  cause === null ||
-                  !("code" in cause) ||
-                  cause.code !== "ESRCH"
-                )
-                  throw cause;
+                const code = errorCode(cause);
+                // A group that lost its marker between the check and the signal already exited;
+                // ESRCH or EPERM against a group that still carries it is a real failure.
+                if ((code === "ESRCH" || code === "EPERM") && !groupCarriesMarker(groupId)) return;
+                throw cause;
               }
             };
             const killOwnedGroups = () => {
@@ -516,6 +540,9 @@ describe("native process group cleanup", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
+          // Identifies the descendant's own argv so a PID the kernel recycled for an unrelated
+          // process right after the descendant exited is never mistaken for a still-live member.
+          const descendantMarker = `native-process-descendant-${process.pid}`;
           const native = yield* spawnNativeProcess({
             executable: process.execPath,
             environment: testEnvironment,
@@ -524,10 +551,11 @@ describe("native process group cleanup", () => {
               "-e",
               [
                 "import { spawn } from 'node:child_process';",
-                "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] });",
+                "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', process.argv[1]], { stdio: ['ignore', 'inherit', 'inherit'] });",
                 "process.stdout.write(`READY ${process.pid} ${descendant.pid}\\n`);",
                 "setInterval(() => {}, 1000);",
               ].join("\n"),
+              descendantMarker,
             ],
           });
           const output = yield* Effect.acquireRelease(
@@ -557,11 +585,11 @@ describe("native process group cleanup", () => {
           const match = /READY \d+ (\d+)/.exec(yield* Ref.get(output.text));
           expect(match).not.toBeNull();
           if (match === null) return;
-          const [state, status] = yield* Effect.scoped(
+          const [psOutput, status] = yield* Effect.scoped(
             Effect.gen(function* () {
               const descendant = yield* ChildProcess.make(
                 "/bin/ps",
-                ["-p", match[1] ?? "", "-o", "stat="],
+                ["-p", match[1] ?? "", "-o", "stat=,command="],
                 { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
               );
               return yield* Effect.all(
@@ -570,9 +598,13 @@ describe("native process group cleanup", () => {
               );
             }),
           );
+          const line = psOutput.trim();
+          const state = line.split(/\s+/u)[0] ?? "";
+          // A recycled PID belongs to an unrelated process, not the descendant; its argv won't
+          // carry the marker, and that counts the same as the descendant already being gone.
+          const stillTracksDescendant = line.includes(descendantMarker);
           expect(
-            (Number(status) === 1 && state.trim() === "") ||
-              (Number(status) === 0 && state.trim().startsWith("Z")),
+            Number(status) === 1 || line === "" || !stillTracksDescendant || state.startsWith("Z"),
           ).toBe(true);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
