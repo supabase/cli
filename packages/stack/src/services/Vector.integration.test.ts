@@ -98,6 +98,57 @@ describe("vector recipe", () => {
     { timeout: 120_000 },
   );
 
+  it.live(
+    "keeps the published config files' identity across a restart with unchanged content",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-vector-restart-" });
+          const configRoot = `${root}/vector/runtime/vector`;
+          const recipe = yield* makeServiceRecipe(
+            {
+              service: "vector",
+              config: { analyticsUrl: "http://analytics" },
+              endpoints: { http: { port: "auto" } },
+            },
+            options(root, "docker"),
+          );
+          const vector = yield* makeService(recipe.definition, {
+            id: "vector",
+            config: recipe.creation,
+          });
+          const inodesByFile = Effect.gen(function* () {
+            const [generation, ...rest] = (yield* fs.readDirectory(configRoot)).filter((entry) =>
+              entry.startsWith("generation-"),
+            );
+            expect(rest).toEqual([]);
+            const stats = yield* Effect.forEach(
+              ["vector-api.yaml", "vector-pipeline.yaml"],
+              (name) => fs.stat(`${configRoot}/${generation}/${name}`),
+            );
+            return { generation, inodes: stats.map((stat) => stat.ino) };
+          });
+
+          yield* vector.start;
+          yield* vector.ready;
+          const before = yield* inodesByFile;
+
+          // A docker Vector launch always binds `0.0.0.0:9001` inside the container regardless of
+          // the published host port, so a restart with the same config republishes byte-identical
+          // content: the generation name, and every file's identity, must not change.
+          yield* vector.restart();
+          yield* vector.ready;
+          const after = yield* inodesByFile;
+
+          expect(after.generation).toBe(before.generation);
+          expect(after.inodes).toEqual(before.inodes);
+          yield* vector.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    { timeout: 120_000 },
+  );
+
   it.live("rejects a caller pipeline that resolves to a stack-owned config file", () =>
     Effect.scoped(
       Effect.gen(function* () {

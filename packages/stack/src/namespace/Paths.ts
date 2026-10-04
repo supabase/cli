@@ -163,34 +163,3 @@ export const destroyOwnedRoot = Effect.fn("Namespace.Paths.destroyOwnedRoot")(
             .pipe(Effect.mapError((cause) => onError("destroy", cause)));
     }),
 );
-
-/**
- * Writes `content` to `target` atomically (full content staged beside it, then renamed into
- * place), for a file the namespace owns inside a directory a caller may also write into.
- */
-export const writeOwnedFile = Effect.fn("Namespace.Paths.writeOwnedFile")(
-  <E>(
-    fs: FileSystem.FileSystem,
-    path: Path.Path,
-    target: string,
-    content: string,
-    onError: (operation: string, cause: unknown) => E,
-  ): Effect.Effect<void, E> =>
-    Effect.gen(function* () {
-      const directory = path.dirname(target);
-      yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
-      yield* Effect.acquireUseRelease(
-        fs.makeTempDirectory({ directory, prefix: `.${path.basename(target)}-` }),
-        (temporaryDirectory) =>
-          Effect.gen(function* () {
-            const temporary = path.join(temporaryDirectory, path.basename(target));
-            yield* fs.writeFileString(temporary, content, { mode: 0o644 });
-            yield* fs.rename(temporary, target);
-          }),
-        (temporaryDirectory) =>
-          fs
-            .remove(temporaryDirectory, { recursive: true, force: true })
-            .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-      );
-    }).pipe(Effect.mapError((cause) => onError("prepare", cause))),
-);

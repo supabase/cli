@@ -1,4 +1,6 @@
-import { Crypto, Data, Effect, FileSystem, Path, PlatformError, Schema } from "effect";
+import { Crypto, Data, Effect, FileSystem, Path, type PlatformError, Schema } from "effect";
+import { contentDigestHex } from "../internal/content-digest.ts";
+import { publishGeneration } from "../internal/generation-publish.ts";
 import { StackIdSchema, type StackId } from "../identity/StackId.ts";
 
 export class FunctionsBootstrapError extends Data.TaggedError("FunctionsBootstrapError")<{
@@ -8,6 +10,8 @@ export class FunctionsBootstrapError extends Data.TaggedError("FunctionsBootstra
 }> {}
 
 export interface FunctionsBootstrapOwner {
+  /** The owned directory a caller mounts statically; generations publish underneath it. */
+  readonly root: string;
   /** Publishes the stack-owned Edge Runtime main service for the current session. */
   readonly write: (input: {
     readonly content: string;
@@ -22,6 +26,8 @@ export interface FunctionsBootstrapOwnerOptions {
 
 const failure = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
   new FunctionsBootstrapError({ message, ...fields });
+
+const generationPrefix = "generation-";
 
 const mapFs = <A, R = never>(
   path: string,
@@ -48,61 +54,24 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
   }) {
     if (input.content.includes("\u0000"))
       return yield* failure("Functions bootstrap contains an invalid character");
-    const target = path.join(root, "index.ts");
-    const configFile = path.join(root, "deno.json");
-    return yield* Effect.gen(function* () {
-      const token = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) =>
-          failure("Unable to allocate functions bootstrap file", { cause }),
-        ),
-      );
-      const temporary = path.join(root, `.index.ts.${token}.tmp`);
-      return yield* Effect.gen(function* () {
-        yield* mapFs(
-          root,
-          "create functions bootstrap directory",
-          fs.makeDirectory(root, { recursive: true, mode: 0o700 }),
-        );
-        yield* mapFs(root, "secure functions bootstrap directory", fs.chmod(root, 0o700));
-        // An empty workspace root stops Deno config discovery before any ancestor package.json or
-        // workspace; a plain `{}` still joins an ancestor Deno workspace and fails membership.
-        yield* mapFs(
-          configFile,
-          "write functions bootstrap config",
-          fs.writeFileString(configFile, '{"workspace":[]}\n', { mode: 0o600 }),
-        );
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const file = yield* mapFs(
-              temporary,
-              "create functions bootstrap file",
-              fs.open(temporary, { flag: "w", mode: 0o600 }),
-            );
-            yield* mapFs(
-              temporary,
-              "write functions bootstrap file",
-              file.writeAll(new TextEncoder().encode(input.content)),
-            );
-            yield* mapFs(temporary, "sync functions bootstrap file", file.sync);
-          }),
-        );
-        yield* mapFs(temporary, "secure functions bootstrap file", fs.chmod(temporary, 0o600));
-        yield* mapFs(target, "publish functions bootstrap file", fs.rename(temporary, target));
-        yield* mapFs(target, "secure published functions bootstrap file", fs.chmod(target, 0o600));
-        return yield* mapFs(
-          target,
-          "resolve published functions bootstrap file",
-          fs.realPath(target),
-        );
-      }).pipe(
-        Effect.ensuring(
-          fs
-            .remove(temporary, { force: true })
-            .pipe(Effect.catchTag("PlatformError", () => Effect.void)),
-        ),
-      );
-    });
+    const hash = yield* mapFs(
+      root,
+      "hash functions bootstrap content",
+      contentDigestHex(crypto, input.content),
+    );
+    const generation = yield* mapFs(
+      root,
+      "publish functions bootstrap generation",
+      // An empty workspace root stops Deno config discovery before any ancestor package.json or
+      // workspace; a plain `{}` still joins an ancestor Deno workspace and fails membership.
+      publishGeneration(fs, path, root, `${generationPrefix}${hash}`, [
+        { name: "deno.json", content: '{"workspace":[]}\n', mode: 0o600 },
+        { name: "index.ts", content: input.content, mode: 0o600 },
+      ]),
+    );
+    const target = path.join(generation, "index.ts");
+    return yield* mapFs(target, "resolve published functions bootstrap file", fs.realPath(target));
   });
 
-  return { write };
+  return { root, write };
 });
