@@ -1,10 +1,10 @@
 import { userInfo } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { NodeServices } from "@effect/platform-node";
 import { Context, Effect, FileSystem, Layer, Path, Predicate, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
-import { errcode } from "./drivers/Sqlite.ts";
+import { errcode, openSharedConnection } from "./drivers/Sqlite.ts";
 import { lstatPath } from "./drivers/FileSystem.ts";
 
 /** Identifies the stack that owns a port reservation. */
@@ -86,37 +86,14 @@ const isHolderRow = (value: unknown): value is HolderRow =>
   Predicate.hasProperty(value, "stack_id") &&
   typeof value.stack_id === "string";
 
-/**
- * One connection per resolved database path for this process's lifetime. POSIX advisory locks (and
- * the SQLite locks built on them) belong to a process, not a descriptor: a second connection this
- * process opened on the same path would not see the first one's transaction as contention, so every
- * caller in this process shares this one connection instead of risking that coalescing.
- */
-const connections = new Map<string, DatabaseSync>();
-
 const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError> =>
-  Effect.suspend(() => {
-    const existing = connections.get(file);
-    if (existing !== undefined) return Effect.succeed(existing);
-    return Effect.try({
-      try: () => {
-        const connection = new DatabaseSync(file);
-        try {
-          // Short and bounded: real contention between two of this user's processes is brief, and
-          // a blocking wait here is simpler than an async retry loop for a database this small. Set
-          // before the schema statement, so even first-time table creation waits out a racing peer
-          // instead of surfacing a spurious busy error.
-          connection.exec("PRAGMA busy_timeout = 2000");
-          connection.exec(schema);
-        } catch (error) {
-          connection.close();
-          throw error;
-        }
-        connections.set(file, connection);
-        return connection;
-      },
-      catch: (cause) => namespaceError("open", cause),
-    });
+  openSharedConnection(file, (connection) => {
+    // Short and bounded: real contention between two of this user's processes is brief, and
+    // a blocking wait here is simpler than an async retry loop for a database this small. Set
+    // before the schema statement, so even first-time table creation waits out a racing peer
+    // instead of surfacing a spurious busy error.
+    connection.exec("PRAGMA busy_timeout = 2000");
+    connection.exec(schema);
   });
 
 /**

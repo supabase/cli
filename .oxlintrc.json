@@ -43,6 +43,389 @@
       "rules": {
         "typescript/await-thenable": "off"
       }
+    },
+    {
+      // The namespace owns claims, paths, leases, artifact pins, and port reservations; everywhere
+      // in the repo, outside `src/namespace/**` itself, reaches that state through
+      // `StackNamespace.ts`, not by importing namespace internals directly. Repo-wide (apps/cli
+      // included) so a deep or relative import of a namespace module fails from any package; the
+      // stack package's own raw-primitive restrictions are layered on top, further down.
+      "files": ["**/*"],
+      "excludeFiles": ["packages/stack/src/namespace/**", "packages/stack/src/StackNamespace.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Default for the whole stack package (`src/**` and `tests/**`): on top of the repo-wide
+      // namespace restriction above, raw `node:fs`/`node:sqlite` are confined to namespace drivers
+      // and a short enumerated list of existing files. The files below are pre-existing direct
+      // namespace consumers the facade doesn't cover yet (tracked for step 3) or raw-primitive
+      // users; they get their own, narrower overrides further down.
+      "files": ["packages/stack/src/**", "packages/stack/tests/**"],
+      "excludeFiles": [
+        "packages/stack/src/namespace/**",
+        "packages/stack/src/StackNamespace.ts",
+        "packages/stack/src/Network.ts",
+        "packages/stack/src/Owner.ts",
+        "packages/stack/src/Ports.ts",
+        "packages/stack/src/Ports.integration.test.ts",
+        "packages/stack/src/port-reservation.e2e.test.ts",
+        "packages/stack/src/StackHost.ts",
+        "packages/stack/src/host/CommandRunner.ts",
+        "packages/stack/src/preparation/ArtifactStore.ts",
+        "packages/stack/src/preparation/artifacts.integration.test.ts",
+        "packages/stack/src/runtime/Container.ts",
+        "packages/stack/src/runtime/NativeProcess.ts",
+        "packages/stack/src/runtime/native-process.integration.test.ts",
+        "packages/stack/src/runtime/native-launcher.ts",
+        "packages/stack/src/runtime/postgres-user.ts",
+        "packages/stack/src/services/Catalog.ts",
+        "packages/stack/src/services/Database.ts",
+        "packages/stack/src/services/DatabaseSnapshot.ts",
+        "packages/stack/src/services/ProcessRecipe.ts",
+        "packages/stack/src/services/Recipe.ts",
+        "packages/stack/src/storage/DockerDatabaseStorage.ts",
+        "packages/stack/src/storage/DockerDatabaseStorage.integration.test.ts",
+        "packages/stack/tests/claims.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ],
+            "paths": [
+              {
+                "name": "node:fs",
+                "message": "Raw node:fs is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // `StackNamespace.ts` is the facade itself: it needs namespace imports, but is still an
+      // ordinary consumer of raw primitives, so those restrictions stay on.
+      "files": ["packages/stack/src/StackNamespace.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:fs",
+                "message": "Raw node:fs is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Inside the namespace, drivers are the only place for raw `node:fs`/`node:sqlite`; sibling
+      // namespace modules import each other freely, so only the raw-primitive restriction repeats
+      // here (the facade exception above excludes this whole directory from that one).
+      "files": ["packages/stack/src/namespace/**"],
+      "excludeFiles": [
+        "packages/stack/src/namespace/drivers/**",
+        "packages/stack/src/namespace/Namespace.integration.test.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              { "name": "node:fs", "message": "Raw node:fs stays in namespace/drivers." },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises stays in namespace/drivers."
+              },
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Sqlite is the driver directory's whole purpose, so it stays allowed everywhere in it; raw
+      // `node:fs` is narrower, limited to `FileSystem.ts` (the no-follow lstat/rmdir driver) by
+      // exact filename, excluded below.
+      "files": ["packages/stack/src/namespace/drivers/**"],
+      "excludeFiles": ["packages/stack/src/namespace/drivers/FileSystem.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              { "name": "node:fs", "message": "Raw node:fs stays in drivers/FileSystem.ts." },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises stays in drivers/FileSystem.ts."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Synchronous existence check between manual scheduler steps; keeps the disable comment's
+      // reason, only sqlite stays off-limits.
+      "files": ["packages/stack/src/namespace/Namespace.integration.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Existing direct namespace consumers the facade doesn't cover yet (tracked for step 3);
+      // none of them touch raw node:fs/node:sqlite themselves, so that restriction stays on.
+      // - Network.ts, Ports.ts (+its integration test), port-reservation.e2e.test.ts: read/reserve
+      //   ports through PortReservations, not yet on the facade.
+      // - Owner.ts: needs Claims, namespaceError, no-follow lstatPath, and owned/borrowed Paths.
+      // - StackHost.ts: reads Claims.
+      // - ArtifactStore.ts, artifacts.integration.test.ts: use the sqlite-pin driver and Pin;
+      //   artifact pins are not on the facade yet.
+      // - Container.ts, Database.ts, ProcessRecipe.ts, Catalog.ts: need owned/borrowed Paths
+      //   and/or Environment.
+      // - NativeProcess.ts, native-process.integration.test.ts: need Environment.
+      // - postgres-user.ts: needs the no-follow lstatPath.
+      // - Recipe.ts: needs Claims types only.
+      // - DockerDatabaseStorage.ts (+its integration test): needs Claims types and Publication.
+      // - tests/claims.ts: a no-op `ContainerClaims`/`DirectoryClaims` fixture for tests that don't
+      //   exercise the namespace's own reconcile loop.
+      "files": [
+        "packages/stack/src/Network.ts",
+        "packages/stack/src/Owner.ts",
+        "packages/stack/src/Ports.ts",
+        "packages/stack/src/Ports.integration.test.ts",
+        "packages/stack/src/port-reservation.e2e.test.ts",
+        "packages/stack/src/StackHost.ts",
+        "packages/stack/src/preparation/ArtifactStore.ts",
+        "packages/stack/src/preparation/artifacts.integration.test.ts",
+        "packages/stack/src/runtime/Container.ts",
+        "packages/stack/src/runtime/NativeProcess.ts",
+        "packages/stack/src/runtime/native-process.integration.test.ts",
+        "packages/stack/src/runtime/postgres-user.ts",
+        "packages/stack/src/services/Catalog.ts",
+        "packages/stack/src/services/Database.ts",
+        "packages/stack/src/services/ProcessRecipe.ts",
+        "packages/stack/src/services/Recipe.ts",
+        "packages/stack/src/storage/DockerDatabaseStorage.ts",
+        "packages/stack/src/storage/DockerDatabaseStorage.integration.test.ts",
+        "packages/stack/tests/claims.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:fs",
+                "message": "Raw node:fs is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers (plus runtime/native-launcher.ts's standalone boundary); use a namespace driver."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // `host/CommandRunner.ts` needs Claims, Environment, and borrow from the namespace, plus the
+      // raw `rmdir` Effect's FileSystem has no non-recursive equivalent for (see its existing
+      // disable comment); sqlite stays off-limits.
+      "files": ["packages/stack/src/host/CommandRunner.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // `services/DatabaseSnapshot.ts` opens its own sqlite lock file for the snapshot store, a
+      // concern independent of the namespace's own locking; it also needs the no-follow
+      // lstatPath. Raw node:fs stays off-limits.
+      "files": ["packages/stack/src/services/DatabaseSnapshot.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:fs",
+                "message": "Raw node:fs is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              },
+              {
+                "name": "node:fs/promises",
+                "message": "Raw node:fs/promises is confined to namespace drivers and a short enumerated list of existing files; use Effect's FileSystem or a namespace driver."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Standalone process outside the Effect runtime, launched before any service is wired up: it
+      // calls the sqlite-pin driver and raw node:fs/node:sqlite directly by design (see its
+      // existing disable comments), so none of the namespace restrictions apply here.
+      "files": ["packages/stack/src/runtime/native-launcher.ts"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      // Raw node:fs with an existing disable comment explaining why Effect's FileSystem can't do
+      // the job; none of these import namespace internals or raw sqlite.
+      "files": [
+        "packages/stack/src/internal/host-process.ts",
+        "packages/stack/src/Sweep.integration.test.ts",
+        "packages/stack/src/storage/DirectoryCopy.ts",
+        "packages/stack/src/storage/DirectoryCopy.integration.test.ts",
+        "packages/stack/src/effect-timeout.integration.test.ts",
+        "packages/stack/src/HostProcess.ts",
+        "packages/stack/src/functions/serve-main-resolver.integration.test.ts",
+        "packages/stack/tests/effect-timeout.fixture.ts",
+        "packages/stack/tests/host-process-fixture.ts",
+        "packages/stack/tests/failing-owner-fixture.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ],
+            "paths": [
+              {
+                "name": "node:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw node:sqlite stays in namespace/drivers."
+              },
+              {
+                "name": "bun:sqlite",
+                "allowTypeImports": true,
+                "message": "Raw bun:sqlite stays in namespace/drivers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Standalone fixture process the lease waits on, outside any Effect runtime: it takes the
+      // same raw sqlite lock as the lease it waits for and reports over a raw fd (see its existing
+      // disable comments). It doesn't import namespace internals, so that restriction stays on.
+      "files": ["packages/stack/tests/lease-wait-fixture.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/namespace/**"],
+                "message": "Namespace internals are private; consume them through StackNamespace.ts."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }
