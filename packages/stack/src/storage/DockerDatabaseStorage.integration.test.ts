@@ -1351,6 +1351,177 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live(
+    "destroys the owned namespace in the shared volume after its on-disk marker is deleted, using the identity resolved in memory",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const helperImage = yield* postgresImage("17");
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-no-marker-" });
+          const storageRoot = path.join(root, "state", "stack", "data");
+          const cacheRoot = path.join(root, "cache");
+          const instanceRoot = path.join(storageRoot, "sleeping");
+          yield* fs.makeDirectory(instanceRoot, { recursive: true });
+          yield* fs.makeDirectory(cacheRoot, { recursive: true });
+          const container = yield* makeContainerRuntime({
+            claims: noContainerClaims,
+            target: dockerTarget,
+            root,
+          });
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const stackId = `storage-no-marker-${yield* crypto.randomUUIDv4}`;
+          // One storage object spans the whole case, the way an Owner keeps one per instance for
+          // the stack's lifetime: its resolved identity stays in memory across the sleep below.
+          const storage = yield* makeDockerDatabaseStorage({
+            claims: noContainerClaims,
+            runtime: "docker",
+            target: dockerTarget,
+            stackId,
+            instanceId: "sleeping",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+          yield* storage.prepare("17");
+          const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+            yield* fs.readFileString(markerPath),
+          );
+          if (marker.backend !== "docker" || marker.volume === undefined)
+            return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+          const volume = marker.volume;
+          const mount = yield* storage.mount("17");
+          if (mount.type !== "volume" || mount.volumeSubpath === undefined)
+            return yield* new DockerTestError({ message: "Docker volume backend unavailable" });
+          yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/data,volume-subpath=${mount.volumeSubpath}`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            "printf 17 > /data/PG_VERSION",
+          ]);
+          yield* storage.markInitialized("17");
+
+          // The database sleeps (the registered instance stays stopped); its storage object keeps
+          // running, so this is the only change: the registration's on-disk marker is now gone.
+          yield* fs.remove(markerPath);
+
+          yield* storage.destroyData("17");
+
+          const remaining = yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            `[ -e ${quote(`/store/${marker.namespace}`)} ] && echo present || echo absent`,
+          ]);
+          expect(remaining.trim()).toBe("absent");
+          yield* docker(["volume", "rm", volume]);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "destroys the owned namespace after its whole state root is deleted, with no filesystem dependency for an identity already resolved in memory",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const helperImage = yield* postgresImage("17");
+          // `root` is deleted entirely below; nest it under the scope's own temp dir so the test
+          // framework's own cleanup of that outer, still-present directory does not fail.
+          const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-no-root-" });
+          const root = path.join(tempDir, "state-root");
+          const storageRoot = path.join(root, "state", "stack", "data");
+          const cacheRoot = path.join(root, "cache");
+          const instanceRoot = path.join(storageRoot, "sleeping");
+          yield* fs.makeDirectory(instanceRoot, { recursive: true });
+          yield* fs.makeDirectory(cacheRoot, { recursive: true });
+          const container = yield* makeContainerRuntime({
+            claims: noContainerClaims,
+            target: dockerTarget,
+            root,
+          });
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const stackId = `storage-no-root-${yield* crypto.randomUUIDv4}`;
+          // One storage object spans the whole case, the way an Owner keeps one per instance for
+          // the stack's lifetime: its resolved identity stays in memory across the sleep below.
+          const storage = yield* makeDockerDatabaseStorage({
+            claims: noContainerClaims,
+            runtime: "docker",
+            target: dockerTarget,
+            stackId,
+            instanceId: "sleeping",
+            instanceRoot,
+            root: storageRoot,
+            cacheRoot,
+            fs,
+            path,
+            crypto,
+            container,
+            spawner,
+          });
+          yield* storage.prepare("17");
+          const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+            yield* fs.readFileString(markerPath),
+          );
+          if (marker.backend !== "docker" || marker.volume === undefined)
+            return yield* new DockerTestError({ message: "Docker test selected host fallback" });
+          const volume = marker.volume;
+          const mount = yield* storage.mount("17");
+          if (mount.type !== "volume" || mount.volumeSubpath === undefined)
+            return yield* new DockerTestError({ message: "Docker volume backend unavailable" });
+          yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/data,volume-subpath=${mount.volumeSubpath}`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            "printf 17 > /data/PG_VERSION",
+          ]);
+          yield* storage.markInitialized("17");
+
+          // The database sleeps; its storage object keeps running (the resolved identity is
+          // already in memory), then the whole state root disappears from under the live owner.
+          yield* fs.remove(root, { recursive: true, force: true });
+
+          yield* storage.destroyData("17");
+
+          const remaining = yield* docker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            helperImage,
+            "/bin/sh",
+            "-c",
+            `[ -e ${quote(`/store/${marker.namespace}`)} ] && echo present || echo absent`,
+          ]);
+          expect(remaining.trim()).toBe("absent");
+          yield* docker(["volume", "rm", volume]);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("handles root-owned host data through helper operations", () =>
     Effect.scoped(
       Effect.gen(function* () {

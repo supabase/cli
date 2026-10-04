@@ -790,13 +790,32 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
         return present ? Option.some(yield* getMarker) : Option.none<Marker>();
       });
+      // The in-memory resolution from `selected`, kept for the instance's lifetime across sleeps and
+      // generations once resolved, independent of the on-disk marker: a marker deleted after
+      // resolution must not hide a namespace this process still knows it owns.
+      const resolvedFromMemory = Ref.get(selectedCache);
       const getMarkerForRemoval = Effect.gen(function* () {
+        const cached = yield* resolvedFromMemory;
+        if (cached !== undefined) return Option.some(cached);
         const existing = yield* getMarkerIfPresent;
         if (Option.isSome(existing) && options.runtime === "docker") {
           yield* selected;
           return Option.some(yield* getMarker);
         }
         return existing;
+      });
+      /**
+       * Destroy tolerates a missing volume by design (`validateDockerMarkerIdentity` plus its own
+       * volume-existence check below), so this skips `selected`'s stricter resolution and only adds
+       * the in-memory shortcut on top of the existing on-disk read. `validated` tells the caller
+       * whether `selected` already confirmed this identity in memory: a live owner's cleanup must
+       * not then re-derive it from the filesystem (`realPath(stateRoot)` in
+       * `validateDockerMarkerIdentity`), only a new owner discovering from disk needs that check.
+       */
+      const getMarkerForDestroy = Effect.gen(function* () {
+        const cached = yield* resolvedFromMemory;
+        if (cached !== undefined) return { marker: Option.some(cached), validated: true as const };
+        return { marker: yield* getMarkerIfPresent, validated: false as const };
       });
       const readyMarkerPath = options.path.join(
         options.instanceRoot,
@@ -946,7 +965,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
       );
       const destroyData = Effect.fn("DockerDatabaseStorage.destroyData")((version: string) =>
         Effect.gen(function* () {
-          const markerOption = yield* getMarkerIfPresent;
+          const { marker: markerOption, validated } = yield* getMarkerForDestroy;
           if (Option.isNone(markerOption)) {
             yield* removeUnmarkedData(version, { checkpoints: true });
             return yield* removeHelper();
@@ -962,7 +981,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             yield* removeReadyMarker;
             yield* removeHelper();
           } else {
-            yield* validateDockerMarkerIdentity(marker);
+            // Memory-sourced identities were already validated by `selected` when first resolved;
+            // only a marker discovered fresh from disk (a new owner recovering) needs this check.
+            if (!validated) yield* validateDockerMarkerIdentity(marker);
             if (marker.volume === undefined)
               return yield* errorFor("destroy", "Recorded Docker storage volume is missing");
             const volumeExists = yield* engineCommand(["volume", "inspect", marker.volume]).pipe(

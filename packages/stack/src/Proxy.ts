@@ -1,6 +1,5 @@
-import { NodeSink, NodeSocket, NodeSocketServer, NodeStream } from "@effect/platform-node";
-import { Data, Effect, Option, Stream } from "effect";
-import type { Scope } from "effect";
+import { NodeSink, NodeStream } from "@effect/platform-node";
+import { Data, Effect, Exit, FiberSet, Scope, Stream, SubscriptionRef } from "effect";
 import type { SocketServer } from "effect/unstable/socket";
 import * as Net from "node:net";
 import { PortError } from "./Ports.ts";
@@ -17,20 +16,143 @@ export class ProxyError extends Data.TaggedError("ProxyError")<{
 const proxyError = (cause: unknown) =>
   new ProxyError({ message: cause instanceof Error ? cause.message : String(cause), cause });
 
-/** Binds a dedicated public listener and retains the socket until its scope closes. */
-export const bindTcp = (host: string, port: number) =>
-  NodeSocketServer.make({ host, port, allowHalfOpen: true }).pipe(
-    Effect.mapError(
-      (cause) =>
-        // `SocketServerError.reason.cause` is the OS error (for example EADDRINUSE); unwrap it
-        // here so `Ports.ts`'s conflict detection sees the same shape it gets from `HttpProxy`.
-        new PortError({
-          key: "tcp",
-          message: "Cannot bind TCP listener",
-          cause: cause.reason.cause,
+export interface TcpListener {
+  readonly address: SocketServer.Address;
+  /** Installs the per-connection handler; keeps the listener alive until interrupted. */
+  readonly run: <R, E, _>(
+    handler: (socket: Net.Socket) => Effect.Effect<_, E, R>,
+  ) => Effect.Effect<never, never, R>;
+  /** Stops accepting new connections on the listener; established connections keep flowing. */
+  readonly stopAccepting: Effect.Effect<void>;
+  /** The count of established client connections, observable until it reaches 0. */
+  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
+  /** Destroys every established connection immediately. */
+  readonly cutAll: Effect.Effect<void>;
+}
+
+/**
+ * Binds a dedicated public listener and retains the socket until its scope closes. Built directly
+ * on `node:net`, not `NodeSocketServer`, because `NodeSocketServer`'s `run` only exposes a combined
+ * accept-and-destroy teardown: this separates closing accept (`stopAccepting`) from cutting
+ * established connections (`cutAll`), with the count of outstanding ones observable in between.
+ */
+export const bindTcp = (
+  host: string,
+  port: number,
+): Effect.Effect<TcpListener, PortError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const services = yield* Effect.context<never>();
+    // Every accepted socket, queued or dispatched, from acceptance until close: the single source
+    // for the outstanding count, `cutAll`, and teardown, so none of them is ever only half-tracked.
+    const sockets = new Set<Net.Socket>();
+    const outstandingConnections = yield* SubscriptionRef.make(0);
+    let accepting = true;
+    // A connection that arrives before `run` installs its handler is queued, the same as
+    // `NodeSocketServer`'s own listener, so none are dropped in that gap.
+    const pending = new Set<Net.Socket>();
+    let onConnection: (conn: Net.Socket) => void = (conn) => {
+      pending.add(conn);
+    };
+    const server = Net.createServer({ allowHalfOpen: true }, (conn) => {
+      // Attached synchronously, before any dispatch, so a reset while a handler is still cold
+      // (queued, or waiting on scoped target acquisition) never surfaces as an unhandled error.
+      conn.on("error", () => conn.destroy());
+      if (!accepting) {
+        conn.destroy();
+        return;
+      }
+      sockets.add(conn);
+      Effect.runSyncWith(services)(
+        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
+      );
+      conn.once("close", () => {
+        sockets.delete(conn);
+        pending.delete(conn);
+        Effect.runSyncWith(services)(
+          SubscriptionRef.update(outstandingConnections, (count) => count - 1),
+        );
+      });
+      onConnection(conn);
+    });
+    yield* Effect.acquireRelease(
+      Effect.callback<void, PortError>((resume) => {
+        const onError = (cause: Error) =>
+          // Unwrapped so `Ports.ts`'s conflict detection sees the same shape it gets from
+          // `HttpProxy` (for example EADDRINUSE).
+          resume(
+            Effect.fail(new PortError({ key: "tcp", message: "Cannot bind TCP listener", cause })),
+          );
+        server.once("error", onError);
+        server.listen(port, host, () => {
+          // Accept errors after binding (for example fd exhaustion) are logged for the listener's
+          // whole life rather than left unhandled to crash the owner.
+          server.off("error", onError);
+          server.on("error", (cause) =>
+            Effect.runSyncWith(services)(Effect.logError("TCP listener error", cause)),
+          );
+          resume(Effect.void);
+        });
+        return Effect.sync(() => server.off("error", onError));
+      }),
+      () =>
+        Effect.callback<void, never>((resume) => {
+          pending.clear();
+          for (const socket of sockets) socket.destroy();
+          server.close(() => resume(Effect.void));
+          return Effect.void;
         }),
-    ),
-  );
+    );
+    const bound = server.address();
+    if (bound === null)
+      return yield* new PortError({ key: "tcp", message: "TCP listener has no address" });
+    const address: SocketServer.Address =
+      typeof bound === "string"
+        ? { _tag: "UnixAddress", path: bound }
+        : { _tag: "TcpAddress", hostname: bound.address, port: bound.port };
+
+    const run = <R, E, _>(
+      handler: (socket: Net.Socket) => Effect.Effect<_, E, R>,
+    ): Effect.Effect<never, never, R> =>
+      Effect.gen(function* () {
+        const connectionScope = yield* Scope.make();
+        const runFiber = yield* FiberSet.makeRuntime<R>().pipe(
+          Effect.provideService(Scope.Scope, connectionScope),
+        );
+        const previous = onConnection;
+        onConnection = (conn) => {
+          runFiber(
+            handler(conn).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("Unhandled TCP connection failure", cause),
+              ),
+            ),
+          );
+        };
+        for (const conn of pending) onConnection(conn);
+        pending.clear();
+        return yield* Effect.onExit(Effect.never, () =>
+          Scope.close(connectionScope, Exit.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                onConnection = previous;
+              }),
+            ),
+          ),
+        );
+      });
+
+    return {
+      address,
+      run,
+      stopAccepting: Effect.sync(() => {
+        accepting = false;
+      }),
+      outstandingConnections,
+      cutAll: Effect.sync(() => {
+        for (const socket of sockets) socket.destroy();
+      }),
+    };
+  });
 
 const connect = Effect.fn("Proxy.connect")((address: BackendAddress) =>
   Effect.gen(function* () {
@@ -64,22 +186,13 @@ const copy = (source: Net.Socket, destination: Net.Socket) =>
 /** The scoped target acquisition owns request activity and performs orchestrated wake/readiness. */
 export const serveTcp = Effect.fn("Proxy.serveTcp")(
   (
-    listener: SocketServer.SocketServer["Service"],
+    listener: TcpListener,
     target: Effect.Effect<BackendAddress, ProxyError, Scope.Scope>,
     label: string,
   ) =>
-    listener.run(() =>
+    listener.run((incoming) =>
       Effect.scoped(
         Effect.gen(function* () {
-          // rc.112 supplies this service to handlers but does not remove it from run's requirements.
-          const incoming = yield* Effect.serviceOption(NodeSocket.NetSocket).pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () => Effect.fail(proxyError("TCP listener supplied no connection")),
-                onSome: Effect.succeed,
-              }),
-            ),
-          );
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               incoming.destroy();

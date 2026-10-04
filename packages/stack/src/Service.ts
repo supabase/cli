@@ -145,6 +145,14 @@ interface SessionRecord {
   readonly removed: Ref.Ref<boolean>;
 }
 
+/**
+ * Owns one launch attempt's resources from before preparation through confirmed cleanup. A stale
+ * or abandoned attempt still closes its scope; a successful one hands that duty to `stopNow`.
+ */
+interface ExecutionHandle {
+  readonly scope: Scope.Closeable;
+}
+
 const sessionStopped = () => new ServiceError({ operation: "health", message: "Session stopped" });
 
 const contextFor = <Config>(
@@ -191,6 +199,10 @@ export const makeService = <Config>(
     const revision = yield* Ref.make(0);
     const launchCounter = yield* Ref.make(0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
+    // Forked before preparation starts so an abandoned or stale attempt still has a scope to close.
+    const allocateHandle: Effect.Effect<ExecutionHandle> = Scope.fork(owner, "parallel").pipe(
+      Effect.map((scope): ExecutionHandle => ({ scope })),
+    );
     // stopNow clears observation.launchId while keeping the error, so readiness must not read that field.
     const launchError = yield* Ref.make<
       { readonly launchId: number; readonly error: ServiceError } | undefined
@@ -270,11 +282,14 @@ export const makeService = <Config>(
         ),
     );
 
-    // Mask only the permit handoff; admitted work belongs to the host scope.
+    // Mask only the permit handoff; admitted work belongs to the host scope. `onAdmitted` runs
+    // uninterruptibly right after the fork succeeds, so a caller can transfer resource-cleanup
+    // ownership to the owner fiber atomically: once it has run, the caller's own interruption of
+    // the join below can no longer race ahead of that transfer.
     const run = Effect.fn("Service.run")(function* <
       A,
       E extends ServiceError | ServiceDestroyed | ServiceNotStopped,
-    >(operation: Effect.Effect<A, E>) {
+    >(operation: Effect.Effect<A, E>, onAdmitted: Effect.Effect<void> = Effect.void) {
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           yield* restore(gate.take(1));
@@ -283,6 +298,7 @@ export const makeService = <Config>(
             owner,
             { uninterruptible: false },
           );
+          yield* onAdmitted;
           return yield* restore(Fiber.join(fiber));
         }),
       );
@@ -346,6 +362,8 @@ export const makeService = <Config>(
     });
 
     const launchNow = Effect.fn("Service.launchNow")(function* (
+      handle: ExecutionHandle,
+      handedOff: Ref.Ref<boolean>,
       guard: Effect.Effect<void, ServiceError>,
     ) {
       yield* Effect.annotateCurrentSpan({ member_id: options.id });
@@ -380,7 +398,7 @@ export const makeService = <Config>(
             ),
           ),
         );
-        const runtimeScope = yield* Scope.fork(owner, "parallel");
+        const runtimeScope = handle.scope;
         const launchExit = yield* Effect.exit(
           definition.launch(contextFor(options.id, yield* Ref.get(config), runtimeScope)).pipe(
             Effect.map((runtime) => ({ runtime, failure: undefined })),
@@ -414,6 +432,8 @@ export const makeService = <Config>(
           removed: yield* Ref.make(false),
         };
         yield* Ref.set(current, record);
+        // From here, record.scope (== handle.scope) is stopNow's responsibility, not the caller's.
+        yield* Ref.set(handedOff, true);
         if (launchFailure !== undefined)
           yield* Ref.set(launchError, { launchId, error: launchFailure });
         yield* update({
@@ -503,28 +523,58 @@ export const makeService = <Config>(
         if (existing.lifecycle === "running") return;
       }
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined)
-        yield* definition
-          .prepare(nextConfig)
-          .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if (observation.lifecycle === "running" || observation.lifecycle === "starting") return;
-          if ((yield* Ref.get(revision)) !== expectedRevision || (wake && !observation.wakeEnabled))
-            return yield* new ServiceError({
-              operation: "admission",
-              message: "Service intent changed before admission",
-            });
-          yield* setOperation("start");
-          yield* launchNow(
-            guard.pipe(
-              Effect.andThen(Ref.set(config, nextConfig)),
-              Effect.andThen(update({ config: nextConfig })),
+      const handle = yield* allocateHandle;
+      const handedOff = yield* Ref.make(false);
+      // Set once `run` admits the operation onto the owner fiber; from that point the owner alone
+      // decides the handle's fate (via the inner `ensuring` below), atomically with the fork, so
+      // the caller's own interruption of the join can never race ahead of that decision.
+      const admitted = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        if (definition.prepare !== undefined)
+          yield* definition
+            .prepare(nextConfig)
+            .pipe(Effect.tapError((error) => recordPreparationFailure(expectedRevision, error)));
+        yield* run(
+          Effect.gen(function* () {
+            const observation = yield* SubscriptionRef.get(observations);
+            if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
+            if (observation.lifecycle === "running" || observation.lifecycle === "starting") return;
+            if (
+              (yield* Ref.get(revision)) !== expectedRevision ||
+              (wake && !observation.wakeEnabled)
+            )
+              return yield* new ServiceError({
+                operation: "admission",
+                message: "Service intent changed before admission",
+              });
+            yield* setOperation("start");
+            yield* launchNow(
+              handle,
+              handedOff,
+              guard.pipe(
+                Effect.andThen(Ref.set(config, nextConfig)),
+                Effect.andThen(update({ config: nextConfig })),
+              ),
+            ).pipe(Effect.ensuring(setOperation(undefined)));
+          }).pipe(
+            Effect.ensuring(
+              Ref.get(handedOff).pipe(
+                Effect.flatMap((isHandedOff) =>
+                  isHandedOff ? Effect.void : Scope.close(handle.scope, Exit.void),
+                ),
+              ),
             ),
-          ).pipe(Effect.ensuring(setOperation(undefined)));
-        }),
+          ),
+          Ref.set(admitted, true),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Ref.get(admitted).pipe(
+            Effect.flatMap((isAdmitted) =>
+              isAdmitted ? Effect.void : Scope.close(handle.scope, Exit.void),
+            ),
+          ),
+        ),
       );
     });
     const start = Ref.get(revision).pipe(Effect.flatMap((revision) => startAt(revision)));
@@ -596,25 +646,49 @@ export const makeService = <Config>(
       yield* Effect.annotateCurrentSpan({ member_id: options.id });
       const expectedRevision = requestedRevision ?? (yield* Ref.get(revision));
       const nextConfig = candidate ?? (yield* Ref.get(config));
-      if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
-      yield* run(
-        Effect.gen(function* () {
-          const observation = yield* SubscriptionRef.get(observations);
-          if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
-          if ((yield* Ref.get(revision)) !== expectedRevision)
-            return yield* new ServiceError({
-              operation: "admission",
-              message: "Service intent changed before admission",
-            });
-          yield* coordinate("restart", invalidate());
-          yield* setOperation("restart");
-          yield* Effect.gen(function* () {
-            yield* stopNow();
-            yield* Ref.set(config, nextConfig);
-            yield* update({ config: nextConfig });
-            yield* launchNow(guard);
-          }).pipe(Effect.ensuring(setOperation(undefined)));
-        }),
+      const handle = yield* allocateHandle;
+      const handedOff = yield* Ref.make(false);
+      // See `startAt`: ownership transfers atomically to the owner fiber on admission, so the
+      // caller's own interruption of the join can never race ahead of that transfer.
+      const admitted = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        if (definition.prepare !== undefined) yield* definition.prepare(nextConfig);
+        yield* run(
+          Effect.gen(function* () {
+            const observation = yield* SubscriptionRef.get(observations);
+            if (!observation.registered) return yield* new ServiceDestroyed({ id: options.id });
+            if ((yield* Ref.get(revision)) !== expectedRevision)
+              return yield* new ServiceError({
+                operation: "admission",
+                message: "Service intent changed before admission",
+              });
+            yield* coordinate("restart", invalidate());
+            yield* setOperation("restart");
+            yield* Effect.gen(function* () {
+              yield* stopNow();
+              yield* Ref.set(config, nextConfig);
+              yield* update({ config: nextConfig });
+              yield* launchNow(handle, handedOff, guard);
+            }).pipe(Effect.ensuring(setOperation(undefined)));
+          }).pipe(
+            Effect.ensuring(
+              Ref.get(handedOff).pipe(
+                Effect.flatMap((isHandedOff) =>
+                  isHandedOff ? Effect.void : Scope.close(handle.scope, Exit.void),
+                ),
+              ),
+            ),
+          ),
+          Ref.set(admitted, true),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Ref.get(admitted).pipe(
+            Effect.flatMap((isAdmitted) =>
+              isAdmitted ? Effect.void : Scope.close(handle.scope, Exit.void),
+            ),
+          ),
+        ),
       );
     });
 

@@ -446,6 +446,53 @@ describe("service kernel", () => {
     ),
   );
 
+  it.live(
+    "stops and cleans up the running workload when a restart is destroyed mid-preparation and completes late",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const plans = yield* Queue.unbounded<RuntimePlan>();
+          const preparations = yield* Queue.unbounded<PreparationPlan>();
+          const initialPreparation = yield* makePreparationPlan;
+          const restartPreparation = yield* makePreparationPlan;
+          yield* open(initialPreparation.gate);
+          yield* Queue.offer(preparations, initialPreparation);
+          yield* Queue.offer(preparations, restartPreparation);
+          const service = yield* makeService(makeDefinition(plans, preparations), {
+            id: "database-late-restart",
+            config: { version: 17 },
+          });
+          const original = yield* makeRuntimePlan;
+          const superseded = yield* makeRuntimePlan;
+          yield* Queue.offer(plans, original);
+          yield* Queue.offer(plans, superseded);
+          yield* open(original.launchGate);
+          yield* service.start;
+          expect((yield* service.get).lifecycle).toBe("running");
+
+          const restarting = yield* service.restart({ version: 18 }).pipe(Effect.forkScoped);
+          yield* Deferred.await(restartPreparation.started);
+
+          yield* open(original.stopGate);
+          yield* open(original.removeGate);
+          yield* service.destroy;
+          expect((yield* service.get).registered).toBe(false);
+          expect((yield* Ref.get(original.state)).removed).toBe(true);
+
+          // The superseded restart's own preparation only resolves after the destroy above, so its
+          // launch attempt (if it ran at all) would be the one completing late.
+          yield* open(restartPreparation.gate);
+          const result = yield* Fiber.await(restarting);
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result))
+            expect(result.cause.reasons.find(Cause.isFailReason)?.error).toBeInstanceOf(
+              ServiceDestroyed,
+            );
+          expect(yield* Deferred.isDone(superseded.launchStarted)).toBe(false);
+        }),
+      ),
+  );
+
   it.live("records a launch failure as stopped and can launch successfully on retry", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -663,6 +710,52 @@ describe("service kernel", () => {
         yield* stopFixture(fixture.service, plan);
       }),
     ),
+  );
+
+  it.live(
+    "keeps the handle's scope and its resources alive through a cold launch after the caller is canceled",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const resourceClosed = yield* Deferred.make<void>();
+          const launchStarted = yield* Deferred.make<void>();
+          const launchGate = yield* Deferred.make<void>();
+          const service = yield* makeService<Config>(
+            {
+              launch: (context) =>
+                Effect.gen(function* () {
+                  // A real resource owned by the launch's execution handle, not just the fake
+                  // plan's own bookkeeping: closing the handle early would settle this finalizer.
+                  yield* Scope.addFinalizer(
+                    context.scope,
+                    Deferred.succeed(resourceClosed, undefined).pipe(Effect.asVoid),
+                  );
+                  yield* Deferred.succeed(launchStarted, undefined);
+                  yield* Deferred.await(launchGate);
+                  return {
+                    health: Effect.void,
+                    exit: Effect.never,
+                    stop: Effect.void,
+                    remove: Effect.void,
+                  } satisfies RuntimeSession;
+                }),
+              removeData: () => Effect.void,
+            },
+            { id: "cold-launch-resource", config: { version: 1 } },
+          );
+          const caller = yield* service.start.pipe(Effect.forkScoped);
+          yield* Deferred.await(launchStarted);
+          yield* Fiber.interrupt(caller);
+          // The caller gave up mid-launch; the owner fiber and the scope it owns must stay live.
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(false);
+          yield* Deferred.succeed(launchGate, undefined);
+          yield* service.ready;
+          expect((yield* service.get).lifecycle).toBe("running");
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(false);
+          yield* service.stop;
+          expect(yield* Deferred.isDone(resourceClosed)).toBe(true);
+        }),
+      ),
   );
 
   it.live("lets independent instances progress concurrently", () =>

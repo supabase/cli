@@ -1,4 +1,4 @@
-import { Data, Effect, FiberSet, Ref, Scope } from "effect";
+import { Data, Effect, FiberSet, Ref, Scope, SubscriptionRef } from "effect";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
@@ -45,6 +45,12 @@ export interface HttpProxy {
   readonly host: string;
   readonly port: number;
   readonly setRoutes: (routes: ReadonlyArray<HttpRoute>) => Effect.Effect<void>;
+  /** Stops accepting new connections on the listener; established connections keep flowing. */
+  readonly stopAccepting: Effect.Effect<void>;
+  /** The count of established client connections, observable until it reaches 0. */
+  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
+  /** Destroys every established connection immediately. */
+  readonly cutAll: Effect.Effect<void>;
 }
 
 const hopByHop = new Set([
@@ -414,7 +420,12 @@ export const makeHttpProxy = (options: {
       (value) => Effect.sync(() => value.destroy()),
     );
     const runRequest = yield* FiberSet.makeRuntime();
+    const services = yield* Effect.context<never>();
     const sockets = new Set<Socket>();
+    const outstandingConnections = yield* SubscriptionRef.make(0);
+    // `server.close()` also tears down idle keep-alive sockets immediately, which would end
+    // established connections instead of letting them keep flowing; track acceptance separately.
+    let accepting = true;
     const server = createServer((request, response) => {
       runRequest(
         Effect.scoped(
@@ -454,8 +465,20 @@ export const makeHttpProxy = (options: {
       );
     });
     server.on("connection", (socket) => {
+      if (!accepting) {
+        socket.destroy();
+        return;
+      }
       sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
+      Effect.runSyncWith(services)(
+        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
+      );
+      socket.once("close", () => {
+        sockets.delete(socket);
+        Effect.runSyncWith(services)(
+          SubscriptionRef.update(outstandingConnections, (count) => count - 1),
+        );
+      });
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());
@@ -505,5 +528,12 @@ export const makeHttpProxy = (options: {
           routes,
           [...next].sort((a, b) => b.prefix.length - a.prefix.length),
         ),
+      stopAccepting: Effect.sync(() => {
+        accepting = false;
+      }),
+      outstandingConnections,
+      cutAll: Effect.sync(() => {
+        for (const socket of sockets) socket.destroy();
+      }),
     };
   });

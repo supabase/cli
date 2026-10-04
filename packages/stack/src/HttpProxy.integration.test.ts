@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -1027,3 +1027,190 @@ it.live("releases a waiting WebSocket target quietly when its client resets", ()
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, captureErrors(logs))));
 });
+
+const connectRaw = (port: number, host: string) =>
+  Effect.acquireRelease(
+    Effect.callback<Socket, HttpProxyTestError>((resume) => {
+      const socket = new Socket();
+      const onConnect = () => resume(Effect.succeed(socket));
+      const onError = (cause: Error) =>
+        resume(Effect.fail(new HttpProxyTestError({ message: cause.message, cause })));
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+      socket.connect(port, host);
+      return Effect.sync(() => {
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+      });
+    }).pipe(Effect.timeout("5 seconds")),
+    (socket) => Effect.sync(() => socket.destroy()),
+  );
+
+/** Reads one full HTTP/1.1 response off `socket`: accumulates chunks until the declared body length. */
+const readFullResponse = (socket: Socket) =>
+  Effect.callback<{ readonly status: number; readonly body: string }, HttpProxyTestError>(
+    (resume) => {
+      let buffered = Buffer.alloc(0);
+      let headerEnd: number | undefined;
+      let status = 0;
+      let contentLength = 0;
+      const onData = (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (headerEnd === undefined) {
+          const index = buffered.indexOf("\r\n\r\n");
+          if (index === -1) return;
+          headerEnd = index + 4;
+          const head = buffered.subarray(0, headerEnd).toString("latin1");
+          status = Number(/^HTTP\/1\.1 (\d+)/u.exec(head)?.[1] ?? 0);
+          contentLength = Number(/content-length:\s*(\d+)/iu.exec(head)?.[1] ?? 0);
+        }
+        if (buffered.length - headerEnd < contentLength) return;
+        socket.off("data", onData);
+        resume(
+          Effect.succeed({
+            status,
+            body: buffered.subarray(headerEnd, headerEnd + contentLength).toString(),
+          }),
+        );
+      };
+      socket.on("data", onData);
+      return Effect.sync(() => socket.off("data", onData));
+    },
+  ).pipe(Effect.timeout("5 seconds"));
+
+/**
+ * Resolves once a fresh connection attempt to `port` is refused rather than served: the listener
+ * accepts the TCP handshake but destroys the socket immediately, so no response ever arrives.
+ */
+const connectionRefused = (port: number, host: string) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new Socket()),
+    (socket) => Effect.sync(() => socket.destroy()),
+  ).pipe(
+    Effect.flatMap((probe) =>
+      Effect.callback<boolean, never>((resume) => {
+        const onSettled = (responded: boolean) => resume(Effect.succeed(!responded));
+        probe.once("error", () => onSettled(false));
+        probe.once("close", () => onSettled(false));
+        probe.once("data", () => onSettled(true));
+        probe.connect(port, host, () =>
+          probe.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+        );
+        return Effect.void;
+      }).pipe(Effect.timeout("5 seconds")),
+    ),
+  );
+
+it.live(
+  "lets a response already in flight when stopAccepting runs finish and deliver its full body",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const backend = createServer((_incoming, outgoing) => {
+          outgoing.writeHead(200, { "content-type": "text/plain" });
+          outgoing.write("first-chunk");
+          // Held open deliberately: the test itself finishes the response, once stopAccepting
+          // has already run, so the response's generation crosses the freeze.
+        });
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/", target: Effect.succeed(backendAddress) },
+        ]);
+
+        const heldResponseFiber = yield* Effect.callback<ServerResponse, HttpProxyTestError>(
+          (resume) => {
+            const onRequest = (_incoming: unknown, outgoing: ServerResponse) =>
+              resume(Effect.succeed(outgoing));
+            backend.once("request", onRequest);
+            return Effect.sync(() => backend.off("request", onRequest));
+          },
+        ).pipe(Effect.forkScoped);
+        const responseFiber = yield* request(proxy.port, "/", new Uint8Array()).pipe(
+          Effect.provide(NodeHttpClient.layerNodeHttp),
+          Effect.forkScoped,
+        );
+        const heldResponse = yield* Fiber.join(heldResponseFiber);
+
+        yield* proxy.stopAccepting;
+        expect(yield* connectionRefused(proxy.port, proxy.host)).toBe(true);
+
+        heldResponse?.end("-second-chunk");
+        const response = yield* Fiber.join(responseFiber);
+        expect(response.status).toBe(200);
+        expect(new TextDecoder().decode(response.body)).toBe("first-chunk-second-chunk");
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "refuses a new connection after stopAccepting while an established connection keeps completing requests until it closes",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let requests = 0;
+        const backend = createServer((_request, response) => {
+          requests += 1;
+          response.end(requests === 1 ? "first-response" : "second-response");
+        });
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/", target: Effect.succeed(backendAddress) },
+        ]);
+
+        const client = yield* connectRaw(proxy.port, proxy.host);
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        const first = yield* readFullResponse(client);
+        expect(first.status).toBe(200);
+        expect(first.body).toBe("first-response");
+        expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(1);
+
+        yield* proxy.stopAccepting;
+
+        expect(yield* connectionRefused(proxy.port, proxy.host)).toBe(true);
+
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        const second = yield* readFullResponse(client);
+        expect(second.status).toBe(200);
+        expect(second.body).toBe("second-response");
+
+        const reachedZero = yield* Stream.runHead(
+          Stream.filter(
+            SubscriptionRef.changes(proxy.outstandingConnections),
+            (count) => count === 0,
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.sync(() => client.end());
+        yield* Fiber.join(reachedZero);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("destroys every established connection immediately when cutAll runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const backend = createServer((_request, response) => response.end("ok"));
+      const backendAddress = yield* listen(backend);
+      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+      yield* proxy.setRoutes([{ id: "api", prefix: "/", target: Effect.succeed(backendAddress) }]);
+
+      const client = yield* connectRaw(proxy.port, proxy.host);
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      const response = yield* readFullResponse(client);
+      expect(response.status).toBe(200);
+      expect(response.body).toBe("ok");
+      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(1);
+
+      const closed = yield* Effect.callback<void, never>((resume) => {
+        const onClose = () => resume(Effect.void);
+        client.once("close", onClose);
+        if (client.destroyed) onClose();
+        return Effect.sync(() => client.off("close", onClose));
+      }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
+      yield* proxy.cutAll;
+      yield* Fiber.join(closed);
+      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(0);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

@@ -193,6 +193,14 @@ interface Entry extends Orchestrator.RegisteredInstance {
   /** The saved creation, which composition wiring and launches update. */
   readonly creation: Ref.Ref<ServiceCreation>;
   readonly namespace: NetworkNamespace;
+  /**
+   * Removes this instance's containers, storage namespace and network namespace, independent of
+   * the saved registration: used by destroy (which then publishes the registration removal) and
+   * reusable as-is by a future abandonment path, which releases without touching the registration.
+   */
+  readonly cleanupResources: (
+    context: ServiceInstanceContext<ServiceCreation>,
+  ) => Effect.Effect<void, ServiceError>;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -317,6 +325,19 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     options.state.withLock(
       readSaved.pipe(Effect.flatMap((current) => options.state.save(update(current)))),
     );
+  // Idempotent on an already-missing registration (a deleted or already-destroyed state.json),
+  // unlike `updateState`: destroy must still be able to publish an instance's removal, or confirm
+  // there is nothing left to publish, even when the registration disappeared from under it.
+  const removeInstanceRegistration = (id: string) =>
+    options.state.withLock(
+      options.state
+        .read(stackId)
+        .pipe(
+          Effect.flatMap((current) =>
+            current === undefined ? Effect.void : options.state.save(withoutInstance(current, id)),
+          ),
+        ),
+    );
 
   const requireStopped = (configuration: CompositionConfig) =>
     Effect.forEach(
@@ -401,6 +422,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     const initial = recipe.creation;
     const creation = yield* Ref.make(initial);
     const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
+    // Independent of the saved registration and of on-disk discovery: removes containers and the
+    // owned storage namespace, then releases the network namespace. Destroy below runs this to
+    // completion before publishing the registration removal, so a confirmed removal is never
+    // recorded ahead of the resources it describes; a future abandonment path can call this same
+    // operation and release the stack's ports without ever reading or saving the registration.
+    const cleanupResources = (context: ServiceInstanceContext<ServiceCreation>) =>
+      recipe.definition.removeData(context).pipe(
+        Effect.andThen(
+          Ref.get(namespaceRef).pipe(
+            Effect.flatMap((namespace) => namespace?.release ?? Effect.void),
+            Effect.mapError(serviceError("release")),
+          ),
+        ),
+      );
     const core = yield* makeService(
       {
         ...recipe.definition,
@@ -410,17 +445,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             Effect.andThen(recipe.definition.launch(context)),
           ),
         removeData: (context) =>
-          recipe.definition.removeData(context).pipe(
+          cleanupResources(context).pipe(
             Effect.andThen(
-              Ref.get(namespaceRef).pipe(
-                Effect.flatMap((namespace) => namespace?.release ?? Effect.void),
-                Effect.mapError(serviceError("release")),
-              ),
-            ),
-            Effect.andThen(
-              updateState((current) => withoutInstance(current, id)).pipe(
-                Effect.mapError(serviceError("state")),
-              ),
+              removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
             ),
           ),
       },
@@ -475,6 +502,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       recipe,
       creation,
       namespace,
+      cleanupResources,
       startAt: (revision, inputs, wake, guard) =>
         Ref.get(creation).pipe(
           Effect.flatMap((current) => mergeInputs(current, inputs)),

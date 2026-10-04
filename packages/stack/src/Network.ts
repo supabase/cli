@@ -200,9 +200,6 @@ const makeNetwork = (options: {
                             yield* Effect.forkIn(
                               serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
                                 Effect.provideService(Scope.Scope, endpointScope),
-                                Effect.catch((cause) =>
-                                  Effect.logWarning("Public listener failed", cause),
-                                ),
                               ),
                               endpointScope,
                               { startImmediately: true },
