@@ -632,7 +632,9 @@ const discoverGenerations = (
  * AND, rechecked while holding that lock, its mtime is older than the retention window. Digest
  * lock files are never deleted (a stable inode); only the generation directory they guard is. A
  * per-digest failure (including contention from a live pin or another retirer) is skipped, never
- * propagated: this sweep must never block the `prepare`/`use` call it runs alongside.
+ * propagated: this sweep must never block the `prepare`/`use` call it runs alongside. Each
+ * digest's own lock attempt shares `Pin`'s per-path permit for that digest, so it can never open a
+ * second, independent connection alongside a concurrent first-time local `pin` on the same path.
  */
 const retireStaleGenerations = Effect.fn("ArtifactStore.retire")(function* (
   fs: FileSystem.FileSystem,
@@ -646,18 +648,24 @@ const retireStaleGenerations = Effect.fn("ArtifactStore.retire")(function* (
     const generationPath = path.join(keyRoot, digest);
     const lockPath = path.join(keyRoot, `${digest}.lock`);
     const stagingRoot = path.join(keyRoot, STAGING_DIR_NAME);
-    const didRetire = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const connection = yield* acquireLock(lockPath, "existing");
-        yield* takeExclusiveLock(connection);
-        const info = yield* fs.stat(lockPath);
-        const mtime = Option.getOrUndefined(info.mtime);
-        const now = yield* Clock.currentTimeMillis;
-        if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS) return false;
-        yield* relocateToStaging(fs, path, crypto, stagingRoot, generationPath);
-        return true;
-      }),
-    ).pipe(Effect.orElseSucceed(() => false));
+    const didRetire = yield* Pin.withoutLocalPin(
+      lockPath,
+      Effect.scoped(
+        Effect.gen(function* () {
+          const connection = yield* acquireLock(lockPath, "existing");
+          yield* takeExclusiveLock(connection);
+          const info = yield* fs.stat(lockPath);
+          const mtime = Option.getOrUndefined(info.mtime);
+          const now = yield* Clock.currentTimeMillis;
+          if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS) return false;
+          yield* relocateToStaging(fs, path, crypto, stagingRoot, generationPath);
+          return true;
+        }),
+      ),
+    ).pipe(
+      Effect.map(Option.getOrElse(() => false)),
+      Effect.orElseSucceed(() => false),
+    );
     if (didRetire) retired++;
   }
   yield* Effect.annotateCurrentSpan({ "artifact.retired_count": retired });

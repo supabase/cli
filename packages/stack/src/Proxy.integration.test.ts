@@ -336,8 +336,20 @@ it.live(
           if (client.destroyed) onClose();
           return Effect.sync(() => client.off("close", onClose));
         }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
+        // Subscribed before `cutAll` runs: the client's own "close" event is a separate, cross-
+        // socket signal that reaches this process over the loopback connection, with no ordering
+        // guarantee relative to the listener's own bookkeeping (observed to lag it on Windows), so
+        // the listener's count must be awaited on its own observable, never inferred from the
+        // client's.
+        const reachedZero = yield* Stream.runHead(
+          Stream.filter(
+            SubscriptionRef.changes(listener.outstandingConnections),
+            (count) => count === 0,
+          ),
+        ).pipe(Effect.forkScoped);
         yield* listener.cutAll;
         yield* Fiber.join(closed);
+        yield* Fiber.join(reachedZero);
         expect(yield* SubscriptionRef.get(listener.outstandingConnections)).toBe(0);
       }),
     ),

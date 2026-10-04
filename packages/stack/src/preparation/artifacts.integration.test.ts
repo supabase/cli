@@ -824,6 +824,102 @@ describe("pins", () => {
   );
 
   it.live(
+    "a fresh pin never fails busy against a same-process retirement sweep triggered through the real store",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-pin-sweep-race-",
+          });
+          const key = "database/postgres-pin-sweep-race";
+
+          const setupStore = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* setupStore.prepare({ ...request, key });
+          // Idle and past the retention window: ahead-of-time `prepare` only pins itself for its
+          // own duration (see `ArtifactStore.prepare`), so by now nothing in this process still
+          // pins it, making it a legitimate, un-pinned sweep target.
+          yield* ageLockFile(fs, prepared.lockPath);
+          const keyRoot = path.dirname(prepared.path);
+
+          // Gates the sweep right after it opens its own connection on the target's lock path
+          // (inside `acquireLock`/`takeExclusiveLock`, just before `retireStaleGenerations`'
+          // `fs.stat` call), holding it open across a real async gap under full test control.
+          const sweepIsHolding = yield* Deferred.make<void>();
+          const releaseSweep = yield* Deferred.make<void>();
+          const sweepStore = yield* makeArtifactStore({
+            cacheRoot: root,
+            source: sourceWritingAlt(),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              stat: (...args: Parameters<typeof fs.stat>) =>
+                args[0] === prepared.lockPath
+                  ? Deferred.succeed(sweepIsHolding, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseSweep)),
+                      Effect.andThen(fs.stat(...args)),
+                    )
+                  : fs.stat(...args),
+            }),
+          );
+
+          // Gates the fresh `use` right before it calls `Pin.pin`, once it has resolved the same
+          // generation and confirmed the key directory (the step immediately preceding the pin).
+          const freshPinApproaching = yield* Deferred.make<void>();
+          const letFreshPinProceed = yield* Deferred.make<void>();
+          const freshPinStore = yield* makeArtifactStore({
+            cacheRoot: root,
+            source: sourceWriting(),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              realPath: (...args: Parameters<typeof fs.realPath>) =>
+                args[0] === keyRoot
+                  ? Deferred.succeed(freshPinApproaching, undefined).pipe(
+                      Effect.andThen(Deferred.await(letFreshPinProceed)),
+                      Effect.andThen(fs.realPath(...args)),
+                    )
+                  : fs.realPath(...args),
+            }),
+          );
+
+          // A failed assertion below must not leave either fiber parked on its gate forever.
+          yield* Effect.addFinalizer(() =>
+            Effect.all([
+              Deferred.succeed(releaseSweep, undefined),
+              Deferred.succeed(letFreshPinProceed, undefined),
+            ]),
+          );
+
+          const sweepFiber = yield* sweepStore
+            .prepare({ ...request, key })
+            .pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(sweepIsHolding);
+
+          const freshPinFiber = yield* Effect.scoped(freshPinStore.use({ ...request, key })).pipe(
+            Effect.exit,
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(freshPinApproaching);
+
+          // Releases the fresh pin into its own `Pin.pin` call first, while the sweep still holds
+          // the identical path open, then lets the sweep finish: this is the exact collision an
+          // unsynchronized sweep would lose.
+          yield* Deferred.succeed(letFreshPinProceed, undefined);
+          yield* Deferred.succeed(releaseSweep, undefined);
+
+          const sweepExit = yield* Fiber.join(sweepFiber);
+          const freshPinExit = yield* Fiber.join(freshPinFiber);
+          const message = (exit: Exit.Exit<unknown, unknown>) =>
+            Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
+          expect(Exit.isSuccess(sweepExit), message(sweepExit)).toBe(true);
+          expect(Exit.isSuccess(freshPinExit), message(freshPinExit)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live(
     "the native launcher holds its own pin independent of the owner, releasing it only once it reports the workload's exit",
     () =>
       withPlatform(

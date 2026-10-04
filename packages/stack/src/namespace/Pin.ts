@@ -1,4 +1,4 @@
-import { DateTime, Effect, Exit, FileSystem, Schedule, Scope, Semaphore } from "effect";
+import { DateTime, Effect, Exit, FileSystem, Option, Schedule, Scope, Semaphore } from "effect";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import { acquireLock, isBusy, takeSharedLock } from "./drivers/Sqlite.ts";
 
@@ -77,4 +77,23 @@ export const pin = (
           return Scope.close(entry.scope, Exit.void);
         }),
       ),
+  );
+
+/**
+ * Runs `attempt` (a non-pinning, best-effort reader like a retirement sweep) only while this
+ * process holds no live local pin on `lockPath`, under the same per-path permit `pin` itself
+ * takes. Without this, a sweep's own `acquireLock` and a concurrent first-time `pin` on the same
+ * path race to open independent connections, and the loser sees "locked by this process" instead
+ * of either properly queuing or deferring; sharing the permit makes them mutually exclusive, so a
+ * sweep either runs to completion before a fresh pin ever opens a connection, or correctly finds
+ * the path already pinned and skips.
+ */
+export const withoutLocalPin = <A, E, R>(
+  lockPath: string,
+  attempt: Effect.Effect<A, E, R>,
+): Effect.Effect<Option.Option<A>, E, R> =>
+  semaphoreFor(lockPath).withPermits(1)(
+    Effect.suspend((): Effect.Effect<Option.Option<A>, E, R> =>
+      registry.has(lockPath) ? Effect.succeed(Option.none()) : Effect.map(attempt, Option.some),
+    ),
   );
