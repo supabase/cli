@@ -28,6 +28,7 @@ import { exerciseAnalytics, queryAnalyticsMarker } from "./analytics.ts";
 import { subscribeRealtime } from "./websocket.ts";
 import { watchRecoveryMail } from "./realtime-mail.ts";
 import { assertWorkloadsGone, captureWorkloads } from "./workloads.ts";
+import { captureLoopbackViolations } from "./loopback.ts";
 import { assertOwnerExited, captureOwnerPid } from "../owner.ts";
 import {
   assertConfinedTo,
@@ -622,3 +623,20 @@ export const writeConfinement = (runtime: Runtime) =>
       );
     }),
   );
+
+/**
+ * Wakes every service eagerly and drives real traffic through each endpoint, then asserts that no
+ * listening TCP socket owned by a workload's process tree binds outside loopback. Native only:
+ * container workloads publish their ports to loopback through Docker's own mapping, a different
+ * mechanism out of this scenario's scope.
+ */
+export const loopbackOnly = withFixture("native", (fixture) =>
+  Effect.gen(function* () {
+    yield* setActivation(fixture.stack, "eager");
+    yield* fixture.stack.composition.start;
+    yield* assertLifecycle(fixture, "running");
+    yield* exerciseStack(fixture, "loopback");
+    const violations = yield* captureLoopbackViolations(fixture);
+    expect(violations).toEqual([]);
+  }),
+);

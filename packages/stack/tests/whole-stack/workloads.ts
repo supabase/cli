@@ -10,7 +10,7 @@ export const WorkloadSnapshot = Schema.Struct({
 });
 export type WorkloadSnapshot = Schema.Schema.Type<typeof WorkloadSnapshot>;
 
-const commandOutput = Effect.fn("WholeStack.commandOutput")(
+export const commandOutput = Effect.fn("WholeStack.commandOutput")(
   (command: string, args: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
