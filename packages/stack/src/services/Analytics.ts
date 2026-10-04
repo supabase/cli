@@ -33,6 +33,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       const db = yield* databaseConnection(databaseUrl);
       return {
         DATABASE_URL: databaseUrl,
+        PHX_HTTP_IP: container ? "0.0.0.0" : "127.0.0.1",
         ...(http === undefined
           ? {}
           : { PORT: String(http.port), PHX_HTTP_PORT: String(http.port) }),

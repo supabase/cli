@@ -63,6 +63,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       const filePath = container ? "/mnt" : creation.config.filePath;
       return {
         DATABASE_URL: databaseUrl,
+        SERVER_HOST: container ? "0.0.0.0" : "127.0.0.1",
         ...(http === undefined ? {} : { STORAGE_PORT: String(http.port), PORT: String(http.port) }),
         ANON_KEY: creation.config.anonKey ?? anon,
         SERVICE_KEY: creation.config.serviceRoleKey ?? service,

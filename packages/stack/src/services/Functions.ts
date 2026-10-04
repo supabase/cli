@@ -196,7 +196,9 @@ export const makeSpec = (
       return [
         "start",
         `--main-service=${root}`,
-        ...(http === undefined ? [] : [`--port=${http.port}`]),
+        ...(http === undefined
+          ? []
+          : [`--port=${http.port}`, `--ip=${context.container ? "0.0.0.0" : "127.0.0.1"}`]),
         ...(creation.config.policy === undefined ? [] : [`--policy=${creation.config.policy}`]),
         ...(creation.config.inspector === true && inspector !== undefined
           ? [`--inspect=${context.container ? "0.0.0.0" : "127.0.0.1"}:${inspector.port}`]
