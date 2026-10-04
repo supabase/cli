@@ -1,7 +1,8 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { makePorts, PortError } from "./Ports.ts";
+import { makePorts, PortError, probeVacant } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -51,6 +52,17 @@ export interface NetworkNamespace {
 
 export interface Interface {
   readonly release: Effect.Effect<void, NetworkError>;
+  /**
+   * Marks a stack-wide destroy in progress: every per-instance `NetworkNamespace.release` closes
+   * its listeners as usual but skips deleting its own reservation rows, so a destroy that later
+   * turns out uncertain (remaining resource claims) still finds them. Call {@link releaseStack} once
+   * destroy is confirmed to leave nothing behind, or {@link cancelDestroy} to resume immediate
+   * per-service deletion (the shape an individual `destroyService` still relies on).
+   */
+  readonly beginDestroy: Effect.Effect<void>;
+  readonly cancelDestroy: Effect.Effect<void>;
+  /** Releases every reservation this stack holds, dedicated and shared alike, in one step. */
+  readonly releaseStack: Effect.Effect<void, NetworkError>;
   readonly register: (options: {
     readonly id: string;
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
@@ -70,13 +82,16 @@ const makeNetwork = (options: {
   readonly stackId: string;
   readonly runtime: NetworkRuntime;
   readonly state: StackNamespace.Interface;
+  readonly platform?: NodeJS.Platform;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
       Effect.mapError((cause) => errorFor("ports", cause)),
     );
+    const probe = probeVacant(options.platform ?? process.platform);
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
+    const deferReservations = yield* Ref.make(false);
     const shared = yield* Ref.make<
       | {
           readonly claim: number;
@@ -169,15 +184,18 @@ const makeNetwork = (options: {
                                   });
                                 return { proxy: current.proxy };
                               }
+                              yield* probe(key, host, port);
                               return { proxy: yield* makeHttpProxy({ host, port }) };
                             }
                             if (endpoint.protocol === "http") {
+                              yield* probe(key, host, port);
                               const proxy = yield* makeHttpProxy({ host, port });
                               yield* proxy.setRoutes([
                                 { id, prefix: "/", target: endpoint.backend },
                               ]);
                               return { proxy };
                             }
+                            yield* probe(key, host, port);
                             const listener = yield* bindTcp(host, port);
                             yield* Effect.forkIn(
                               serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
@@ -287,6 +305,10 @@ const makeNetwork = (options: {
                     "Stop the instance before releasing its endpoints",
                   );
               yield* Ref.set(closed, true);
+              // A stack-wide destroy defers every row deletion to its own success boundary (see
+              // `beginDestroy`), so an uncertain destroy (remaining resource claims) still finds
+              // this instance's reservations; an individual `destroyService` still deletes them now.
+              if (yield* Ref.get(deferReservations)) return;
               for (const name of Object.keys(endpoints)) {
                 const endpoint = endpoints[name];
                 if (endpoint?.shared === undefined)
@@ -333,7 +355,18 @@ const makeNetwork = (options: {
           .pipe(Effect.mapError((cause) => errorFor("release", cause))),
       ),
     );
-    return { register, release: release() } satisfies Interface;
+    const releaseStack = Effect.fn("Network.releaseStack")(() =>
+      ports
+        .releaseStack(options.stackId)
+        .pipe(Effect.mapError((cause) => errorFor("release", cause))),
+    );
+    return {
+      register,
+      release: release(),
+      beginDestroy: Ref.set(deferReservations, true),
+      cancelDestroy: Ref.set(deferReservations, false),
+      releaseStack: releaseStack(),
+    } satisfies Interface;
   });
 
 export const layer = (options: { readonly stackId: string; readonly runtime: NetworkRuntime }) =>
@@ -343,4 +376,4 @@ export const layer = (options: { readonly stackId: string; readonly runtime: Net
       const state = yield* StackNamespace.Service;
       return yield* makeNetwork({ ...options, state });
     }).pipe(Effect.map(Service.of)),
-  );
+  ).pipe(Layer.provide(PortReservations.layer));

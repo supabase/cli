@@ -560,7 +560,9 @@ const resolveRealDockerHost = Effect.gen(function* () {
  * Proves a running stack writes only inside its state root and artifact cache (plus the project
  * directory it was handed): points HOME, TMPDIR/TMP/TEMP and the XDG roots at fresh, empty
  * directories for the stack and its detached owner, then diffs those directories before and after
- * a full start/exercise/stop/destroy cycle.
+ * a full start/exercise/stop/destroy cycle. The per-user port reservation registry resolves its
+ * home through the OS passwd database (`getent`/`dscacheutil`), not `$HOME`, so it writes outside
+ * this sandbox entirely and is not expected to appear in either diff.
  */
 export const writeConfinement = (runtime: Runtime) =>
   Effect.scoped(

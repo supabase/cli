@@ -13,7 +13,6 @@ export {
   StackCredentials,
   StackKeysInput,
   StackLifetime,
-  type StackClaims,
 } from "./namespace/Registry.ts";
 
 export interface Interface extends Registry.Interface, Lease.Interface, Claims.Interface {

@@ -41,6 +41,15 @@ uploads are preserved. The independent artifact cache is retained. Communicates
 with the local owner and selected runtime, with no hosted API calls. Shared
 routing/settings can read project configuration and profiles.
 
+Destruction releases this stack's rows in the per-user port registry at
+`<passwd home>/.supabase/ports.sqlite` (independent of `SUPABASE_HOME`, with no
+override) only once cleanup is confirmed complete; a destroy that fails or skips
+engine cleanup keeps the stack's reservations, and its ports remain unavailable
+to other stacks until a later destroy succeeds. A reservation whose owning
+stack's state was deleted without going through destroy (for example a removed
+or unmounted state root) is reclaimed lazily by whichever stack next needs that
+port.
+
 ## Output, exit codes and telemetry
 
 Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,

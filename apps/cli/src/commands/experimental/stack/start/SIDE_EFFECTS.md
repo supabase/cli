@@ -38,6 +38,14 @@ use `$SUPABASE_HOME/cache/stack`, keyed by content digest and retired automatica
 30 days. Storage files use the caller-owned project directory `supabase/.temp/stack-uploads/<stack-id>/`.
 Functions preparation may build the project's source.
 
+Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
+which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's ports stay
+reserved across every other stack's starts, including in a different state root, and starting it
+again reuses the same ports. A saved or explicitly requested port already held by another stack, or
+occupied by a process outside the registry, fails start naming the conflict instead of picking a
+different port; only automatic allocation tries another candidate. On macOS a process can still win
+a narrow race against the pre-bind probe before a brand-new listener exists.
+
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 native on Linux x64/arm64 and macOS arm64. The probe is bounded by 10 seconds. Without a reachable
 engine on other platforms, the command fails and asks the user to start Docker. When auto selection

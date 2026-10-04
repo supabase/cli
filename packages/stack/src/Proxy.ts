@@ -21,7 +21,14 @@ const proxyError = (cause: unknown) =>
 export const bindTcp = (host: string, port: number) =>
   NodeSocketServer.make({ host, port, allowHalfOpen: true }).pipe(
     Effect.mapError(
-      (cause) => new PortError({ key: "tcp", message: "Cannot bind TCP listener", cause }),
+      (cause) =>
+        // `SocketServerError.reason.cause` is the OS error (for example EADDRINUSE); unwrap it
+        // here so `Ports.ts`'s conflict detection sees the same shape it gets from `HttpProxy`.
+        new PortError({
+          key: "tcp",
+          message: "Cannot bind TCP listener",
+          cause: cause.reason.cause,
+        }),
     ),
   );
 

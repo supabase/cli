@@ -767,8 +767,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
-      destroy: orchestrator.destroyNamespace.pipe(
-        Effect.andThen(network.release),
+      destroy: network.beginDestroy.pipe(
+        // Deferred for the whole of this destroy: every instance's own teardown below closes its
+        // listeners as usual, but leaves its reservation rows for `releaseStack` to drop together,
+        // only once destroy is confirmed to leave nothing behind. `ensuring` below resumes
+        // immediate per-service deletion again on every exit, success, failure, or interruption
+        // alike, so a service destruction, sweep, or claim-read failure can never leave deferral
+        // stuck on for a stack that is still otherwise live.
+        Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         // A claim reconcile deliberately kept (for example one recorded against a different
         // daemon) must not be lost to a full deregistration; the stack stays registered so a
@@ -776,7 +782,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         Effect.andThen(options.state.readClaims(stackId)),
         Effect.flatMap((remaining) =>
           remaining.length === 0
-            ? options.state.remove(stackId)
+            ? network.releaseStack.pipe(Effect.andThen(options.state.remove(stackId)))
             : Effect.gen(function* () {
                 const currentDaemonId = options.engineTarget?.daemonId;
                 const claimsPath = path.join(options.state.root, stackId, Claims.CLAIMS_FILE);
@@ -798,6 +804,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
                 });
               }),
         ),
+        Effect.ensuring(network.cancelDestroy),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),

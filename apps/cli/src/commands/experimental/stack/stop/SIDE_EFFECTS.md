@@ -33,7 +33,9 @@ current project/Git identity when no explicit ID is supplied. Shared routing and
 settings may read project configuration and the selected profile. Communicates
 only with local owner endpoints; no hosted API requests. Shutdown updates owned
 runtime resources but preserves persistent instance definitions, data and port
-claims. No caller-owned upload files are removed.
+reservations in the per-user registry at `<passwd home>/.supabase/ports.sqlite`
+(unaffected by `SUPABASE_HOME`); killing the owner process preserves them the
+same way. No caller-owned upload files are removed.
 
 ## Exit codes and telemetry
 

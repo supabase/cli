@@ -205,7 +205,7 @@ describe("durable registry", () => {
   );
 
   it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "lists and claims readable stacks past a sibling directory it cannot access",
+    "lists readable stacks past a sibling directory it cannot access",
     () =>
       run(
         Effect.gen(function* () {
@@ -229,7 +229,6 @@ describe("durable registry", () => {
 
           expect((yield* store.list).map(({ id }) => id)).toEqual([initial.id]);
           expect(reported).toEqual(["locked"]);
-          expect((yield* store.claims).map(({ id }) => id)).toEqual([initial.id]);
         }),
       ),
   );

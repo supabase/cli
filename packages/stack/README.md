@@ -91,6 +91,30 @@ Native PostgreSQL refuses to run as uid 0. When the stack runs as root inside a 
 
 Native PostgreSQL listens only on its socket and reads a stack-generated HBA file, written to the socket directory on every launch, instead of `PGDATA/pg_hba.conf`. It trusts `supabase_admin`, including through the proxied loopback database port, and requires `scram-sha-256` passwords from every other role.
 
+### Public ports
+
+Every public port is reserved, before any listener binds it, in one SQLite registry per OS user at
+`<passwd home>/.supabase/ports.sqlite`. The home is resolved once per process straight from the OS
+user database (`getent passwd <uid>` on Linux, `dscacheutil -q user -a uid <uid>` on macOS), never
+`$HOME` or `SUPABASE_HOME`, and with no override; a process cannot steer the registry's location by
+setting its own environment. The registry is the only authority on which stack owns a port across
+every state root on the machine, so a stopped stack keeps its ports across other
+stacks' starts, and a restart reuses the same ports or fails with a `StackError` whose `conflict`
+field names the port, the endpoint, and either the live holder (`{ stackId, stateRoot }`) or
+`"foreign"` for a process outside the registry. A fixed or previously saved port is never silently
+reassigned; only automatic allocation tries another candidate. A reservation is released when
+`destroy` confirms the stack has nothing left to clean up, or when deleting an individual service
+releases the endpoints only it owned; stopping a stack or killing its owner leaves reservations in
+place. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
+after deleting its state root) is reclaimed lazily by the next stack that needs its port.
+
+Known limitations: on macOS, BSD, and Windows, where the kernel allows overlapping binds, a loopback
+probe before the real bind narrows but cannot close the race with a foreign process binding in the
+same window; two of this user's stacks can never collide, because the registry excludes them. An
+unmounted or otherwise temporarily unreachable state root looks identical to a deleted one and can
+be reclaimed the same way. The registry does not reserve across OS users; isolation between users'
+stacks still relies only on the kernel refusing a second bind.
+
 ## Composition and operation scope
 
 Registering a service does not add it to the application composition. For a fresh composition, `composition.supabase` registers the selected recipes and supplies their standard bindings:

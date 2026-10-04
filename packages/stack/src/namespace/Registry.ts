@@ -89,19 +89,10 @@ export const SavedStack = Schema.Struct({
 });
 export interface SavedStack extends Schema.Schema.Type<typeof SavedStack> {}
 
-const ClaimsDocument = Schema.Struct({ ports: Schema.Array(PortClaim) });
-
-export interface StackClaims {
-  readonly id: string;
-  readonly ports: ReadonlyArray<PortClaim>;
-}
-
 export interface Interface {
   readonly read: (id: string) => Effect.Effect<SavedStack | undefined, NamespaceError>;
   /** Skips each stack entry that stays unreadable after transient retries, reporting it to `onInvalidState`. */
   readonly list: Effect.Effect<ReadonlyArray<SavedStack>, NamespaceError>;
-  /** Decodes only each stack's port claims and silently skips entries that cannot provide them. */
-  readonly claims: Effect.Effect<ReadonlyArray<StackClaims>, NamespaceError>;
   readonly save: (state: SavedStack) => Effect.Effect<void, NamespaceError>;
   readonly remove: (id: string) => Effect.Effect<void, NamespaceError>;
   /** Not reentrant; wrap metadata updates here, while Ports operations acquire this lock themselves. */
@@ -183,18 +174,6 @@ export const make = (
       });
     const list = Effect.fn("Namespace.Registry.list")(() =>
       readEntries(read, (id, error) => options.onInvalidState?.(id, error) ?? Effect.void),
-    );
-    const decodeClaims = Schema.decodeEffect(Schema.fromJsonString(ClaimsDocument));
-    const readClaims = (id: string) =>
-      fs.readFileString(statePath(id)).pipe(
-        retryTransientRead,
-        Effect.flatMap((text) =>
-          decodeClaims(text).pipe(Effect.mapError((cause) => namespaceError("decode", cause))),
-        ),
-        Effect.map(({ ports }): StackClaims => ({ id, ports })),
-      );
-    const claims = Effect.fn("Namespace.Registry.claims")(() =>
-      readEntries(readClaims, () => Effect.void),
     );
     const save = Effect.fn("Namespace.Registry.save")(function* (state: SavedStack) {
       yield* checkId(state.id);
@@ -282,5 +261,5 @@ export const make = (
         ),
     );
 
-    return { read, list: list(), claims: claims(), save, remove, withLock };
+    return { read, list: list(), save, remove, withLock };
   });
