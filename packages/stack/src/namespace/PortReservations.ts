@@ -22,6 +22,8 @@ export interface Interface {
     stackId: string,
     endpoint: string,
   ) => Effect.Effect<number | undefined, NamespaceError>;
+  /** True when any stack, at any state root, holds a public reservation for `port`. */
+  readonly isReserved: (port: number) => Effect.Effect<boolean, NamespaceError>;
   /**
    * Reserves `port` for `(stateRoot, stackId, endpoint)`. Resolves to `undefined` once the row is
    * committed, or the live {@link Holder} already occupying `port` when it is taken.
@@ -240,6 +242,15 @@ const make = Effect.fn("PortReservations.make")(function* (): Effect.fn.Return<
     return isHolderRow(row) ? row : undefined;
   };
 
+  // Untraced: the native backend scan in `Ports.ts` calls this once per candidate port, and its
+  // own span already records the attempt and failure counts for the whole scan.
+  const isReserved = Effect.fnUntraced(function* (port: number) {
+    return yield* Effect.try({
+      try: () => holderOf(port) !== undefined,
+      catch: (cause) => namespaceError("find", cause),
+    });
+  });
+
   // Untraced: `Ports.ts`'s auto scan calls `reserve` and `reclaim` once per candidate port, and its
   // own span already records the attempt and failure counts for the whole scan.
   const reserve = Effect.fnUntraced(function* (
@@ -351,7 +362,7 @@ const make = Effect.fn("PortReservations.make")(function* (): Effect.fn.Return<
     });
   });
 
-  return { find, reserve, reclaim, release, releaseStack };
+  return { find, isReserved, reserve, reclaim, release, releaseStack };
 });
 
 export const layer = Layer.effect(Service, make().pipe(Effect.map(Service.of)));

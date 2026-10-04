@@ -45,6 +45,10 @@ again reuses the same ports. A saved or explicitly requested port already held b
 occupied by a process outside the registry, fails start naming the conflict instead of picking a
 different port; only automatic allocation tries another candidate. On macOS a process can still win
 a narrow race against the pre-bind probe before a brand-new listener exists.
+Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
+auto range and below the OS ephemeral range on every supported platform; this range is not
+configurable, and a host whose ephemeral range has been widened to overlap it reintroduces the
+ephemeral-port race this reservation exists to avoid.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 native on Linux x64/arm64 and macOS arm64. The probe is bounded by 10 seconds. Without a reachable

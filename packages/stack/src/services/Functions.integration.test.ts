@@ -22,7 +22,11 @@ import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import {
+  noContainerClaims,
+  noDirectoryClaims,
+  noPublicPortReservations,
+} from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -104,6 +108,7 @@ describe("service catalog", () => {
             {
               containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
+              isPubliclyReserved: noPublicPortReservations,
               ...dockerOptions(root),
               stackId,
               instanceId,
@@ -168,6 +173,7 @@ describe("service catalog", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             ...options(root),
             stackId,
             instanceId,
@@ -263,6 +269,7 @@ describe("service catalog", () => {
               {
                 containerClaims: noContainerClaims,
                 directoryClaims: noDirectoryClaims,
+                isPubliclyReserved: noPublicPortReservations,
                 ...options(stackRoot),
                 stackId: "d".repeat(64),
                 instanceId: "ancestor",
@@ -336,6 +343,7 @@ describe("service catalog", () => {
             {
               containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
+              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "e".repeat(64),
               instanceId: "deno-config",
@@ -412,6 +420,7 @@ describe("service catalog", () => {
             {
               containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
+              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "f".repeat(64),
               instanceId: "plain-deno-config",
@@ -527,6 +536,7 @@ for (const runtime of ["native", "docker"] as const) {
             {
               containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
+              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "c".repeat(64),
               instanceId: "configured",
@@ -637,6 +647,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       };
       const deps = {
         borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+        isPubliclyReserved: noPublicPortReservations,
         fs: yield* FileSystem.FileSystem,
         path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
         crypto: yield* Crypto.Crypto,
@@ -649,6 +660,7 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
         {
           containerClaims: noContainerClaims,
           directoryClaims: noDirectoryClaims,
+          isPubliclyReserved: noPublicPortReservations,
           stackId: "e".repeat(64),
           instanceId: "windows",
           root: "C:\\Users\\dev\\stack",

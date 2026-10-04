@@ -4,6 +4,7 @@ import type { Effect, Ref } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
 import type { ServiceDefinition } from "../Service.ts";
 import type { ContainerClaims, DirectoryClaims } from "../namespace/Claims.ts";
+import type { PortError } from "../Ports.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
@@ -63,6 +64,8 @@ export interface CatalogOptions {
   readonly containerClaims: ContainerClaims;
   /** Journals directories a service creates outside its data root (for example under `/tmp`). */
   readonly directoryClaims: DirectoryClaims;
+  /** Read-only: true when the per-user registry holds `port` for any stack's public listener. */
+  readonly isPubliclyReserved: (port: number) => Effect.Effect<boolean, PortError>;
 }
 
 export interface CatalogLog {

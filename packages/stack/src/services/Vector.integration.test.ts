@@ -5,7 +5,11 @@ import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import {
+  noContainerClaims,
+  noDirectoryClaims,
+  noPublicPortReservations,
+} from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string, runtime: "docker" | "native") => ({
@@ -17,6 +21,7 @@ const options = (root: string, runtime: "docker" | "native") => ({
   ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
   containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
+  isPubliclyReserved: noPublicPortReservations,
 });
 
 describe("vector recipe", () => {

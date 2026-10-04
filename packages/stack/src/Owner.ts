@@ -20,6 +20,8 @@ import type { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import { PortError } from "./Ports.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { CompositionConfig } from "./Orchestrator.ts";
 import {
@@ -247,6 +249,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const crypto = Context.get(services, Crypto.Crypto);
   const path = Context.get(services, Path.Path);
   const network = yield* Network.Service;
+  const portReservations = yield* PortReservations.Service;
+  const isPubliclyReserved = (port: number) =>
+    portReservations.isReserved(port).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PortError({
+            key: "native",
+            message: "Unable to check the public port reservation registry",
+            cause,
+          }),
+      ),
+    );
   const orchestrator = yield* Orchestrator.make<Entry>();
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
   const definitionGate = yield* Semaphore.make(1);
@@ -365,6 +379,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       helpers,
       containerClaims: claims.containers,
       directoryClaims: claims.directories,
+      isPubliclyReserved,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));
@@ -828,4 +843,5 @@ export const layer = (options: Omit<OwnerOptions, "state">) =>
         runtime: options.saved.runtime,
       }),
     ),
+    Layer.provide(PortReservations.layer),
   );

@@ -2,7 +2,11 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import {
+  noContainerClaims,
+  noDirectoryClaims,
+  noPublicPortReservations,
+} from "../../tests/claims.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-recipe",
@@ -12,6 +16,7 @@ const options = (root: string) => ({
   runtime: "native" as const,
   containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
+  isPubliclyReserved: noPublicPortReservations,
 });
 
 describe("service catalog", () => {

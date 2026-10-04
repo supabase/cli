@@ -369,6 +369,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         spawner,
         container,
         borrowCallerPath,
+        isPubliclyReserved: options.isPubliclyReserved,
       };
       switch (creation.service) {
         case "rest":

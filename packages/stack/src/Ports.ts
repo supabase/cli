@@ -125,10 +125,125 @@ export const probeVacant =
       if (yield* loopbackVacant(platform)(port)) return;
       return yield* new PortError({
         key,
-        message: `Public port ${port} for ${key} at ${host}:${port} is already in use`,
+        message: `Port ${port} for ${key} at ${host}:${port} is already in use`,
         conflict: { port, endpoint: key, holder: "foreign" },
       });
     });
+
+/**
+ * Disjoint from the public auto range (`portBase`..`portBase + portSpan`) and contiguous below it,
+ * so a native backend's direct bind can never land on a port the per-user registry is reserving for
+ * a public listener. Both ranges stay below the OS ephemeral range (ADR 0017).
+ */
+export const nativePortBase = 10000;
+export const nativePortSpan = portBase - nativePortBase;
+/** Co-prime with the span, matching the public scan's stride. */
+const nativePortStride = 257;
+
+export interface NativePortReservation {
+  readonly port: number;
+  readonly server: Net.Server;
+}
+
+const closeNativePort = (server: Net.Server): Effect.Effect<void> =>
+  Effect.callback<void, never>((resume) => {
+    if (!server.listening) {
+      resume(Effect.void);
+      return Effect.void;
+    }
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+const bindNativePort = (
+  key: string,
+  port: number,
+): Effect.Effect<NativePortReservation, PortError> =>
+  Effect.callback<NativePortReservation, PortError>((resume) => {
+    const server = Net.createServer((socket) => socket.destroy());
+    const onError = (cause: Error) =>
+      resume(
+        Effect.fail(
+          new PortError({ key, message: "Unable to reserve native service port", cause }),
+        ),
+      );
+    server.once("error", onError);
+    server.listen({ host: "127.0.0.1", port }, () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        onError(new Error("Native service port reservation returned no address"));
+      } else {
+        resume(Effect.succeed({ port: address.port, server }));
+      }
+    });
+    return Effect.sync(() => {
+      server.off("error", onError);
+      if (server.listening) server.close();
+    });
+  });
+
+/**
+ * Reserves a native backend's private port, hash-seeding the scan from `key` so a reopened
+ * instance starts from the same candidate while separate keys spread out (mirrors the public auto
+ * scan's hash seed). Skips a candidate `isPubliclyReserved` reports, so a native bind can never
+ * take a port the per-user registry holds for a stopped stack's public listener (that stack owns
+ * no live socket to probe or bind against). Otherwise probes with {@link probeVacant} before the
+ * real bind, since a loopback-only bind can silently coexist with a wildcard listener on macOS,
+ * BSD, and Windows. A port a prior attempt in this batch lost is passed in `excluded` so a retry
+ * advances instead of repeating it. Never saved: backend ports are private and are not stable
+ * across restarts.
+ */
+export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
+  (
+    key: string,
+    excluded: ReadonlySet<number>,
+    isPubliclyReserved: (port: number) => Effect.Effect<boolean, PortError>,
+    platform: NodeJS.Platform = process.platform,
+  ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
+    Effect.acquireRelease(
+      Effect.gen(function* () {
+        const probe = probeVacant(platform);
+        const start = Math.abs(Hash.string(key)) % nativePortSpan;
+        let failures = 0;
+        let lastFailure: PortError | undefined;
+        for (let attempt = 0; attempt < nativePortSpan && failures < 64; attempt++) {
+          const port = nativePortBase + ((start + attempt * nativePortStride) % nativePortSpan);
+          if (excluded.has(port)) continue;
+          if (yield* isPubliclyReserved(port)) {
+            failures++;
+            lastFailure = new PortError({
+              key,
+              message: `Port ${port} is reserved by a public listener`,
+            });
+            continue;
+          }
+          const probed = yield* Effect.exit(probe(key, "127.0.0.1", port));
+          if (Exit.isFailure(probed)) {
+            const probeError = Cause.findErrorOption(probed.cause);
+            if (Option.isNone(probeError)) return yield* Effect.failCause(probed.cause);
+            failures++;
+            lastFailure = probeError.value;
+            continue;
+          }
+          const result = yield* Effect.exit(bindNativePort(key, port));
+          if (Exit.isSuccess(result)) return result.value;
+          const error = Cause.findErrorOption(result.cause);
+          if (Option.isNone(error)) return yield* Effect.failCause(result.cause);
+          failures++;
+          lastFailure = error.value;
+        }
+        return yield* new PortError({
+          key,
+          message:
+            lastFailure === undefined
+              ? "No native service port is available"
+              : `No native service port is available: ${lastFailure.message}`,
+          cause: lastFailure,
+        });
+      }),
+      ({ server }) => closeNativePort(server),
+    ),
+);
 
 const resolveRequest = (
   stack: StackNamespace.SavedStack,

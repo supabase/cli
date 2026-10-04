@@ -6,7 +6,11 @@ import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import {
+  noContainerClaims,
+  noDirectoryClaims,
+  noPublicPortReservations,
+} from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -17,6 +21,7 @@ const options = (root: string) => ({
   runtime: "native" as const,
   containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
+  isPubliclyReserved: noPublicPortReservations,
 });
 
 const dockerOptions = (root: string) => ({

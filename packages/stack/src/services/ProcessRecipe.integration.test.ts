@@ -25,6 +25,7 @@ import * as Net from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the collision fixture owns a local HTTP listener.
 import * as NodeHttp from "node:http";
 import { catalogPins, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
+import { nativePortBase, nativePortSpan } from "../Ports.ts";
 import {
   makeArtifactStore,
   type ArtifactRequest,
@@ -46,7 +47,11 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import {
+  noContainerClaims,
+  noDirectoryClaims,
+  noPublicPortReservations,
+} from "../../tests/claims.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -76,6 +81,7 @@ const options: CatalogOptions = {
   runtime: "docker",
   containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
+  isPubliclyReserved: noPublicPortReservations,
 };
 
 const spec: ProcessRecipeSpec<TestCreation> = {
@@ -192,6 +198,7 @@ describe("ProcessRecipe launch cleanup", () => {
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
           const service = yield* makeService(recipe.definition, {
@@ -280,6 +287,7 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+          isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -391,6 +399,7 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+          isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
@@ -406,6 +415,10 @@ describe("ProcessRecipe launch cleanup", () => {
         expect(blocker?.listening).toBe(true);
         expect(ports).toHaveLength(3);
         expect(ports.every((port) => port > 0)).toBe(true);
+        for (const port of ports) {
+          expect(port).toBeGreaterThanOrEqual(nativePortBase);
+          expect(port).toBeLessThan(nativePortBase + nativePortSpan);
+        }
         yield* service.stop;
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
@@ -453,6 +466,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     {
       containerClaims: noContainerClaims,
       directoryClaims: noDirectoryClaims,
+      isPubliclyReserved: noPublicPortReservations,
       stackId: "process-recipe-test",
       instanceId: "instance",
       root: "/unused",
@@ -461,6 +475,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+      isPubliclyReserved: noPublicPortReservations,
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
       crypto: yield* Crypto.Crypto,
@@ -670,6 +685,7 @@ const nativeRestRecipe = Effect.fn(function* (
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+      isPubliclyReserved: noPublicPortReservations,
       fs,
       path,
       crypto,
@@ -940,6 +956,7 @@ describe("process recipe startup", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-race",
             instanceId: "instance",
             root,
@@ -949,6 +966,7 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1017,6 +1035,7 @@ describe("process recipe startup", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-exhaustion",
             instanceId: "instance",
             root,
@@ -1026,6 +1045,7 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1154,6 +1174,7 @@ describe("process recipe startup", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-deadline",
             instanceId: "instance",
             root,
@@ -1163,6 +1184,7 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1219,6 +1241,7 @@ describe("process recipe startup", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-unrelated-failure",
             instanceId: "instance",
             root,
@@ -1228,6 +1251,7 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1326,6 +1350,7 @@ describe("process recipe startup", () => {
           {
             containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
+            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-exit-failure",
             instanceId: "instance",
             root,
@@ -1335,6 +1360,7 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
+            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
