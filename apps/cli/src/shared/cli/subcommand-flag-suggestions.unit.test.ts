@@ -159,7 +159,7 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("also collapses the doubled prefix for a non-choice primitive whose failure text starts with 'Expected' (e.g. an invalid integer flag value)", () => {
-    // Real failure text from effect's schema-backed `Primitive.integer` (also affects `float`,
+    // Real failure text from effect's schema-backed `Primitive.Int` (also affects `float`,
     // `boolean`, and `date`).
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({
@@ -178,7 +178,7 @@ describe("subcommand flag placement suggestions", () => {
   });
 
   it("leaves invalid-value errors whose expected text does not start with 'Expected' unchanged", () => {
-    // Real failure text from effect's `Primitive.keyValuePair`, which never starts with
+    // Real failure text from effect's `Primitive.KeyValuePair`, which never starts with
     // "Expected", so it needs no rewriting.
     const errors = formatCliErrorsForDisplay([
       new CliError.InvalidValue({

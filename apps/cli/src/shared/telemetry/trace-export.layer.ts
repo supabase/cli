@@ -52,7 +52,7 @@ export interface TraceSettings {
 }
 
 const optionalEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(
+  Config.option(Config.String(name)).pipe(
     Effect.map(Option.filter((value) => value.trim().length > 0)),
     Effect.mapError(() => `${name} could not be read`),
   );

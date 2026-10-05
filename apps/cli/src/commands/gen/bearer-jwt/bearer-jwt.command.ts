@@ -15,12 +15,12 @@ const config = {
   // `--role` stays optional at parse time so a missing value is enforced in
   // the handler instead, after telemetry is wired up — see
   // `GenBearerJwtRoleRequiredError`.
-  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
+  role: Flag.String("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
   // The displayed default is cosmetically "anonymous" but the real default
   // stays "" — an omitted `--sub` never puts a `sub` claim in the token at
   // all.
-  sub: Flag.string("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
-  exp: Flag.string("exp").pipe(
+  sub: Flag.String("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
+  exp: Flag.String("exp").pipe(
     Flag.withDescription("Expiry timestamp for this token."),
     Flag.mapTryCatch(
       (value) => parseBearerJwtExp(value),
@@ -28,7 +28,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  validFor: Flag.string("valid-for").pipe(
+  validFor: Flag.String("valid-for").pipe(
     Flag.withDescription("Validity duration for this token."),
     Flag.withDefault("30m"),
     Flag.mapTryCatch(
@@ -36,7 +36,7 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  payload: Flag.string("payload").pipe(
+  payload: Flag.String("payload").pipe(
     Flag.withDescription("Custom claims in JSON format."),
     Flag.withDefault("{}"),
   ),

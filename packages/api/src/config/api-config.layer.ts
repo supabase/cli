@@ -6,10 +6,10 @@ export const DEFAULT_SUPABASE_API_URL = "https://api.supabase.com";
 
 const makeApiConfig = Effect.gen(function* () {
   return ApiConfig.of({
-    baseUrl: yield* Config.string("SUPABASE_API_URL").pipe(
+    baseUrl: yield* Config.String("SUPABASE_API_URL").pipe(
       Config.withDefault(DEFAULT_SUPABASE_API_URL),
     ),
-    accessToken: yield* Config.option(Config.redacted("SUPABASE_ACCESS_TOKEN")),
+    accessToken: yield* Config.option(Config.Redacted("SUPABASE_ACCESS_TOKEN")),
   });
 });
 

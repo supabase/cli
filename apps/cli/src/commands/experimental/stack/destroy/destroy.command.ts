@@ -6,13 +6,13 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackDestroy } from "./destroy.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription(
       "Destroy the stack with this name (defaults to the current project stack).",
     ),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Destroy an existing stack by id or unique id prefix."),
     Flag.optional,
   ),

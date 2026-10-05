@@ -9,7 +9,7 @@ import { migrationDown } from "./down.handler.ts";
 const config = {
   // `--last` is conceptually a uint (default 1); Effect has no uint type, so negatives are
   // rejected explicitly.
-  last: Flag.integer("last").pipe(
+  last: Flag.Int("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.withDefault(1),
     Flag.mapTryCatch(
@@ -22,21 +22,21 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Resets applied migrations on the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Resets applied migrations on the linked project."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Resets applied migrations on the local database."),
     Flag.withDefault(true),
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

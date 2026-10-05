@@ -9,11 +9,11 @@ export const dbSchemaDeclarativeSharedBase = Command.make("declarative").pipe(
   Command.withDescription("Manage declarative database schemas."),
   Command.withShortDescription("Manage declarative database schemas"),
   Command.withSharedFlags({
-    noCache: Flag.boolean("no-cache").pipe(
+    noCache: Flag.Boolean("no-cache").pipe(
       Flag.withDescription("Disable catalog cache and force fresh shadow database setup."),
       Flag.withDefault(false),
     ),
-    strictCoverage: Flag.boolean("strict-coverage").pipe(
+    strictCoverage: Flag.Boolean("strict-coverage").pipe(
       Flag.withDescription(
         "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
       ),

@@ -7,11 +7,11 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { backupsRestore } from "./restore.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  timestamp: Flag.integer("timestamp").pipe(
+  timestamp: Flag.Int("timestamp").pipe(
     Flag.withAlias("t"),
     Flag.withDescription("The recovery time target in seconds since epoch."),
     Flag.optional,

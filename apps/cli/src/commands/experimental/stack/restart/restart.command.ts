@@ -5,11 +5,11 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackRestart } from "./restart.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription("Restart a named stack (defaults to the current project stack)."),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Restart an existing stack by id or unique id prefix."),
     Flag.optional,
   ),

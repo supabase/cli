@@ -7,11 +7,11 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { ssoRemove } from "./remove.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  providerId: Argument.string("provider-id").pipe(
+  providerId: Argument.String("provider-id").pipe(
     Argument.withDescription("The ID of the SSO identity provider to remove."),
   ),
 };

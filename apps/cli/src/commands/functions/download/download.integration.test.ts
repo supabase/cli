@@ -2292,7 +2292,7 @@ describe("functions download", () => {
             ),
           ).toHaveLength(1);
           const ambient = yield* Config.option(
-            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+            Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
           ).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,

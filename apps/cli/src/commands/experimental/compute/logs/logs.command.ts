@@ -20,29 +20,29 @@ import { computeLogs } from "./logs.handler.ts";
 const MAX_TAIL = 1000;
 
 const config = {
-  name: Argument.string("name").pipe(Argument.withDescription("Compute to read logs for.")),
-  projectRef: Flag.string("project-ref").pipe(
+  name: Argument.String("name").pipe(Argument.withDescription("Compute to read logs for.")),
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  kind: Flag.choice("kind", COMPUTE_LOG_KINDS).pipe(
+  kind: Flag.Literals("kind", COMPUTE_LOG_KINDS).pipe(
     Flag.withDescription(
       "Limit to one log stream: app (the compute's own output), requests (HTTP access), " +
         "builds (deploy lifecycle). Defaults to all three.",
     ),
     Flag.optional,
   ),
-  follow: Flag.boolean("follow").pipe(
+  follow: Flag.Boolean("follow").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
       `Keep printing new lines until interrupted, polling every ${COMPUTE_LOG_POLL_SECONDS} seconds.`,
     ),
-    // Required: `Flag.boolean` alone builds a *required* param, which breaks
+    // Required: `Flag.Boolean` alone builds a *required* param, which breaks
     // invocations that omit the flag. `boolean-flag-defaults.unit.test.ts`
     // walks the command tree and fails any bare boolean.
     Flag.withDefault(false),
   ),
-  tail: Flag.integer("tail").pipe(
+  tail: Flag.Int("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0 && tail <= MAX_TAIL,
       (tail) => `Expected --tail between 0 and ${MAX_TAIL}, got ${tail}`,

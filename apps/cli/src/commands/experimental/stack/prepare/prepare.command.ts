@@ -6,19 +6,19 @@ import { stackPrepare } from "./prepare.handler.ts";
 import { STACK_PREPARABLE_CAPABILITIES } from "../start/start.options.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
-  stackId: Flag.string("stack-id").pipe(
+  stack: Flag.String("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Open an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  runtime: Flag.choice("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
+  runtime: Flag.Literals("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
     Flag.withDescription(
       "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
     ),
     Flag.withDefault("auto" as const),
   ),
   capability: Flag.atMost(
-    Flag.choice("capability", STACK_PREPARABLE_CAPABILITIES),
+    Flag.Literals("capability", STACK_PREPARABLE_CAPABILITIES),
     STACK_PREPARABLE_CAPABILITIES.length,
   ).pipe(Flag.withDescription("Capability to prepare (repeatable).")),
 } as const;

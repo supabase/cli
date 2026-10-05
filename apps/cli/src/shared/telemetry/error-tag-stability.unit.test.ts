@@ -191,7 +191,7 @@ describe("error tag stability", () => {
     Effect.gen(function* () {
       const currentTagSet = new Set(productionDeclarations.map((declaration) => declaration.tag));
 
-      const updateFixture = yield* Config.option(Config.string("UPDATE_ERROR_TAGS_FIXTURE"));
+      const updateFixture = yield* Config.option(Config.String("UPDATE_ERROR_TAGS_FIXTURE"));
       if (Option.isSome(updateFixture) && updateFixture.value === "1") {
         yield* writeFixture(currentTagSet);
       }

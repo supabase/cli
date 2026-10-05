@@ -23,12 +23,12 @@ export const postgresConfigDeleteConfigFlag = stringSliceFlag(
 );
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   config: postgresConfigDeleteConfigFlag,
-  noRestart: Flag.boolean("no-restart").pipe(
+  noRestart: Flag.Boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
     Flag.withDefault(false),
   ),

@@ -7,26 +7,26 @@ import { dbLint } from "./lint.handler.ts";
 import { dbLintRuntimeLayer } from "./lint.layers.ts";
 
 const config = {
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Lints the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Lints the linked project for schema errors."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Lints the local database for schema errors."),
     Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
@@ -35,11 +35,11 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  level: Flag.choice("level", ["warning", "error"] as const).pipe(
+  level: Flag.Literals("level", ["warning", "error"] as const).pipe(
     Flag.withDescription("Error level to emit."),
     Flag.optional,
   ),
-  failOn: Flag.choice("fail-on", ["none", "warning", "error"] as const).pipe(
+  failOn: Flag.Literals("fail-on", ["none", "warning", "error"] as const).pipe(
     Flag.withDescription("Error level to exit with non-zero status."),
     Flag.optional,
   ),
@@ -62,7 +62,7 @@ export const dbLintCommand = Command.make("lint", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
-        // level/fail-on are auto-detected as safe (Flag.choice); --schema and
+        // level/fail-on are auto-detected as safe (Flag.Literals); --schema and
         // --project-ref stay redacted (no established safelist).
         config,
         aliases: { s: "schema" },

@@ -6,12 +6,12 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackStatus } from "./status.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
-  stackId: Flag.string("stack-id").pipe(
+  stack: Flag.String("stack").pipe(Flag.withDescription("Inspect a named stack."), Flag.optional),
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Inspect an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  env: Flag.boolean("env").pipe(
+  env: Flag.Boolean("env").pipe(
     Flag.withDescription("Export connection URLs and credentials as environment variables."),
     Flag.withDefault(false),
   ),

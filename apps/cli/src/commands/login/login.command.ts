@@ -7,15 +7,15 @@ import { loginRuntimeLayer } from "./login.layers.ts";
 import { login } from "./login.handler.ts";
 
 const config = {
-  token: Flag.string("token").pipe(
+  token: Flag.String("token").pipe(
     Flag.withDescription("Use provided token instead of automatic login flow."),
     Flag.optional,
   ),
-  name: Flag.string("name").pipe(
+  name: Flag.String("name").pipe(
     Flag.withDescription("Name that will be used to store token in your settings."),
     Flag.optional,
   ),
-  noBrowser: Flag.boolean("no-browser").pipe(
+  noBrowser: Flag.Boolean("no-browser").pipe(
     Flag.withDescription("Do not open browser automatically."),
     Flag.withDefault(false),
   ),

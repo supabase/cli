@@ -22,28 +22,28 @@ import { storageCp } from "./cp.handler.ts";
 // Flags are declared before `src`/`dst` on purpose: Effect CLI validates flags before positional
 // args in declaration order, so a malformed `--jobs` must fail before a missing-operand error.
 const config = {
-  recursive: Flag.boolean("recursive").pipe(
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively copy a directory."),
     Flag.withDefault(false),
   ),
-  cacheControl: Flag.string("cache-control").pipe(
+  cacheControl: Flag.String("cache-control").pipe(
     Flag.withDescription('Custom Cache-Control header for HTTP upload. (default "max-age=3600")'),
     Flag.optional,
   ),
-  contentType: Flag.string("content-type").pipe(
+  contentType: Flag.String("content-type").pipe(
     Flag.withDescription('Custom Content-Type header for HTTP upload. (default "auto-detect")'),
     Flag.optional,
   ),
-  jobs: Flag.string("jobs").pipe(
+  jobs: Flag.String("jobs").pipe(
     Flag.withAlias("j"),
-    // Declared as a string, not `Flag.integer`, so the raw token reaches the parser below;
+    // Declared as a string, not `Flag.Int`, so the raw token reaches the parser below;
     // `withMetavar` keeps the `--jobs, -j integer` help token.
     Flag.withMetavar("integer"),
     Flag.withDescription("Maximum number of parallel jobs. (default 1)"),
     // `--jobs` is a pflag-style uint: a non-uint token must fail at parse time, before the
     // experimental gate, the handler, or any telemetry, with pflag's exact message and original
-    // spelling preserved. `Flag.integer` loses that fidelity (`-0` normalizes to negative zero,
+    // spelling preserved. `Flag.Int` loses that fidelity (`-0` normalizes to negative zero,
     // which a `value < 0` check would wrongly accept), so this parses the raw token with
     // `parseUintBase0` instead; it must sit before `Flag.optional`, which passes `InvalidValue`
     // through untouched.
@@ -62,8 +62,8 @@ const config = {
   linked: StorageLinkedFlagDef,
   local: StorageLocalFlagDef,
   projectRef: StorageProjectRefFlagDef,
-  src: Argument.string("src").pipe(Argument.withDescription("Source path to copy from.")),
-  dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to copy to.")),
+  src: Argument.String("src").pipe(Argument.withDescription("Source path to copy from.")),
+  dst: Argument.String("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
 
 export type StorageCpFlags = CliCommand.Command.Config.Infer<typeof config>;

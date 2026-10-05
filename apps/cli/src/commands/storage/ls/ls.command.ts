@@ -16,11 +16,11 @@ import {
 import { storageLs } from "./ls.handler.ts";
 
 const config = {
-  path: Argument.string("path").pipe(
+  path: Argument.String("path").pipe(
     Argument.withDescription("Storage path to list (e.g. ss:///bucket/docs)."),
     Argument.optional,
   ),
-  recursive: Flag.boolean("recursive").pipe(
+  recursive: Flag.Boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively list a directory."),
     Flag.withDefault(false),

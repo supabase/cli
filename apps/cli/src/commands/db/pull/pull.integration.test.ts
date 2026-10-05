@@ -188,7 +188,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         }
         const stdout = opts.edgeStdout ?? "";
         if (stdout.trim().length === 0) {
-          return Config.option(Config.string("PGDELTA_DEBUG")).pipe(
+          return Config.option(Config.String("PGDELTA_DEBUG")).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({ preserveEmptyStrings: true }),

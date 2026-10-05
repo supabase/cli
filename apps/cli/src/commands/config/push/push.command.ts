@@ -13,7 +13,7 @@ import { configPush } from "./push.handler.ts";
 const config = {
   // Accepts either a project ref or a branch name/UUID of the linked project; there's no
   // separate --target flag.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
     ),

@@ -38,26 +38,26 @@ const onRunFailure = (error: TestDbRunError | TestDbNoTestsError) =>
  * families — see "Hoist Before You Duplicate" in `apps/cli/CLAUDE.md`.
  */
 export const testDbConfig = {
-  paths: Argument.string("path").pipe(
+  paths: Argument.String("path").pipe(
     Argument.withDescription("Paths to test files or directories."),
     Argument.variadic(),
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Tests the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Runs pgTAP tests on the linked project."),
     Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Runs pgTAP tests on the local database."),
     Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

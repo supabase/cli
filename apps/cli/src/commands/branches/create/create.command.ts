@@ -51,37 +51,37 @@ const BRANCH_SIZES = [
 ] as const;
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("Name for the new branch."),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  region: Flag.choice("region", BRANCH_REGIONS).pipe(
+  region: Flag.Literals("region", BRANCH_REGIONS).pipe(
     Flag.withDescription("Select a region to deploy the branch database."),
     Flag.optional,
   ),
-  size: Flag.choice("size", BRANCH_SIZES).pipe(
+  size: Flag.Literals("size", BRANCH_SIZES).pipe(
     Flag.withDescription("Select a desired instance size for the branch database."),
     Flag.optional,
   ),
   // Optional so the handler can distinguish "flag explicitly set false" from "flag absent":
   // `--persistent`/`--no-persistent` set `Option.some(true|false)`; absent stays `Option.none()`.
-  persistent: Flag.boolean("persistent").pipe(
+  persistent: Flag.Boolean("persistent").pipe(
     Flag.withDescription("Whether to create a persistent branch."),
     Flag.optional,
   ),
-  withData: Flag.boolean("with-data").pipe(
+  withData: Flag.Boolean("with-data").pipe(
     Flag.withDescription("Whether to clone production data to the branch database."),
     Flag.optional,
   ),
-  notifyUrl: Flag.string("notify-url").pipe(
+  notifyUrl: Flag.String("notify-url").pipe(
     Flag.withDescription("URL to notify when branch is active healthy."),
     Flag.optional,
   ),
-  gitBranch: Flag.string("git-branch").pipe(
+  gitBranch: Flag.String("git-branch").pipe(
     Flag.withDescription("Associate a git branch with the new preview branch."),
     Flag.optional,
   ),

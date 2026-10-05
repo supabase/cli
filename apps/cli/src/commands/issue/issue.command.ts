@@ -6,13 +6,13 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { issueBug, issueDocs, issueFeature } from "./issue.handler.ts";
 
-const issueNoBrowserFlag = Flag.boolean("no-browser").pipe(
+const issueNoBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser."),
   Flag.withDefault(false),
 );
 
 const issueOptionalTextFlag = (name: string, description: string) =>
-  Flag.string(name).pipe(Flag.withDescription(description), Flag.optional);
+  Flag.String(name).pipe(Flag.withDescription(description), Flag.optional);
 
 const issueCommonContextFlag = issueOptionalTextFlag(
   "additional-context",
@@ -38,7 +38,7 @@ const issueBugConfig = {
 } as const;
 
 const issueFeatureConfig = {
-  existingIssues: Flag.boolean("existing-issues").pipe(
+  existingIssues: Flag.Boolean("existing-issues").pipe(
     Flag.withDescription("Prefill the existing issues checklist."),
     Flag.withDefault(false),
   ),

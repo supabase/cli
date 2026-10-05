@@ -13,10 +13,10 @@ import { functionsNew } from "./new.handler.ts";
 const AUTH_MODE_VALUES = ["none", "apikey", "user"] as const;
 
 const config = {
-  functionName: Argument.string("Function name").pipe(
+  functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to create."),
   ),
-  auth: Flag.choice("auth", AUTH_MODE_VALUES).pipe(
+  auth: Flag.Literals("auth", AUTH_MODE_VALUES).pipe(
     Flag.withDescription("use a specific auth mode"),
     Flag.withDefault("apikey" as const),
   ),

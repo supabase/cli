@@ -7,13 +7,13 @@ import { notebooksProjectRefSafeFlags } from "../notebooks.shared.ts";
 import { notebooksPull } from "./pull.handler.ts";
 
 const config = {
-  notebookId: Argument.string("Notebook id").pipe(
+  notebookId: Argument.String("Notebook id").pipe(
     Argument.withDescription(
       "UUID of the notebook to replace locally. Pulls only locally missing notebooks if omitted.",
     ),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

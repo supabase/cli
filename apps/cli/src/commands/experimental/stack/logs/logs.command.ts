@@ -5,30 +5,30 @@ import { withCommandTelemetry } from "../../../../telemetry/command-telemetry.ts
 import { stackLogs } from "./logs.handler.ts";
 
 const config = {
-  stack: Flag.string("stack").pipe(
+  stack: Flag.String("stack").pipe(
     Flag.withDescription(
       "Select an existing stack by name (defaults to the current project stack).",
     ),
     Flag.optional,
   ),
-  stackId: Flag.string("stack-id").pipe(
+  stackId: Flag.String("stack-id").pipe(
     Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
-  service: Flag.string("service").pipe(
+  service: Flag.String("service").pipe(
     Flag.withDescription(
       "Read one service kind or instance ID; repeat to select several. Defaults to composition members.",
     ),
     Flag.atLeast(0),
   ),
-  follow: Flag.boolean("follow").pipe(
+  follow: Flag.Boolean("follow").pipe(
     Flag.withAlias("f"),
     Flag.withDescription(
       "After the history, keep streaming new lines until interrupted; requires a running stack.",
     ),
     Flag.withDefault(false),
   ),
-  tail: Flag.integer("tail").pipe(
+  tail: Flag.Int("tail").pipe(
     Flag.filter(
       (tail) => tail >= 0,
       (tail) => `Expected --tail to be 0 or more, got ${tail}`,
@@ -38,7 +38,7 @@ const config = {
     ),
     Flag.withDefault(200),
   ),
-  since: Flag.string("since").pipe(
+  since: Flag.String("since").pipe(
     Flag.withDescription(
       "Only print lines since a duration ago (10m, 1h30m), an ISO-8601 time, or start for each service's latest launch.",
     ),

@@ -7,11 +7,11 @@ import { notebooksProjectRefSafeFlags } from "../notebooks.shared.ts";
 import { notebooksPush } from "./push.handler.ts";
 
 const config = {
-  notebookName: Argument.string("Notebook name").pipe(
+  notebookName: Argument.String("Notebook name").pipe(
     Argument.withDescription("Name of the notebook to push. Pushes all if omitted."),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

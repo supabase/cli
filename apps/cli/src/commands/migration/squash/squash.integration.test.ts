@@ -836,7 +836,7 @@ describe("migration squash", () => {
           // Reverted once the command's scope closes; never leaks into a later command in
           // the same process.
           const ambient = yield* Config.option(
-            Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
+            Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY"),
           ).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,

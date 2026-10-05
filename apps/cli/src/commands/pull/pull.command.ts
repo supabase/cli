@@ -11,29 +11,29 @@ import { pullRuntimeLayer } from "./pull.layers.ts";
 
 const config = {
   // Accepts either a project ref or a branch name of the linked project — no separate `--target`.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
     ),
     Flag.optional,
   ),
-  remoteLabel: Flag.string("remote-label").pipe(
+  remoteLabel: Flag.String("remote-label").pipe(
     Flag.withDescription(
       "Name of the [remotes.*] block the config step writes into, overriding the block it would otherwise reuse or create.",
     ),
     Flag.optional,
   ),
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription("Show what would be pulled without writing or changing anything."),
     Flag.withDefault(false),
   ),
-  force: Flag.boolean("force").pipe(
+  force: Flag.Boolean("force").pipe(
     Flag.withDescription(
       "Write even when supabase/config.toml (or config.json), supabase/migrations, or supabase/functions has uncommitted or untracked changes in git.",
     ),
     Flag.withDefault(false),
   ),
-  withMigrationHistory: Flag.boolean("with-migration-history").pipe(
+  withMigrationHistory: Flag.Boolean("with-migration-history").pipe(
     Flag.withDescription(
       "Fetch the remote migration history table into supabase/migrations, even when it already has files. Runs automatically when supabase/migrations is missing or empty.",
     ),

@@ -66,7 +66,7 @@ export function userGlobalFlagParams(command: Command.Command.Any): ReadonlyArra
 }
 
 /**
- * `choiceKeys` (the valid value set for `Flag.choice`/`Flag.choiceWithValue`) is attached to
+ * `choiceKeys` (the valid value set for `Flag.Literals`/`Flag.ChoiceWithValue`) is attached to
  * the `Primitive<A>` at runtime but carries an `@internal` tag and is absent from the public
  * type, so this narrows through the same runtime type-guard idiom as `CommandInternals` above.
  */

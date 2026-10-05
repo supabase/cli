@@ -7,7 +7,7 @@ import { dbStart } from "./start.handler.ts";
 import { dbStartRuntimeLayer } from "./start.layers.ts";
 
 const config = {
-  fromBackup: Flag.string("from-backup").pipe(
+  fromBackup: Flag.String("from-backup").pipe(
     Flag.withDescription("Path to a logical backup file."),
     Flag.optional,
   ),

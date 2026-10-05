@@ -7,7 +7,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { orgsCreate } from "./create.handler.ts";
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("Display name for the new organization."),
   ),
 };

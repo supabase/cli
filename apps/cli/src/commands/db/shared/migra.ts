@@ -101,7 +101,7 @@ where pd.deptype is null
   and pn.nspowner::regrole::text != 'supabase_admin'
 order by pn.nspname`;
 
-const isSslDebugEnabled = Config.string("SUPABASE_SSL_DEBUG").pipe(
+const isSslDebugEnabled = Config.String("SUPABASE_SSL_DEBUG").pipe(
   Config.withDefault(""),
   Effect.map((value) => value.toLowerCase() === "true"),
   Effect.orElseSucceed(() => false),

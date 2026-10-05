@@ -414,7 +414,7 @@ const hostError = (pathname: string) => (error: PlatformError.PlatformError) =>
 const unknownHostError = (pathname: string) => (error: PlatformError.PlatformError) =>
   new Cause.UnknownError(hostError(pathname)(error), "An error occurred in Effect.tryPromise");
 
-const debugEnvEnabled = Config.option(Config.string("DEBUG")).pipe(
+const debugEnvEnabled = Config.option(Config.String("DEBUG")).pipe(
   Effect.map(Option.exists((value) => value === "true")),
   Effect.orDie,
 );

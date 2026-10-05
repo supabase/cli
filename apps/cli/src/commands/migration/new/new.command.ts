@@ -7,7 +7,7 @@ import { migrationNewRuntimeLayer } from "../migration.layers.ts";
 import { migrationNew } from "./new.handler.ts";
 
 const config = {
-  migrationName: Argument.string("migration name").pipe(
+  migrationName: Argument.String("migration name").pipe(
     Argument.withDescription("Name for the new migration file."),
   ),
 } as const;

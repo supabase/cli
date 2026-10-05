@@ -2210,7 +2210,7 @@ describe("db diff", () => {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
         });
         const ambientRegistry = () =>
-          Config.option(Config.string("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
+          Config.option(Config.String("SUPABASE_INTERNAL_IMAGE_REGISTRY")).pipe(
             Effect.provideService(
               ConfigProvider.ConfigProvider,
               ConfigProvider.fromEnv({ preserveEmptyStrings: true }),

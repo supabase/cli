@@ -10,7 +10,7 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { encryptionUpdateRootKey } from "./update-root-key.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),

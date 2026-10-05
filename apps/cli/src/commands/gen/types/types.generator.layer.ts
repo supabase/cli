@@ -55,7 +55,7 @@ export const mapRegistryError = (lang: string, cause: unknown): GenTypesGenerate
 };
 
 const optionalEnv = (name: string) =>
-  Config.option(Config.string(name)).pipe(Effect.map(Option.getOrUndefined));
+  Config.option(Config.String(name)).pipe(Effect.map(Option.getOrUndefined));
 
 /**
  * Live `GenTypesGenerator`: opens a `DbConnection` session, adapts it to typegen's `Queryable`

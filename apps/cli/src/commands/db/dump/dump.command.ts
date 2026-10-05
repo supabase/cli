@@ -27,22 +27,22 @@ const onRunFailure = (error: DbDumpRunError) =>
   });
 
 const config = {
-  dryRun: Flag.boolean("dry-run").pipe(
+  dryRun: Flag.Boolean("dry-run").pipe(
     Flag.withDescription("Prints the pg_dump script that would be executed."),
     Flag.withDefault(false),
   ),
   // Mutually-exclusive-group flags (data-only/role-only/keep-comments, and the
   // db-url/linked/local target group) are modelled as `Option` so presence, not
   // value, drives validation — `--data-only=false` still counts as set.
-  dataOnly: Flag.boolean("data-only").pipe(
+  dataOnly: Flag.Boolean("data-only").pipe(
     Flag.withDescription("Dumps only data records."),
     Flag.optional,
   ),
-  useCopy: Flag.boolean("use-copy").pipe(
+  useCopy: Flag.Boolean("use-copy").pipe(
     Flag.withDescription("Use copy statements in place of inserts."),
     Flag.withDefault(false),
   ),
-  exclude: Flag.string("exclude").pipe(
+  exclude: Flag.String("exclude").pipe(
     Flag.withAlias("x"),
     Flag.withDescription("List of schema.tables to exclude from data-only dump."),
     Flag.atLeast(0),
@@ -52,44 +52,44 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  roleOnly: Flag.boolean("role-only").pipe(
+  roleOnly: Flag.Boolean("role-only").pipe(
     Flag.withDescription("Dumps only cluster roles."),
     Flag.optional,
   ),
-  keepComments: Flag.boolean("keep-comments").pipe(
+  keepComments: Flag.Boolean("keep-comments").pipe(
     Flag.withDescription("Keeps commented lines from pg_dump output."),
     Flag.optional,
   ),
-  file: Flag.string("file").pipe(
+  file: Flag.String("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("File path to save the dumped contents."),
     Flag.optional,
   ),
-  dbUrl: Flag.string("db-url").pipe(
+  dbUrl: Flag.String("db-url").pipe(
     Flag.withDescription(
       "Dumps from the database specified by the connection string (must be percent-encoded).",
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(
+  linked: Flag.Boolean("linked").pipe(
     Flag.withDescription("Dumps from the linked project."),
     Flag.optional,
   ),
-  local: Flag.boolean("local").pipe(
+  local: Flag.Boolean("local").pipe(
     Flag.withDescription("Dumps from the local database."),
     Flag.optional,
   ),
   // TS-only override of the linked project ref — see push.command.ts.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  password: Flag.string("password").pipe(
+  password: Flag.String("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
   ),
-  schema: Flag.string("schema").pipe(
+  schema: Flag.String("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),

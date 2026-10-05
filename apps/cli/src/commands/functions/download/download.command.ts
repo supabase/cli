@@ -7,24 +7,24 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { functionsDownload } from "./download.handler.ts";
 
 const config = {
-  functionName: Argument.string("Function name").pipe(
+  functionName: Argument.String("Function name").pipe(
     Argument.withDescription("Name of the Function to download. Downloads all if omitted."),
     Argument.optional,
   ),
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  useApi: Flag.boolean("use-api").pipe(
+  useApi: Flag.Boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
     Flag.withDefault(false),
   ),
-  useDocker: Flag.boolean("use-docker").pipe(
+  useDocker: Flag.Boolean("use-docker").pipe(
     Flag.withDescription("Use Docker to unbundle functions locally."),
     Flag.withDefault(true),
     Flag.withHidden,
   ),
-  legacyBundle: Flag.boolean("legacy-bundle").pipe(
+  legacyBundle: Flag.Boolean("legacy-bundle").pipe(
     Flag.withDescription("Use legacy bundling."),
     Flag.withDefault(false),
     Flag.withHidden,

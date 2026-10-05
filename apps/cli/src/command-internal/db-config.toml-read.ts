@@ -762,7 +762,7 @@ export const resolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string 
 const DEFAULT_SUPABASE_ENV = "development";
 
 export const configEnvOption = Effect.fnUntraced(function* (name: string) {
-  return yield* Config.option(Config.string(name)).pipe(
+  return yield* Config.option(Config.String(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),
     ),

@@ -11,13 +11,13 @@ import { configDiff } from "./diff.handler.ts";
 
 const config = {
   // Accepts either a project ref or a branch of the linked project; no separate `--target` flag.
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription(
       "Project ref of the Supabase project, or the name (or UUID) of one of its branches. Values that are exactly 20 lowercase letters are always treated as project refs.",
     ),
     Flag.optional,
   ),
-  exitCode: Flag.boolean("exit-code").pipe(
+  exitCode: Flag.Boolean("exit-code").pipe(
     Flag.withDescription(
       "Exit with status 2 when any difference is found (errors keep exiting 1).",
     ),

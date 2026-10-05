@@ -323,7 +323,7 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   // Loads the dotenv cascade explicitly before `loadCliConfig` decodes `env(...)` TOML
   // references — `loadCliConfig`'s own internal env resolution covers only
   // `supabase/.env[.local]`, not `.env.<SUPABASE_ENV>[.local]` or `<workdir>/.env`.
-  const supabaseEnv = yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+  const supabaseEnv = yield* Config.option(Config.String("SUPABASE_ENV")).pipe(
     Effect.mapError(() =>
       onConfigParseError("failed to resolve environment variable: SUPABASE_ENV"),
     ),

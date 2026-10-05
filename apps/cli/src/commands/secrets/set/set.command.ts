@@ -7,15 +7,15 @@ import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";
 import { secretsSet } from "./set.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  envFile: Flag.string("env-file").pipe(
+  envFile: Flag.String("env-file").pipe(
     Flag.withDescription("Read secrets from a .env file."),
     Flag.optional,
   ),
-  secrets: Argument.string("NAME=VALUE").pipe(
+  secrets: Argument.String("NAME=VALUE").pipe(
     Argument.withDescription("Secret name=value pairs to set."),
     Argument.variadic(),
   ),

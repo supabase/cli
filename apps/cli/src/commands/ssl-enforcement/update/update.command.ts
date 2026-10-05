@@ -13,17 +13,17 @@ import {
 import { sslEnforcementUpdate } from "./update.handler.ts";
 
 const config = {
-  projectRef: Flag.string("project-ref").pipe(
+  projectRef: Flag.String("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  enableDbSslEnforcement: Flag.boolean("enable-db-ssl-enforcement").pipe(
+  enableDbSslEnforcement: Flag.Boolean("enable-db-ssl-enforcement").pipe(
     Flag.withDescription(
       "Whether the DB should enable SSL enforcement for all external connections.",
     ),
     Flag.withDefault(false),
   ),
-  disableDbSslEnforcement: Flag.boolean("disable-db-ssl-enforcement").pipe(
+  disableDbSslEnforcement: Flag.Boolean("disable-db-ssl-enforcement").pipe(
     Flag.withDescription(
       "Whether the DB should disable SSL enforcement for all external connections.",
     ),

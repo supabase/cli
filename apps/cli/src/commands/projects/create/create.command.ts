@@ -54,49 +54,49 @@ const INSTANCE_SIZES = [
 ] as const;
 
 const config = {
-  name: Argument.string("name").pipe(
+  name: Argument.String("name").pipe(
     Argument.withDescription("Name of the project to create."),
     Argument.optional,
   ),
-  orgId: Flag.string("org-id").pipe(
+  orgId: Flag.String("org-id").pipe(
     Flag.withDescription("Organization ID to create the project in."),
     Flag.optional,
   ),
-  dbPassword: Flag.string("db-password").pipe(
+  dbPassword: Flag.String("db-password").pipe(
     Flag.withDescription("Database password of the project."),
     Flag.optional,
   ),
-  region: Flag.choice("region", AWS_REGIONS).pipe(
+  region: Flag.Literals("region", AWS_REGIONS).pipe(
     Flag.withDescription("Select a region close to you for the best performance."),
     Flag.optional,
   ),
-  size: Flag.choice("size", INSTANCE_SIZES).pipe(
+  size: Flag.Literals("size", INSTANCE_SIZES).pipe(
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
-  highAvailability: Flag.boolean("high-availability").pipe(
+  highAvailability: Flag.Boolean("high-availability").pipe(
     Flag.withDescription("Enable high availability for the project."),
     Flag.optional,
   ),
   // Hidden and `--experimental`-gated: the upstream OpenAPI spec marks these fields deprecated
   // even though the API accepts them, restored via `packages/api/scripts/openapi-overrides.json`.
-  releaseChannel: Flag.choice("release-channel", RELEASE_CHANNELS).pipe(
+  releaseChannel: Flag.Literals("release-channel", RELEASE_CHANNELS).pipe(
     Flag.withDescription("Select a release channel for the project."),
     Flag.optional,
     Flag.withHidden,
   ),
-  postgresEngine: Flag.choice("postgres-engine", POSTGRES_ENGINES).pipe(
+  postgresEngine: Flag.Literals("postgres-engine", POSTGRES_ENGINES).pipe(
     Flag.withDescription("Select the Postgres engine for the project."),
     Flag.optional,
     Flag.withHidden,
   ),
-  interactive: Flag.boolean("interactive").pipe(
+  interactive: Flag.Boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode."),
     Flag.withAlias("i"),
     Flag.optional,
     Flag.withHidden,
   ),
-  plan: Flag.string("plan").pipe(
+  plan: Flag.String("plan").pipe(
     Flag.withDescription("Select a plan that suits your needs."),
     Flag.optional,
     Flag.withHidden,
@@ -118,7 +118,7 @@ export const projectsCreateCommand = Command.make("create", config).pipe(
     projectsCreate(flags).pipe(
       // `high-availability` is omitted from `safeFlags` since boolean flags are always logged
       // verbatim regardless of that list. `config` auto-detects `region`/`size`/`release-channel`/
-      // `postgres-engine` as safe since they're `Flag.choice`.
+      // `postgres-engine` as safe since they're `Flag.Literals`.
       withCommandTelemetry({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),
