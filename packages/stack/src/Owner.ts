@@ -65,6 +65,7 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
+import { DockerDatabaseStorageError } from "./storage/DockerDatabaseStorage.ts";
 import * as Claims from "./namespace/Claims.ts";
 import { namespaceError } from "./namespace/Capabilities.ts";
 import { lstatPath } from "./namespace/drivers/FileSystem.ts";
@@ -227,32 +228,35 @@ const rpcError = (operation: string) =>
  * removal, or a `DockerDatabaseStorageError` from database volume cleanup, among others), so the
  * daemon's own unreachable-daemon phrasing in the message is the one signal common to all of them.
  */
+/**
+ * A container engine confirmed unreachable (F5), checked as a typed reason through the cause
+ * chain rather than by matching message text: a direct `ContainerError` from workload removal, or
+ * a `DockerDatabaseStorageError` from database volume cleanup, whose own `reason` field is set
+ * once, at the raw engine CLI invocation that is the only place either module can observe it.
+ */
 const engineUnreachableCleanup = (error: ServiceError) =>
-  Container.engineUnreachableMessage(error.message);
+  (error.cause instanceof Container.ContainerError &&
+    error.cause.reason === "engine-unavailable") ||
+  (Schema.is(DockerDatabaseStorageError)(error.cause) &&
+    error.cause.reason === "engine-unavailable");
 
 /**
- * Backoff for abandonment cleanup retries: bounded delay, and a generous but finite overall budget.
- * Per F6's final decision, cleanup should retry until it is confirmed or the engine is confirmed
- * permanently unreachable, not give up merely because a short fixed time budget ran out while the
- * engine might still recover — so the engine-unreachable check (below) is the primary, fast give-up
- * path. This budget is a backstop, not the intended exit: deleting a stack's whole state root out
- * from under a live workload can fail its stop/cleanup for reasons this predicate cannot name (for
- * example a mount source that disappeared with it), and an owner that retries such a failure forever
- * would violate the one invariant F6 exists to guarantee — that an abandoned owner always exits.
+ * Backoff for abandonment cleanup retries: bounded delay, unbounded attempts. Per F6's final
+ * decision, cleanup retries until it is confirmed or the engine is confirmed permanently
+ * unreachable — never until a fixed time budget runs out while the engine might still recover.
  */
 const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(5))),
   ),
-  Schedule.upTo({ duration: "2 minutes" }),
 );
 
 /**
  * Cleans up one abandoned instance through the same confirmed, serialized execution path destroy
  * uses (`core.removeData`, under the service's execution lock, retrying only steps a previous
  * attempt didn't finish), but without a `confirm` step: abandonment never touches the registration.
- * Retries transient failures; a confirmed-unreachable engine, or the backstop budget above, is
- * logged and left behind, so the owner's exit is never blocked indefinitely (F1, F5).
+ * Retries transient failures; only a confirmed-unreachable engine is logged and left behind, so a
+ * recoverable failure never blocks the owner's exit (F1, F5).
  */
 const cleanupAbandonedInstance = (entry: Entry) =>
   entry.core.removeData().pipe(
@@ -864,14 +868,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     namespace: {
       // Shutdown drain (F5): accept closes on every listener before any service stops, and the
       // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
-      stop: network
-        .drain(Network.SHUTDOWN_DRAIN_DEADLINE)
-        .pipe(
-          Effect.andThen(orchestrator.stopNamespace),
-          Effect.andThen(sweep),
-          definitionGate.withPermits(1),
-          Effect.withSpan("Owner.stopNamespace"),
-        ),
+      stop: network.drain.pipe(
+        Effect.andThen(orchestrator.stopNamespace),
+        Effect.andThen(sweep),
+        definitionGate.withPermits(1),
+        Effect.withSpan("Owner.stopNamespace"),
+      ),
       destroy: network.beginDestroy.pipe(
         // Deferred for the whole of this destroy: every instance's own teardown below closes its
         // listeners as usual, but leaves its reservation rows for `releaseStack` to drop together,
@@ -879,7 +881,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         // immediate per-service deletion again on every exit, success, failure, or interruption
         // alike, so a service destruction, sweep, or claim-read failure can never leave deferral
         // stuck on for a stack that is still otherwise live.
-        Effect.andThen(network.drain(Network.SHUTDOWN_DRAIN_DEADLINE)),
+        Effect.andThen(network.drain),
         Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         // A claim reconcile deliberately kept (for example one recorded against a different
@@ -920,7 +922,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       // F6: settles admitted definition work under the same gate as stop/destroy first. Never
       // reads or writes the registration (already confirmed gone), so every step below is
       // best-effort and logs rather than fails; the caller must still be able to exit.
-      abandon: network.drain(Network.SHUTDOWN_DRAIN_DEADLINE).pipe(
+      abandon: network.drain.pipe(
         Effect.andThen(
           orchestrator.stopNamespace.pipe(
             Effect.catch((cause) =>

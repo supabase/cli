@@ -2,7 +2,6 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Cause,
-  Clock,
   Context,
   Data,
   Deferred,
@@ -32,6 +31,7 @@ import {
   waitForOwnerExit,
   type HostAccess,
 } from "./HostProcess.ts";
+import * as Network from "./Network.ts";
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
@@ -1218,10 +1218,11 @@ it.live(
   { timeout: 60_000 },
 );
 
-// A real 10 s wait, not `TestClock`: the deadline and this in-process owner's other timers (lease,
-// idle, cooldown, readiness polling) share one `Clock` threaded through a single layer composition,
-// so virtualizing it risks silently changing those unrelated subsystems for an already-fast (~13 s),
-// repeatedly-verified test.
+// Drives the deadline with a shortened `Network.ShutdownDrainDeadline` (the internal reference
+// production always defaults to 10 s) rather than asserting a wall-clock lower bound: a timed
+// assertion only proves this test's own timer started before drain's, which a loaded CI runner can
+// easily violate without the drain logic itself being wrong. Ordering is observed instead: the
+// connection is confirmed still open while draining, then confirmed cut once stop completes.
 it.live(
   "cuts a hanging connection at the drain deadline, then stop completes",
   () =>
@@ -1230,7 +1231,7 @@ it.live(
         const { runtime, port } = yield* withRunningMail("stack-host-drain-deadline-");
         // Proves the listener is genuinely functional before testing the hang. A one-shot agent, not
         // the hanging connection itself: Node's own ~5 s keep-alive idle timeout would otherwise cut
-        // an idle HTTP connection before the 10 s drain deadline ever has a chance to.
+        // an idle HTTP connection before even a shortened drain deadline has a chance to.
         const proof = yield* Effect.acquireUseRelease(
           Effect.sync(() => new Http.Agent({ keepAlive: false })),
           (agent) => httpRoundTrip(port, agent),
@@ -1238,16 +1239,27 @@ it.live(
         );
         expect(Number.isFinite(proof.status), "the listener answers before the hang").toBe(true);
         const socket = yield* openRawSocket(port);
-        const startedAt = yield* Clock.currentTimeMillis;
-        yield* shutdownOwner(runtime.access, false);
-        const elapsedMillis = (yield* Clock.currentTimeMillis) - startedAt;
-        // The 10 s drain deadline bounds the wait; generous slack absorbs real scheduling variance.
-        expect(elapsedMillis).toBeGreaterThanOrEqual(9_000);
-        expect(elapsedMillis).toBeLessThan(60_000);
-        expect(socket.destroyed, "the idle established connection is cut at the deadline").toBe(
-          true,
+        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
+        // Observed, not timed: confirms drain has started (new connections already refused) while
+        // the hanging connection is still deliberately held open, ahead of the deadline cut.
+        yield* waitUntilRefused(port);
+        expect(socket.destroyed, "the established connection survives into the drain window").toBe(
+          false,
         );
+        yield* Fiber.join(shutdown).pipe(
+          Effect.timeoutOrElse({
+            duration: "10 seconds",
+            orElse: () =>
+              Effect.fail(
+                new HostTestError({ message: "Stop did not complete after the drain deadline" }),
+              ),
+          }),
+        );
+        expect(socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
       }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 60_000 },
+    ).pipe(
+      Effect.provideService(Network.ShutdownDrainDeadline, "2 seconds"),
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  { timeout: 30_000 },
 );

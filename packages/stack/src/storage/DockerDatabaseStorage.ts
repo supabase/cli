@@ -18,7 +18,11 @@ import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import type * as Claims from "../namespace/Claims.ts";
 import * as Publication from "../namespace/Publication.ts";
-import type { ContainerRuntime, EngineTarget } from "../runtime/Container.ts";
+import {
+  engineUnreachableMessage,
+  type ContainerRuntime,
+  type EngineTarget,
+} from "../runtime/Container.ts";
 import { composeProjectFor } from "../runtime/ContainerName.ts";
 import type { DatabaseRuntime } from "../services/Database.ts";
 import {
@@ -57,7 +61,13 @@ interface ResolvedDaemon extends DaemonIdentity {
 
 export class DockerDatabaseStorageError extends Schema.TaggedError<DockerDatabaseStorageError>()(
   "DockerDatabaseStorageError",
-  { operation: Schema.String, message: Schema.String, cause: Schema.optionalKey(Schema.Defect()) },
+  {
+    operation: Schema.String,
+    message: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+    /** Set once, at the raw engine CLI invocation that produced `message` (see `errorFor`). */
+    reason: Schema.optionalKey(Schema.Literal("engine-unavailable")),
+  },
 ) {}
 
 export interface DatabaseStorageMount {
@@ -90,6 +100,9 @@ export interface DockerDatabaseStorage {
 }
 
 // Snapshot failures keep the protocol's operation so both engines report the same step.
+// The engine CLI's own stderr text is the only unreachable-daemon signal this module ever sees
+// (it invokes the raw CLI directly, not through `runtime/Container.ts`'s typed `ContainerError`),
+// so the message is classified here, once, at the source, and carried onward as `reason`.
 const errorFor = (operation: string, cause: unknown) =>
   Schema.is(DockerDatabaseStorageError)(cause)
     ? cause
@@ -98,11 +111,15 @@ const errorFor = (operation: string, cause: unknown) =>
           operation: cause.operation,
           message: cause.message,
           cause,
+          ...(engineUnreachableMessage(cause.message) ? { reason: "engine-unavailable" } : {}),
         })
       : new DockerDatabaseStorageError({
           operation,
           message: failureMessage(cause),
           cause,
+          ...(engineUnreachableMessage(failureMessage(cause))
+            ? { reason: "engine-unavailable" }
+            : {}),
         });
 
 const parseMajor = (version: string): number | undefined => {

@@ -20,8 +20,15 @@ import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker";
 
-/** The shutdown-drain deadline (F5): established connections keep flowing until this elapses. */
-export const SHUTDOWN_DRAIN_DEADLINE: Duration.Input = "10 seconds";
+/**
+ * The shutdown-drain deadline (F5): established connections keep flowing until this elapses.
+ * Internal only, following the `RegistrationCheckInterval` pattern: tests shorten it through this
+ * reference; production never reads it from an environment variable or `Config`.
+ */
+export const ShutdownDrainDeadline = Context.Reference<Duration.Input>(
+  "@supabase/stack/ShutdownDrainDeadline",
+  { defaultValue: () => "10 seconds" },
+);
 
 /** The accept/outstanding/cut-all surface every listener kind (`TcpListener`, `HttpProxy`) shares. */
 interface ListenerHandle {
@@ -91,11 +98,11 @@ export interface Interface {
   }) => Effect.Effect<NetworkNamespace, NetworkError>;
   /**
    * Shutdown drain (F5): closes accept on every stack listener, public and dependency alike, then
-   * lets established connections keep flowing until each reaches 0 or `deadline` elapses, whichever
-   * comes first. At the deadline every remaining connection is cut. Listener scopes are untouched;
-   * the caller closes them afterward through the ordinary stop/destroy path.
+   * lets established connections keep flowing until each reaches 0 or `ShutdownDrainDeadline`
+   * elapses, whichever comes first. At the deadline every remaining connection is cut. Listener
+   * scopes are untouched; the caller closes them afterward through the ordinary stop/destroy path.
    */
-  readonly drain: (deadline: Duration.Input) => Effect.Effect<void>;
+  readonly drain: Effect.Effect<void>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -420,7 +427,8 @@ const makeNetwork = (options: {
         Stream.takeUntil((count) => count === 0),
         Stream.runDrain,
       );
-    const drain = Effect.fn("Network.drain")(function* (deadline: Duration.Input) {
+    const drain = Effect.fn("Network.drain")(function* () {
+      const deadline = yield* ShutdownDrainDeadline;
       // Setting `draining` and snapshotting `listeners` atomically under the same gate `bind`
       // holds for its whole call (F2) means no bind can complete after this snapshot without
       // either being captured by it or observing `draining` and refusing before creating anything.
@@ -448,7 +456,7 @@ const makeNetwork = (options: {
       beginDestroy: Ref.set(deferReservations, true),
       cancelDestroy: Ref.set(deferReservations, false),
       releaseStack: releaseStack(),
-      drain,
+      drain: drain(),
     } satisfies Interface;
   });
 

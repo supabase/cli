@@ -642,9 +642,17 @@ export const makeContainerRuntime = (options: {
       yield* fs
         .makeDirectory(containerEnvRoot, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
+      // Not `makeTempDirectoryScoped`: its scoped cleanup removes without `force`, then dies on
+      // any failure, including a confirmed ENOENT when this stack's whole root (this directory's
+      // owned ancestor) is already gone — turning an ordinary stop into an unrecoverable defect
+      // (F5/F1 root cause). A plain temp directory plus a tolerant finalizer treats "already gone"
+      // as already cleaned up, matching this directory's own owned-and-disposable nature.
       const directory = yield* fs
-        .makeTempDirectoryScoped({ directory: containerEnvRoot, prefix: "container-" })
+        .makeTempDirectory({ directory: containerEnvRoot, prefix: "container-" })
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
+      yield* Effect.addFinalizer(() =>
+        fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+      );
       const envPath = path.join(directory, "environment");
       yield* fs
         .writeFileString(

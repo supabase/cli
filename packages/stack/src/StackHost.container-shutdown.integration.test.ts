@@ -392,16 +392,13 @@ it.live.skipIf(process.platform === "win32")(
               recursive: true,
               force: true,
             });
-        // Losing the whole root also breaks this workload's own graceful-stop bookkeeping (its
-        // container-env file is gone too), so its stop retries for real before the owner's 2-minute
-        // cleanup backstop (F5) gives up on it and still proceeds to remove what it can confirm.
         yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
           Effect.retry({
             schedule: Schedule.spaced("1 second"),
             while: (failure) =>
               failure.reason === "owner-exit-pending" || failure.reason === "owner-exit-zombie",
           }),
-          Effect.timeout("150 seconds"),
+          Effect.timeout("30 seconds"),
         );
 
         expect(
@@ -418,5 +415,5 @@ it.live.skipIf(process.platform === "win32")(
         ).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 200_000 },
+  { timeout: 180_000 },
 );
