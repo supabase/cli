@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
   Context,
   Data,
   Deferred,
@@ -1057,4 +1058,131 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
       expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+/** A running native database, reachable through its public stack listener like any other client. */
+const withRunningDatabase = Effect.fn("Test.withRunningDatabase")(function* (prefix: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix });
+  const state = yield* stateFor(`${root}/state`);
+  const saved = {
+    id: "stack",
+    runtime: "native" as const,
+    identity: { projectRoot: root, branchContext: "main", stackName: prefix },
+    instances: [],
+    lifetime: "detached" as const,
+    composition: { members: [], dependencies: [] },
+    ports: [],
+  };
+  yield* state.save(saved);
+  const owner = yield* ownerFor({
+    saved,
+    state,
+    root: `${root}/data`,
+    cacheRoot: "/tmp/supabase-stack-artifacts",
+  });
+  const { runtime } = yield* inProcessRuntime(owner, state, root);
+  const client = yield* ownerClient(runtime.access);
+  const database = yield* client.createService({
+    service: "database",
+    config: {
+      version: "17",
+      databasePassword: Redacted.make("drain-test-password"),
+      jwtSecret: Redacted.make("drain-test-jwt-secret-at-least-thirty-two-characters"),
+      jwtExpiry: 3600,
+    },
+    endpoints: { sql: { port: "auto" } },
+  });
+  yield* client.startService({ id: database.id });
+  yield* client.readyService({ id: database.id });
+  const databaseUrl = (yield* client.credentials({ id: database.id, from: "host" })).databaseUrl;
+  if (databaseUrl === undefined) return yield* Effect.die("Database credentials missing");
+  return { runtime, port: Number(new URL(databaseUrl).port) };
+});
+
+/**
+ * Connects a raw socket to `port`; the listener proxies whatever bytes flow without needing the
+ * real wire protocol, so this alone counts as one established connection for drain purposes.
+ */
+const openRawSocket = (port: number) =>
+  Effect.acquireRelease(
+    Effect.callback<Net.Socket, HostTestError>((resume) => {
+      const socket = Net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.once("connect", () => resume(Effect.succeed(socket)));
+      socket.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
+      return Effect.void;
+    }),
+    (socket) => Effect.sync(() => socket.destroy()),
+  );
+
+/** Resolves `true` once a connection to `port` closes on its own shortly after connecting. */
+const isRefusedQuickly = (port: number) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const socket = yield* openRawSocket(port);
+      return yield* awaitClosed(socket).pipe(
+        Effect.as(true),
+        Effect.race(Effect.sleep("1 second").pipe(Effect.as(false))),
+      );
+    }),
+  );
+
+it.live(
+  "drains an established connection through a stack listener during stop, and refuses a new one",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, port } = yield* withRunningDatabase("stack-host-drain-inflight-");
+        const socket = yield* openRawSocket(port);
+        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
+        // Accept closes synchronously at the start of drain; this bounds the wait for that flip to
+        // reach the listener, well inside the multi-second window the condition then holds steady.
+        yield* Effect.sleep("300 millis");
+        expect(yield* isRefusedQuickly(port), "a new connection during drain is refused").toBe(
+          true,
+        );
+        expect(socket.destroyed, "the established connection survives the refusal check").toBe(
+          false,
+        );
+        // The client finishes on its own, well before the drain deadline.
+        socket.end();
+        yield* awaitClosed(socket).pipe(
+          Effect.timeoutOrElse({
+            duration: "3 seconds",
+            orElse: () =>
+              Effect.fail(new HostTestError({ message: "Established connection did not close" })),
+          }),
+        );
+        yield* Fiber.join(shutdown).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () =>
+              Effect.fail(
+                new HostTestError({ message: "Stop did not complete once the connection closed" }),
+              ),
+          }),
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 60_000 },
+);
+
+it.live(
+  "cuts a hanging connection at the drain deadline, then stop completes",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, port } = yield* withRunningDatabase("stack-host-drain-deadline-");
+        const socket = yield* openRawSocket(port);
+        const startedAt = yield* Clock.currentTimeMillis;
+        yield* shutdownOwner(runtime.access, false);
+        const elapsedMillis = (yield* Clock.currentTimeMillis) - startedAt;
+        // The 10 s drain deadline bounds the wait; generous slack absorbs real scheduling variance.
+        expect(elapsedMillis).toBeGreaterThanOrEqual(9_000);
+        expect(elapsedMillis).toBeLessThan(60_000);
+        expect(socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 60_000 },
 );

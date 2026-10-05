@@ -382,7 +382,8 @@
         "packages/stack/src/functions/serve-main-resolver.integration.test.ts",
         "packages/stack/tests/effect-timeout.fixture.ts",
         "packages/stack/tests/host-process-fixture.ts",
-        "packages/stack/tests/failing-owner-fixture.ts"
+        "packages/stack/tests/failing-owner-fixture.ts",
+        "packages/stack/tests/short-registration-poll-fixture.ts"
       ],
       "rules": {
         "no-restricted-imports": [

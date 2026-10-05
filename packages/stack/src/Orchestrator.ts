@@ -141,6 +141,8 @@ export interface Interface<Entry extends RegisteredInstance = RegisteredInstance
   readonly report: (event: LifecycleEvent) => Effect.Effect<void>;
   readonly register: (entry: Entry) => Effect.Effect<void, OrchestratorError>;
   readonly get: (id: string) => Effect.Effect<Entry, OrchestratorError>;
+  /** A snapshot of every currently registered entry, independent of composition membership. */
+  readonly instances: Effect.Effect<ReadonlyArray<Entry>>;
   readonly status: (id: string) => Effect.Effect<Status, OrchestratorError>;
   readonly changes: (id: string) => Stream.Stream<Status, OrchestratorError>;
   readonly composition: Effect.Effect<CompositionConfig>;
@@ -1182,6 +1184,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       );
     }),
     get: (id) => node(id),
+    instances: Ref.get(registry).pipe(Effect.map((values) => [...values.values()])),
     status,
     changes,
     composition: Ref.get(composition),

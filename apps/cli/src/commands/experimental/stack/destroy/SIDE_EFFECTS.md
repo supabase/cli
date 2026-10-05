@@ -23,6 +23,10 @@ Cleanup failures remain errors; the command does not claim success on failure.
 A failed destroy may leave its owner running; retry destruction or use
 `stack stop` to shut down that owner.
 
+As with `stack stop`, the owner drains live connections on every stack listener
+(up to 10 seconds) before any service stops, so a request in flight when
+destroy is issued can still complete.
+
 When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes nothing: the registration, port claims and host
 data stay as they are, stderr warns that Docker resources were not removed, and
@@ -47,8 +51,10 @@ override) only once cleanup is confirmed complete; a destroy that fails or skips
 engine cleanup keeps the stack's reservations, and its ports remain unavailable
 to other stacks until a later destroy succeeds. A reservation whose owning
 stack's state was deleted without going through destroy (for example a removed
-or unmounted state root) is reclaimed lazily by whichever stack next needs that
-port.
+or unmounted state root) is usually released by that stack's own still-running
+owner within its next registration check (30 seconds by default), which also
+stops its workloads; the lazy reclaim by whichever stack next needs that port
+remains the backstop when no owner is left alive to do so.
 
 ## Output, exit codes and telemetry
 

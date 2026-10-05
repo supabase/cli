@@ -16,6 +16,12 @@ command reports `No owner is reachable; workload state is unavailable.` It
 neither starts an owner nor claims workloads have stopped. If an owner disappears
 after that preflight, the shutdown error remains a failure.
 
+Before any service stops, the owner stops accepting new connections on every
+stack listener and lets connections already established keep flowing for up to
+10 seconds, then cuts whatever remains. A request in flight when `stop` is
+issued can still complete, at the cost of the command waiting up to that long
+longer for shutdown to finish.
+
 Text confirms each successful shutdown and identifies each unavailable owner.
 JSON and stream-json success data contain `stopped` and `unavailable` ID arrays.
 A missing default selection reports `found: false`; an unknown explicit name or

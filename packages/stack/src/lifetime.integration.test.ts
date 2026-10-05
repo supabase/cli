@@ -16,8 +16,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { create, open } from "./effect.ts";
+import { launchHost, ownerClient, ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { assertOwnerExited, captureOwnerPid, watchLeaseRelease } from "../tests/owner.ts";
+import {
+  assertOwnerExited,
+  captureOwnerPid,
+  shutdownOwner,
+  watchLeaseRelease,
+} from "../tests/owner.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
@@ -27,6 +33,9 @@ const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const sessionFixture = fileURLToPath(
   new URL("../tests/session-client-fixture.ts", import.meta.url),
+);
+const shortRegistrationPollFixture = fileURLToPath(
+  new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
 );
 
 const stateFor = (root: string) =>
@@ -219,4 +228,98 @@ it.live("lets only the creating handle start a session stack's owner", () =>
     expect(yield* state.read(id)).toBeUndefined();
     expect(yield* state.leased(id)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "exits, stops its native workload and releases its port when its registration is confirmed gone",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-native-" });
+      const stateRoot = `${root}/state`;
+      const state = yield* stateFor(stateRoot);
+      const stackId = "abandon-native";
+      yield* state.save({
+        id: stackId,
+        runtime: "native",
+        identity: { projectRoot: root, branchContext: "main", stackName: stackId },
+        instances: [],
+        lifetime: "detached",
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      // The shortened poll interval (F6) comes only from this dedicated test entrypoint, through
+      // the internal `Context.Reference`; production startup never reads an env var or `Config`.
+      const access = yield* launchHost(state, {
+        stateRoot,
+        cacheRoot,
+        stackId,
+        entrypoint: shortRegistrationPollFixture,
+      });
+      const client = yield* ownerClient(access);
+      const mail = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      });
+      yield* client.startService({ id: mail.id });
+      yield* client.readyService({ id: mail.id });
+      const status = yield* client.status({ id: mail.id });
+      const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
+      if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
+      const ownerPid = access.endpoint.pid;
+      const owned = yield* descendantsOf(ownerPid);
+      expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
+
+      yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+      // Detection is bounded by the poll interval (200 ms here); the generous timeout absorbs
+      // drain, workload stop and cleanup, none of which the default 30 s interval would leave room
+      // to observe inside a reasonable test budget.
+      yield* waitForOwnerExit(ownerPid, ownerExitProbe(fs)).pipe(Effect.timeout("15 seconds"));
+
+      expect(owned.filter(alive), "native processes die with their abandoned owner").toEqual([]);
+      expect(
+        yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
+        "no registration is republished",
+      ).toBe(false);
+
+      // The port reservation is released: a fresh stack can claim the exact same port.
+      const reclaimedRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-abandon-native-reclaim-",
+      });
+      const reclaimedStateRoot = `${reclaimedRoot}/state`;
+      const reclaimedState = yield* stateFor(reclaimedStateRoot);
+      const reclaimedId = "abandon-native-reclaim";
+      yield* reclaimedState.save({
+        id: reclaimedId,
+        runtime: "native",
+        identity: { projectRoot: reclaimedRoot, branchContext: "main", stackName: reclaimedId },
+        instances: [],
+        lifetime: "detached",
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      const reclaimedAccess = yield* launchHost(reclaimedState, {
+        stateRoot: reclaimedStateRoot,
+        cacheRoot,
+        stackId: reclaimedId,
+      });
+      const reclaimedClient = yield* ownerClient(reclaimedAccess);
+      const reclaimedMail = yield* reclaimedClient.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port } },
+      });
+      yield* reclaimedClient.startService({ id: reclaimedMail.id });
+      yield* reclaimedClient.readyService({ id: reclaimedMail.id });
+      const reclaimedStatus = yield* reclaimedClient.status({ id: reclaimedMail.id });
+      expect(reclaimedStatus.endpoints.find((endpoint) => endpoint.name === "http")?.port).toBe(
+        port,
+      );
+      yield* shutdownOwner(reclaimedAccess, true);
+      yield* waitForOwnerExit(reclaimedAccess.endpoint.pid, ownerExitProbe(fs)).pipe(
+        Effect.timeout("15 seconds"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  { timeout: 60_000 },
 );

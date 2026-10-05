@@ -11,6 +11,7 @@ import {
   Data,
   DateTime,
   Deferred,
+  type Duration,
   Effect,
   Exit,
   FileSystem,
@@ -48,6 +49,15 @@ import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+
+/**
+ * How often an owner confirms its own registration still exists (F6). Internal only: tests shorten
+ * it through a dedicated entrypoint that overrides this reference, never through env or `Config`.
+ */
+export const RegistrationCheckInterval = Context.Reference<Duration.Input>(
+  "@supabase/stack/RegistrationCheckInterval",
+  { defaultValue: () => "30 seconds" },
+);
 
 export interface StackHostOptions {
   readonly stateRoot: string;
@@ -159,6 +169,8 @@ export interface StackHostRuntime {
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
   ) => Effect.Effect<void, StackError>;
+  /** F6: ends ownership after a confirmed-gone registration; joins an already-running shutdown. */
+  readonly abandon: Effect.Effect<void>;
   readonly exit: Deferred.Deferred<void>;
 }
 
@@ -328,6 +340,46 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
             yield* Fiber.join(fiber);
           }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
       );
+      // F6: a registration-loss poll drives this, never an RPC caller, so there is no response to
+      // watch and no registration left to touch. An in-flight shutdown already owns `current`;
+      // abandonment only joins it instead of racing its own cleanup against it.
+      const abandon = Effect.fn("StackHost.abandon")(() =>
+        gate
+          .withPermits(1)(
+            Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const existing = yield* Ref.get(current);
+                if (existing !== undefined) return existing.fiber;
+                yield* owner.setDraining(true);
+                const cleanup = restore(
+                  Effect.gen(function* () {
+                    yield* attachments.stopAll;
+                    yield* runner.cleanup;
+                    yield* owner.namespace.abandon;
+                  }),
+                ).pipe(
+                  // Abandonment must still let the owner exit even if an unexpected defect strikes:
+                  // there is no caller left to report it to and no registration left to retry.
+                  Effect.catchCause((cause) =>
+                    Effect.logError("Abandoned stack cleanup failed", cause),
+                  ),
+                  Effect.andThen(closeConnections),
+                  Effect.andThen(Deferred.succeed(exit, undefined)),
+                  Effect.asVoid,
+                );
+                const fiber = yield* Effect.forkIn(cleanup, scope);
+                yield* Ref.set(current, { destroy: false, fiber });
+                return fiber;
+              }),
+            ),
+          )
+          .pipe(
+            Effect.flatMap(Fiber.join),
+            // `existing.fiber` may be an in-flight normal shutdown, typed to report `StackError`;
+            // abandonment never fails the caller (the registration poll), so it is logged, not raised.
+            Effect.catch((cause) => Effect.logError("Stack shutdown failed", cause)),
+          ),
+      );
       const handlers = StackRpc.of({
         ...owner.handlers,
         runCommand: (input: RunCommandPayload) => attachments.run(input),
@@ -377,11 +429,48 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
 
-      return { endpoint: access.endpoint, access, serve, shutdown, closeConnections, exit };
+      return {
+        endpoint: access.endpoint,
+        access,
+        serve,
+        shutdown,
+        abandon: abandon(),
+        closeConnections,
+        exit,
+      };
     }),
 );
 
-type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
+type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone" | "registration-gone";
+
+/**
+ * Polls for a confirmed-gone registration (F6) and offers `registration-gone` once. Any other
+ * error (permissions, an unmounted root mid-read) keeps the owner running; only a confirmed ENOENT
+ * (`state.read` returning `undefined`) counts as abandonment.
+ */
+const pollRegistration = Effect.fn("StackHost.pollRegistration")(function* (
+  state: StackNamespace.Interface,
+  id: string,
+  events: Queue.Queue<HostEvent>,
+) {
+  const interval = yield* RegistrationCheckInterval;
+  while (true) {
+    yield* Effect.sleep(interval);
+    const saved = yield* state.read(id).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning(
+          "Could not confirm the stack registration; keeping the owner running",
+          cause,
+        ),
+      ),
+      Effect.option,
+    );
+    if (Option.isSome(saved) && saved.value === undefined) {
+      yield* Queue.offer(events, "registration-gone");
+      return;
+    }
+  }
+});
 
 export const runStackHost = Effect.fn("StackHost.run")(
   (options: StackHostOptions): Effect.Effect<void, StackHostError, never> =>
@@ -523,6 +612,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             yield* Effect.forkScoped(
               creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
             );
+          yield* Effect.forkScoped(pollRegistration(state, id, events));
           yield* options.onReady?.(access) ?? Effect.void;
           yield* Effect.forkScoped(
             sweepOrphans({
@@ -562,6 +652,10 @@ export const runStackHost = Effect.fn("StackHost.run")(
               Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
               Effect.ignore,
             );
+            break;
+          }
+          if (event === "registration-gone") {
+            yield* started.abandon;
             break;
           }
           const shutdownSucceeded = yield* started.shutdown(false).pipe(

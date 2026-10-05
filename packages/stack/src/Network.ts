@@ -1,4 +1,16 @@
-import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
+import {
+  Context,
+  Data,
+  type Duration,
+  Effect,
+  Exit,
+  Layer,
+  Ref,
+  Scope,
+  Semaphore,
+  Stream,
+  SubscriptionRef,
+} from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -7,6 +19,16 @@ import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker";
+
+/** The shutdown-drain deadline (F5): established connections keep flowing until this elapses. */
+export const SHUTDOWN_DRAIN_DEADLINE: Duration.Input = "10 seconds";
+
+/** The accept/outstanding/cut-all surface every listener kind (`TcpListener`, `HttpProxy`) shares. */
+interface ListenerHandle {
+  readonly stopAccepting: Effect.Effect<void>;
+  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
+  readonly cutAll: Effect.Effect<void>;
+}
 
 type RouteContribution = Pick<
   HttpRoute,
@@ -67,6 +89,13 @@ export interface Interface {
     readonly id: string;
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
   }) => Effect.Effect<NetworkNamespace, NetworkError>;
+  /**
+   * Shutdown drain (F5): closes accept on every stack listener, public and dependency alike, then
+   * lets established connections keep flowing until each reaches 0 or `deadline` elapses, whichever
+   * comes first. At the deadline every remaining connection is cut. Listener scopes are untouched;
+   * the caller closes them afterward through the ordinary stop/destroy path.
+   */
+  readonly drain: (deadline: Duration.Input) => Effect.Effect<void>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -92,6 +121,23 @@ const makeNetwork = (options: {
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const deferReservations = yield* Ref.make(false);
+    // Every bound listener (the shared API proxy under "api", every dedicated endpoint under
+    // "id:name"), tracked only for shutdown drain; registration and deregistration are tied to the
+    // same scope that owns the listener, so this never drifts from what is actually bound.
+    const listeners = yield* Ref.make<ReadonlyMap<string, ListenerHandle>>(new Map());
+    const trackListener = (key: string, handle: ListenerHandle) =>
+      Ref.update(listeners, (current) => new Map(current).set(key, handle)).pipe(
+        Effect.andThen(
+          Effect.addFinalizer(() =>
+            Ref.update(listeners, (current) => {
+              if (current.get(key) !== handle) return current;
+              const next = new Map(current);
+              next.delete(key);
+              return next;
+            }),
+          ),
+        ),
+      );
     const shared = yield* Ref.make<
       | {
           readonly claim: number;
@@ -185,7 +231,9 @@ const makeNetwork = (options: {
                                 return { proxy: current.proxy };
                               }
                               yield* probe(key, host, port);
-                              return { proxy: yield* makeHttpProxy({ host, port }) };
+                              const proxy = yield* makeHttpProxy({ host, port });
+                              yield* trackListener(key, proxy);
+                              return { proxy };
                             }
                             if (endpoint.protocol === "http") {
                               yield* probe(key, host, port);
@@ -193,10 +241,12 @@ const makeNetwork = (options: {
                               yield* proxy.setRoutes([
                                 { id, prefix: "/", target: endpoint.backend },
                               ]);
+                              yield* trackListener(key, proxy);
                               return { proxy };
                             }
                             yield* probe(key, host, port);
                             const listener = yield* bindTcp(host, port);
+                            yield* trackListener(key, listener);
                             yield* Effect.forkIn(
                               serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
                                 Effect.provideService(Scope.Scope, endpointScope),
@@ -357,12 +407,34 @@ const makeNetwork = (options: {
         .releaseStack(options.stackId)
         .pipe(Effect.mapError((cause) => errorFor("release", cause))),
     );
+    // Stopping accepting can only shrink each listener's outstanding count from here on, so waiting
+    // for every handle to independently reach 0 is equivalent to waiting for the stack-wide total.
+    const quiesced = (handle: ListenerHandle) =>
+      SubscriptionRef.changes(handle.outstandingConnections).pipe(
+        Stream.takeUntil((count) => count === 0),
+        Stream.runDrain,
+      );
+    const drain = Effect.fn("Network.drain")(function* (deadline: Duration.Input) {
+      const handles = [...(yield* Ref.get(listeners)).values()];
+      yield* Effect.forEach(handles, (handle) => handle.stopAccepting, { discard: true });
+      const outcome = yield* Effect.forEach(handles, quiesced, {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(
+        Effect.as("quiesced" as const),
+        Effect.race(Effect.sleep(deadline).pipe(Effect.as("deadline" as const))),
+      );
+      if (outcome === "deadline")
+        yield* Effect.forEach(handles, (handle) => handle.cutAll, { discard: true });
+      yield* Effect.annotateCurrentSpan({ listeners: handles.length, outcome });
+    });
     return {
       register,
       release: release(),
       beginDestroy: Ref.set(deferReservations, true),
       cancelDestroy: Ref.set(deferReservations, false),
       releaseStack: releaseStack(),
+      drain,
     } satisfies Interface;
   });
 

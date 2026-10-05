@@ -2,6 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { fileURLToPath } from "node:url";
 import * as StackNamespace from "./StackNamespace.ts";
 import {
   hasReason,
@@ -14,6 +15,10 @@ import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.t
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { noContainerClaims } from "../tests/claims.ts";
+
+const shortRegistrationPollFixture = fileURLToPath(
+  new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
+);
 
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -222,6 +227,77 @@ it.live.skipIf(process.platform === "win32")(
         activeB = undefined;
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
         expect(yield* (yield* stateFor(rootB)).read(stackId)).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 180_000 },
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "removes its containers and exits when its registration is confirmed gone (F6)",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-" });
+        const stackId = `abandon-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-docker-data-", stackId).pipe(
+          Effect.flatMap(fs.realPath),
+        );
+        const stateRoot = path.dirname(path.dirname(dataRoot));
+        const cacheRoot = `${base}/cache`;
+        const state = yield* stateFor(stateRoot);
+        yield* state.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project`,
+            branchContext: "abandon-docker-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached",
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
+        // The shortened poll interval (F6) comes only from this dedicated test entrypoint, through
+        // the internal `Context.Reference`; production startup never reads an env var or `Config`.
+        const access = yield* launchHost(state, {
+          stateRoot,
+          cacheRoot,
+          stackId,
+          entrypoint: shortRegistrationPollFixture,
+        });
+        const client = yield* ownerClient(access);
+        const database = yield* client.createService({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("abandon-docker-password"),
+            jwtSecret: Redacted.make("abandon-docker-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* client.startService({ id: database.id });
+        yield* client.readyService({ id: database.id });
+        expect(
+          (yield* containers(stackId, dataRoot)).length,
+          "the owner runs the database container",
+        ).toBeGreaterThan(0);
+
+        yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("30 seconds"),
+        );
+
+        expect(yield* containers(stackId, dataRoot), "abandonment removes containers").toEqual([]);
+        expect(
+          yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
+          "no registration is republished",
+        ).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },

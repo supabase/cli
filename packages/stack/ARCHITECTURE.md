@@ -491,6 +491,21 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
 
+**Abandoned registration.** The orphan sweep above covers a dead owner whose registration survives;
+the opposite case is a live owner whose registration disappears out from under it (the state root
+is deleted, moved or unmounted). Every owner polls its own `<stateRoot>/<id>/state.json` on an
+interval (30 seconds by default) and treats only a confirmed ENOENT as gone; any other read error,
+such as a permission failure or a transient I/O error on an unmounted root, keeps the owner
+running and logs a warning instead. On a confirmed-gone registration the owner treats its
+ownership as ended: it drains (connection drain, above), stops every workload and removes what it
+created through the same registration-independent `cleanupResources` path destroy uses, retrying
+transient cleanup failures and giving up only once an engine is confirmed unreachable (the leftover
+container ids are logged, not retried forever), releases its port reservations, and exits. It never
+reads or writes the registration again, and it does not publish a registration removal: there is
+nothing left to update, and any resource claim it already recorded stays available for a future
+reconcile. Deletion, a move and an unmount are treated identically, because a stack whose root is
+unreachable cannot operate regardless of which of the three caused it.
+
 **Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
@@ -501,10 +516,21 @@ During Draining:
 
 1. Close admission to new mutations and proxy wake requests.
 2. Reject queued work that has not begun.
-3. Let executing instance operations settle.
-4. Cancel and settle attached commands and stop owned services through their existing operations.
-5. For destruction, remove proven-owned data and metadata after shutdown.
-6. Send the outcome, close the control endpoint and release ownership.
+3. Drain every stack listener, public and dependency alike (connection drain, below).
+4. Let executing instance operations settle.
+5. Cancel and settle attached commands and stop owned services through their existing operations.
+6. For destruction, remove proven-owned data and metadata after shutdown.
+7. Send the outcome, close the control endpoint and release ownership.
+
+**Connection drain.** Stop and destroy share one drain step, run before any service stops: accept
+closes on every stack listener, public and internal dependency traffic alike (they are the same
+listeners), so no new connection is admitted. Connections already established, including HTTP
+keep-alive and a workload's own pooled dependency connections (PostgREST's database pool, for
+example), keep flowing until each one closes or a 10 second deadline passes, whichever comes
+first. At the deadline every remaining connection is cut. Listener scopes close only afterward,
+through the ordinary stop/destroy teardown. Accepted, documented tradeoff: during the drain
+window, an admitted request that needs a new dependency connection can fail; the deadline bounds
+that window.
 
 **Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 

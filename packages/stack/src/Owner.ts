@@ -1,6 +1,7 @@
 import {
   Context,
   Crypto,
+  Duration,
   Effect,
   Fiber,
   FileSystem,
@@ -8,6 +9,7 @@ import {
   Option,
   Path,
   Ref,
+  Schedule,
   Schema,
   Scope,
   Semaphore,
@@ -178,6 +180,13 @@ export interface Interface {
      * containers, claims and saved state.
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
+    /**
+     * Ends ownership after a confirmed-gone registration (F6): drains, stops every workload and
+     * removes what it created through the same registration-independent `cleanupResources` path as
+     * destroy, then releases port reservations. Never reads or writes the registration, which is
+     * already gone; a leftover resource past the engine-unreachable backstop is logged, not thrown.
+     */
+    readonly abandon: Effect.Effect<void>;
   };
   readonly setDraining: (draining: boolean) => Effect.Effect<void>;
   readonly getServing: Effect.Effect<boolean>;
@@ -211,6 +220,44 @@ const serviceError =
 
 const rpcError = (operation: string) =>
   Effect.mapError((cause: unknown) => stackError(operation, cause));
+
+/** A container engine confirmed unreachable (F6): no further retry can make this attempt succeed. */
+const engineUnreachableCleanup = (error: ServiceError) =>
+  error.cause instanceof Container.ContainerError && error.cause.reason === "engine-unavailable";
+
+/** Bounded backoff for abandonment cleanup: retries transient failures, gives up on a confirmed-unreachable engine. */
+const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(5))),
+  ),
+  Schedule.upTo({ duration: "30 seconds" }),
+);
+
+/**
+ * Cleans up one abandoned instance through its registration-independent `cleanupResources`, the
+ * same confirmed path destroy uses. Retries transient failures; an engine confirmed unreachable, or
+ * retries exhausted, is logged and left behind rather than blocking the owner's exit (F6).
+ */
+const cleanupAbandonedInstance = (entry: Entry) =>
+  Ref.get(entry.creation).pipe(
+    Effect.flatMap((config) =>
+      Effect.acquireUseRelease(
+        Scope.make("parallel"),
+        (scope) => entry.cleanupResources({ id: entry.id, config, scope }),
+        (scope, exit) => Scope.close(scope, exit),
+      ),
+    ),
+    Effect.retry({
+      schedule: abandonCleanupSchedule,
+      while: (error) => !engineUnreachableCleanup(error),
+    }),
+    Effect.catch((error) =>
+      Effect.logWarning(
+        `Abandoned stack could not confirm cleanup of ${entry.service} ${entry.id}; leaving it behind`,
+        error,
+      ),
+    ),
+  );
 
 const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string | undefined>) =>
   Schema.decodeUnknownEffect(ServiceCreation)({
@@ -800,11 +847,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     handlers,
     getStackCredentials,
     namespace: {
-      stop: orchestrator.stopNamespace.pipe(
-        Effect.andThen(sweep),
-        definitionGate.withPermits(1),
-        Effect.withSpan("Owner.stopNamespace"),
-      ),
+      // Shutdown drain (F5): accept closes on every listener before any service stops, and the
+      // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
+      stop: network
+        .drain(Network.SHUTDOWN_DRAIN_DEADLINE)
+        .pipe(
+          Effect.andThen(orchestrator.stopNamespace),
+          Effect.andThen(sweep),
+          definitionGate.withPermits(1),
+          Effect.withSpan("Owner.stopNamespace"),
+        ),
       destroy: network.beginDestroy.pipe(
         // Deferred for the whole of this destroy: every instance's own teardown below closes its
         // listeners as usual, but leaves its reservation rows for `releaseStack` to drop together,
@@ -812,6 +864,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         // immediate per-service deletion again on every exit, success, failure, or interruption
         // alike, so a service destruction, sweep, or claim-read failure can never leave deferral
         // stuck on for a stack that is still otherwise live.
+        Effect.andThen(network.drain(Network.SHUTDOWN_DRAIN_DEADLINE)),
         Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         // A claim reconcile deliberately kept (for example one recorded against a different
@@ -845,6 +898,35 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         Effect.ensuring(network.cancelDestroy),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
+      ),
+      // F6: never reads or writes the registration (already confirmed gone), so every step below
+      // is best-effort and logs rather than fails; the caller must still be able to exit.
+      abandon: network.drain(Network.SHUTDOWN_DRAIN_DEADLINE).pipe(
+        Effect.andThen(
+          orchestrator.stopNamespace.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Abandoned stack could not confirm every workload stopped", cause),
+            ),
+          ),
+        ),
+        Effect.andThen(
+          orchestrator.instances.pipe(
+            Effect.flatMap((entries) =>
+              Effect.forEach(entries, cleanupAbandonedInstance, {
+                concurrency: "unbounded",
+                discard: true,
+              }),
+            ),
+          ),
+        ),
+        Effect.andThen(
+          network.releaseStack.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Abandoned stack could not release its port reservations", cause),
+            ),
+          ),
+        ),
+        Effect.withSpan("Owner.abandonNamespace", { attributes: { stack_id: stackId } }),
       ),
     },
     setDraining: (value) => Ref.set(draining, value),
