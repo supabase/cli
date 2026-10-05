@@ -9,6 +9,7 @@
     "!packages/stack/**",
     "!apps/cli/src/commands/**",
     "!apps/cli/src/shared/auth/**",
+    "!apps/cli/src/shared/cli/**",
     "!apps/cli/src/shared/compute/**",
     "!apps/cli/src/shared/config/**",
     "!apps/cli/src/shared/feedback/**",
@@ -22,9 +23,11 @@
     "!apps/cli/src/shared/output/**",
     "!apps/cli/src/shared/runtime/**",
     "!apps/cli/src/shared/services/**",
+    "!apps/cli/src/shared/stack-constants.ts",
     "!apps/cli/src/shared/telemetry/**",
     // Last match wins across the whole list: keep bare re-exclusions after every
     // `!` entry that would otherwise re-include them.
+    "apps/cli/src/shared/cli/bin.ts",
     "apps/cli/src/shared/compute/stacks/**",
     "apps/cli/src/shared/feedback/database.types.ts",
     "!apps/cli/tests/helpers/branches-live.ts",
