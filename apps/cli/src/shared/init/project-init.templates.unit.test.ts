@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -97,6 +98,11 @@ describe("project init templates", () => {
       'template = "Your code is {{ .Code }}"',
       'template = "Your code is {{ .Code }}"',
     ]);
+  });
+
+  it("pins a stack project's OrioleDB version to one the artifact catalog publishes", () => {
+    const rendered = renderCliConfigTemplate("demo-project", true, true);
+    expect(orioledbVersions()).toContain(/^orioledb_version = "(.+)"$/m.exec(rendered)?.[1]);
   });
 
   it("enables pg-delta by default in the generated config", () => {

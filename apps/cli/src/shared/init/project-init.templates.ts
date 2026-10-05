@@ -1,3 +1,5 @@
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+
 const CONFIG_TEMPLATE_RAW = `# For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
@@ -466,6 +468,10 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ORIOLE_DB_VERSION = "17.11.0.002";
 
+/** The stack only runs catalog-pinned OrioleDB builds, so a stack project starts on the pinned one. */
+const stackOrioledbVersion = (): string =>
+  orioledbVersions().find((version) => postgresMajor(version) === "17") ?? ORIOLE_DB_VERSION;
+
 const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
 stack = true
 `;
@@ -515,7 +521,7 @@ export function renderCliConfigTemplate(
 ): string {
   const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
-    useOrioledb ? ORIOLE_DB_VERSION : "",
+    useOrioledb ? (experimentalStack ? stackOrioledbVersion() : ORIOLE_DB_VERSION) : "",
   );
   return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }

@@ -87,19 +87,36 @@ const declarativeBaselinePrepStatements = (
   return statements;
 };
 
-/** Leading comments, then a `CREATE EXTENSION` statement that is not yet idempotent. */
-const NON_IDEMPOTENT_CREATE_EXTENSION_RE =
-  /^((?:\s+|--[^\r\n]*|\/\*[\s\S]*?\*\/)*CREATE\s+EXTENSION\s+)(?!IF\s+NOT\s+EXISTS\b)(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/i;
+/** Whitespace and comments; matched on its own, so it never backtracks. */
+const SQL_TRIVIA = /(?:\s|--[^\r\n]*|\/\*[\s\S]*?\*\/)*/y;
+
+const EXTENSION_NAME = /"([^"]+)"|([a-zA-Z_][\w$-]*)/y;
+
+const afterTrivia = (sql: string, from: number): number => {
+  SQL_TRIVIA.lastIndex = from;
+  SQL_TRIVIA.exec(sql);
+  return SQL_TRIVIA.lastIndex;
+};
+
+/** Index after the trivia that follows `keyword` at `at`, or `undefined` when it is not there. */
+const afterKeyword = (sql: string, at: number, keyword: string): number | undefined => {
+  const end = at + keyword.length;
+  if (sql.slice(at, end).toLowerCase() !== keyword || /[\w$]/.test(sql[end] ?? ""))
+    return undefined;
+  return afterTrivia(sql, end);
+};
 
 /** Rewrites whole statements only, so literals, identifiers, and bodies stay as written. */
 const keepImageExtensionCreates = (sql: string): string =>
   splitSql(sql, (statement) => {
-    const match = NON_IDEMPOTENT_CREATE_EXTENSION_RE.exec(statement);
-    const prefix = match?.[1];
-    if (prefix === undefined) return statement;
-    const name = (match?.[2] ?? match?.[3] ?? "").toLowerCase();
-    if (!IMAGE_KEPT_EXTENSIONS.has(name)) return statement;
-    return `${prefix}IF NOT EXISTS ${statement.slice(prefix.length)}`;
+    const create = afterKeyword(statement, afterTrivia(statement, 0), "create");
+    const nameAt = create === undefined ? undefined : afterKeyword(statement, create, "extension");
+    if (nameAt === undefined || afterKeyword(statement, nameAt, "if") !== undefined)
+      return statement;
+    EXTENSION_NAME.lastIndex = nameAt;
+    const name = EXTENSION_NAME.exec(statement);
+    if (!IMAGE_KEPT_EXTENSIONS.has((name?.[1] ?? name?.[2] ?? "").toLowerCase())) return statement;
+    return `${statement.slice(0, nameAt)}IF NOT EXISTS ${statement.slice(nameAt)}`;
   }).join("");
 
 /**

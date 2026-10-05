@@ -75,9 +75,13 @@ describe("filesForDeclarativeShadowLoad", () => {
       name: "public/03.sql",
       sql: "SELECT E'it\\'s';\nCREATE EXTENSION orioledb;\nSELECT 'after';",
     };
+    const commented = {
+      name: "public/04.sql",
+      sql: "CREATE /* declaration */ EXTENSION -- engine\n orioledb;",
+    };
     expect(
       filesForDeclarativeShadowLoad(
-        [orioledb, alreadyIdempotent, quoted, afterEscapedString],
+        [orioledb, alreadyIdempotent, quoted, afterEscapedString, commented],
         false,
       ),
     ).toEqual([
@@ -91,7 +95,16 @@ describe("filesForDeclarativeShadowLoad", () => {
         name: afterEscapedString.name,
         sql: "SELECT E'it\\'s';\nCREATE EXTENSION IF NOT EXISTS orioledb;\nSELECT 'after';",
       },
+      {
+        name: commented.name,
+        sql: "CREATE /* declaration */ EXTENSION -- engine\n IF NOT EXISTS orioledb;",
+      },
     ]);
+  });
+
+  it("scans leading whitespace in linear time", () => {
+    const padded = { name: "public/05.sql", sql: `${" ".repeat(100_000)}CREATE TABLE t (id int);` };
+    expect(filesForDeclarativeShadowLoad([padded], false)).toEqual([padded]);
   });
 });
 
