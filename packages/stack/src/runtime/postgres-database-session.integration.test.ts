@@ -1,11 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Redacted, Ref } from "effect";
-import {
-  AuthenticationError,
-  ConnectionError,
-  SqlError,
-  UnknownError,
-} from "effect/sql/SqlError";
+import { AuthenticationError, ConnectionError, SqlError, UnknownError } from "effect/sql/SqlError";
 import {
   ensureInternalDatabase,
   makeDatabaseSessionFromAcquisition,

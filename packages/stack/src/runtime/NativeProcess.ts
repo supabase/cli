@@ -3,11 +3,7 @@ import { fileURLToPath } from "node:url";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { PlatformError } from "effect/PlatformError";
 import { isBunVirtualPath } from "../internal/dispatch-markers.ts";
-import type {
-  ChildProcessHandle,
-  ExitCode,
-  ProcessId,
-} from "effect/process/ChildProcessSpawner";
+import type { ChildProcessHandle, ExitCode, ProcessId } from "effect/process/ChildProcessSpawner";
 
 export interface NativeProcessSpec {
   readonly executable: string;
