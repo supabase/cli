@@ -5,7 +5,7 @@ import {
   ConnectionError,
   SqlError,
   UnknownError,
-} from "effect/unstable/sql/SqlError";
+} from "effect/sql/SqlError";
 import {
   ensureInternalDatabase,
   makeDatabaseSessionFromAcquisition,

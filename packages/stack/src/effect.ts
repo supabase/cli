@@ -18,8 +18,8 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { HttpClient } from "effect/http";
+import { RpcClientError } from "effect/rpc/RpcClientError";
 import {
   connectHost,
   hasReason,

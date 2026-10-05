@@ -1,4 +1,4 @@
-import { Flag, GlobalFlag } from "effect/unstable/cli";
+import { Flag, GlobalFlag } from "effect/cli";
 
 /**
  * `--linked` / `--local` are scoped global flags on the `seed` group, so both

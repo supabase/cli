@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { ExperimentalFlag } from "../command-internal/global-flags.ts";

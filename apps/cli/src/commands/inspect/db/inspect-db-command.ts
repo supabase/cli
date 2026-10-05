@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withCommandTelemetry } from "../../../telemetry/command-telemetry.ts";

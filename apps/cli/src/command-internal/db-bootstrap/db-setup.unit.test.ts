@@ -7,7 +7,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
 import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { DbExecError } from "../db-connection.errors.ts";

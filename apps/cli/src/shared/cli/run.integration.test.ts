@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Console, Effect, Exit, Layer } from "effect";
-import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliOutput, Command, Flag } from "effect/cli";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";

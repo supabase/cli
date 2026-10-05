@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as State from "./State.ts";
 import {
   hasReason,

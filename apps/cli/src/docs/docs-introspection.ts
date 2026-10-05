@@ -1,4 +1,4 @@
-import type { Command, GlobalFlag, Param, Primitive } from "effect/unstable/cli";
+import type { Command, GlobalFlag, Param, Primitive } from "effect/cli";
 
 /**
  * `.config.flags`/`.contextConfig.flags`/`.globalFlags` exist on `Command` at runtime but are

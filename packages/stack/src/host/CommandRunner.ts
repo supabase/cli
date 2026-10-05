@@ -13,8 +13,8 @@ import {
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem has no non-recursive directory removal operation.
 import { rmdir } from "node:fs/promises";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/process";
+import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,

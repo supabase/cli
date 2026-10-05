@@ -1,6 +1,6 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { Console, Effect } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as State from "../src/State.ts";
 import { isBunVirtualPath } from "../src/internal/dispatch-markers.ts";
 import { fileURLToPath } from "node:url";

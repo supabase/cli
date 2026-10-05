@@ -14,10 +14,10 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration verifies exact-port reopening.
 import * as Net from "node:net";
 import { fileURLToPath } from "node:url";

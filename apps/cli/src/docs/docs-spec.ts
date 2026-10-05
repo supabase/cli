@@ -1,7 +1,7 @@
 import { Option } from "effect";
 import { stringify } from "yaml";
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param } from "effect/unstable/cli";
+import { GlobalFlag } from "effect/cli";
+import type { Command, Param } from "effect/cli";
 import {
   choiceKeysOf,
   commandInternals,

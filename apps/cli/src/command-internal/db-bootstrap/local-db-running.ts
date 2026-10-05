@@ -1,7 +1,7 @@
 import http from "node:http";
 
 import { Context, Crypto, Data, Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
-import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 
 import {
   actionability,

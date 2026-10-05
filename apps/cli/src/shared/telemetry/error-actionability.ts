@@ -1,5 +1,5 @@
 import { Cause, Option, Predicate } from "effect";
-import type { CliError as EffectCliError } from "effect/unstable/cli";
+import type { CliError as EffectCliError } from "effect/cli";
 
 /**
  * CLI error actionability taxonomy for KPI reporting.
@@ -820,7 +820,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
       ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
       : { ...actionability.impossibleState, fingerprint_suffix: "request_encoding" },
 
-  // effect/unstable/http — generated Management API client transport/decoding
+  // effect/http — generated Management API client transport/decoding
   HttpClientError: (error) => {
     const reason = error["reason"];
     const reasonTag = isErrorRecord(reason) ? readString(reason, "_tag") : undefined;

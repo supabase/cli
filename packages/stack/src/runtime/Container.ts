@@ -19,7 +19,7 @@ import {
   Sink,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { identifyContainer } from "./ContainerName.ts";
 

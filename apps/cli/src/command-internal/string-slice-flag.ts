@@ -12,7 +12,7 @@ import {
  *
  * Whitespace is not trimmed and empty fields are not dropped.
  */
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 const QUOTE = 0x22; // "
 const COMMA = 0x2c; // ,

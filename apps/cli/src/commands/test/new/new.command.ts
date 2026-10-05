@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { commandSettingsLayer } from "../../../config/command-settings.layer.ts";
 import { debugLoggerLayer } from "../../../command-internal/debug-logger.layer.ts";

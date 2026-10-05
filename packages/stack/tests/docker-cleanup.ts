@@ -1,4 +1,4 @@
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { Effect, Stream } from "effect";
 
 export const cleanupDockerRoot = Effect.fn("DockerTest.cleanupRoot")((root: string) =>

@@ -11,8 +11,8 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { ChildProcess } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcess } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";

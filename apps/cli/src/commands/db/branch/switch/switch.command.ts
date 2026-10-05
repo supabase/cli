@@ -1,5 +1,5 @@
-import { Argument, Command } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { dbBranchSwitch } from "./switch.handler.ts";
 
 const config = {

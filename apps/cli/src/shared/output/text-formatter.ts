@@ -1,4 +1,4 @@
-import { CliOutput } from "effect/unstable/cli";
+import { CliOutput } from "effect/cli";
 import type {
   CliErrorSuggestionContext,
   FormattedCliError,

@@ -1,6 +1,6 @@
 import { expect } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Predicate, Stream } from "effect";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess } from "effect/process";
 import { fileURLToPath } from "node:url";
 import { discover, type StackLocations } from "../src/effect.ts";
 import { HostProcessError, shutdownHost, type HostAccess } from "../src/HostProcess.ts";

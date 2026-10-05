@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
 
 import { cobraMutuallyExclusiveErrorMessage } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";

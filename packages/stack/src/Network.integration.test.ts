@@ -3,7 +3,7 @@ import { expect, it } from "@effect/vitest";
 import { Context, Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import * as Network from "./Network.ts";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as State from "./State.ts";

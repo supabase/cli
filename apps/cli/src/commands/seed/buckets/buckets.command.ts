@@ -1,5 +1,5 @@
 import { Effect, Layer, type Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";

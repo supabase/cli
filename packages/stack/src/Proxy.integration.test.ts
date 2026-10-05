@@ -6,7 +6,7 @@ import {
   HttpClientRequest,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
 import * as Http from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw client and backend fixtures for connection failures.

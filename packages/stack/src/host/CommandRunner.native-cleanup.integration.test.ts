@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Path, Stream } from "effect";
 import { systemError } from "effect/PlatformError";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { postgres } from "../Commands.ts";
 import * as CommandRunner from "./CommandRunner.ts";
 

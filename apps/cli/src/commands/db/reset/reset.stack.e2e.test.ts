@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Data, Effect, FileSystem, Layer, Path, Redacted } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { PgClient } from "@effect/sql-pg";
 import { create as createStack } from "@supabase/stack/effect";
 import { tmpdir } from "node:os";

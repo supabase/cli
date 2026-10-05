@@ -9,8 +9,8 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { HttpClient } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
 import { validateRelativePath, validateSha256 } from "./Integrity.ts";
 import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";

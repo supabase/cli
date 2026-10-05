@@ -1,6 +1,6 @@
 import { languages, type OptionSpec, type OptionValue, type OptionValues } from "@supabase/typegen";
 import { Option } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 /** A user-facing registry option as one CLI flag, merged across the languages that declare it. */
 export interface LanguageFlagSpec {

@@ -10,7 +10,7 @@
  */
 
 import { Data, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { branchClause, detectGitBranch } from "../../shared/git/git-branch.ts";
 import {

@@ -1,5 +1,5 @@
 import { Config, Effect, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { isBitbucketPipeline } from "../../../command-internal/bitbucket-pipeline.ts";
 import {

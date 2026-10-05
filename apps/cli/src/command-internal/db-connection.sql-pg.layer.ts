@@ -3,8 +3,8 @@ import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
 import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
-import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
+import * as Reactivity from "effect/reactivity/Reactivity";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 // `pg` is `@effect/sql-pg`'s transitive driver; used directly here for COPY and
 // extended-protocol batches, which `@effect/sql-pg` does not expose. Keep the direct `pg`
 // version in package.json aligned with the one `@effect/sql-pg` resolves.

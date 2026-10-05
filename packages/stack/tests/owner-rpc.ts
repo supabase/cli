@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { RpcTest } from "effect/unstable/rpc";
+import { RpcTest } from "effect/rpc";
 import * as Owner from "../src/Owner.ts";
 import { OwnerRpc } from "../src/Rpc.ts";
 import { Service as StateService } from "../src/State.ts";

@@ -1,5 +1,5 @@
 import { Config, Effect, FileSystem, Layer } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { RuntimeInfo } from "./runtime-info.service.ts";
 import { Browser } from "./browser.service.ts";

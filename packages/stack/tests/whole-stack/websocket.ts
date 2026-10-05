@@ -1,6 +1,6 @@
 import { Deferred, Effect, Queue, Schedule, Schema, Scope } from "effect";
 import { NodeSocket } from "@effect/platform-node";
-import * as Socket from "effect/unstable/socket/Socket";
+import * as Socket from "effect/socket/Socket";
 
 class RealtimeProbeError extends Schema.TaggedError<RealtimeProbeError>()("RealtimeProbeError", {
   message: Schema.String,

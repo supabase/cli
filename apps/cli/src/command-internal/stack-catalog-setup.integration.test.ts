@@ -13,7 +13,7 @@ import {
   Result,
   Stream,
 } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { tmpdir } from "node:os";
 import { create, StackError, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";

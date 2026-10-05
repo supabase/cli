@@ -1,5 +1,5 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Argument, Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { parseSchemaFlags } from "../../../command-internal/schema-flags.ts";

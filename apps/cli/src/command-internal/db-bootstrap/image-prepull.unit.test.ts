@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Ref, Sink, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { ImagePrepullError, ensureImagesCached } from "./image-prepull.ts";
 

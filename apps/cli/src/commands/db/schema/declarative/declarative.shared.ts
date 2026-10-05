@@ -1,4 +1,4 @@
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 
 /**
  * Base `db schema declarative` group command carrying the shared `--no-cache`/`--strict-coverage`

@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";

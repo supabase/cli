@@ -1,6 +1,6 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { commandCredentialsLayer } from "../../auth/command-credentials.layer.ts";
 import { commandPlatformApiFactoryLayer } from "../../auth/command-platform-api-factory.layer.ts";

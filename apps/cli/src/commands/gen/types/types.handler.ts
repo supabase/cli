@@ -1,6 +1,6 @@
 import type { LoadedCliConfig } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
 import { DnsResolverFlag } from "../../../command-internal/global-flags.ts";

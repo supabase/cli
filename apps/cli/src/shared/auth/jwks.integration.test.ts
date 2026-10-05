@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { resolveRemoteJwks } from "./jwks.ts";
 

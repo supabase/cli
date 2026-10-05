@@ -10,7 +10,7 @@ import {
   type TypegenLanguage,
 } from "@supabase/typegen";
 import { Config, Effect, Layer, Option } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import { DbConnection } from "../../../command-internal/db-connection.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";

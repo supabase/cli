@@ -1,4 +1,4 @@
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 /**
  * `--no-descriptions` flag shared by all four completion subcommands.

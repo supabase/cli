@@ -3,9 +3,9 @@ import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Sink, Stream 
 import * as TestClock from "effect/testing/TestClock";
 import { NodeServices } from "@effect/platform-node";
 import { systemError, type PlatformError } from "effect/PlatformError";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
-import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/process/ChildProcessSpawner";
+import type { ExitCode } from "effect/process/ChildProcessSpawner";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The test closes inherited fd5 before sending the launch payload and scans exact marker-owned processes for cleanup.
 import { execFileSync, spawn as spawnProcess } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- The test waits for actual inherited-fd and process events.

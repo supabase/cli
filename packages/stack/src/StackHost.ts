@@ -23,11 +23,11 @@ import {
   Semaphore,
   Path,
 } from "effect";
-import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as RpcServer from "effect/rpc/RpcServer";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
 import * as Http from "node:http";
 import {

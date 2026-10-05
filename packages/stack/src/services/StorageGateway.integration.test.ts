@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { tmpdir } from "node:os";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,

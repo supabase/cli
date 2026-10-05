@@ -1,7 +1,7 @@
 import { expect } from "@effect/vitest";
 import { Context, Effect, Fiber, Layer, Redacted, Schema } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import {
   jsonRequest,

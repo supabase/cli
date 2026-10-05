@@ -12,7 +12,7 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as State from "./State.ts";
 
 const saved: State.SavedStack = {

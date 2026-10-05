@@ -1,7 +1,7 @@
 import { NodeSink, NodeSocket, NodeSocketServer, NodeStream } from "@effect/platform-node";
 import { Data, Effect, Option, Stream } from "effect";
 import type { Scope } from "effect";
-import type { SocketServer } from "effect/unstable/socket";
+import type { SocketServer } from "effect/socket";
 import * as Net from "node:net";
 import { PortError } from "./Ports.ts";
 

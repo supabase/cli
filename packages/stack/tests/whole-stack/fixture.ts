@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { postgres } from "../../src/Commands.ts";
 import { homedir, tmpdir } from "node:os";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { create, type Stack } from "../../src/effect.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";

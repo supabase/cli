@@ -1,6 +1,6 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Duration, Effect, Option } from "effect";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/http/HttpClientError";
 
 import { CommandPlatformApiFactory } from "../auth/command-platform-api-factory.service.ts";
 import { CommandPlatformApi } from "../auth/command-platform-api.service.ts";

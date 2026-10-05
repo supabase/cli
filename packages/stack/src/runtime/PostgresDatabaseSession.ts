@@ -1,5 +1,5 @@
 import { Effect, Predicate, Redacted, Schema, Scope } from "effect";
-import { isSqlError, type SqlError } from "effect/unstable/sql/SqlError";
+import { isSqlError, type SqlError } from "effect/sql/SqlError";
 import {
   DatabaseBootstrapError,
   INTERNAL_DATABASE,

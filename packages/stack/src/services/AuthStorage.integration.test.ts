@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import { makeService } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";

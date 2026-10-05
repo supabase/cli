@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
 import { changedLinkedLocalFlags } from "../../command-internal/db-target-flags.ts";
 import { StorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";

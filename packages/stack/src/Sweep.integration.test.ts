@@ -14,7 +14,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import * as State from "./State.ts";

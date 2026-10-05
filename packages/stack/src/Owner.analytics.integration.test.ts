@@ -16,7 +16,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { tmpdir } from "node:os";
 import { logflareEvent, logflareSources } from "./host/LogflareEvents.ts";
 import * as State from "./State.ts";

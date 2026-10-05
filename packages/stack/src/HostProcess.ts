@@ -17,10 +17,10 @@ import {
   Scope,
   Stream,
 } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Effect ChildProcess cannot hand the owner a log file descriptor or release its lifeline pipe from the event loop.
 import { spawn, type ChildProcess } from "node:child_process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the spawner shares its owner log descriptor with the owner and reads the log tail through it.

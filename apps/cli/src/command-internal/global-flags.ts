@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { Flag, GlobalFlag } from "effect/unstable/cli";
+import { Flag, GlobalFlag } from "effect/cli";
 
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { VALUE_CONSUMING_LONG_FLAGS, VALUE_CONSUMING_SHORT_FLAGS } from "./db-target-flags.ts";

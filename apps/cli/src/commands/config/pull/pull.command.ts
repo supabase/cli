@@ -1,6 +1,6 @@
 import { Layer, Option } from "effect";
-import type * as CliCommand from "effect/unstable/cli/Command";
-import { Command, Flag } from "effect/unstable/cli";
+import type * as CliCommand from "effect/cli/Command";
+import { Command, Flag } from "effect/cli";
 
 import { PROJECT_REF_PATTERN } from "../../../config/project-ref.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";

@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Layer, Option } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { GlobalFlag } from "effect/unstable/cli";
-import type { Command, Param, Primitive } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/http";
+import { GlobalFlag } from "effect/cli";
+import type { Command, Param, Primitive } from "effect/cli";
 import process from "node:process";
 import {
   QUERY_OUTPUT_FORMATS,

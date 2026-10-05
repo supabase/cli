@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option, Ref, Stdio } from "effect";
-import { Param } from "effect/unstable/cli";
+import { Param } from "effect/cli";
 import {
   CommandRuntime,
   getCommandRuntimeCommand,

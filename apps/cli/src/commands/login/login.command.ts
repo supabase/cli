@@ -1,5 +1,5 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command, Flag } from "effect/cli";
+import type * as CliCommand from "effect/cli/Command";
 
 import { withCommandTelemetry } from "../../telemetry/command-telemetry.ts";
 import { withJsonErrorHandling } from "../../shared/output/json-error-handling.ts";

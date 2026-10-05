@@ -1,5 +1,5 @@
 import { Config, Effect, FileSystem, Option, Path } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { ServiceError } from "../Service.ts";
 
 /** Names the non-root system user that runs native PostgreSQL when the stack itself runs as root. */

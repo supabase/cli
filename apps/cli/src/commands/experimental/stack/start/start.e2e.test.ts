@@ -12,7 +12,7 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { parse as parseDotenv } from "dotenv";
 import { afterAll, afterEach, describe, expect, test } from "vitest";
 import {

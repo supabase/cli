@@ -7,8 +7,8 @@ import {
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import {
   bodyText,
   decodeJsonBody,

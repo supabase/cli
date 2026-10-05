@@ -1,4 +1,4 @@
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 import { describe, expect, it } from "vitest";
 
 import { unwrapParam, unwrapToSingleParam } from "./param-introspection.ts";

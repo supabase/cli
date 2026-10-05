@@ -1,6 +1,6 @@
 import { Layer } from "effect";
 import { httpClientLayer } from "../../../auth/http-debug.layer.ts";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { FUNCTIONS_SERVE_INSPECT_MODES } from "../../../shared/functions/serve.ts";

@@ -23,8 +23,8 @@ import {
   type PlatformError,
   Schema,
 } from "effect";
-import * as HttpBody from "effect/unstable/http/HttpBody";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";

@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Fiber, Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw WebSocket upgrade fixture.

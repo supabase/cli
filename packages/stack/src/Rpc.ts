@@ -1,5 +1,5 @@
 import { Exit, Schema } from "effect";
-import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Rpc, RpcGroup } from "effect/rpc";
 import { ServiceCreation, ServiceCreationInput } from "./services/Catalog.ts";
 import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";

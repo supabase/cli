@@ -13,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { SignJWT } from "jose";
 import { tmpdir } from "node:os";
 import * as State from "../State.ts";

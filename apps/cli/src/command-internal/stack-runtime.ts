@@ -1,7 +1,7 @@
 import { defaultRuntime } from "@supabase/stack/internal/artifacts";
 import { Data, Effect } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
-import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import {
   actionability,

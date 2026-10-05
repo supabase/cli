@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { makeContainerRuntime } from "./Container.ts";
 
 const primary = "ghcr.io/supabase/cli/postgrest:v16.2";

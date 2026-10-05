@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { backupsCommand } from "../commands/backups/backups.command.ts";
 import { bootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";

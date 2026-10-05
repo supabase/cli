@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Primitive, type Command } from "effect/unstable/cli";
+import { Primitive, type Command } from "effect/cli";
 import {
   commandInternals,
   flattenSubcommands,

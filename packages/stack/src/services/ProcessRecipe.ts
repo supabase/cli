@@ -17,9 +17,9 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { prepareNativeArtifact, resolveArtifact, type ServiceKind } from "../Artifacts.ts";
 import { accepts, type NativePortReservation, type PortError } from "../Ports.ts";
 import type * as State from "../State.ts";

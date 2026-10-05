@@ -15,9 +15,9 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { Rpc, RpcClient, RpcGroup, RpcSerialization } from "effect/unstable/rpc";
-import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { Rpc, RpcClient, RpcGroup, RpcSerialization } from "effect/rpc";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClient from "effect/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
 import {

@@ -18,9 +18,9 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
 import {
   slimImageMirrors,
   prepareNativeArtifact,

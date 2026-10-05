@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunCrypto } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
 import {
   AgentFlag,

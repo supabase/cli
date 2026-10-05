@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { Effect, Exit } from "effect";
-import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
+import { SqlError, SqlSyntaxError, UnknownError } from "effect/sql/SqlError";
 import type * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
