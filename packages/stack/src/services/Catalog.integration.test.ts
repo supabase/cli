@@ -2,7 +2,6 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted } from "effect";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-recipe",
@@ -10,7 +9,6 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
-  isPubliclyReserved: noPublicPortReservations,
 });
 
 describe("service catalog", () => {

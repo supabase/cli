@@ -3,7 +3,6 @@ import type { Stream } from "effect";
 import type { Effect, Ref } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
 import type { ServiceDefinition } from "../Service.ts";
-import type { PortError } from "../Ports.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
@@ -57,8 +56,6 @@ export interface CatalogOptions {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Read-only: true when the per-user registry holds `port` for any stack's public listener. */
-  readonly isPubliclyReserved: (port: number) => Effect.Effect<boolean, PortError>;
 }
 
 export interface CatalogLog {

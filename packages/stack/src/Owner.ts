@@ -22,8 +22,6 @@ import type { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
 import type { NetworkEndpoint, NetworkNamespace } from "./Network.ts";
-import * as PortReservations from "./namespace/PortReservations.ts";
-import { PortError } from "./Ports.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { CompositionConfig } from "./Orchestrator.ts";
 import {
@@ -270,7 +268,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const fs = Context.get(services, FileSystem.FileSystem);
   const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
   const network = yield* Network.Service;
-  const portReservations = yield* PortReservations.Service;
   // A native stack has no engine to lose, so every cleanup failure is retried forever; a docker
   // stack probes the pinned target directly, never by classifying a failure's cause.
   const engineAvailable: Effect.Effect<boolean> =
@@ -283,17 +280,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const removeContainerEnvRoot = fs
     .remove(path.join(options.root, Paths.CONTAINER_ENV_DIRNAME), { recursive: true, force: true })
     .pipe(Effect.mapError(serviceError("cleanup")));
-  const isPubliclyReserved = (port: number) =>
-    portReservations.isReserved(port).pipe(
-      Effect.mapError(
-        (cause) =>
-          new PortError({
-            key: "native",
-            message: "Unable to check the public port reservation registry",
-            cause,
-          }),
-      ),
-    );
   const rejectWhileDraining = (options.draining ?? Effect.succeed(false)).pipe(
     Effect.flatMap((isDraining) =>
       isDraining
@@ -436,7 +422,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
-      isPubliclyReserved,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));
@@ -917,5 +902,4 @@ export const layer = (options: Omit<OwnerOptions, "state">) =>
         runtime: options.saved.runtime,
       }),
     ),
-    Layer.provide(PortReservations.layer),
   );

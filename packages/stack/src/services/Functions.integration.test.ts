@@ -22,7 +22,6 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
-import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
@@ -103,7 +102,6 @@ describe("service catalog", () => {
               },
             },
             {
-              isPubliclyReserved: noPublicPortReservations,
               ...dockerOptions(root),
               stackId,
               instanceId,
@@ -166,7 +164,6 @@ describe("service catalog", () => {
             config: { functionsRoot, databaseUrl: "postgres://functions-db" },
           },
           {
-            isPubliclyReserved: noPublicPortReservations,
             ...options(root),
             stackId,
             instanceId,
@@ -260,7 +257,6 @@ describe("service catalog", () => {
                 },
               },
               {
-                isPubliclyReserved: noPublicPortReservations,
                 ...options(stackRoot),
                 stackId: "d".repeat(64),
                 instanceId: "ancestor",
@@ -334,7 +330,6 @@ describe("service catalog", () => {
               },
             },
             {
-              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "e".repeat(64),
               instanceId: "deno-config",
@@ -409,7 +404,6 @@ describe("service catalog", () => {
               },
             },
             {
-              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "f".repeat(64),
               instanceId: "plain-deno-config",
@@ -523,7 +517,6 @@ for (const runtime of ["native", "docker"] as const) {
               },
             },
             {
-              isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "c".repeat(64),
               instanceId: "configured",
@@ -634,7 +627,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       };
       const deps = {
         borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-        isPubliclyReserved: noPublicPortReservations,
         fs: yield* FileSystem.FileSystem,
         path: yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32)),
         crypto: yield* Crypto.Crypto,
@@ -645,7 +637,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const recipe = yield* makeProcessRecipe(
         creation,
         {
-          isPubliclyReserved: noPublicPortReservations,
           stackId: "e".repeat(64),
           instanceId: "windows",
           root: "C:\\Users\\dev\\stack",

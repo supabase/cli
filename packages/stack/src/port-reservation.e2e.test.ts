@@ -462,3 +462,33 @@ it.live(
     ),
   { timeout: 120_000 },
 );
+
+it.live(
+  "pinning a public port inside the native range fails naming the range and reserves nothing",
+  () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cacheRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "port-reservation-native-range-cache-",
+        });
+        const { stack, stateRoot } = yield* makeStack(fs, cacheRoot);
+        const mail = yield* stack.services.create(mailOn(15_432));
+
+        const failure = yield* Effect.flip(mail.start);
+
+        expect(failure.message).toContain("10000-19999");
+        expect(failure.message).toContain("choose a port outside that range");
+        const state = yield* StackNamespace.Service.pipe(
+          Effect.provide(StackNamespace.layer({ root: stateRoot })),
+        );
+        expect((yield* state.read(stack.id))?.ports).toEqual([]);
+        const reservationContext = yield* Layer.build(PortReservations.layer);
+        const portReservations = Context.get(reservationContext, PortReservations.Service);
+        expect(
+          yield* portReservations.find(yield* fs.realPath(stateRoot), stack.id, `${mail.id}:http`),
+        ).toBeUndefined();
+      }),
+    ),
+  { timeout: 120_000 },
+);

@@ -132,8 +132,9 @@ export const probeVacant =
 
 /**
  * Disjoint from the public auto range (`portBase`..`portBase + portSpan`) and contiguous below it,
- * so a native backend's direct bind can never land on a port the per-user registry is reserving for
- * a public listener. Both ranges stay below the OS ephemeral range (ADR 0017).
+ * and a pinned public port inside it is rejected, so a native backend's direct bind can never land
+ * on a port the per-user registry is reserving for a public listener. Both ranges stay below the
+ * OS ephemeral range (ADR 0017).
  */
 export const nativePortBase = 10000;
 export const nativePortSpan = portBase - nativePortBase;
@@ -185,19 +186,15 @@ const bindNativePort = (
 /**
  * Reserves a native backend's private port, hash-seeding the scan from `key` so a reopened
  * instance starts from the same candidate while separate keys spread out (mirrors the public auto
- * scan's hash seed). Skips a candidate `isPubliclyReserved` reports, so a native bind can never
- * take a port the per-user registry holds for a stopped stack's public listener (that stack owns
- * no live socket to probe or bind against). Otherwise probes with {@link probeVacant} before the
- * real bind, since a loopback-only bind can silently coexist with a wildcard listener on macOS,
- * BSD, and Windows. A port a prior attempt in this batch lost is passed in `excluded` so a retry
- * advances instead of repeating it. Never saved: backend ports are private and are not stable
- * across restarts.
+ * scan's hash seed). Probes with {@link probeVacant} before the real bind, since a loopback-only
+ * bind can silently coexist with a wildcard listener on macOS, BSD, and Windows. A port a prior
+ * attempt in this batch lost is passed in `excluded` so a retry advances instead of repeating it.
+ * Never saved: backend ports are private and are not stable across restarts.
  */
 export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
   (
     key: string,
     excluded: ReadonlySet<number>,
-    isPubliclyReserved: (port: number) => Effect.Effect<boolean, PortError>,
     platform: NodeJS.Platform = process.platform,
   ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
     Effect.acquireRelease(
@@ -209,14 +206,6 @@ export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
         for (let attempt = 0; attempt < nativePortSpan && failures < 64; attempt++) {
           const port = nativePortBase + ((start + attempt * nativePortStride) % nativePortSpan);
           if (excluded.has(port)) continue;
-          if (yield* isPubliclyReserved(port)) {
-            failures++;
-            lastFailure = new PortError({
-              key,
-              message: `Port ${port} is reserved by a public listener`,
-            });
-            continue;
-          }
           const probed = yield* Effect.exit(probe(key, "127.0.0.1", port));
           if (Exit.isFailure(probed)) {
             const probeError = Cause.findErrorOption(probed.cause);
@@ -273,6 +262,13 @@ const resolveRequest = (
   if (requested === "auto") return Effect.succeed({ saved, requested });
   if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
     return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
+  if (requested >= nativePortBase && requested < portBase)
+    return Effect.fail(
+      new PortError({
+        key: request.key,
+        message: `Public port ${requested} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service ports; choose a port outside that range`,
+      }),
+    );
   return Effect.succeed({ saved, requested });
 };
 

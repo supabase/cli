@@ -49,7 +49,6 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
-import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -77,7 +76,6 @@ const options: CatalogOptions = {
   root: "/tmp/process-recipe-test",
   cacheRoot: "/tmp/process-recipe-test-cache",
   runtime: "docker",
-  isPubliclyReserved: noPublicPortReservations,
 };
 
 const spec: ProcessRecipeSpec<TestCreation> = {
@@ -194,7 +192,6 @@ describe("ProcessRecipe launch cleanup", () => {
             spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             container,
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
           const service = yield* makeStandaloneService(recipe.definition, {
@@ -283,7 +280,6 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-          isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeStandaloneService(recipe.definition, {
@@ -395,7 +391,6 @@ describe("ProcessRecipe launch cleanup", () => {
           spawner,
           container: undefined,
           borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-          isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
         const service = yield* makeStandaloneService(recipe.definition, {
@@ -460,7 +455,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   const recipe = yield* makeProcessRecipe(
     creation,
     {
-      isPubliclyReserved: noPublicPortReservations,
       stackId: "process-recipe-test",
       instanceId: "instance",
       root: "/unused",
@@ -469,7 +463,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-      isPubliclyReserved: noPublicPortReservations,
       fs: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
       crypto: yield* Crypto.Crypto,
@@ -679,7 +672,6 @@ const nativeRestRecipe = Effect.fn(function* (
     },
     {
       borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-      isPubliclyReserved: noPublicPortReservations,
       fs,
       path,
       crypto,
@@ -957,7 +949,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-race",
             instanceId: "instance",
             root,
@@ -967,7 +958,6 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1036,7 +1026,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-exhaustion",
             instanceId: "instance",
             root,
@@ -1046,7 +1035,6 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1176,7 +1164,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-deadline",
             instanceId: "instance",
             root,
@@ -1186,7 +1173,6 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1241,7 +1227,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-unrelated-failure",
             instanceId: "instance",
             root,
@@ -1251,7 +1236,6 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,
@@ -1348,7 +1332,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-exit-failure",
             instanceId: "instance",
             root,
@@ -1358,7 +1341,6 @@ describe("process recipe startup", () => {
           },
           {
             borrowCallerPath: () => Effect.die("borrowCallerPath not exercised in this test"),
-            isPubliclyReserved: noPublicPortReservations,
             fs,
             path,
             crypto,

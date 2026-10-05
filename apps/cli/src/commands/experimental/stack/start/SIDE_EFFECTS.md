@@ -47,7 +47,7 @@ different port; only automatic allocation tries another candidate. On macOS a pr
 a narrow race against the pre-bind probe before a brand-new listener exists.
 Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
 auto range and below the OS ephemeral range on every supported platform; this range is not
-configurable, and a host whose ephemeral range has been widened to overlap it reintroduces the
+configurable, and a public port pinned inside it is rejected. A host whose ephemeral range has been widened to overlap it reintroduces the
 ephemeral-port race this reservation exists to avoid.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then

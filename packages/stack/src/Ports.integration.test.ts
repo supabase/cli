@@ -62,9 +62,6 @@ const saveStack = (state: StackNamespace.Interface, root: string, id: string) =>
 const probedBind = (key: string) => (host: string, port: number) =>
   probeVacant(process.platform)(key, host, port).pipe(Effect.andThen(bindTcp(host, port)));
 
-/** Stands in for the real per-user registry check in tests that are not exercising it. */
-const neverPubliclyReserved = () => Effect.succeed(false);
-
 /**
  * Binds a real wildcard listener directly in the native span, skipping any already-occupied
  * candidate, instead of reserving a port through the allocator and racing to rebind it as a
@@ -350,7 +347,7 @@ it.live("reserveNativePort skips a port a wildcard listener already holds", () =
       // past the wildcard listener instead of merely missing it by chance.
       const key = keyWithFirstCandidate(blocked.port);
 
-      const reserved = yield* reserveNativePort(key, new Set(), neverPubliclyReserved);
+      const reserved = yield* reserveNativePort(key, new Set());
       expect(reserved.port).not.toBe(blocked.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -361,55 +358,13 @@ it.live("reserveNativePort excludes a port a previous attempt lost from the next
     Effect.gen(function* () {
       const key = `native-exclude-${randomUUID()}`;
       const firstScope = yield* Scope.make();
-      const first = yield* reserveNativePort(key, new Set(), neverPubliclyReserved).pipe(
+      const first = yield* reserveNativePort(key, new Set()).pipe(
         Effect.provideService(Scope.Scope, firstScope),
       );
       yield* Scope.close(firstScope, Exit.void);
 
-      const second = yield* reserveNativePort(key, new Set([first.port]), neverPubliclyReserved);
+      const second = yield* reserveNativePort(key, new Set([first.port]));
       expect(second.port).not.toBe(first.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.live(
-  "reserveNativePort skips a stopped stack's fixed public reservation inside the native range",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped();
-        const id = `native-public-${randomUUID()}`;
-        const state = yield* makeTestState(root);
-        yield* saveStack(state, root, id);
-        const portReservations = yield* PortReservations.Service;
-        const stateRoot = yield* fs.realPath(root);
-
-        // A free candidate in the native span, claimed as stack `id`'s durable fixed public
-        // reservation with no live listener: the stopped-but-not-destroyed state the registry
-        // keeps. The row, not a socket, is what the native allocator must respect here.
-        const target = yield* bindNativeWildcard();
-        yield* Effect.callback<void>((resume) => {
-          target.server.close(() => resume(Effect.void));
-        });
-        const conflict = yield* portReservations.reserve(stateRoot, id, "fixed", target.port);
-        yield* Effect.addFinalizer(() =>
-          portReservations.release(stateRoot, id, "fixed").pipe(Effect.orDie),
-        );
-        expect(conflict).toBeUndefined();
-
-        const key = keyWithFirstCandidate(target.port);
-        const isPubliclyReserved = (port: number) =>
-          portReservations.isReserved(port).pipe(Effect.orDie);
-        const reserved = yield* reserveNativePort(key, new Set(), isPubliclyReserved);
-        expect(reserved.port).not.toBe(target.port);
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.merge(
-          NodeServices.layer,
-          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
-        ),
-      ),
-    ),
 );

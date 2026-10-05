@@ -115,9 +115,9 @@ unmounted or otherwise temporarily unreachable state root looks identical to a d
 be reclaimed the same way. The registry does not reserve across OS users; isolation between users'
 stacks still relies only on the kernel refusing a second bind. A native backend's own (never public)
 ports are reserved directly from 10000–19999, disjoint from the public auto range and below the OS
-ephemeral range on every supported platform; this is not configurable, and a host whose ephemeral
-range has been widened to overlap 10000–19999 reintroduces the ephemeral-port race this reservation
-exists to avoid.
+ephemeral range on every supported platform; this is not configurable, and a public port pinned
+inside it is rejected. A host whose ephemeral range has been widened to overlap 10000–19999
+reintroduces the ephemeral-port race this reservation exists to avoid.
 
 ## Composition and operation scope
 

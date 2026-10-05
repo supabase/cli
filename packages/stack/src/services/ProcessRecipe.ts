@@ -28,7 +28,7 @@ import {
 } from "../Artifacts.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { containerInstancePath, destroyOwnedRoot, type BorrowedPath } from "../namespace/Paths.ts";
-import { accepts, reserveNativePort, type PortError } from "../Ports.ts";
+import { accepts, reserveNativePort } from "../Ports.ts";
 import {
   type ContainerError,
   type ContainerProcess,
@@ -186,8 +186,6 @@ export interface ProcessDependencies {
   readonly container: ContainerRuntime | undefined;
   /** Validates a caller-supplied path against the stack's data root; see `namespace/Paths.borrow`. */
   readonly borrowCallerPath: (candidate: string) => Effect.Effect<BorrowedPath, ServiceError>;
-  /** Read-only: true when the per-user registry holds `port` for any stack's public listener. */
-  readonly isPubliclyReserved: (port: number) => Effect.Effect<boolean, PortError>;
 }
 
 const serviceError = mapToServiceError;
@@ -505,11 +503,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           const reservations = yield* Effect.forEach(
             portNames,
             ([name]) =>
-              reserveNativePort(
-                keyFor(name),
-                excluded.get(keyFor(name)) ?? emptyNativePortSet,
-                deps.isPubliclyReserved,
-              ),
+              reserveNativePort(keyFor(name), excluded.get(keyFor(name)) ?? emptyNativePortSet),
             { concurrency: 1 },
           ).pipe(
             Scope.provide(portScope),
