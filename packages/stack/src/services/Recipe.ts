@@ -17,12 +17,10 @@ export class CatalogError extends Data.TaggedError("CatalogError")<{
   readonly cause?: unknown;
 }> {}
 
-export interface ServiceEndpoint {
-  readonly kind: "tcp" | "unix";
-  readonly host?: "127.0.0.1";
-  readonly path?: string;
-  readonly port: number;
-}
+export type ServiceEndpoint =
+  | { readonly kind: "tcp"; readonly host?: "127.0.0.1"; readonly port: number }
+  /** `path` is the full socket filename, for example `<dir>/.s.PGSQL.<port>`. */
+  | { readonly kind: "unix"; readonly path: string; readonly port: number };
 
 export const EndpointIntent = Schema.Struct({
   port: Schema.Union([Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)), Schema.Literal("auto")]),

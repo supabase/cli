@@ -7,6 +7,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string, runtime: "docker" | "native") => ({
   stackId: "catalog-test",
@@ -47,7 +48,7 @@ describe("vector recipe", () => {
             yield* vector.ready;
             const endpoint = yield* recipe.endpoint("http");
             const response = yield* client.execute(
-              HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/health`),
+              HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/health`),
             );
             expect(response.status).toBe(200);
             yield* fs.makeDirectory(`${root}/vector/runtime/vector/.vector-api.yaml-interrupted`);

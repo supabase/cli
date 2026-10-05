@@ -40,6 +40,7 @@ import {
 } from "../runtime/Container.ts";
 import { ServiceError } from "../Service.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -773,7 +774,7 @@ describe("process recipe startup", () => {
         expect(yield* Ref.get(taken)).toHaveLength(2);
         expect(yield* Ref.get(taken)).not.toContain(endpoint?.port);
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/`),
+          HttpClientRequest.get(`http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/`),
         );
         expect(yield* response.text).toBe("owned-fixture");
         yield* service.stop;
@@ -1000,7 +1001,9 @@ describe("process recipe startup", () => {
         );
         expect(yield* competingResponse.text).toBe("competing-listener");
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint?.host}:${endpoint?.port}/api/health`),
+          HttpClientRequest.get(
+            `http://${endpoint && httpHost(endpoint)}:${endpoint?.port}/api/health`,
+          ),
         );
         expect(yield* response.text).toBe(`owned-fixture:${endpoint?.port}`);
         expect(yield* Ref.get(collisionInstalled)).toBe(true);

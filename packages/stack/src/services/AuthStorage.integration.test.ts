@@ -7,6 +7,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
@@ -78,7 +79,7 @@ describe("service catalog", () => {
           const email = "catalog@example.test";
           const password = "catalog-password-123";
           const signupRequest = yield* HttpClientRequest.bodyJson({ email, password })(
-            HttpClientRequest.post(`http://${authEndpoint.host}:${authEndpoint.port}/signup`),
+            HttpClientRequest.post(`http://${httpHost(authEndpoint)}:${authEndpoint.port}/signup`),
           );
           const signup = yield* client.execute(signupRequest);
           expect(signup.status).toBe(200);
@@ -92,7 +93,7 @@ describe("service catalog", () => {
             password,
           })(
             HttpClientRequest.post(
-              `http://${authEndpoint.host}:${authEndpoint.port}/token?grant_type=password`,
+              `http://${httpHost(authEndpoint)}:${authEndpoint.port}/token?grant_type=password`,
             ),
           );
           const login = yield* client.execute(loginRequest);
@@ -145,7 +146,7 @@ describe("service catalog", () => {
           );
           const bucketRequest = yield* HttpClientRequest.bodyJson({ name: "catalog" })(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/bucket`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/bucket`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -155,7 +156,7 @@ describe("service catalog", () => {
           expect(bucket.status).toBe(200);
           const uploadRequest = HttpClientRequest.bodyText(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/hello.txt`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/hello.txt`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -173,7 +174,7 @@ describe("service catalog", () => {
           );
           const imageRequest = HttpClientRequest.bodyUint8Array(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/source.png`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/source.png`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -185,7 +186,7 @@ describe("service catalog", () => {
           expect(imageUpload.status).toBe(200);
           const transformedImage = yield* client.execute(
             HttpClientRequest.get(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),

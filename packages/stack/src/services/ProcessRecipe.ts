@@ -382,7 +382,7 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
   timeout: Duration.Input = "60 seconds",
 ) {
   const attempt = client
-    .execute(HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}${path}`))
+    .execute(HttpClientRequest.get(`http://127.0.0.1:${endpoint.port}${path}`))
     .pipe(
       Effect.flatMap((response) =>
         (response.status >= 200 && response.status < 300) || response.status === 401

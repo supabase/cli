@@ -13,6 +13,7 @@ import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -159,7 +160,7 @@ describe("service catalog", () => {
                 enabled: Ref.get(restActive),
                 backend: restRecipe.endpoint("http").pipe(
                   Effect.flatMap((endpoint) =>
-                    endpoint.host === undefined
+                    endpoint.kind !== "tcp" || endpoint.host === undefined
                       ? Effect.fail(new ProxyError({ message: "REST endpoint has no host" }))
                       : Effect.succeed({ host: endpoint.host, port: endpoint.port }),
                   ),
@@ -206,6 +207,7 @@ describe("service catalog", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const client = yield* HttpClient.HttpClient;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-rest-native-" });
         const stackId = "catalog-native";
@@ -229,11 +231,14 @@ describe("service catalog", () => {
         yield* database.start;
         yield* database.ready;
         const databaseEndpoint = yield* databaseRecipe.endpoint("sql");
-        if (databaseEndpoint.kind !== "unix" || databaseEndpoint.path === undefined)
+        if (databaseEndpoint.kind !== "unix")
           return yield* new ProxyError({ message: "Native database did not expose a Unix socket" });
+        // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so it must receive the
+        // socket directory rather than the endpoint's full socket filename.
+        const databaseSocketDir = path.dirname(databaseEndpoint.path);
         const databaseLayer = yield* Layer.build(
           PgClient.layer({
-            host: databaseEndpoint.path,
+            host: databaseSocketDir,
             port: databaseEndpoint.port,
             database: "postgres",
             username: "supabase_admin",
@@ -255,7 +260,7 @@ describe("service catalog", () => {
             config: {
               databaseUrl:
                 "postgresql://supabase_admin:postgres@127.0.0.1/postgres?host=" +
-                encodeURIComponent(databaseEndpoint.path),
+                encodeURIComponent(databaseSocketDir),
               jwtSecret: secret,
               anonRole: "anon",
             },
@@ -278,7 +283,7 @@ describe("service catalog", () => {
         );
         const response = yield* client.execute(
           HttpClientRequest.get(
-            "http://" + endpoint.host + ":" + endpoint.port + "/catalog_native_probe",
+            "http://" + httpHost(endpoint) + ":" + endpoint.port + "/catalog_native_probe",
           ).pipe(HttpClientRequest.setHeader("Authorization", "Bearer " + token)),
         );
         const responseBody = yield* response.text;

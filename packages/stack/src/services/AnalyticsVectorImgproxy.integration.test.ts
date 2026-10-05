@@ -6,6 +6,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
@@ -79,7 +80,7 @@ describe("service catalog", () => {
           const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
           const analyticsResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${analyticsEndpoint.host}:${analyticsEndpoint.port}/health`,
+              `http://${httpHost(analyticsEndpoint)}:${analyticsEndpoint.port}/health`,
             ),
           );
           expect(analyticsResponse.status).toBe(200);
@@ -108,7 +109,9 @@ describe("service catalog", () => {
           yield* vector.ready;
           const vectorEndpoint = yield* vectorRecipe.endpoint("http");
           const vectorResponse = yield* client.execute(
-            HttpClientRequest.get(`http://${vectorEndpoint.host}:${vectorEndpoint.port}/health`),
+            HttpClientRequest.get(
+              `http://${httpHost(vectorEndpoint)}:${vectorEndpoint.port}/health`,
+            ),
           );
           expect(vectorResponse.status).toBe(200);
 
@@ -127,7 +130,7 @@ describe("service catalog", () => {
           const imgproxyEndpoint = yield* imgproxyRecipe.endpoint("http");
           const imgproxyResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${imgproxyEndpoint.host}:${imgproxyEndpoint.port}/health`,
+              `http://${httpHost(imgproxyEndpoint)}:${imgproxyEndpoint.port}/health`,
             ),
           );
           expect(imgproxyResponse.status).toBe(200);

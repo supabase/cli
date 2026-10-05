@@ -8,6 +8,7 @@ import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-rela
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-realtime",
@@ -68,7 +69,7 @@ describe("service catalog", () => {
           const realtimeEndpoint = yield* realtimeRecipe.endpoint("http");
           const realtimeResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${realtimeEndpoint.host}:${realtimeEndpoint.port}/healthcheck`,
+              `http://${httpHost(realtimeEndpoint)}:${realtimeEndpoint.port}/healthcheck`,
             ),
           );
           expect(realtimeResponse.status).toBe(200);
@@ -86,7 +87,9 @@ describe("service catalog", () => {
           const pgmetaEndpoint = yield* pgmetaRecipe.endpoint("http");
           const pgmetaRelay = yield* makeDockerHttpRelay(pgmetaRecipe.endpoint("http"));
           const schemasResponse = yield* client.execute(
-            HttpClientRequest.get(`http://${pgmetaEndpoint.host}:${pgmetaEndpoint.port}/schemas`),
+            HttpClientRequest.get(
+              `http://${httpHost(pgmetaEndpoint)}:${pgmetaEndpoint.port}/schemas`,
+            ),
           );
           expect(schemasResponse.status).toBe(200);
           expect(yield* schemasResponse.text).toContain("public");
@@ -114,13 +117,13 @@ describe("service catalog", () => {
           const studioEndpoint = yield* studioRecipe.endpoint("http");
           const profileResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${studioEndpoint.host}:${studioEndpoint.port}/api/platform/profile`,
+              `http://${httpHost(studioEndpoint)}:${studioEndpoint.port}/api/platform/profile`,
             ),
           );
           expect(profileResponse.status).toBe(200);
           const queryResponse = yield* client.execute(
             HttpClientRequest.post(
-              `http://${studioEndpoint.host}:${studioEndpoint.port}/api/platform/pg-meta/default/query`,
+              `http://${httpHost(studioEndpoint)}:${studioEndpoint.port}/api/platform/pg-meta/default/query`,
             ).pipe(HttpClientRequest.bodyJsonUnsafe({ query: "select current_user" })),
           );
           expect(queryResponse.status).toBe(200);

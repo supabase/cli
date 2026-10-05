@@ -24,6 +24,7 @@ import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -117,7 +118,7 @@ describe("service catalog", () => {
           yield* instance.ready;
           const endpoint = yield* recipe.endpoint("http");
           const response = yield* client.execute(
-            HttpClientRequest.get("http://" + endpoint.host + ":" + endpoint.port + "/hello"),
+            HttpClientRequest.get("http://" + httpHost(endpoint) + ":" + endpoint.port + "/hello"),
           );
           expect(response.status).toBe(200);
           expect(yield* response.json).toEqual(
@@ -136,7 +137,7 @@ describe("service catalog", () => {
           const inspector = yield* recipe.endpoint("inspector");
           const inspectorResponse = yield* client.execute(
             HttpClientRequest.get(
-              "http://" + inspector.host + ":" + inspector.port + "/json/version",
+              "http://" + httpHost(inspector) + ":" + inspector.port + "/json/version",
             ),
           );
           expect(inspectorResponse.status).toBe(200);
@@ -285,7 +286,9 @@ describe("service catalog", () => {
               Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
             );
             const endpoint = yield* recipe.endpoint("http");
-            const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+            const response = yield* client.get(
+              `http://${httpHost(endpoint)}:${endpoint.port}/hello`,
+            );
             expect(response.status, yield* Ref.get(logs)).toBe(200);
             expect(yield* response.text).toBe("shared");
             yield* instance.stop;
@@ -359,7 +362,7 @@ describe("service catalog", () => {
           );
           const endpoint = yield* recipe.endpoint("http");
 
-          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+          const response = yield* client.get(`http://${httpHost(endpoint)}:${endpoint.port}/hello`);
 
           expect(response.status, yield* Ref.get(logs)).toBe(200);
           expect(yield* response.text).toBe("config");
@@ -442,7 +445,7 @@ describe("service catalog", () => {
           );
           const endpoint = yield* recipe.endpoint("http");
 
-          const response = yield* client.get(`http://${endpoint.host}:${endpoint.port}/hello`);
+          const response = yield* client.get(`http://${httpHost(endpoint)}:${endpoint.port}/hello`);
           yield* Deferred.await(warned).pipe(
             Effect.timeout("30 seconds"),
             Effect.tapError(() => Ref.get(logs).pipe(Effect.flatMap(Effect.logError))),
@@ -558,7 +561,7 @@ for (const runtime of ["native", "docker"] as const) {
               ),
             );
             const endpoint = yield* recipe.endpoint("http");
-            const base = `http://${endpoint.host}:${endpoint.port}`;
+            const base = `http://${httpHost(endpoint)}:${endpoint.port}`;
             const response = yield* client.execute(HttpClientRequest.get(`${base}/hello`));
             const responseText = yield* response.text;
             expect(response.status, responseText).toBe(200);

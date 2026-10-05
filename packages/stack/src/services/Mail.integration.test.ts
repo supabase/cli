@@ -6,6 +6,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-mail",
@@ -78,7 +79,7 @@ describe("service catalog", () => {
         yield* instance.ready;
         const endpoint = yield* recipe.endpoint("http");
         const response = yield* client.execute(
-          HttpClientRequest.get(`http://${endpoint.host}:${endpoint.port}/readyz`),
+          HttpClientRequest.get(`http://${httpHost(endpoint)}:${endpoint.port}/readyz`),
         );
         expect(response.status).toBe(200);
         yield* instance.stop;

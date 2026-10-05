@@ -333,13 +333,20 @@ const forward = Effect.fn("HttpProxy.forward")(
 const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   (request: IncomingMessage, response: ServerResponse, route: HttpRoute, agent: Agent) =>
     Effect.gen(function* () {
-      const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
+      // Re-resolved on retry: a backend invalidated between attempts may have its address reused.
+      const resolveBackend = () => Effect.raceFirst(route.target, disconnected(request, response));
+      const backend = yield* resolveBackend();
       yield* forward(request, response, route, backend, isReplayable(request) ? agent : false).pipe(
         Effect.catchIf(isRetryable(request, response), (error) =>
           Effect.logWarning(
             `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
             error,
-          ).pipe(Effect.andThen(forward(request, response, route, backend, false))),
+          ).pipe(
+            Effect.andThen(resolveBackend()),
+            Effect.andThen((retryBackend) =>
+              forward(request, response, route, retryBackend, false),
+            ),
+          ),
         ),
       );
     }),

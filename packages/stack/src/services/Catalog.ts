@@ -28,6 +28,7 @@ import {
   type CatalogOptions,
   type CatalogRecipe as RecipeCatalogRecipe,
   type ProcessRecipeResult,
+  type ServiceEndpoint,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
 import { borrow } from "../namespace/Paths.ts";
@@ -273,6 +274,13 @@ const databaseRecipe = (
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
+          // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so the database keeps the
+          // directory and port private; the catalog's endpoint carries the full socket filename.
+          Effect.map((value): ServiceEndpoint =>
+            value.kind === "unix"
+              ? { ...value, path: `${value.path}/.s.PGSQL.${value.port}` }
+              : value,
+          ),
           Effect.mapError(
             (cause) =>
               new CatalogError({

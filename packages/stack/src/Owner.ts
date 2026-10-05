@@ -560,7 +560,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             .acquire(id, name !== "inspector", `traffic on endpoint ${name}`)
             .pipe(
               Effect.andThen(recipe.endpoint(name)),
-              Effect.flatMap(backendAddress),
+              Effect.map(backendAddress),
               Effect.mapError((cause) =>
                 cause instanceof ProxyError
                   ? cause
