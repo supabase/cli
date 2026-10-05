@@ -275,6 +275,7 @@ const health = Effect.fn("Database.health")(function* (
           username: "supabase_admin",
           password: config.databasePassword,
           connectTimeout: "2 seconds",
+          idleTimeout: "10 seconds",
         }),
       );
       const client = Context.get(layer, PgClient.PgClient);
@@ -297,6 +298,7 @@ const health = Effect.fn("Database.health")(function* (
               username: "supabase_admin",
               password: config.databasePassword,
               connectTimeout: "2 seconds",
+              idleTimeout: "10 seconds",
             }),
           );
           const client = Context.get(layer, PgClient.PgClient);
@@ -310,6 +312,7 @@ const health = Effect.fn("Database.health")(function* (
                 username: "supabase_admin",
                 password: config.databasePassword,
                 connectTimeout: "2 seconds",
+                idleTimeout: "10 seconds",
               }),
             );
             return makeDatabaseSessionFromSqlClient(Context.get(internalLayer, PgClient.PgClient));
