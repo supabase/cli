@@ -139,10 +139,10 @@ pins it. A hotfix PR opened before the upgrade appeared is left as is. Merge it 
 upgrade and the upgrade PR conflicts until the next run for that service rewrites it; merge the
 upgrade first and the hotfix PR is superseded and must be closed by hand.
 
-A service with a single pin has a single line, which accepts any comparable newer upstream: a
-Studio year rollover or a postgrest major bump moves that line forward. Only a service with
-additional pins (postgres) assigns each release tag to a line by its leading version component
-plus any engine-variant suffix: postgres `17.11.0.002-orioledb` is on line `17-orioledb`, separate
+A service with a single pin and no engine variants has a single line, which accepts any comparable
+newer upstream: a Studio year rollover or a postgrest major bump moves that line forward. Only
+postgres, which has additional pins and engine variants, assigns each release tag to a line by its
+leading version component plus any engine-variant suffix, even when the catalog carries one pin: postgres `17.11.0.002-orioledb` is on line `17-orioledb`, separate
 from stock `17`, and compares within it without the suffix. The first release of a variant line
 whose stock major the catalog carries is an **add** (branch `slim-bump/<svc>-<line>`, title
 `chore(stack): add <svc> <release_version>`) that inserts the line's pin; later releases hotfix or

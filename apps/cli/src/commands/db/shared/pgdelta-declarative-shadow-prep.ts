@@ -87,15 +87,27 @@ const declarativeBaselinePrepStatements = (
   return statements;
 };
 
-/** Whitespace and comments; matched on its own, so it never backtracks. */
-const SQL_TRIVIA = /(?:\s|--[^\r\n]*|\/\*[\s\S]*?\*\/)*/y;
-
 const EXTENSION_NAME = /"([^"]+)"|([a-zA-Z_][\w$-]*)/y;
 
+/** Index after the whitespace and comments at `from`; block comments nest as in PostgreSQL. */
 const afterTrivia = (sql: string, from: number): number => {
-  SQL_TRIVIA.lastIndex = from;
-  SQL_TRIVIA.exec(sql);
-  return SQL_TRIVIA.lastIndex;
+  let at = from;
+  for (;;) {
+    if (/\s/.test(sql[at] ?? "")) at += 1;
+    else if (sql.startsWith("--", at)) {
+      while (at < sql.length && sql[at] !== "\n" && sql[at] !== "\r") at += 1;
+    } else if (sql.startsWith("/*", at)) {
+      let depth = 0;
+      let end = at;
+      do {
+        if (end >= sql.length) return at;
+        if (sql.startsWith("/*", end)) depth += 1;
+        else if (sql.startsWith("*/", end)) depth -= 1;
+        end += sql.startsWith("/*", end) || sql.startsWith("*/", end) ? 2 : 1;
+      } while (depth > 0);
+      at = end;
+    } else return at;
+  }
 };
 
 /** Index after the trivia that follows `keyword` at `at`, or `undefined` when it is not there. */
@@ -107,17 +119,20 @@ const afterKeyword = (sql: string, at: number, keyword: string): number | undefi
 };
 
 /** Rewrites whole statements only, so literals, identifiers, and bodies stay as written. */
+const keepImageExtensionCreate = (statement: string): string => {
+  const create = afterKeyword(statement, afterTrivia(statement, 0), "create");
+  const nameAt = create === undefined ? undefined : afterKeyword(statement, create, "extension");
+  if (nameAt === undefined || afterKeyword(statement, nameAt, "if") !== undefined) return statement;
+  EXTENSION_NAME.lastIndex = nameAt;
+  const name = EXTENSION_NAME.exec(statement);
+  if (!IMAGE_KEPT_EXTENSIONS.has((name?.[1] ?? name?.[2] ?? "").toLowerCase())) return statement;
+  return `${statement.slice(0, nameAt)}IF NOT EXISTS ${statement.slice(nameAt)}`;
+};
+
 const keepImageExtensionCreates = (sql: string): string =>
-  splitSql(sql, (statement) => {
-    const create = afterKeyword(statement, afterTrivia(statement, 0), "create");
-    const nameAt = create === undefined ? undefined : afterKeyword(statement, create, "extension");
-    if (nameAt === undefined || afterKeyword(statement, nameAt, "if") !== undefined)
-      return statement;
-    EXTENSION_NAME.lastIndex = nameAt;
-    const name = EXTENSION_NAME.exec(statement);
-    if (!IMAGE_KEPT_EXTENSIONS.has((name?.[1] ?? name?.[2] ?? "").toLowerCase())) return statement;
-    return `${statement.slice(0, nameAt)}IF NOT EXISTS ${statement.slice(nameAt)}`;
-  }).join("");
+  [...IMAGE_KEPT_EXTENSIONS].some((name) => sql.toLowerCase().includes(name))
+    ? splitSql(sql, keepImageExtensionCreate).join("")
+    : sql;
 
 /**
  * Shadow-load view of the declarations: kept image extensions load idempotently, and image pgjwt

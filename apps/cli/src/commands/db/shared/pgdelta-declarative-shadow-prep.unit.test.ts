@@ -77,7 +77,7 @@ describe("filesForDeclarativeShadowLoad", () => {
     };
     const commented = {
       name: "public/04.sql",
-      sql: "CREATE /* declaration */ EXTENSION -- engine\n orioledb;",
+      sql: "/* a /* nested */ note */ CREATE /* declaration */ EXTENSION -- engine\n orioledb;",
     };
     expect(
       filesForDeclarativeShadowLoad(
@@ -97,7 +97,7 @@ describe("filesForDeclarativeShadowLoad", () => {
       },
       {
         name: commented.name,
-        sql: "CREATE /* declaration */ EXTENSION -- engine\n IF NOT EXISTS orioledb;",
+        sql: "/* a /* nested */ note */ CREATE /* declaration */ EXTENSION -- engine\n IF NOT EXISTS orioledb;",
       },
     ]);
   });
