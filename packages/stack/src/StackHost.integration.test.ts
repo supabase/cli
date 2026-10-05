@@ -314,6 +314,62 @@ it.live("keeps serving when namespace shutdown fails", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("recovers network admission after a shutdown that fails once drain has begun (F6)", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-drain-recovery-" });
+      const state = yield* stateFor(`${root}/state`);
+      const saved = {
+        id: "stack",
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-recovery" },
+        instances: [],
+        lifetime: "detached" as const,
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      };
+      yield* state.save(saved);
+      const owner = yield* ownerFor({
+        saved,
+        state,
+        root: `${root}/data`,
+        cacheRoot: "/tmp/supabase-stack-artifacts",
+      });
+      const failedOwner = {
+        ...owner,
+        namespace: {
+          ...owner.namespace,
+          // Lets the real drain run (so `Network`'s own internal draining flag is genuinely set),
+          // then fails afterward: reproduces "shutdown fails after drain begins" without reaching
+          // into `Network`'s internals directly.
+          stop: owner.namespace.stop.pipe(
+            Effect.andThen(
+              Effect.fail(new OrchestratorError({ operation: "stop", message: "cleanup failed" })),
+            ),
+          ),
+        },
+      };
+      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+      const client = yield* ownerClient(runtime.access);
+      const failure = yield* shutdownOwner(runtime.access, false).pipe(Effect.flip);
+      expect(failure.message).toContain("cleanup failed");
+
+      // F6: a drain that already began during the failed shutdown must not block ordinary
+      // service recovery forever; starting a service again must bind its listener, not refuse it
+      // as still draining.
+      const mail = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      });
+      yield* client.startService({ id: mail.id });
+      yield* client.readyService({ id: mail.id });
+      yield* shutdownOwner(runtime.access, true);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("reports destroy and fallback stop failures together", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1128,24 +1184,6 @@ const httpRoundTrip = (port: number, agent: Http.Agent) =>
     },
   );
 
-/**
- * Connects a raw socket to `port` without speaking HTTP, so Node's own keep-alive idle timeout
- * (5 s by default, shorter than the 10 s drain deadline) never applies to it. The listener proxies
- * whatever bytes flow without needing a real protocol, so this still counts as one established
- * connection for drain purposes.
- */
-const openRawSocket = (port: number) =>
-  Effect.acquireRelease(
-    Effect.callback<Net.Socket, HostTestError>((resume) => {
-      const socket = Net.connect(port, "127.0.0.1");
-      socket.on("error", () => {});
-      socket.once("connect", () => resume(Effect.succeed(socket)));
-      socket.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
-      return Effect.void;
-    }),
-    (socket) => Effect.sync(() => socket.destroy()),
-  );
-
 /** `true` once a fresh one-shot request to `port` is refused (reset) rather than answered. */
 const isHttpRefused = (port: number) =>
   Effect.acquireRelease(
@@ -1184,10 +1222,9 @@ it.live(
           (agent) => Effect.sync(() => agent.destroy()),
         );
         const first = yield* httpRoundTrip(port, agent);
-        expect(
-          Number.isFinite(first.status),
-          "the first request gets a real response before drain",
-        ).toBe(true);
+        // Exactly 200, not merely finite: a proxy-generated 502 (the backend unreachable) is
+        // just as finite a status and must not pass as "a real response".
+        expect(first.status, "the first request gets a real response before drain").toBe(200);
         const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
         yield* waitUntilRefused(port);
         expect(first.socket.destroyed, "the established connection survives the refusal").toBe(
@@ -1199,9 +1236,9 @@ it.live(
           "the second request reuses the same already-established connection",
         ).toBe(first.socket);
         expect(
-          Number.isFinite(second.status),
+          second.status,
           "a request on the established connection still completes during drain",
-        ).toBe(true);
+        ).toBe(200);
         // The client finishes on its own, well before the drain deadline.
         agent.destroy();
         yield* Fiber.join(shutdown).pipe(
@@ -1219,33 +1256,40 @@ it.live(
 );
 
 // Drives the deadline with a shortened `Network.ShutdownDrainDeadline` (the internal reference
-// production always defaults to 10 s) rather than asserting a wall-clock lower bound: a timed
-// assertion only proves this test's own timer started before drain's, which a loaded CI runner can
-// easily violate without the drain logic itself being wrong. Ordering is observed instead: the
-// connection is confirmed still open while draining, then confirmed cut once stop completes.
+// production always defaults to 10 s) rather than `TestClock`: this in-process owner's other
+// timers (lease, idle, cooldown, readiness polling) share the same `Clock` through one layer
+// composition, so virtualizing it for the deadline alone risks silently changing those unrelated
+// subsystems too. The shortened real deadline keeps this test's own timing assertion-free in turn:
+// ordering is observed (still open mid-drain, then cut once stop completes), never timed.
 it.live(
   "cuts a hanging connection at the drain deadline, then stop completes",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const { runtime, port } = yield* withRunningMail("stack-host-drain-deadline-");
-        // Proves the listener is genuinely functional before testing the hang. A one-shot agent, not
-        // the hanging connection itself: Node's own ~5 s keep-alive idle timeout would otherwise cut
-        // an idle HTTP connection before even a shortened drain deadline has a chance to.
-        const proof = yield* Effect.acquireUseRelease(
-          Effect.sync(() => new Http.Agent({ keepAlive: false })),
-          (agent) => httpRoundTrip(port, agent),
+        const agent = yield* Effect.acquireRelease(
+          Effect.sync(() => new Http.Agent({ keepAlive: true, maxSockets: 1 })),
           (agent) => Effect.sync(() => agent.destroy()),
         );
-        expect(Number.isFinite(proof.status), "the listener answers before the hang").toBe(true);
-        const socket = yield* openRawSocket(port);
+        // Establishes progress on the exact socket under test, not a different one: the listener
+        // has genuinely accepted and answered on it before drain, closing the race a bare
+        // client-side `connect` would otherwise leave against the server's own acceptance.
+        const first = yield* httpRoundTrip(port, agent);
+        expect(first.status, "the listener answers before the hang").toBe(200);
         const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
-        // Observed, not timed: confirms drain has started (new connections already refused) while
-        // the hanging connection is still deliberately held open, ahead of the deadline cut.
         yield* waitUntilRefused(port);
-        expect(socket.destroyed, "the established connection survives into the drain window").toBe(
-          false,
-        );
+        // A second, real in-flight request on that same connection, started only once drain is
+        // already refusing new ones, proves it keeps flowing mid-drain rather than merely sitting
+        // idle and unnoticed.
+        const second = yield* httpRoundTrip(port, agent);
+        expect(second.socket, "reuses the same established connection").toBe(first.socket);
+        expect(second.status, "a request on it still completes during drain").toBe(200);
+        expect(
+          second.socket.destroyed,
+          "the established connection survives into the drain window",
+        ).toBe(false);
+        // Deliberately left idle (no further request, the agent never closed) past this point, so
+        // the deadline cut — not a voluntary close — is what ends it.
         yield* Fiber.join(shutdown).pipe(
           Effect.timeoutOrElse({
             duration: "10 seconds",
@@ -1255,7 +1299,7 @@ it.live(
               ),
           }),
         );
-        expect(socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
+        expect(second.socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
       }),
     ).pipe(
       Effect.provideService(Network.ShutdownDrainDeadline, "2 seconds"),

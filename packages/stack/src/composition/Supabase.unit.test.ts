@@ -42,6 +42,7 @@ const makeInstance = (
       bind: Effect.void,
       close: Effect.void,
       confirmRemoved: Effect.void,
+      release: Effect.void,
       hasEndpoint: options.hasEndpoint ?? true,
       inputs: options.inputs ?? [],
       outputs: options.outputs ?? {},

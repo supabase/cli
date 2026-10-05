@@ -93,12 +93,44 @@ export interface ContainerRuntime {
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
 
-const errorFor = (operation: string, cause: unknown) =>
-  new ContainerError({
+/** A spawn failure for a missing engine CLI binary; it carries no message pattern to test. */
+const isMissingEngineBinary = (cause: unknown): boolean =>
+  cause instanceof PlatformError.PlatformError &&
+  cause.reason._tag === "NotFound" &&
+  cause.reason.method === "spawn";
+
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
+ * rejects the caller. Windows' `error during connect` also wraps authentication and TLS failures,
+ * so only its refused or missing-endpoint causes match. Matches regardless of which wrapping error
+ * type carried the message (a bare `ContainerError`, or another operation's error whose message
+ * preserves the underlying CLI failure text, such as a database storage cleanup failure).
+ */
+const engineUnreachableMessage = (message: string): boolean =>
+  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
+    message,
+  );
+
+/**
+ * Whether `cause` (a spawn failure for a missing engine binary) or `message` (the engine CLI's
+ * own unreachable-daemon phrasing) signals a permanently unavailable engine (F3). Classified once,
+ * here, at every engine invocation boundary (`errorFor`, below), and carried onward through
+ * wrapping as the error's own `reason` rather than re-matched; a caller that only ever sees a
+ * message (database storage, which invokes the engine CLI directly rather than through this
+ * module's `ContainerError`) calls this too, at its own equivalent source.
+ */
+export const isEngineUnavailable = (cause: unknown, message: string): boolean =>
+  isMissingEngineBinary(cause) || engineUnreachableMessage(message);
+
+const errorFor = (operation: string, cause: unknown): ContainerError => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return new ContainerError({
     operation,
-    message: cause instanceof Error ? cause.message : String(cause),
+    message,
     cause,
+    ...(isEngineUnavailable(cause, message) ? { reason: "engine-unavailable" as const } : {}),
   });
+};
 
 /** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
@@ -118,24 +150,8 @@ const transientPullFailure = (error: ContainerError) =>
     error.message,
   );
 
-/**
- * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
- * rejects the caller. Windows' `error during connect` also wraps authentication and TLS failures,
- * so only its refused or missing-endpoint causes match. Matches regardless of which wrapping error
- * type carried the message (a bare `ContainerError`, or another operation's error whose message
- * preserves the underlying CLI failure text, such as a database storage cleanup failure).
- */
-export const engineUnreachableMessage = (message: string): boolean =>
-  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
-    message,
-  );
-
-/** Also matches a missing engine CLI binary, which never produces a message to test. */
-export const engineUnreachable = (error: ContainerError) =>
-  (error.cause instanceof PlatformError.PlatformError &&
-    error.cause.reason._tag === "NotFound" &&
-    error.cause.reason.method === "spawn") ||
-  engineUnreachableMessage(error.message);
+/** Classified once, at construction (`errorFor`), and simply read back here. */
+export const engineUnreachable = (error: ContainerError) => error.reason === "engine-unavailable";
 
 /** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
 const runRaw = (
@@ -645,13 +661,14 @@ export const makeContainerRuntime = (options: {
       // Not `makeTempDirectoryScoped`: its scoped cleanup removes without `force`, then dies on
       // any failure, including a confirmed ENOENT when this stack's whole root (this directory's
       // owned ancestor) is already gone — turning an ordinary stop into an unrecoverable defect
-      // (F5/F1 root cause). A plain temp directory plus a tolerant finalizer treats "already gone"
-      // as already cleaned up, matching this directory's own owned-and-disposable nature.
-      const directory = yield* fs
-        .makeTempDirectory({ directory: containerEnvRoot, prefix: "container-" })
-        .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
-      yield* Effect.addFinalizer(() =>
-        fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+      // (F5/F1 root cause). `acquireRelease` keeps the plain `makeTempDirectory` and installing its
+      // tolerant, `force: true` finalizer uninterruptible together (F8), so an interruption between
+      // the two can never leave the directory created but unregistered for cleanup.
+      const directory = yield* Effect.acquireRelease(
+        fs
+          .makeTempDirectory({ directory: containerEnvRoot, prefix: "container-" })
+          .pipe(Effect.mapError((cause) => errorFor("environment", cause))),
+        (value) => fs.remove(value, { recursive: true, force: true }).pipe(Effect.ignore),
       );
       const envPath = path.join(directory, "environment");
       yield* fs
@@ -754,6 +771,7 @@ export const makeContainerRuntime = (options: {
                       operation: error.operation,
                       message: `${error.message} (container name ${name})`,
                       cause: error,
+                      ...(error.reason === undefined ? {} : { reason: error.reason }),
                     }),
               ),
               Effect.catchTag("TimeoutError", () =>
@@ -1056,17 +1074,10 @@ export const removeContainerById = Effect.fn("Container.removeContainerById")(
         }),
       ).pipe(
         Effect.timeout("30 seconds"),
-        Effect.mapError((cause) => {
-          const error = cause instanceof ContainerError ? cause : errorFor("cleanup", cause);
-          return engineUnreachable(error)
-            ? new ContainerError({
-                operation: error.operation,
-                message: error.message,
-                cause: error.cause,
-                reason: "engine-unavailable",
-              })
-            : error;
-        }),
+        // `errorFor` already classifies at construction; nothing further to reclassify here.
+        Effect.mapError((cause) =>
+          cause instanceof ContainerError ? cause : errorFor("cleanup", cause),
+        ),
       );
     }),
 );

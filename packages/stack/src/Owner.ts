@@ -184,10 +184,17 @@ export interface Interface {
     /**
      * Ends ownership after a confirmed-gone registration (F6): drains, stops every workload and
      * removes what it created through the same registration-independent `cleanupResources` path as
-     * destroy, then releases port reservations. Never reads or writes the registration, which is
-     * already gone; a leftover resource past the engine-unreachable backstop is logged, not thrown.
+     * destroy. Never reads or writes the registration, which is already gone, and never releases
+     * port reservations either: a stale one stays for `Ports.ts`'s own lazy reclamation once the
+     * holder's registration is confirmed gone — exactly this trigger. A leftover resource past the
+     * engine-unreachable backstop is logged, not thrown.
      */
     readonly abandon: Effect.Effect<void>;
+    /**
+     * Recovers network admission after a shutdown that failed once drain had already begun (F6):
+     * see {@link Network.Interface.recoverDrain}.
+     */
+    readonly recoverDraining: Effect.Effect<void>;
   };
   readonly setDraining: (draining: boolean) => Effect.Effect<void>;
   readonly getServing: Effect.Effect<boolean>;
@@ -244,8 +251,10 @@ const engineUnreachableCleanup = (error: ServiceError) =>
  * Backoff for abandonment cleanup retries: bounded delay, unbounded attempts. Per F6's final
  * decision, cleanup retries until it is confirmed or the engine is confirmed permanently
  * unreachable — never until a fixed time budget runs out while the engine might still recover.
+ * Exported so every abandonment cleanup stage shares one retry policy, including `StackHost.ts`'s
+ * retained native-command cleanup, which is outside this module's own cleanup paths.
  */
-const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
+export const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(5))),
   ),
@@ -499,21 +508,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       });
     const initial = recipe.creation;
     const creation = yield* Ref.make(initial);
-    const namespaceRef = yield* Ref.make<NetworkNamespace | undefined>(undefined);
     // Independent of the saved registration and of on-disk discovery: removes containers and the
-    // owned storage namespace, then releases the network namespace. Destroy below runs this to
-    // completion before publishing the registration removal, so a confirmed removal is never
-    // recorded ahead of the resources it describes; a future abandonment path can call this same
-    // operation and release the stack's ports without ever reading or saving the registration.
+    // owned storage namespace. Shared as-is by destroy and abandonment, through `core.removeData`;
+    // neither reads or writes the registration. Network reservations are never part of this: they
+    // are destroy's own separate `release` step (`Orchestrator.destroy`), never abandonment's,
+    // since a stale reservation stays for `Ports.ts`'s lazy reclamation once the holder's
+    // registration is confirmed gone — exactly the abandonment trigger.
     const cleanupResources = (context: ServiceInstanceContext<ServiceCreation>) =>
-      recipe.definition.removeData(context).pipe(
-        Effect.andThen(
-          Ref.get(namespaceRef).pipe(
-            Effect.flatMap((namespace) => namespace?.release ?? Effect.void),
-            Effect.mapError(serviceError("release")),
-          ),
-        ),
-      );
+      recipe.definition.removeData(context);
     const core = yield* makeService(
       {
         ...recipe.definition,
@@ -568,7 +570,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       }),
     );
     const namespace = yield* network.register({ id, endpoints });
-    yield* Ref.set(namespaceRef, namespace);
     const entry: Entry = {
       id,
       service: initial.service,
@@ -578,6 +579,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       namespace,
       cleanupResources,
       confirmRemoved: removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
+      release: namespace.release.pipe(Effect.mapError(serviceError("release"))),
       launch: (generation, inputs, candidate) =>
         configFor(inputs, candidate).pipe(
           Effect.flatMap((config) => core.launch(generation, config)),
@@ -940,23 +942,24 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             ),
           ),
         ),
+        // F7: retried until confirmed, like every other abandonment cleanup stage; its own
+        // `force: true` only tolerates an already-gone directory, never a transient failure.
+        // Port reservations are never released here (simplification over F2/F7): a stale
+        // reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
+        // confirmed gone — exactly the abandonment trigger — so abandonment never touches
+        // `Ports.ts`'s registry at all, even once the state root itself no longer exists.
         Effect.andThen(
           removeContainerEnvRoot.pipe(
+            Effect.retry(abandonCleanupSchedule),
             Effect.catch((cause) =>
               Effect.logWarning("Abandoned stack could not remove its container-env root", cause),
-            ),
-          ),
-        ),
-        Effect.andThen(
-          network.releaseStack.pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Abandoned stack could not release its port reservations", cause),
             ),
           ),
         ),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.abandonNamespace", { attributes: { stack_id: stackId } }),
       ),
+      recoverDraining: network.recoverDrain,
     },
     setDraining: (value) => Ref.set(draining, value),
     getServing: Ref.get(draining).pipe(Effect.map((isDraining) => !isDraining)),

@@ -80,6 +80,13 @@ export interface RegisteredInstance {
    * abandonment never does, because there is no registration left to update.
    */
   readonly confirmRemoved: Effect.Effect<void, ServiceError>;
+  /**
+   * Releases this instance's network reservations once its data is confirmed removed: destroy's
+   * own step, run right after `core.removeData` succeeds. Abandonment never calls it — a stale
+   * reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
+   * confirmed gone, exactly the abandonment trigger, so abandonment has nothing to release itself.
+   */
+  readonly release: Effect.Effect<void, ServiceError>;
   readonly hasEndpoint: boolean;
   readonly inputs: ReadonlyArray<string>;
   readonly outputs: Readonly<Record<string, Effect.Effect<string, ServiceError>>>;
@@ -967,7 +974,11 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
             }),
           );
           yield* entry.close;
-          yield* entry.core.removeData(entry.confirmRemoved);
+          // `release` runs as part of the same `confirm` step `core.removeData` already
+          // serializes under its execution lock, strictly before the registration-removal
+          // publish: ports are released once data removal is confirmed, but before anything
+          // observes the instance as unregistered.
+          yield* entry.core.removeData(entry.release.pipe(Effect.andThen(entry.confirmRemoved)));
           yield* entry.close;
         }),
       ).pipe(

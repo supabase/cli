@@ -325,7 +325,11 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                         ? Effect.failCause(cause)
                         : owner
                             .setDraining(false)
+                            // F6: drain may already have run (and so left the network's own
+                            // admission closed) before this later stage failed; recovering it here
+                            // keeps a start/restart that follows from refusing as still draining.
                             .pipe(
+                              Effect.andThen(owner.namespace.recoverDraining),
                               Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
                               Effect.andThen(Effect.failCause(cause)),
                             ),
@@ -350,6 +354,14 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
         );
       const abandonResources = settled("abandon namespace cleanup", owner.namespace.abandon);
+      // F5: a retained native command's termination can still be failing when this runs; retried
+      // under the same policy as every other abandonment cleanup stage (confirmed, or a confirmed
+      // permanently unreachable engine) before the owner is permitted to exit. Namespace cleanup
+      // below still runs on its own regardless of how long this takes.
+      const retainedCommandCleanup = settled(
+        "command runner cleanup",
+        runner.cleanup.pipe(Effect.retry(Owner.abandonCleanupSchedule)),
+      );
       const abandon = Effect.fn("StackHost.abandon")(() =>
         gate
           .withPermits(1)(
@@ -361,7 +373,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                 const cleanup = restore(
                   Effect.gen(function* () {
                     yield* settled("stopping attachments", attachments.stopAll);
-                    yield* settled("command runner cleanup", runner.cleanup);
+                    yield* retainedCommandCleanup;
                     yield* abandonResources;
                   }),
                 ).pipe(
@@ -379,14 +391,22 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           .pipe(
             Effect.flatMap((record) =>
               Fiber.join(record.fiber).pipe(
+                Effect.exit,
                 // `record.fiber` may be an in-flight normal shutdown, typed to report `StackError`;
                 // abandonment never fails the caller (the registration poll), so it is logged.
-                Effect.catch((cause) => Effect.logError("Stack shutdown failed", cause)),
-                Effect.andThen(
-                  // A joined plain stop deliberately preserves storage and port reservations; F6
-                  // cleanup still has to run. A joined destroy already confirmed both, so running
-                  // it again would be redundant (and safe: the shared cleanup path is idempotent).
-                  record.destroy ? Effect.void : abandonResources,
+                Effect.tap((joined) =>
+                  Exit.isFailure(joined)
+                    ? Effect.logError("Stack shutdown failed", joined.cause)
+                    : Effect.void,
+                ),
+                Effect.flatMap((joined) =>
+                  // F4: a joined destroy only confirmed both data removal and reservation release
+                  // when it actually succeeded; a failed destroy can have fallen back to a plain
+                  // stop (which preserves both) or failed before removing anything, so either way
+                  // F6 cleanup still has to run. Inspecting the outcome, not the requested mode,
+                  // is what tells the two apart; running it again on an already-confirmed destroy
+                  // is redundant but safe, since the shared cleanup path is idempotent.
+                  record.destroy && Exit.isSuccess(joined) ? Effect.void : abandonResources,
                 ),
               ),
             ),

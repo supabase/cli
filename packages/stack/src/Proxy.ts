@@ -24,6 +24,8 @@ export interface TcpListener {
   ) => Effect.Effect<never, never, R>;
   /** Stops accepting new connections on the listener; established connections keep flowing. */
   readonly stopAccepting: Effect.Effect<void>;
+  /** Reverses `stopAccepting` (F6): recovers a listener left refusing after a failed drain. */
+  readonly resumeAccepting: Effect.Effect<void>;
   /** The count of established client connections, observable until it reaches 0. */
   readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
   /** Destroys every established connection immediately. */
@@ -146,6 +148,9 @@ export const bindTcp = (
       run,
       stopAccepting: Effect.sync(() => {
         accepting = false;
+      }),
+      resumeAccepting: Effect.sync(() => {
+        accepting = true;
       }),
       outstandingConnections,
       cutAll: Effect.sync(() => {

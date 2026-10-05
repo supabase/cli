@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Fiber, Option, Queue, Ref, Scope, Stream } from "effect";
 import { makeStandaloneService } from "../tests/standalone-service.ts";
+import { LifecycleEvent } from "./Lifecycle.ts";
 import type { Status } from "./Orchestrator.ts";
 import {
   makeService,
@@ -631,6 +632,47 @@ describe("service execution", () => {
         expect((yield* Ref.get(plan.state)).removed).toBe(true);
       }),
     ),
+  );
+
+  it.live(
+    "reports confirmed termination when removeData cleans up a session a failed stop retained (F1)",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Direct `makeService`, not `makeStandaloneService`: abandonment calls `core.removeData`
+          // without ever going through the orchestrator's own dispatch, which already retries and
+          // reports a failed stop correctly on its own (`Lifecycle.ts`'s `retryCleanup`) and so
+          // never exercises this path. Only a direct `removeData` call does.
+          const plans = yield* Queue.unbounded<RuntimePlan>();
+          const events = yield* Ref.make<ReadonlyArray<LifecycleEvent>>([]);
+          const service = yield* makeService(makeDefinition(plans), {
+            id: "database-removedata-retry",
+            config: { version: 17 },
+            report: (event) => Ref.update(events, (current) => [...current, event]),
+          });
+          const plan = yield* makeRuntimePlan;
+          yield* Queue.offer(plans, plan);
+          yield* open(plan.launchGate);
+          yield* open(plan.healthGate);
+          yield* service.launch(1, { version: 17 });
+
+          yield* Ref.set(plan.stopFailure, true);
+          yield* service.stop(1, { operation: "stop", discard: true });
+          expect((yield* Ref.get(events)).some((event) => event._tag === "StopFailed")).toBe(true);
+
+          // The retained session's retry, through `removeData` alone this time.
+          yield* open(plan.stopGate);
+          yield* open(plan.removeGate);
+          yield* service.removeData();
+
+          expect(
+            (yield* Ref.get(events)).some((event) => event._tag === "Exited"),
+            "the retry's confirmed termination must reach the reducer, or it stays Stopping forever",
+          ).toBe(true);
+          expect((yield* Ref.get(plan.state)).removed).toBe(true);
+          expect((yield* service.get).registered).toBe(false);
+        }),
+      ),
   );
 
   it.live(

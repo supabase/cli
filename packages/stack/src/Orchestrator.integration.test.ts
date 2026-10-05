@@ -104,6 +104,7 @@ const makeInstance = (
         configFor(inputs, candidate).pipe(Effect.flatMap((config) => core.prepare(config))),
       bind: options.bind ?? Ref.set(bound, true),
       confirmRemoved: Effect.void,
+      release: Effect.void,
       close: orchestrator.status(id).pipe(
         Effect.flatMap((state) =>
           state.lifecycle === "stopped" && !state.wakeEnabled ? Ref.set(bound, false) : Effect.void,
@@ -1252,6 +1253,7 @@ describe("idle races through a real listener", () => {
       ),
       close: Effect.void,
       confirmRemoved: Effect.void,
+      release: Effect.void,
       hasEndpoint: true,
       inputs: [],
       outputs: {},

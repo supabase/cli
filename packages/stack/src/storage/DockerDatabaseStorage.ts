@@ -19,7 +19,7 @@ import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-l
 import type * as Claims from "../namespace/Claims.ts";
 import * as Publication from "../namespace/Publication.ts";
 import {
-  engineUnreachableMessage,
+  isEngineUnavailable,
   type ContainerRuntime,
   type EngineTarget,
 } from "../runtime/Container.ts";
@@ -100,9 +100,10 @@ export interface DockerDatabaseStorage {
 }
 
 // Snapshot failures keep the protocol's operation so both engines report the same step.
-// The engine CLI's own stderr text is the only unreachable-daemon signal this module ever sees
-// (it invokes the raw CLI directly, not through `runtime/Container.ts`'s typed `ContainerError`),
-// so the message is classified here, once, at the source, and carried onward as `reason`.
+// A spawn failure for a missing engine CLI binary, or the engine CLI's own stderr text, is the
+// only unreachable-daemon signal this module ever sees (it invokes the raw CLI directly, not
+// through `runtime/Container.ts`'s typed `ContainerError`), so both are classified here, once, at
+// the source (F3), and carried onward as `reason`.
 const errorFor = (operation: string, cause: unknown) =>
   Schema.is(DockerDatabaseStorageError)(cause)
     ? cause
@@ -111,13 +112,13 @@ const errorFor = (operation: string, cause: unknown) =>
           operation: cause.operation,
           message: cause.message,
           cause,
-          ...(engineUnreachableMessage(cause.message) ? { reason: "engine-unavailable" } : {}),
+          ...(isEngineUnavailable(cause, cause.message) ? { reason: "engine-unavailable" } : {}),
         })
       : new DockerDatabaseStorageError({
           operation,
           message: failureMessage(cause),
           cause,
-          ...(engineUnreachableMessage(failureMessage(cause))
+          ...(isEngineUnavailable(cause, failureMessage(cause))
             ? { reason: "engine-unavailable" }
             : {}),
         });

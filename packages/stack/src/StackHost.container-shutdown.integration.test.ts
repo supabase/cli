@@ -379,19 +379,16 @@ it.live.skipIf(process.platform === "win32")(
           (yield* containers(stackId, dataRoot)).length,
           "the owner runs the mail container",
         ).toBeGreaterThan(0);
+        const status = yield* client.status({ id: mail.id });
+        const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
+        if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
 
-        // Deletes every discovery-relevant entry in the stack directory, not just `state.json`: the
-        // claims journal and storage marker are gone too, so cleanup can only come from the owner's
-        // in-memory resources, never from on-disk discovery. `owner.log` is spared only because it
-        // is diagnostic output this test reads on failure, never a file the owner itself discovers
-        // or recovers from. The lease file is removed, so this relies on budgeted polling rather
-        // than a lease-release subscription.
-        for (const entry of yield* fs.readDirectory(`${stateRoot}/${stackId}`))
-          if (entry !== "owner.log")
-            yield* fs.remove(`${stateRoot}/${stackId}/${entry}`, {
-              recursive: true,
-              force: true,
-            });
+        // Deletes the actual `<stateRoot>` itself (F2), not just the entries inside
+        // `<stateRoot>/<stackId>`: its sibling `.registry-lock.sqlite` (`Ports.ts`'s per-root
+        // reservation registry) is gone too, so cleanup can only come from the owner's in-memory
+        // resources, and must never open that registry at all. The lease file goes with it, so
+        // this relies on budgeted polling rather than a lease-release subscription.
+        yield* fs.remove(stateRoot, { recursive: true, force: true });
         yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
           Effect.retry({
             schedule: Schedule.spaced("1 second"),
@@ -405,14 +402,44 @@ it.live.skipIf(process.platform === "win32")(
           yield* containers(stackId, dataRoot),
           "abandonment removes containers from in-memory resources alone",
         ).toEqual([]);
-        expect(
-          yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
-          "no registration is republished",
-        ).toBe(false);
-        expect(
-          yield* fs.exists(`${stateRoot}/${stackId}/claims.json`),
-          "no claims journal is republished",
-        ).toBe(false);
+
+        // The port reservation is never released by abandonment (simplification over F2/F7):
+        // a fresh stack can still claim the exact same port, through `Ports.ts`'s own lazy
+        // reclamation once the former holder's registration is confirmed gone.
+        const reclaimedBase = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-abandon-docker-root-reclaim-",
+        });
+        const reclaimedStackId = `abandon-root-reclaim-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const reclaimedDataRoot = yield* makeDockerDatabaseRoot(
+          "stack-abandon-docker-root-reclaim-data-",
+          reclaimedStackId,
+        ).pipe(Effect.flatMap(fs.realPath));
+        const reclaimedStateRoot = path.dirname(path.dirname(reclaimedDataRoot));
+        yield* Effect.addFinalizer(() =>
+          removeContainers(reclaimedStackId, reclaimedDataRoot).pipe(Effect.ignore),
+        );
+        const reclaimedAccess = yield* startHost(
+          reclaimedStateRoot,
+          cacheRoot,
+          reclaimedStackId,
+          `${reclaimedBase}/project`,
+        );
+        const reclaimedClient = yield* ownerClient(reclaimedAccess);
+        const reclaimedMail = yield* reclaimedClient.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port } },
+        });
+        yield* reclaimedClient.startService({ id: reclaimedMail.id });
+        yield* reclaimedClient.readyService({ id: reclaimedMail.id });
+        const reclaimedStatus = yield* reclaimedClient.status({ id: reclaimedMail.id });
+        expect(reclaimedStatus.endpoints.find((endpoint) => endpoint.name === "http")?.port).toBe(
+          port,
+        );
+        yield* shutdownOwner(reclaimedAccess, true);
+        yield* waitForOwnerExit(reclaimedAccess.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },

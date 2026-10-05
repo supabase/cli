@@ -27,6 +27,7 @@ import { HttpClient } from "effect/unstable/http";
 import {
   ContainerLaunchError,
   DOCKER_HOST_ALIAS,
+  engineUnreachable,
   makeContainerRuntime,
   makeHostGateway,
   resolveEngineTarget,
@@ -1491,6 +1492,63 @@ describe("container process adapter", () => {
           Layer.merge(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
         ),
       ),
+  );
+
+  it.live(
+    "classifies a real connection refusal to the engine as permanently unavailable (F3)",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // A real connection attempt, not a mocked one: nothing listens on this loopback port, so
+        // the docker CLI's own refusal is what `errorFor` classifies, at its one true source.
+        const failure = yield* resolveEngineTarget(spawner).pipe(Effect.flip);
+        expect(
+          engineUnreachable(failure),
+          "a real daemon connection refusal classifies as engine-unavailable",
+        ).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            ConfigProvider.layer(
+              ConfigProvider.fromEnvRecord({ DOCKER_HOST: "tcp://127.0.0.1:1" }),
+            ),
+          ),
+        ),
+      ),
+  );
+
+  it.live("classifies a real missing engine binary as permanently unavailable (F3)", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fs = yield* FileSystem.FileSystem;
+      // A directory deliberately containing no `docker` binary, real `PATH` lookup included: the
+      // engine's own spawn failure, not a stubbed `ChildProcessSpawner`, is what `errorFor`
+      // classifies.
+      const emptyBinDir = yield* fs.makeTempDirectoryScoped({ prefix: "engine-missing-bin-" });
+      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the spawned child inherits PATH; this is not application config.
+      const originalPath = process.env.PATH;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
+          process.env.PATH = emptyBinDir;
+        }),
+        () =>
+          Effect.sync(() => {
+            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
+            process.env.PATH = originalPath;
+          }),
+      );
+      const failure = yield* resolveEngineTarget(spawner).pipe(Effect.flip);
+      expect(
+        engineUnreachable(failure),
+        "a real spawn ENOENT for the missing docker binary classifies as engine-unavailable",
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+      ),
+    ),
   );
 
   it.live(

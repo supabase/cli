@@ -490,7 +490,21 @@ export const makeService = <Config>(
           yield* update({ currentOperation: "destroy" });
           yield* Effect.gen(function* () {
             const leftover = yield* Ref.get(current);
-            if (leftover !== undefined) yield* stopRecord(leftover, true);
+            if (leftover !== undefined) {
+              yield* stopRecord(leftover, true);
+              // F1: a previous stop attempt may have failed and reported `StopFailed`, leaving the
+              // reducer in `Stopping` forever; this retry's own confirmed termination must reach it
+              // too, the same way `stop`'s own successful path does, or the reducer (and anything
+              // gated on it, such as `NetworkNamespace.release`'s endpoint check) never learns.
+              yield* report(
+                LifecycleEvent.Exited({
+                  id,
+                  generation: leftover.generation,
+                  cause: undefined,
+                  requested: true,
+                }),
+              );
+            }
             const dataScope = yield* Scope.fork(owner, "parallel");
             yield* definition
               .removeData({ id, config: yield* Ref.get(config), scope: dataScope })

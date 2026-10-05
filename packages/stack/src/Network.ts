@@ -33,6 +33,7 @@ export const ShutdownDrainDeadline = Context.Reference<Duration.Input>(
 /** The accept/outstanding/cut-all surface every listener kind (`TcpListener`, `HttpProxy`) shares. */
 interface ListenerHandle {
   readonly stopAccepting: Effect.Effect<void>;
+  readonly resumeAccepting: Effect.Effect<void>;
   readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
   readonly cutAll: Effect.Effect<void>;
 }
@@ -103,6 +104,14 @@ export interface Interface {
    * scopes are untouched; the caller closes them afterward through the ordinary stop/destroy path.
    */
   readonly drain: Effect.Effect<void>;
+  /**
+   * Recovers from a shutdown that failed after {@link drain} began (F6): resets the drain flag
+   * `bind` checks and resumes accepting on every currently tracked listener, so a start/restart
+   * that follows a failed shutdown binds normally instead of refusing as still draining forever.
+   * Paired with the owner's own admission recovery; never called while a shutdown might still
+   * confirm success on its own.
+   */
+  readonly recoverDrain: Effect.Effect<void>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -450,6 +459,18 @@ const makeNetwork = (options: {
         yield* Effect.forEach(handles, (handle) => handle.cutAll, { discard: true });
       yield* Effect.annotateCurrentSpan({ listeners: handles.length, outcome });
     });
+    const recoverDrain = Effect.fn("Network.recoverDrain")(() =>
+      gate.withPermits(1)(
+        Ref.set(draining, false).pipe(
+          Effect.andThen(Ref.get(listeners)),
+          Effect.flatMap((current) =>
+            Effect.forEach([...current.values()], (handle) => handle.resumeAccepting, {
+              discard: true,
+            }),
+          ),
+        ),
+      ),
+    );
     return {
       register,
       release: release(),
@@ -457,6 +478,7 @@ const makeNetwork = (options: {
       cancelDestroy: Ref.set(deferReservations, false),
       releaseStack: releaseStack(),
       drain: drain(),
+      recoverDrain: recoverDrain(),
     } satisfies Interface;
   });
 
