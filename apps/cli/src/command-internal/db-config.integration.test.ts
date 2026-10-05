@@ -505,7 +505,6 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
                   instances: [],
                   lifetime: "detached" as const,
                   composition: { members: [], dependencies: [] },
-                  ports: [],
                 },
                 host: undefined,
               })

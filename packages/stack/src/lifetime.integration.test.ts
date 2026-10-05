@@ -124,7 +124,6 @@ it.live.skipIf(process.platform === "win32")(
       )(ready);
       const state = yield* stateFor(stateRoot);
       expect(yield* state.leased(stackId)).toBe(true);
-      expect((yield* state.read(stackId))?.ports.length).toBeGreaterThan(0);
       const ownerPid = yield* captureOwnerPid({ stateRoot, cacheRoot }, stackId);
       const owned = yield* descendantsOf(ownerPid);
       expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
@@ -220,7 +219,6 @@ it.live.skipIf(process.platform === "win32")(
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       // The shortened poll interval comes only from this dedicated test entrypoint, through
       // the internal `Context.Reference`; production startup never reads an env var or `Config`.
@@ -275,7 +273,6 @@ it.live.skipIf(process.platform === "win32")(
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const reclaimedAccess = yield* launchHost(reclaimedState, {
         stateRoot: reclaimedStateRoot,

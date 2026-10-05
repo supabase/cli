@@ -40,7 +40,6 @@ const initial: StackNamespace.SavedStack = {
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 };
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

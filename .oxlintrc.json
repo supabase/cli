@@ -77,6 +77,7 @@
         "packages/stack/src/namespace/**",
         "packages/stack/src/StackNamespace.ts",
         "packages/stack/src/Network.ts",
+        "packages/stack/src/Network.integration.test.ts",
         "packages/stack/src/Owner.ts",
         "packages/stack/src/Ports.ts",
         "packages/stack/src/Ports.integration.test.ts",
@@ -256,6 +257,7 @@
       // - DockerDatabaseStorage.ts: needs Publication.
       "files": [
         "packages/stack/src/Network.ts",
+        "packages/stack/src/Network.integration.test.ts",
         "packages/stack/src/Owner.ts",
         "packages/stack/src/Ports.ts",
         "packages/stack/src/Ports.integration.test.ts",

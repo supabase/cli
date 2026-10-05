@@ -49,13 +49,6 @@ export const StackCredentials = Schema.Struct({
 });
 export interface StackCredentials extends Schema.Schema.Type<typeof StackCredentials> {}
 
-export const PortClaim = Schema.Struct({
-  key: Schema.String,
-  host: Schema.String,
-  port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
-});
-export interface PortClaim extends Schema.Schema.Type<typeof PortClaim> {}
-
 /** A session stack is destroyed when its creator exits; a detached stack outlives it. */
 export const StackLifetime = Schema.Literals(["session", "detached"]);
 export type StackLifetime = Schema.Schema.Type<typeof StackLifetime>;
@@ -78,7 +71,6 @@ export const SavedStack = Schema.Struct({
   ),
   composition: CompositionConfig,
   credentials: Schema.optionalKey(StackCredentials),
-  ports: Schema.Array(PortClaim),
 });
 export interface SavedStack extends Schema.Schema.Type<typeof SavedStack> {}
 

@@ -194,7 +194,6 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
     return yield* launchHost(state, { stateRoot, cacheRoot, stackId });
   });
@@ -352,7 +351,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* stateB3.save({
           id: stackId,
@@ -365,7 +363,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         const accessA3 = yield* launchHost(stateA3, {
           stateRoot: rootA,
@@ -463,7 +460,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         // The shortened poll interval comes only from this dedicated test entrypoint, through
@@ -559,7 +555,6 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
       const access = yield* launchHost(state, {
@@ -673,7 +668,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached" as const,
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         const access = yield* launchHost(state, {
@@ -751,7 +745,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         const access = yield* launchHost(state, {
@@ -871,7 +864,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         const access = yield* launchHost(state, {
@@ -949,7 +941,6 @@ it.live.skipIf(process.platform === "win32")(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
         const access = yield* launchHost(state, {

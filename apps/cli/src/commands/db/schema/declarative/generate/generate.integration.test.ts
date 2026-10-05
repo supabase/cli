@@ -180,7 +180,6 @@ function generateStackApi(workdir: string) {
             instances: [],
             composition,
             lifetime: "detached" as const,
-            ports: [],
           },
           host: undefined,
         }),

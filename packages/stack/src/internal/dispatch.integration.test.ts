@@ -66,7 +66,6 @@ it.live("dispatches compiled owner and native launchers through the production b
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
 
       const runOwner = (mode: "owner" | "stop") =>

@@ -58,7 +58,6 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     instances: [],
     lifetime: "detached",
     composition: { members: [], dependencies: [] },
-    ports: [],
   };
   const state = Context.get(
     yield* Layer.build(StackNamespace.layer({ root: stateRoot })),

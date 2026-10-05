@@ -857,7 +857,6 @@ export const create = Effect.fn("Stack.create")(
       runtime: options.runtime,
       instances: [],
       composition: { members: [], dependencies: [] },
-      ports: [],
     };
     const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
     const existing = yield* state.read(id);

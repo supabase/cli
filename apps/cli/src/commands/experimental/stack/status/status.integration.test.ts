@@ -238,7 +238,6 @@ const runStatus = (input: {
       })),
       composition: { members: input.members ?? [], dependencies: [] },
       lifetime: "detached" as const,
-      ports: [],
     };
     const api = Layer.succeed(StackApi, {
       create: () => Effect.die("create must not run"),

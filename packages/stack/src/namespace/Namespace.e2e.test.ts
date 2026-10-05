@@ -55,7 +55,6 @@ const savedStack = (root: string, id: string): StackNamespace.SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live(

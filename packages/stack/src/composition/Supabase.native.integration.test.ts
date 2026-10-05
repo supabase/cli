@@ -60,7 +60,6 @@ const initial = (id: string): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live("reports the failed binding and cleanup reason with the retained instance ID", () =>

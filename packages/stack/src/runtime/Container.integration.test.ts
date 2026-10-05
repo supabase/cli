@@ -1659,7 +1659,6 @@ describe("container process adapter", () => {
           instances: [],
           lifetime: "detached" as const,
           composition: { members: [], dependencies: [] },
-          ports: [],
         };
         yield* state.save(saved);
         yield* Owner.sweepContainers(saved, root, target).pipe(

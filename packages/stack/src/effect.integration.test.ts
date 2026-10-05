@@ -577,7 +577,6 @@ it.live("reclaims a registered stack's leftovers when stopping without an owner"
       runtime: "native",
       instances: [{ id: "leftover", creation: { service: "mail", config: {} } }],
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
     const leftover = `${options.stateRoot}/${id}/data/leftover`;
     yield* fs.makeDirectory(leftover, { recursive: true });
@@ -842,7 +841,6 @@ it.live("replaces a dead session stack that holds the requested identity", () =>
       runtime: "native",
       instances: [{ id: "abandoned", creation: { service: "mail", config: {} } }],
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
 
     yield* Effect.scoped(

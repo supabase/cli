@@ -322,7 +322,6 @@ it.live("preserves composition outcomes over RPC", () =>
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -378,7 +377,6 @@ it.live("stops serving after a failed shutdown and keeps reporting that failure"
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -428,7 +426,6 @@ it.live(
           instances: [],
           lifetime: "detached" as const,
           composition: { members: [], dependencies: [] },
-          ports: [],
         };
         yield* state.save(saved);
         const owner = yield* ownerFor({
@@ -487,7 +484,6 @@ it.live("reports a destroy failure and the owner exits", () =>
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -551,7 +547,6 @@ it.live("rejects destroy while stop is in flight", () =>
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -597,7 +592,6 @@ it.live("exits after a namespace shutdown defect without rerunning cleanup", () 
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -643,7 +637,6 @@ it.live(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         const access = yield* launchHost(state, {
           stateRoot: `${root}/state`,
@@ -842,7 +835,6 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const owner = yield* ownerFor({
         saved: {
@@ -852,7 +844,6 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         },
         state,
         root: `${root}/data`,
@@ -894,7 +885,6 @@ it.live("withdraws a command waiting for its prerequisite", () =>
         instances: [],
         lifetime: "detached" as const,
         composition: { members: [], dependencies: [] },
-        ports: [],
       };
       yield* state.save(saved);
       const owner = yield* ownerFor({
@@ -953,7 +943,6 @@ const disconnectFixture = (prefix: string) =>
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     };
     yield* state.save(saved);
     return { root, state, saved };
@@ -1211,7 +1200,6 @@ it.live(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         const access = yield* launchHost(state, {
           stateRoot,

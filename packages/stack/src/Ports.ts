@@ -235,31 +235,18 @@ export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
 );
 
 const resolveRequest = (
-  stack: StackNamespace.SavedStack,
   request: PortRequest,
   owned: number | undefined,
-): Effect.Effect<
-  { readonly saved: StackNamespace.PortClaim | undefined; readonly requested: number | "auto" },
-  PortError
-> => {
-  const saved = stack.ports.find((entry) => entry.key === request.key);
-  if (saved !== undefined && saved.host !== request.host)
-    return Effect.fail(
-      new PortError({
-        key: request.key,
-        message: "The requested listener differs from its saved assignment",
-      }),
-    );
-  const expected = owned ?? saved?.port;
-  if (request.port !== "auto" && expected !== undefined && expected !== request.port)
+): Effect.Effect<number | "auto", PortError> => {
+  if (request.port !== "auto" && owned !== undefined && owned !== request.port)
     return Effect.fail(
       new PortError({
         key: request.key,
         message: "The requested listener differs from its reserved assignment",
       }),
     );
-  const requested = expected ?? request.port;
-  if (requested === "auto") return Effect.succeed({ saved, requested });
+  const requested = owned ?? request.port;
+  if (requested === "auto") return Effect.succeed(requested);
   if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
     return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
   if (requested >= nativePortBase && requested < portBase)
@@ -269,7 +256,7 @@ const resolveRequest = (
         message: `Public port ${requested} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service ports; choose a port outside that range`,
       }),
     );
-  return Effect.succeed({ saved, requested });
+  return Effect.succeed(requested);
 };
 
 /**
@@ -336,7 +323,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
           if (stack === undefined)
             return yield* new PortError({ key: request.key, message: "Stack is not registered" });
           const owned = yield* portReservations.find(stateRoot, request.stackId, request.key);
-          const { saved, requested } = yield* resolveRequest(stack, request, owned);
+          const requested = yield* resolveRequest(request, owned);
           const owner = yield* Scope.Scope;
           yield* Effect.annotateCurrentSpan({
             "stack.endpoint": request.key,
@@ -344,49 +331,32 @@ export const makePorts = (state: StackNamespace.Interface) =>
               requested !== "auto" ? (owned !== undefined ? "owned" : "fixed") : "auto",
           });
 
-          const publishIfNeeded = (port: number) =>
-            saved === undefined || saved.port !== port || saved.host !== request.host
-              ? state.save({
-                  ...stack,
-                  ports: [
-                    ...stack.ports.filter((entry) => entry.key !== request.key),
-                    { key: request.key, host: request.host, port },
-                  ],
-                })
-              : Effect.void;
+          /** Binds `port` against whatever scope the caller provides. */
+          const bindListener = (port: number) =>
+            bind(request.host, port).pipe(
+              Effect.map((listener) => ({ port, listener })),
+              Effect.mapError(
+                (cause) =>
+                  new PortError({
+                    key: request.key,
+                    message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
+                    cause: cause.cause,
+                    conflict:
+                      cause.conflict ??
+                      (isAddressInUse(cause.cause)
+                        ? { port, endpoint: request.key, holder: "foreign" as const }
+                        : undefined),
+                  }),
+              ),
+            );
 
-          /** Binds `port` and publishes it, against whatever scope the caller provides. */
-          const bindAndPublish = (port: number) =>
-            Effect.gen(function* () {
-              const listener = yield* bind(request.host, port).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new PortError({
-                      key: request.key,
-                      message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
-                      cause: cause.cause,
-                      conflict:
-                        cause.conflict ??
-                        (isAddressInUse(cause.cause)
-                          ? { port, endpoint: request.key, holder: "foreign" as const }
-                          : undefined),
-                    }),
-                ),
-              );
-              yield* publishIfNeeded(port);
-              return { port, listener };
-            });
-
-          /**
-           * One bind attempt at `port`, in its own forked scope so a failure rolls back both the
-           * listener and the `state.json` publish together; a success holds the scope open instead.
-           */
+          /** One bind attempt at `port`, in its own forked scope so a failure closes the listener; a success holds the scope open instead. */
           const attemptBind = (port: number) =>
             Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
                 const scope = yield* Scope.fork(owner, "sequential");
                 return yield* restore(
-                  bindAndPublish(port).pipe(Effect.provideService(Scope.Scope, scope)),
+                  bindListener(port).pipe(Effect.provideService(Scope.Scope, scope)),
                 ).pipe(
                   Effect.onExit((exit) =>
                     Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void,
@@ -434,7 +404,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
                 if (holder !== undefined) return undefined;
                 const scope = yield* Scope.fork(owner, "sequential");
                 return yield* restore(
-                  bindAndPublish(port).pipe(Effect.provideService(Scope.Scope, scope)),
+                  bindListener(port).pipe(Effect.provideService(Scope.Scope, scope)),
                 ).pipe(
                   Effect.onExit((exit) =>
                     Exit.isFailure(exit)
@@ -485,18 +455,13 @@ export const makePorts = (state: StackNamespace.Interface) =>
       );
     });
 
+    /** The port this stack's reservation holds for `key`, or `undefined` when it holds none. */
+    const assigned = Effect.fn("Ports.assigned")((stackId: string, key: string) =>
+      portReservations.find(stateRoot, stackId, key),
+    );
+
     const release = Effect.fn("Ports.release")(function* (stackId: string, key: string) {
-      yield* state.withLock(
-        Effect.gen(function* () {
-          yield* portReservations.release(stateRoot, stackId, key);
-          const stack = yield* state.read(stackId);
-          if (stack !== undefined)
-            yield* state.save({
-              ...stack,
-              ports: stack.ports.filter((entry) => entry.key !== key),
-            });
-        }),
-      );
+      yield* state.withLock(portReservations.release(stateRoot, stackId, key));
     });
 
     /** Releases every reservation a stack holds, regardless of endpoint; used at destroy's success boundary. */
@@ -504,5 +469,5 @@ export const makePorts = (state: StackNamespace.Interface) =>
       yield* portReservations.releaseStack(stateRoot, stackId);
     });
 
-    return { acquire, release, releaseStack };
+    return { acquire, assigned, release, releaseStack };
   });

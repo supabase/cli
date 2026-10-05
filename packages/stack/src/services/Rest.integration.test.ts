@@ -62,7 +62,6 @@ describe("service catalog", () => {
             instances: [],
             lifetime: "detached",
             composition: { members: [], dependencies: [] },
-            ports: [],
           });
           const network = yield* makeTestNetwork({ stackId, runtime: "docker", state });
           const secret = "catalog-rest-secret-with-at-least-32-chars";
@@ -194,7 +193,7 @@ describe("service catalog", () => {
           yield* Ref.set(databaseActive, false);
           yield* databaseNamespace.close;
           yield* databaseNamespace.release;
-          yield* network.release;
+          yield* network.releaseStack;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     { timeout: 120_000 },

@@ -47,7 +47,6 @@ const savedStack = (root: string, stackName: string): StackNamespace.SavedStack 
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 /** A loopback listener that accepts connections and never answers, counting each one. */
@@ -265,7 +264,6 @@ it.live("starts exactly one owner for concurrent launchers and attaches the othe
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const entrypoint = fileURLToPath(
         new URL("../tests/host-process-fixture.ts", import.meta.url),
@@ -419,7 +417,6 @@ it.live(
           instances: [],
           lifetime: "detached",
           composition: { members: [], dependencies: [] },
-          ports: [],
         });
         const entrypoint = fileURLToPath(
           new URL("../tests/host-process-fixture.ts", import.meta.url),
@@ -454,7 +451,6 @@ it.live("terminates a detached child when readiness is interrupted", () =>
         instances: [],
         lifetime: "detached",
         composition: { members: [], dependencies: [] },
-        ports: [],
       });
       const entrypoint = fileURLToPath(
         new URL("../tests/host-process-fixture.ts", import.meta.url),

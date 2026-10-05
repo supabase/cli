@@ -81,12 +81,13 @@ export interface RegisteredInstance {
    */
   readonly confirmRemoved: Effect.Effect<void, ServiceError>;
   /**
-   * Releases this instance's network reservations once its data is confirmed removed: destroy's
-   * own step, run right after `core.removeData` succeeds. Abandonment never calls it — a stale
-   * reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
-   * confirmed gone, the abandonment trigger, so abandonment has nothing to release itself.
+   * Closes this instance's network endpoints for good once its data is confirmed removed. Never
+   * deletes saved port assignments; abandonment never calls it, and a stale reservation stays for
+   * `Ports.ts`'s lazy reclamation once the holder's registration is confirmed gone.
    */
   readonly release: Effect.Effect<void, ServiceError>;
+  /** Deletes this instance's saved port assignments; an individual destroy runs it, a stack-wide destroy leaves them to `Network.releaseStack`. */
+  readonly releasePorts: Effect.Effect<void, ServiceError>;
   readonly hasEndpoint: boolean;
   readonly inputs: ReadonlyArray<string>;
   readonly outputs: Readonly<Record<string, Effect.Effect<string, ServiceError>>>;
@@ -956,8 +957,16 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       }),
     );
 
-  const destroy = Effect.fn("Orchestrator.destroy")(function* (id: string) {
-    yield* Effect.annotateCurrentSpan({ instance_id: id });
+  /**
+   * `ports` says what happens to the instance's saved port assignments once its data is removed:
+   * an individual destroy deletes them, a stack-wide destroy retains them for `Network.releaseStack`
+   * so a destroy that fails part-way keeps every assignment for the retry.
+   */
+  const destroyInstance = Effect.fn("Orchestrator.destroy")(function* (
+    id: string,
+    ports: "delete" | "retain",
+  ) {
+    yield* Effect.annotateCurrentSpan({ instance_id: id, ports });
     const entry = yield* node(id);
     const configured = yield* Ref.get(composition);
     const dependent = configured.dependencies.find((dependency) => dependency.from === id);
@@ -981,7 +990,12 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           // serializes under its execution lock, strictly before the registration-removal
           // publish: ports are released once data removal is confirmed, but before anything
           // observes the instance as unregistered.
-          yield* entry.core.removeData(entry.release.pipe(Effect.andThen(entry.confirmRemoved)));
+          yield* entry.core.removeData(
+            entry.release.pipe(
+              Effect.andThen(ports === "delete" ? entry.releasePorts : Effect.void),
+              Effect.andThen(entry.confirmRemoved),
+            ),
+          );
           yield* entry.close;
         }),
       ).pipe(
@@ -993,6 +1007,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       ),
     );
   });
+
+  const destroy = (id: string) => destroyInstance(id, "delete");
 
   const settleOutcomes = Effect.fn("Orchestrator.settleOutcomes")(function* (
     operation: "start" | "stop" | "destroy",
@@ -1114,7 +1130,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     if (structure instanceof OrchestratorError) return yield* structure;
     const order = topo([...values.keys()], structure.prerequisites).toReversed();
     const outcomes = yield* Effect.forEach(order, (id) =>
-      destroy(id).pipe(
+      destroyInstance(id, "retain").pipe(
         Effect.exit,
         Effect.map((result) => ({ id, result })),
       ),

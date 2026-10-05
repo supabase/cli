@@ -501,6 +501,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       namespace,
       confirmRemoved: removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
       release: namespace.release.pipe(Effect.mapError(serviceError("release"))),
+      releasePorts: namespace.releasePorts.pipe(Effect.mapError(serviceError("release"))),
       launch: (generation, inputs, candidate) =>
         configFor(inputs, candidate).pipe(
           Effect.flatMap((config) => core.launch(generation, config)),
@@ -794,20 +795,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
-      destroy: network.beginDestroy.pipe(
-        // Deferred for the whole of this destroy: every instance's own teardown below closes
-        // its listeners as usual, but leaves its reservation rows for `releaseStack` to drop
-        // together, only once destroy is confirmed to leave nothing behind. `ensuring` below
-        // resumes immediate per-service deletion again on every exit, success, failure, or
-        // interruption alike, so a service destruction or sweep failure can never leave
-        // deferral stuck on for a stack that is still otherwise live.
-        Effect.andThen(network.drain),
+      // Every instance's teardown closes its listeners but retains its saved port assignments;
+      // `releaseStack` drops them together, only once destroy has fully succeeded.
+      destroy: network.drain.pipe(
         Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         Effect.andThen(removeContainerEnvRoot),
         Effect.andThen(network.releaseStack),
         Effect.andThen(options.state.remove(stackId)),
-        Effect.ensuring(network.cancelDestroy),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),

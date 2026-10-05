@@ -149,7 +149,6 @@ const saved = (
   identity: { projectRoot, branchContext: "sweep-test", stackName: id },
   instances: [],
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live.skipIf(process.platform === "win32")(

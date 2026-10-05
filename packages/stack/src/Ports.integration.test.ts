@@ -34,7 +34,7 @@ import { ownerFor } from "../tests/owner-rpc.ts";
  * auto-allocation retry onto a known candidate, which needs the exact first port a real round trip
  * picked; a real TCP bind failure, which a probe-equipped `Network.ts` callback would otherwise
  * intercept first on a platform where overlapping binds succeed; and a stack-wide destroy's
- * deferred row release through a real, in-process `Owner`, whose first attempt a concrete sweep
+ * retained row release through a real, in-process `Owner`, whose first attempt a concrete sweep
  * failure leaves uncertain. All exercise the real per-user registry and real sockets; see
  * `port-reservation.e2e.test.ts` for the end-to-end scenarios, and `Network.integration.test.ts`'s
  * "keeps shared routes independent and retains the shared claim" for the shared-listener
@@ -54,7 +54,6 @@ const saveStack = (state: StackNamespace.Interface, root: string, id: string) =>
     instances: [],
     lifetime: "detached",
     composition: { members: [], dependencies: [] },
-    ports: [],
   });
 
 /** Binds like a brand-new listener Network.ts would create: probed first, then really bound, so
@@ -238,7 +237,7 @@ it.live(
 );
 
 it.live(
-  "a stack-wide destroy defers a dedicated row's release; a cleanup failure keeps it uncertain, and the next destroy, once resolved, releases it",
+  "a stack-wide destroy retains a dedicated row; a cleanup failure keeps it, and the next destroy, once resolved, releases it",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -254,7 +253,6 @@ it.live(
           instances: [],
           lifetime: "detached" as const,
           composition: { members: [], dependencies: [] },
-          ports: [],
         };
         yield* state.save(saved);
 
@@ -314,7 +312,7 @@ it.live(
 
         const firstAttempt = yield* owner.namespace.destroy.pipe(Effect.exit);
         expect(firstAttempt._tag).toBe("Failure");
-        // Deferred: the row survives a destroy that could not confirm nothing remains.
+        // Retained: the row survives a destroy that could not confirm nothing remains.
         expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
 
         resolved = true;

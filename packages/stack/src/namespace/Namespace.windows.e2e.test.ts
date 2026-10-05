@@ -22,7 +22,6 @@ const saved: StackNamespace.SavedStack = {
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 };
 
 class HolderError extends Data.TaggedError("NamespaceWindowsHolderError")<{

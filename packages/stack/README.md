@@ -57,7 +57,7 @@ await stack.close(); // disconnects this client
 
 `start` and `ready` are separate operations. `restart({ config })` replaces recipe configuration while retaining the instance identity and endpoint intentions. A health failure leaves a launched process running and observable; it does not prevent `stop`. Database snapshots require a stopped instance with wake disabled. `saveSnapshot(key)` publishes complete data to managed backend storage and replaces the previous entry for that key; `restoreSnapshot(key)` returns `false` on a miss and `true` after restoring a compatible entry. By default snapshots live in the shared cache, whose retention may evict older keys, and survive destruction of the source stack. `{ scope: "instance" }` keeps a snapshot with the instance instead: it is never evicted, restores only into that instance, survives `resetData`, and is removed when the instance is destroyed. Other service handles have no snapshot methods.
 
-Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid numbers saved by any stack under the same `stateRoot`; a fixed port is decided by binding it, so another stack's saved port blocks only while something listens on it; that conflict names the stack that saved the port. Omitted public endpoints are not exposed.
+Creating a service records its definition. Configured public ports are bound during startup and retained across normal stop/start and owner reopening. An occupied saved port reports a conflict instead of moving. Automatic ports avoid every port reserved in the per-user port registry (see Public ports); a fixed port another stack holds is a conflict that names that stack. Omitted public endpoints are not exposed.
 
 Native public listeners bind to loopback. Docker public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
 
@@ -65,7 +65,7 @@ Functions use a package-provided, self-contained Edge Runtime main service unles
 
 On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker mounts project files at a separate runtime path.
 
-`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions and port assignments separately from live-owner availability. It skips each entry that cannot be read or decoded and reports it to `onInvalidState(id, error)`; only a failure to read `stateRoot` itself fails discovery. Port allocation skips the same entries. Offline definitions are not live lifecycle observations.
+`open({ id, stateRoot, cacheRoot })` reconnects to a saved stack. The package stores the stack document at `<stateRoot>/<id>/state.json` and service data at `<stateRoot>/<id>/data/<instance-id>`. `discover({ stateRoot })` lists saved definitions separately from live-owner availability. It skips each entry that cannot be read or decoded and reports it to `onInvalidState(id, error)`; only a failure to read `stateRoot` itself fails discovery. Port allocation skips the same entries. Offline definitions are not live lifecycle observations.
 
 `find({ stateRoot, projectRoot, name })` derives the stack ID with the same identity rules as `create` and reads only that stack; `find({ stateRoot, id })` reads a known ID. It returns the saved definition with the live owner's endpoint, if any, or nothing when no such stack is saved. Unlike `discover`, an unreadable state document fails the call instead of being skipped. The Effect entrypoint's `StackId` schema validates an ID before lookup.
 
@@ -73,11 +73,11 @@ Pass `startOwner: true` to `open` when live status and other owner-backed operat
 
 ### Lifetimes
 
-`create` defaults to `lifetime: "detached"`: the stack and its owner outlive the creating client. `create({ ..., lifetime: "session" })` starts the owner immediately and ties the stack to the creating client. Closing that client, or its process exiting for any reason, destroys the stack: instances stop, data and registrations are removed, and port claims are released. Other clients may attach to a running session stack but cannot start its owner. A session stack whose owner has stopped is disposable: the next owner start in the state root removes it, and creating a stack with the same identity replaces it.
+`create` defaults to `lifetime: "detached"`: the stack and its owner outlive the creating client. `create({ ..., lifetime: "session" })` starts the owner immediately and ties the stack to the creating client. Closing that client, or its process exiting for any reason, destroys the stack: instances stop, data and registrations are removed, and port reservations are released. Other clients may attach to a running session stack but cannot start its owner. A session stack whose owner has stopped is disposable: the next owner start in the state root removes it, and creating a stack with the same identity replaces it.
 
 `create({ ..., startOwner: true })` starts a detached stack's owner immediately and lets it register the stack under its lease, as a session stack always does. If the owner fails to start or the launch is interrupted before it reports ready, the owner removes that registration and `create` fails with the launch error, so a failed launch leaves no stack behind.
 
-`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` confirms that no owner holds the stack's lease and leaves the registration, port claims and host data untouched, returning `{ runtimeCleanup: "skipped", engine }`. When an owner does run but a labelled container cannot be removed (for example one on a different daemon) or an instance's data cannot be removed, `destroy` likewise keeps the stack registered and fails, listing what remains. Either way, retry `destroy` once the engine is reachable; there is no `cleanupCommands` field.
+`destroy` normally returns `{ runtimeCleanup: "complete" }`. When no owner is running and a new owner cannot start because the stack's container engine reports that its daemon cannot be reached, `destroy` confirms that no owner holds the stack's lease and leaves the registration, port reservations and host data untouched, returning `{ runtimeCleanup: "skipped", engine }`. When an owner does run but a labelled container cannot be removed (for example one on a different daemon) or an instance's data cannot be removed, `destroy` likewise keeps the stack registered and fails, listing what remains. Either way, retry `destroy` once the engine is reachable; there is no `cleanupCommands` field.
 
 The stack owns database, Functions bootstrap, and command-job directories below its data directory. Storage uploads remain at the caller-supplied Storage `filePath` and are preserved when the stack is destroyed; the caller owns that directory. Host metadata remains under `stateRoot`; native database data uses host files. Docker database data normally uses a managed volume, while existing host data is retained through the host-backed fallback. A host marker records the selected Docker storage and detects a missing or mismatched volume; deleting that volume loses the associated database data. Native snapshot entries live below `cacheRoot`. Docker snapshots share the managed data volume in a separate namespace derived from `cacheRoot`, so they survive source destruction and can use filesystem cloning. A Docker cache hit requires the same daemon, `stateRoot`, and `cacheRoot`. There is no portable tar snapshot API.
 
@@ -97,15 +97,15 @@ Every public port is reserved, before any listener binds it, in one SQLite regis
 `<passwd home>/.supabase/ports.sqlite`. The home is resolved once per process straight from the OS
 user database (`getent passwd <uid>` on Linux, `dscacheutil -q user -a uid <uid>` on macOS), never
 `$HOME` or `SUPABASE_HOME`, and with no override; a process cannot steer the registry's location by
-setting its own environment. The registry is the only authority on which stack owns a port across
+setting its own environment. The registry is the only saved port assignment (the stack's `state.json` holds none) and the only authority on which stack owns a port across
 every state root on the machine, so a stopped stack keeps its ports across other
 stacks' starts, and a restart reuses the same ports or fails with a `StackError` whose `conflict`
 field names the port, the endpoint, and either the live holder (`{ stackId, stateRoot }`) or
 `"foreign"` for a process outside the registry. A fixed or previously saved port is never silently
 reassigned; only automatic allocation tries another candidate. A reservation is released when
-`destroy` confirms the stack has nothing left to clean up, or when deleting an individual service
-releases the endpoints only it owned; stopping a stack or killing its owner leaves reservations in
-place. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
+deleting an individual service releases the endpoints only it owned, or when a stack-wide `destroy`
+has fully succeeded; a failed `destroy` keeps every reservation, and stopping a stack or killing its
+owner leaves them in place. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
 after deleting its state root) is reclaimed lazily by the next stack that needs its port.
 
 Known limitations: on macOS, BSD, and Windows, where the kernel allows overlapping binds, a loopback

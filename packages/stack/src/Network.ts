@@ -69,7 +69,10 @@ export interface NetworkNamespace {
   readonly bindings: Effect.Effect<ReadonlyArray<NetworkBinding>>;
   readonly bind: Effect.Effect<ReadonlyArray<NetworkBinding>, NetworkError>;
   readonly close: Effect.Effect<void, NetworkError>;
+  /** Closes the endpoints for good once the instance is stopped; saved port assignments stay. */
   readonly release: Effect.Effect<void, NetworkError>;
+  /** Deletes the saved port assignments of this instance's dedicated endpoints. */
+  readonly releasePorts: Effect.Effect<void, NetworkError>;
   readonly address: (
     name: string,
     from: "host" | "runtime",
@@ -77,16 +80,6 @@ export interface NetworkNamespace {
 }
 
 export interface Interface {
-  readonly release: Effect.Effect<void, NetworkError>;
-  /**
-   * Marks a stack-wide destroy in progress: every per-instance `NetworkNamespace.release` closes
-   * its listeners as usual but skips deleting its own reservation rows, so a destroy that later
-   * turns out uncertain (remaining resource claims) still finds them. Call {@link releaseStack} once
-   * destroy is confirmed to leave nothing behind, or {@link cancelDestroy} to resume immediate
-   * per-service deletion (the shape an individual `destroyService` still relies on).
-   */
-  readonly beginDestroy: Effect.Effect<void>;
-  readonly cancelDestroy: Effect.Effect<void>;
   /** Releases every reservation this stack holds, dedicated and shared alike, in one step. */
   readonly releaseStack: Effect.Effect<void, NetworkError>;
   readonly register: (options: {
@@ -125,7 +118,6 @@ const makeNetwork = (options: {
     const probe = probeVacant(options.platform ?? process.platform);
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
-    const deferReservations = yield* Ref.make(false);
     // Set once under `gate` by `drain`, before it snapshots `listeners`, and never cleared; checked
     // under the same gate by `bind`, so a bind that hasn't yet acquired the gate when drain starts
     // either completes before drain's snapshot (and so is captured by it) or observes this and
@@ -364,37 +356,35 @@ const makeNetwork = (options: {
                     "Stop the instance before releasing its endpoints",
                   );
               yield* Ref.set(closed, true);
-              // A stack-wide destroy defers every row deletion to its own success boundary (see
-              // `beginDestroy`), so an uncertain destroy (remaining resource claims) still finds
-              // this instance's reservations; an individual `destroyService` still deletes them now.
-              if (yield* Ref.get(deferReservations)) return;
-              for (const name of Object.keys(endpoints)) {
-                const endpoint = endpoints[name];
-                if (endpoint?.shared === undefined)
-                  yield* ports
-                    .release(options.stackId, `${id}:${name}`)
-                    .pipe(Effect.mapError((cause) => errorFor("release", cause)));
-              }
             }),
           ),
+        ),
+      );
+      const releasePorts = Effect.fn("Network.releasePorts")(() =>
+        Effect.forEach(
+          Object.entries(endpoints).filter(([, endpoint]) => endpoint.shared === undefined),
+          ([name]) =>
+            ports
+              .release(options.stackId, `${id}:${name}`)
+              .pipe(Effect.mapError((cause) => errorFor("release", cause))),
+          { discard: true },
         ),
       );
       const address = Effect.fn("Network.address")((name: string, from: "host" | "runtime") =>
         Effect.gen(function* () {
           const endpoint = endpoints[name];
           if (endpoint === undefined) return yield* errorFor("address", `Unknown endpoint ${name}`);
-          const saved = yield* options.state
-            .read(options.stackId)
-            .pipe(Effect.mapError((cause) => errorFor("address", cause)));
           const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
-          const claim = saved?.ports.find((value) => value.key === key);
-          if (claim === undefined)
+          const port = yield* ports
+            .assigned(options.stackId, key)
+            .pipe(Effect.mapError((cause) => errorFor("address", cause)));
+          if (port === undefined)
             return yield* errorFor("address", `Endpoint ${name} is not assigned`);
           return {
             name,
             protocol: endpoint.protocol,
             host: from === "host" ? hostAddress : runtimeAddress,
-            port: claim.port,
+            port,
           };
         }),
       );
@@ -402,18 +392,12 @@ const makeNetwork = (options: {
         bind: bind(),
         close: close(),
         release: release(),
+        releasePorts: releasePorts(),
         address,
         bindings: Ref.get(bound).pipe(Effect.map((values) => [...values.values()])),
       } satisfies NetworkNamespace;
     });
 
-    const release = Effect.fn("Network.releaseNamespace")(() =>
-      gate.withPermits(1)(
-        ports
-          .release(options.stackId, "api")
-          .pipe(Effect.mapError((cause) => errorFor("release", cause))),
-      ),
-    );
     const releaseStack = Effect.fn("Network.releaseStack")(() =>
       ports
         .releaseStack(options.stackId)
@@ -452,9 +436,6 @@ const makeNetwork = (options: {
     });
     return {
       register,
-      release: release(),
-      beginDestroy: Ref.set(deferReservations, true),
-      cancelDestroy: Ref.set(deferReservations, false),
       releaseStack: releaseStack(),
       drain: drain(),
     } satisfies Interface;

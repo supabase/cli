@@ -8,7 +8,6 @@ export { NamespaceError } from "./namespace/Capabilities.ts";
 export { LeaseHeldError, LeaseHolder } from "./namespace/Lease.ts";
 export { resolveStackDataRoot } from "./namespace/Paths.ts";
 export {
-  PortClaim,
   SavedStack,
   StackCredentials,
   StackKeysInput,

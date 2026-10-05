@@ -122,7 +122,6 @@ const definitionFor = (id: string, projectRoot: string, creation: ServiceCreatio
   runtime: "native",
   instances: [{ id: "database-id", creation }],
   composition: { members: [{ id: "database-id", activation: "eager" }], dependencies: [] },
-  ports: [],
 });
 
 interface TargetSpec {

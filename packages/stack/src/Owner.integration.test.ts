@@ -33,7 +33,6 @@ const initial = (id: string): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 const initialDocker = (id: string): SavedStack => ({ ...initial(id), runtime: "docker" });
@@ -777,37 +776,92 @@ it.effect("lets a retry choose other credentials after the first database creati
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.effect("rejects a duplicate instance without releasing the existing instance's claims", () =>
+it.effect(
+  "rejects a duplicate instance without releasing the existing instance's reservations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+        const state = yield* stateFor(`${root}/state`);
+        const creation = yield* Schema.decodeEffect(ServiceCreation)({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        const instance = { id: "mail", creation };
+        const stack: SavedStack = {
+          ...initial(`owner-duplicate-${randomUUID().slice(0, 8)}`),
+          instances: [instance],
+        };
+        yield* state.save(stack);
+        const realStateRoot = yield* fs.realPath(`${root}/state`);
+        const portReservations = yield* PortReservations.Service;
+        expect(yield* portReservations.reserve(realStateRoot, stack.id, "mail:http", 54_321)).toBe(
+          undefined,
+        );
+        yield* Effect.addFinalizer(() =>
+          portReservations.release(realStateRoot, stack.id, "mail:http").pipe(Effect.ignore),
+        );
+
+        const failure = yield* ownerFor({
+          saved: { ...stack, instances: [instance, instance] },
+          state,
+          root: `${root}/data`,
+          cacheRoot,
+        }).pipe(Effect.flip);
+
+        expect(failure.message).toBe("Duplicate instance mail");
+        expect(yield* portReservations.find(realStateRoot, stack.id, "mail:http")).toBe(54_321);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);
+
+it.live("destroying one service deletes its port reservation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-destroy-" });
+      const stack = initial(`owner-service-destroy-${randomUUID().slice(0, 8)}`);
       const state = yield* stateFor(`${root}/state`);
-      const creation = yield* Schema.decodeEffect(ServiceCreation)({
-        service: "mail",
-        config: {},
-        endpoints: { http: { port: "auto" } },
-      });
-      const instance = { id: "mail", creation };
-      const claim = { key: "mail:http", host: "127.0.0.1", port: 54_321 };
-      const stack: SavedStack = {
-        ...initial("owner-duplicate"),
-        instances: [instance],
-        ports: [claim],
-      };
       yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      // Composing reserves every member's public port up front without starting any of them.
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = yield* PortReservations.Service;
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeDefined();
 
-      const failure = yield* ownerFor({
-        saved: { ...stack, instances: [instance, instance] },
-        state,
-        root: `${root}/data`,
-        cacheRoot,
-      }).pipe(Effect.flip);
+      yield* owner.rpc.destroyService({ id: mail.id });
 
-      expect(failure.message).toBe("Duplicate instance mail");
-      expect((yield* state.read(stack.id))?.ports).toEqual([claim]);
+      expect(
+        yield* portReservations.find(realStateRoot, stack.id, `${mail.id}:http`),
+      ).toBeUndefined();
     }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>

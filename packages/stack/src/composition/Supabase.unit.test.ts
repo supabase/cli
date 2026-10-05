@@ -43,6 +43,7 @@ const makeInstance = (
       close: Effect.void,
       confirmRemoved: Effect.void,
       release: Effect.void,
+      releasePorts: Effect.void,
       hasEndpoint: options.hasEndpoint ?? true,
       inputs: options.inputs ?? [],
       outputs: options.outputs ?? {},

@@ -5,7 +5,6 @@ import * as Net from "node:net";
 import { create, open, type Observation } from "./effect.ts";
 import { ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
-import * as StackNamespace from "./StackNamespace.ts";
 import { captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 
@@ -334,81 +333,6 @@ it.live(
 );
 
 it.live(
-  "a restart republishes state.json when the registry already holds a port its saved claim forgot",
-  () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "port-reservation-desync-cache-",
-        });
-        const { stack: stackA, stateRoot: stateRootA } = yield* makeStack(fs, cacheRoot);
-        const mailA = yield* stackA.services.create(mailOn("auto"));
-        yield* mailA.start;
-        yield* mailA.ready;
-        const port = portOf(yield* mailA.status);
-        yield* stackA.stop;
-
-        // Simulate a crash between the registry commit and the local `state.json` publish: the
-        // registry still names this port, but the saved claim that mirrors it is gone.
-        const state = yield* StackNamespace.Service.pipe(
-          Effect.provide(StackNamespace.layer({ root: stateRootA })),
-        );
-        const saved = yield* state.read(stackA.id);
-        if (saved === undefined) return yield* Effect.die("stack state missing");
-        yield* state.save({ ...saved, ports: [] });
-
-        const reopenedA = yield* open({ id: stackA.id, stateRoot: stateRootA, cacheRoot });
-        const reopenedMailA = yield* reopenedA.services.get(mailA.id);
-        yield* reopenedMailA.start;
-        yield* reopenedMailA.ready;
-        expect(portOf(yield* reopenedMailA.status)).toBe(port);
-        expect((yield* state.read(stackA.id))?.ports.some((entry) => entry.port === port)).toBe(
-          true,
-        );
-      }),
-    ),
-  { timeout: 120_000 },
-);
-
-it.live(
-  "a restart re-establishes a registry row its saved claim remembers but the registry lost",
-  () =>
-    run(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const cacheRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "port-reservation-missing-row-cache-",
-        });
-        const { stack: stackA, stateRoot: stateRootA } = yield* makeStack(fs, cacheRoot);
-        const mailA = yield* stackA.services.create(mailOn("auto"));
-        yield* mailA.start;
-        yield* mailA.ready;
-        const port = portOf(yield* mailA.status);
-        yield* stackA.stop;
-
-        // Simulate the registry row disappearing independently of `state.json` (for example, a
-        // registry file replaced out from under a stopped stack): the saved claim still names the
-        // port, but no row backs it.
-        const realStateRoot = yield* fs.realPath(stateRootA);
-        const reservationContext = yield* Layer.build(PortReservations.layer);
-        const portReservations = Context.get(reservationContext, PortReservations.Service);
-        yield* portReservations.release(realStateRoot, stackA.id, `${mailA.id}:http`);
-
-        const reopenedA = yield* open({ id: stackA.id, stateRoot: stateRootA, cacheRoot });
-        const reopenedMailA = yield* reopenedA.services.get(mailA.id);
-        yield* reopenedMailA.start;
-        yield* reopenedMailA.ready;
-        expect(portOf(yield* reopenedMailA.status)).toBe(port);
-        expect(yield* portReservations.find(realStateRoot, stackA.id, `${mailA.id}:http`)).toBe(
-          port,
-        );
-      }),
-    ),
-  { timeout: 120_000 },
-);
-
-it.live(
   "composing a member on an already-claimed port surfaces a structured conflict naming the holder",
   () =>
     run(
@@ -479,10 +403,6 @@ it.live(
 
         expect(failure.message).toContain("10000-19999");
         expect(failure.message).toContain("choose a port outside that range");
-        const state = yield* StackNamespace.Service.pipe(
-          Effect.provide(StackNamespace.layer({ root: stateRoot })),
-        );
-        expect((yield* state.read(stack.id))?.ports).toEqual([]);
         const reservationContext = yield* Layer.build(PortReservations.layer);
         const portReservations = Context.get(reservationContext, PortReservations.Service);
         expect(

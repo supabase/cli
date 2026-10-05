@@ -36,6 +36,7 @@ export const makeStandaloneService = Effect.fn("Test.makeStandaloneService")(fun
     close: Effect.void,
     confirmRemoved: Effect.void,
     release: Effect.void,
+    releasePorts: Effect.void,
     hasEndpoint: true,
     inputs: [],
     outputs: {},

@@ -105,6 +105,7 @@ const makeInstance = (
       bind: options.bind ?? Ref.set(bound, true),
       confirmRemoved: Effect.void,
       release: Effect.void,
+      releasePorts: Effect.void,
       close: orchestrator.status(id).pipe(
         Effect.flatMap((state) =>
           state.lifecycle === "stopped" && !state.wakeEnabled ? Ref.set(bound, false) : Effect.void,
@@ -1156,7 +1157,6 @@ describe("idle races through a real listener", () => {
       lifetime: "detached",
       instances: [],
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
     const network = yield* Layer.build(
       Network.layer({ stackId, runtime: "native" }).pipe(
@@ -1254,6 +1254,7 @@ describe("idle races through a real listener", () => {
       close: Effect.void,
       confirmRemoved: Effect.void,
       release: Effect.void,
+      releasePorts: Effect.void,
       hasEndpoint: true,
       inputs: [],
       outputs: {},

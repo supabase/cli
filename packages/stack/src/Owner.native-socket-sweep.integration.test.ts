@@ -52,7 +52,6 @@ const arrange = Effect.fn("arrange")(function* (
     instances: [{ id: "database", creation: yield* databaseCreation }],
     lifetime,
     composition: { members: [], dependencies: [] },
-    ports: [],
   };
   yield* state.save(saved);
   const runtimeRootBase = yield* fs.makeTempDirectoryScoped({ prefix: "stack-socket-sweep-base-" });

@@ -60,7 +60,6 @@ const withHeldOwner = <A, E, R>(
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* Effect.acquireUseRelease(

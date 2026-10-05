@@ -826,7 +826,6 @@ function mockResetStackApi(opts: {
               })),
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
-              ports: [],
             },
             host: undefined,
           }),
