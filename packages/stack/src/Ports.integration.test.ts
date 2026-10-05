@@ -332,6 +332,77 @@ it.live(
     ),
 );
 
+it.live("a destroy that cannot remove the registration keeps every reservation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-remove-fails-" });
+      const id = `destroy-remove-fails-${randomUUID()}`;
+      const state = yield* makeTestState(`${root}/state`);
+      const saved = {
+        id,
+        runtime: "native" as const,
+        identity: { projectRoot: root, branchContext: "test", stackName: id },
+        instances: [],
+        lifetime: "detached" as const,
+        composition: { members: [], dependencies: [] },
+      };
+      yield* state.save(saved);
+      let removable = false;
+      const unremovableState: StackNamespace.Interface = {
+        ...state,
+        remove: (target) =>
+          removable
+            ? state.remove(target)
+            : Effect.fail(
+                new StackNamespace.NamespaceError({
+                  operation: "remove",
+                  message: "injected failure",
+                }),
+              ),
+      };
+      const owner = yield* ownerFor({
+        saved,
+        state: unremovableState,
+        root: `${root}/data`,
+        cacheRoot: `${root}/cache`,
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.suspend(() => {
+          removable = true;
+          return owner.namespace.destroy;
+        }).pipe(Effect.ignore),
+      );
+      const definitions = yield* owner.rpc.supabaseComposition({
+        services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+      });
+      const mail = definitions.find((entry) => entry.creation.service === "mail");
+      if (mail === undefined) return yield* Effect.die("mail missing from the composition");
+      const realStateRoot = yield* fs.realPath(`${root}/state`);
+      const portReservations = yield* PortReservations.Service.pipe(
+        Effect.provide(PortReservations.layer),
+      );
+      const assigned = yield* portReservations.find(realStateRoot, id, `${mail.id}:http`);
+      expect(assigned).toBeDefined();
+
+      const failed = yield* owner.namespace.destroy.pipe(Effect.exit);
+
+      expect(failed._tag).toBe("Failure");
+      expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBe(assigned);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.merge(
+          NodeHttpClient.layerNodeHttp,
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+  ),
+);
+
 it.live("reserveNativePort skips a port a wildcard listener already holds", () =>
   Effect.scoped(
     Effect.gen(function* () {

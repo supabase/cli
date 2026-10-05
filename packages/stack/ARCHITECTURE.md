@@ -357,7 +357,7 @@ flowchart TB
     Stopped -->|explicit start| Start["Orchestrator starts selected services<br/>Reuses saved public ports"]
 ```
 
-Sleep retains the public listener needed to wake. Whole-stack stop closes listeners while preserving the registry's reservations; the next start rebinds the same ports. Destroying an individual instance deletes only the registry rows it owns, not unrelated services' shared listeners or rows; a stack-wide destroy deletes its rows only after it fully succeeds, and a failed destroy keeps them.
+Sleep retains the public listener needed to wake. Whole-stack stop closes listeners while preserving the registry's reservations; the next start rebinds the same ports. Destroying an individual instance deletes only the registry rows it owns, not unrelated services' shared listeners or rows; a stack-wide destroy deletes its rows only after the registration is removed, so a failed destroy keeps them and a failed release leaves them for lazy reclamation.
 
 Composition validation permits lazy activation only for instances with a configured public wake endpoint. A route-less prerequisite, such as pg-meta without its own public endpoint, is eager; it is not implicitly armed through a dependent. This avoids a second wake-permission mechanism. Internal sleep is available only for lazy instances with a supported public wake route and an enabled idle policy. The default composition gives every lazy service one, Functions included; the database is eager. Functions inspector access remains possible while health is starting; ordinary application traffic waits for healthy.
 

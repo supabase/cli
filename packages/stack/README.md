@@ -104,7 +104,7 @@ field names the port, the endpoint, and either the live holder (`{ stackId, stat
 `"foreign"` for a process outside the registry. A fixed or previously saved port is never silently
 reassigned; only automatic allocation tries another candidate. A reservation is released when
 deleting an individual service releases the endpoints only it owned, or when a stack-wide `destroy`
-has fully succeeded; a failed `destroy` keeps every reservation, and stopping a stack or killing its
+has removed the registration; a failed `destroy` keeps every reservation, and stopping a stack or killing its
 owner leaves them in place. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
 after deleting its state root) is reclaimed lazily by the next stack that needs its port.
 

@@ -13,7 +13,7 @@ import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack } from "./StackNamespace.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
-import { ServiceCreation, type ServiceCreationInput } from "./services/Catalog.ts";
+import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import { dockerEngineTarget } from "../tests/engine-target.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
@@ -784,35 +784,34 @@ it.effect(
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-duplicate-" });
         const state = yield* stateFor(`${root}/state`);
-        const creation = yield* Schema.decodeEffect(ServiceCreation)({
-          service: "mail",
-          config: {},
-          endpoints: { http: { port: "auto" } },
-        });
-        const instance = { id: "mail", creation };
-        const stack: SavedStack = {
-          ...initial(`owner-duplicate-${randomUUID().slice(0, 8)}`),
-          instances: [instance],
-        };
+        const stack = initial(`owner-duplicate-${randomUUID().slice(0, 8)}`);
         yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const definitions = yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: { http: { port: "auto" } } }],
+        });
+        const mail = definitions.find((entry) => entry.creation.service === "mail");
+        if (mail === undefined) return yield* Effect.die("mail missing from the composition");
         const realStateRoot = yield* fs.realPath(`${root}/state`);
         const portReservations = yield* PortReservations.Service;
-        expect(yield* portReservations.reserve(realStateRoot, stack.id, "mail:http", 54_321)).toBe(
-          undefined,
-        );
-        yield* Effect.addFinalizer(() =>
-          portReservations.release(realStateRoot, stack.id, "mail:http").pipe(Effect.ignore),
-        );
+        const endpoint = `${mail.id}:http`;
+        const assigned = yield* portReservations.find(realStateRoot, stack.id, endpoint);
+        expect(assigned).toBeDefined();
+        const saved = yield* state.read(stack.id);
+        if (saved === undefined) return yield* Effect.die("saved state disappeared");
+        const instance = saved.instances.find((entry) => entry.id === mail.id);
+        if (instance === undefined) return yield* Effect.die("mail instance was not saved");
 
         const failure = yield* ownerFor({
-          saved: { ...stack, instances: [instance, instance] },
+          saved: { ...saved, instances: [instance, instance] },
           state,
           root: `${root}/data`,
           cacheRoot,
         }).pipe(Effect.flip);
 
-        expect(failure.message).toBe("Duplicate instance mail");
-        expect(yield* portReservations.find(realStateRoot, stack.id, "mail:http")).toBe(54_321);
+        expect(failure.message).toBe(`Duplicate instance ${mail.id}`);
+        expect(yield* portReservations.find(realStateRoot, stack.id, endpoint)).toBe(assigned);
       }),
     ).pipe(
       Effect.provide(

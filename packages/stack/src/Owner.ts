@@ -795,14 +795,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
-      // Every instance's teardown closes its listeners but retains its saved port assignments;
-      // `releaseStack` drops them together, only once destroy has fully succeeded.
+      // Instance teardown retains port rows until the registration is gone; the release after
+      // that is best-effort because `isGone` reclaims a gone stack's rows lazily.
       destroy: network.drain.pipe(
         Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         Effect.andThen(removeContainerEnvRoot),
-        Effect.andThen(network.releaseStack),
         Effect.andThen(options.state.remove(stackId)),
+        Effect.andThen(
+          network.releaseStack.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Destroyed stack could not release its port reservations", cause),
+            ),
+          ),
+        ),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),
