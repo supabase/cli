@@ -25,6 +25,7 @@ import {
 } from "effect";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as NetAddress from "effect/net/NetAddress";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as RpcServer from "effect/rpc/RpcServer";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
@@ -82,7 +83,7 @@ export const bindControl = Effect.fn("StackHost.bindControl")(function* () {
     },
     { host: "127.0.0.1", port: 0 },
   ).pipe(Effect.mapError((cause) => hostError("control", cause)));
-  if (server.address._tag !== "TcpAddress")
+  if (!NetAddress.isInetAddress(server.address))
     return yield* hostError("control", "Control listener has no TCP address");
   return {
     port: server.address.port,

@@ -64,7 +64,7 @@ export const serveTcp = Effect.fn("Proxy.serveTcp")(
     listener.run(() =>
       Effect.scoped(
         Effect.gen(function* () {
-          // rc.112 supplies this service to handlers but does not remove it from run's requirements.
+          // The listener provides the raw socket to handlers but keeps it in `run`'s requirements.
           const incoming = yield* Effect.serviceOption(NodeSocket.NetSocket).pipe(
             Effect.flatMap(
               Option.match({

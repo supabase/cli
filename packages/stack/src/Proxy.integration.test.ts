@@ -1,12 +1,8 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Predicate } from "effect";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/http";
+import { Deferred, Effect, Fiber } from "effect";
+import * as NetAddress from "effect/net/NetAddress";
+import { HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- NodeHttpServer.make requires a native server factory.
 import * as Http from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- raw client and backend fixtures for connection failures.
@@ -35,8 +31,8 @@ it.live(
         );
         const listener = yield* bindTcp("127.0.0.1", 0);
         if (
-          !Predicate.isTagged(backend.address, "TcpAddress") ||
-          !Predicate.isTagged(listener.address, "TcpAddress")
+          !NetAddress.isInetAddress(backend.address) ||
+          !NetAddress.isInetAddress(listener.address)
         )
           return yield* Effect.die("Expected TCP listeners");
         const address = { host: "127.0.0.1", port: backend.address.port };
@@ -84,7 +80,7 @@ it.live("logs one error naming the endpoint when its target fails to wake", () =
   return Effect.scoped(
     Effect.gen(function* () {
       const listener = yield* bindTcp("127.0.0.1", 0);
-      if (!Predicate.isTagged(listener.address, "TcpAddress"))
+      if (!NetAddress.isInetAddress(listener.address))
         return yield* Effect.die("Expected TCP listener");
       const port = listener.address.port;
       const target = Effect.fail(new ProxyError({ message: "wake failed" }));
@@ -131,7 +127,7 @@ it.live("does not log an error when a backend copy resets after a successful con
   return Effect.scoped(
     Effect.gen(function* () {
       const listener = yield* bindTcp("127.0.0.1", 0);
-      if (!Predicate.isTagged(listener.address, "TcpAddress"))
+      if (!NetAddress.isInetAddress(listener.address))
         return yield* Effect.die("Expected TCP listener");
       const port = listener.address.port;
       const backend = yield* listenResetBackend();

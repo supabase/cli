@@ -13,6 +13,7 @@ import {
   Path,
   Stream,
 } from "effect";
+import * as NetAddress from "effect/net/NetAddress";
 import { discover, type Stack } from "./effect.ts";
 import { makeTestStack } from "./testing.ts";
 import { postgres } from "./Commands.ts";
@@ -174,7 +175,7 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-failure-" });
       const occupied = yield* NodeSocketServer.make({ host: "127.0.0.1", port: 0 });
-      if (occupied.address._tag !== "TcpAddress") return yield* Effect.die("Expected TCP");
+      if (!NetAddress.isInetAddress(occupied.address)) return yield* Effect.die("Expected TCP");
       const port = occupied.address.port;
 
       const startup = yield* makeTestStack({

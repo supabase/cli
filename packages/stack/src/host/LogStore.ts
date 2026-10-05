@@ -249,7 +249,7 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
   const readChunk = (file: string, offset: number) =>
     Effect.scoped(
       fs.open(file, { flag: "r" }).pipe(
-        Effect.tap((handle) => handle.seek(offset, "start")),
+        Effect.tap((handle) => handle.seek(BigInt(offset), "start")),
         Effect.flatMap((handle) => handle.readAlloc(readChunkBytes)),
         Effect.map(Option.getOrElse(() => new Uint8Array(0))),
         Effect.map(Option.some),

@@ -1,4 +1,5 @@
-import { Effect, Predicate } from "effect";
+import { Effect } from "effect";
+import * as NetAddress from "effect/net/NetAddress";
 import { bindTcp, serveTcp, ProxyError } from "../src/Proxy.ts";
 import { makeHttpProxy } from "../src/HttpProxy.ts";
 import type { ServiceEndpoint } from "../src/services/Recipe.ts";
@@ -19,7 +20,7 @@ export const makeDockerTcpRelay = Effect.fn("DockerRelay.makeTcp")(
   <E>(endpoint: Effect.Effect<ServiceEndpoint, E>) =>
     Effect.gen(function* () {
       const listener = yield* bindTcp("0.0.0.0", 0);
-      if (!Predicate.isTagged(listener.address, "TcpAddress"))
+      if (!NetAddress.isInetAddress(listener.address))
         return yield* Effect.die("Expected TCP relay listener");
       yield* serveTcp(listener, address(endpoint), "docker-relay").pipe(Effect.forkScoped);
       return { host: "host.docker.internal", port: listener.address.port };
