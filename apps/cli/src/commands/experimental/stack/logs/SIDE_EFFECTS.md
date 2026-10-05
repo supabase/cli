@@ -6,7 +6,7 @@ it never launches an owner or starts/stops a service.
 
 ## Selection and files
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive. By default, only composition members are
 included. `--service <kind-or-instance-id>` can also select standalone instances.
 An unavailable owner, missing stack, or unmatched service fails with status 1.

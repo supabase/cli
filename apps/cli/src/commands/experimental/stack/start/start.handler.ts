@@ -497,7 +497,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         explicitWorkdir: settings.explicitWorkdir,
         projectRoot: target.projectRoot,
         ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { stackId: flags.stackId.value } : {}),
+        ...(Option.isSome(flags.stackId) ? { stackId: stack.id } : {}),
       },
       currentShellPlatform(),
     );

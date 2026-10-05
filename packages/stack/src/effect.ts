@@ -969,19 +969,32 @@ export const open = Effect.fn("Stack.open")(
   Effect.mapError((cause) => failure("open", cause)),
 );
 
-/** Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+/**
+ * Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries.
+ * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it.
+ */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
+      readonly idPrefix?: string;
       readonly onInvalidState?: (id: string, error: State.StateError) => Effect.Effect<void>;
     },
   ) {
+    const selected = (id: string) =>
+      options.idPrefix === undefined || id.startsWith(options.idPrefix);
+    const onInvalidState = options.onInvalidState;
     const state = yield* State.Service.pipe(
       Effect.provide(
-        State.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
+        State.layer({
+          root: options.stateRoot,
+          onInvalidState:
+            onInvalidState === undefined
+              ? undefined
+              : (id, error) => (selected(id) ? onInvalidState(id, error) : Effect.void),
+        }),
       ),
     );
-    const saved = yield* state.list;
+    const saved = (yield* state.list).filter(({ id }) => selected(id));
     return yield* Effect.forEach(
       saved,
       (definition) =>
