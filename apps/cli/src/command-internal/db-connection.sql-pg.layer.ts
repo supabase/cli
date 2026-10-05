@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
-import { PgClient } from "@effect/sql-pg";
 import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
@@ -19,6 +18,7 @@ import {
   isSqlState,
 } from "./connect-errors.ts";
 import { DbConnectError, DbCopyError, DbExecError } from "./db-connection.errors.ts";
+import { makePoolSqlClient } from "./db-connection.pool-client.ts";
 import {
   type DbBatchStatement,
   type DbBatchValue,
@@ -864,10 +864,7 @@ const connect = (
       cfg,
       options,
     );
-    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
-      Effect.provide(Reactivity.layer),
-      Effect.mapError((error) => toConnectError(cfg, options.isLocal, error)),
-    );
+    const client = yield* makePoolSqlClient(pool).pipe(Effect.provide(Reactivity.layer));
 
     // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres' COPY protocol
     // needs a raw client, which `@effect/sql-pg` does not surface, so the session opens one
