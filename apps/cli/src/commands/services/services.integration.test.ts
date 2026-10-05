@@ -373,7 +373,10 @@ describe("services", () => {
         }),
       );
       expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/storage", local: "v1.79.28" }),
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/storage",
+          local: catalogUpstreamVersion("storage"),
+        }),
       );
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
