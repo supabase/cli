@@ -1,6 +1,6 @@
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- pure, synchronous path-string math (no I/O), the same convention as command-internal/path-containment.ts and docker-ids.ts.
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { URL } from "node:url";
 import {
   FunctionResponse_Output,
@@ -12,13 +12,11 @@ import {
   inferFunctionsManifest,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
-import { Cause, Config, Duration, Effect, FileSystem, Option, Ref, Schedule, Schema } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { promptYesNo } from "../../command-internal/prompt-yes-no.ts";
 import { bitbucketCloneDir } from "../../command-internal/bitbucket-pipeline.ts";
-import { isPathContainedInRoot } from "../../command-internal/path-containment.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
 import { bold } from "../../command-internal/colors.ts";
@@ -39,14 +37,8 @@ import {
 import { slimImagesEnabled } from "../services/slim-images.ts";
 import {
   ConflictingFunctionDeployFlagsError,
-  FunctionAssetIsDirectoryError,
-  FunctionAssetOutsideRootError,
-  FunctionBundleFailedError,
   FunctionDeployCancelledError,
-  FunctionDeployJobsRequiresApiError,
-  FunctionImportMapParseError,
   FunctionImportNotDirectoryError,
-  FunctionStaticPatternNoMatchError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
@@ -56,9 +48,6 @@ import {
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
-  type NativeFailure,
-  nativeFailure,
-  nativePlatformFailure,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
@@ -378,11 +367,16 @@ function toApiRelativePath(cwd: string, hostPath: string) {
   return toSlash(relativePath.length > 0 ? relativePath : basename(resolved));
 }
 
-// Call sites always pass already-`realPath`-resolved, absolute candidates and
-// roots, so the shared primitive's "both arguments must already be
-// canonicalized" precondition always holds here.
+function isContainedPath(root: string, candidate: string) {
+  const relativePath = relative(resolve(root), resolve(candidate));
+  return (
+    relativePath === "" ||
+    (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
+  );
+}
+
 function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
-  return roots.some((root) => isPathContainedInRoot(root, candidate));
+  return roots.some((root) => isContainedPath(root, candidate));
 }
 
 /**
@@ -396,30 +390,21 @@ function hasParentPathSegment(relativePath: string) {
     .some((segment) => segment === "..");
 }
 
-function fsErrorCode(error: PlatformError): string | undefined {
-  const cause = error.reason.cause;
-  return cause instanceof Error && "code" in cause ? String(cause.code) : undefined;
+async function realpathIfExists(pathname: string) {
+  try {
+    return await realpath(resolve(pathname));
+  } catch (error) {
+    // ENOTDIR (a path routed through a file) is as nonexistent as ENOENT here.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return resolve(pathname);
+    }
+    throw error;
+  }
 }
-
-/** Curried `nativePlatformFailure` for `Effect.mapError`, labeling the failing path once. */
-const nativeFsError = (path: string) => (error: PlatformError) =>
-  nativePlatformFailure(error, path);
-
-const realpathIfExists = Effect.fn("functions.deploy.realpathIfExists")(function* (
-  fs: FileSystem.FileSystem,
-  pathname: string,
-) {
-  return yield* fs.realPath(resolve(pathname)).pipe(
-    Effect.catchTag("PlatformError", (error) => {
-      // ENOTDIR (a path routed through a file) is as nonexistent as ENOENT here.
-      const code = fsErrorCode(error);
-      if (error.reason._tag === "NotFound" || code === "ENOTDIR") {
-        return Effect.succeed(resolve(pathname));
-      }
-      return Effect.fail(nativePlatformFailure(error, pathname));
-    }),
-  );
-});
 
 const resolveFunctionsSourceRoot = (projectRoot: string) =>
   findGitRootPath(projectRoot).pipe(Effect.map(Option.getOrElse(() => resolve(projectRoot))));
@@ -555,27 +540,23 @@ function getObjectProperty(input: object, key: string): unknown {
   return Reflect.get(input, key);
 }
 
-const readStringMap = Effect.fnUntraced(function* (input: unknown, fieldName: string) {
+function readStringMap(input: unknown, fieldName: string): Record<string, string> {
   if (input === undefined) {
     return {};
   }
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    return yield* new FunctionImportMapParseError({
-      message: `failed to parse import map: expected ${fieldName} to be an object`,
-    });
+    throw new Error(`failed to parse import map: expected ${fieldName} to be an object`);
   }
 
   const values: Record<string, string> = {};
   for (const [key, value] of Object.entries(input)) {
     if (typeof value !== "string") {
-      return yield* new FunctionImportMapParseError({
-        message: `failed to parse import map: expected ${fieldName}.${key} to be a string`,
-      });
+      throw new Error(`failed to parse import map: expected ${fieldName}.${key} to be a string`);
     }
     values[key] = value;
   }
   return values;
-});
+}
 
 class ImportMapFile {
   readonly imports: Record<string, string>;
@@ -592,7 +573,7 @@ class ImportMapFile {
     this.importMapReference = importMapReference;
   }
 
-  static fromUnknown = Effect.fnUntraced(function* (input: unknown) {
+  static fromUnknown(input: unknown) {
     const imports: Record<string, string> = {};
     const scopes: Record<string, Record<string, string>> = {};
     let importMapReference = "";
@@ -603,24 +584,22 @@ class ImportMapFile {
         importMapReference = importMap;
       }
 
-      Object.assign(imports, yield* readStringMap(getObjectProperty(input, "imports"), "imports"));
+      Object.assign(imports, readStringMap(getObjectProperty(input, "imports"), "imports"));
 
       const rawScopes = getObjectProperty(input, "scopes");
       if (rawScopes === undefined) {
         return new ImportMapFile(imports, scopes, importMapReference);
       }
       if (typeof rawScopes !== "object" || rawScopes === null || Array.isArray(rawScopes)) {
-        return yield* new FunctionImportMapParseError({
-          message: "failed to parse import map: expected scopes to be an object",
-        });
+        throw new Error("failed to parse import map: expected scopes to be an object");
       }
       for (const [scopeName, scopeValue] of Object.entries(rawScopes)) {
-        scopes[scopeName] = yield* readStringMap(scopeValue, `scopes.${scopeName}`);
+        scopes[scopeName] = readStringMap(scopeValue, `scopes.${scopeName}`);
       }
     }
 
     return new ImportMapFile(imports, scopes, importMapReference);
-  });
+  }
 
   isReference() {
     return (
@@ -652,59 +631,28 @@ class ImportMapFile {
   }
 }
 
-/**
- * Shared by every JSONC import-map read (`loadImportMapFile`, `resolveImportMapAllowedRoots`).
- * Stays on raw `JSON.parse`, not `Schema.fromJsonString`: that combinator's own JSON-parse step
- * (`SchemaGetter.parseJson`) discards the native `SyntaxError` and reports a fixed
- * "a valid JSON string" message instead, which would change this error's existing text for a
- * malformed file.
- */
-function decodeJsoncBytes(
-  contents: Uint8Array,
-): Effect.Effect<unknown, FunctionImportMapParseError> {
-  return Effect.try({
-    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- see this function's own doc comment: Schema.fromJsonString discards the native SyntaxError this error's message needs
-    try: () => JSON.parse(stripJsonComments(new TextDecoder().decode(contents))),
-    catch: (cause) =>
-      new FunctionImportMapParseError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
-}
-
-// Explicit type annotation breaks the circular inference from the recursive
-// `yield* loadImportMapFile(...)` call below.
-const loadImportMapFile: <E = never>(
-  fs: FileSystem.FileSystem,
+async function loadImportMapFile(
   pathname: string,
-  onRead?: (pathname: string, contents: Uint8Array) => Effect.Effect<void, E>,
-  seen?: Set<string>,
-) => Effect.Effect<ImportMapFile, FunctionImportMapParseError | NativeFailure | E> =
-  Effect.fnUntraced(function* <E = never>(
-    fs: FileSystem.FileSystem,
-    pathname: string,
-    onRead?: (pathname: string, contents: Uint8Array) => Effect.Effect<void, E>,
-    seen: Set<string> = new Set<string>(),
-  ) {
-    const resolvedPath = resolve(pathname);
-    if (seen.has(resolvedPath)) {
-      return yield* new FunctionImportMapParseError({
-        message: `cyclic import map reference: ${pathname}`,
-      });
-    }
-    seen.add(resolvedPath);
-    const contents = yield* fs.readFile(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-    if (onRead !== undefined) {
-      yield* onRead(pathname, contents);
-    }
-    const parsed = yield* decodeJsoncBytes(contents);
-    const importMap = (yield* ImportMapFile.fromUnknown(parsed)).resolve(toSlash(pathname));
-    if (isDenoConfigFile(pathname) && importMap.isReference()) {
-      const nestedPath = join(dirname(pathname), importMap.importMapReference);
-      return yield* loadImportMapFile(fs, nestedPath, onRead, seen);
-    }
-    return importMap;
-  });
+  onRead?: (pathname: string, contents: Uint8Array) => Promise<void>,
+  seen = new Set<string>(),
+): Promise<ImportMapFile> {
+  const resolvedPath = resolve(pathname);
+  if (seen.has(resolvedPath)) {
+    throw new Error(`cyclic import map reference: ${pathname}`);
+  }
+  seen.add(resolvedPath);
+  const contents = await readFile(pathname);
+  if (onRead !== undefined) {
+    await onRead(pathname, contents);
+  }
+  const parsed = JSON.parse(stripJsonComments(new TextDecoder().decode(contents)));
+  const importMap = ImportMapFile.fromUnknown(parsed).resolve(toSlash(pathname));
+  if (isDenoConfigFile(pathname) && importMap.isReference()) {
+    const nestedPath = join(dirname(pathname), importMap.importMapReference);
+    return loadImportMapFile(nestedPath, onRead, seen);
+  }
+  return importMap;
+}
 
 function substituteImportMapValue(
   mappings: Readonly<Record<string, string>>,
@@ -778,14 +726,13 @@ function resolveImportSpecifier(
   return { path: resolved, substituted };
 }
 
-const walkImportPaths = Effect.fnUntraced(function* <EFile = never>(
-  fs: FileSystem.FileSystem,
+async function walkImportPaths(
   importMap: ImportMapFile,
   srcPath: string,
   allowedRoots: ReadonlyArray<string>,
   displayRoot: string,
-  onFile: (pathname: string, contents: Uint8Array) => Effect.Effect<void, EFile>,
-  onWarning: (message: string) => Effect.Effect<void>,
+  onFile: (pathname: string, contents: Uint8Array) => Promise<void>,
+  onWarning: (message: string) => Promise<void>,
 ) {
   const seen = new Set<string>();
   const queue = [toSlash(srcPath)];
@@ -797,39 +744,33 @@ const walkImportPaths = Effect.fnUntraced(function* <EFile = never>(
     }
     seen.add(current);
 
-    const maybeContents: Option.Option<Uint8Array> = yield* Effect.gen(function* () {
-      const resolvedCurrent = yield* fs.realPath(resolve(current));
+    let contents: Uint8Array;
+    try {
+      const resolvedCurrent = await realpath(resolve(current));
       if (!isContainedInAnyPath(allowedRoots, resolvedCurrent)) {
-        yield* onWarning(`WARN: Skipping import path outside source root: ${current}\n`);
-        return Option.none<Uint8Array>();
+        await onWarning(`WARN: Skipping import path outside source root: ${current}\n`);
+        continue;
       }
-      return Option.some(yield* fs.readFile(resolvedCurrent));
-    }).pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        Effect.gen(function* () {
-          if (error.reason._tag === "NotFound") {
-            const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
-            yield* onWarning(`WARN: ${message}\n`);
-            return Option.none<Uint8Array>();
-          }
-          // An ENOTDIR (import path routed through a file) gets a classified, user-facing message
-          // instead of an unhandled raw Node error, so telemetry books it as user-fixable config.
-          if (fsErrorCode(error) === "ENOTDIR") {
-            return yield* new FunctionImportNotDirectoryError({
-              message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
-            });
-          }
-          return yield* nativePlatformFailure(error, current);
-        }),
-      ),
-    );
-
-    if (Option.isNone(maybeContents)) {
-      continue;
+      contents = await readFile(resolvedCurrent);
+    } catch (error) {
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "ENOENT") {
+          const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
+          await onWarning(`WARN: ${message}\n`);
+          continue;
+        }
+        // An ENOTDIR (import path routed through a file) gets a classified, user-facing message
+        // instead of an unhandled raw Node error, so telemetry books it as user-fixable config.
+        if (error.code === "ENOTDIR") {
+          throw new FunctionImportNotDirectoryError({
+            message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
+          });
+        }
+      }
+      throw error;
     }
-    const contents = maybeContents.value;
 
-    yield* onFile(current, contents);
+    await onFile(current, contents);
     const text = new TextDecoder().decode(contents);
     importPathPattern.lastIndex = 0;
     for (const match of text.matchAll(importPathPattern)) {
@@ -867,15 +808,15 @@ const walkImportPaths = Effect.fnUntraced(function* <EFile = never>(
       }
 
       const resolvedModule = resolve(modulePath);
-      const containmentPath = yield* realpathIfExists(fs, resolvedModule);
+      const containmentPath = await realpathIfExists(resolvedModule);
       if (!isContainedInAnyPath(allowedRoots, containmentPath)) {
-        yield* onWarning(`WARN: Skipping import path outside source root: ${modulePath}\n`);
+        await onWarning(`WARN: Skipping import path outside source root: ${modulePath}\n`);
         continue;
       }
       queue.push(toSlash(resolvedModule));
     }
   }
-});
+}
 
 function hasGlobMeta(pattern: string) {
   return pattern.includes("*") || pattern.includes("?") || pattern.includes("[");
@@ -944,161 +885,131 @@ function globBaseDirectory(pattern: string) {
   return stableParts.join("/");
 }
 
-// Node's native recursive `readdir` yields every intermediate directory alongside leaf files,
-// relative to `root`.
-const listPathsRecursive = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, root: string) {
+async function listPathsRecursive(root: string): Promise<ReadonlyArray<string>> {
   const resolvedRoot = resolve(root);
-  const entries = yield* fs.readDirectory(resolvedRoot, { recursive: true });
-  return entries.map((entry) => join(resolvedRoot, entry));
-});
+  const entries = await readdir(resolvedRoot, { withFileTypes: true });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    const pathname = join(resolvedRoot, entry.name);
+    paths.push(pathname);
+    if (entry.isDirectory()) {
+      paths.push(...(await listPathsRecursive(pathname)));
+    }
+  }
+  return paths;
+}
 
-const expandStaticPattern = Effect.fn("functions.deploy.expandStaticPattern")(function* (
-  fs: FileSystem.FileSystem,
-  pattern: string,
-) {
-  const noMatch = () =>
-    new FunctionStaticPatternNoMatchError({ message: `no files matched pattern: ${pattern}` });
-
+async function expandStaticPattern(pattern: string): Promise<ReadonlyArray<string>> {
   if (!hasGlobMeta(pattern)) {
-    const exists = yield* fs.stat(pattern).pipe(
-      Effect.as(true),
-      Effect.catchTag("PlatformError", () => Effect.succeed(false)),
-    );
-    if (!exists) {
-      return yield* noMatch();
+    try {
+      await stat(pattern);
+    } catch {
+      throw new Error(`no files matched pattern: ${pattern}`);
     }
     return [pattern];
   }
 
   const baseDir = globBaseDirectory(pattern);
-  // `globToRegExp` builds its result with `new RegExp(...)`, which throws a native `SyntaxError`
-  // for an invalid bracket expression (e.g. `[z-a]`); keep that as a typed failure the recovery
-  // below can catch, not a defect that would bypass it.
-  const matcher = yield* Effect.try({
-    try: () => globToRegExp(toSlash(resolve(pattern))),
-    catch: (cause) => nativeFailure(cause),
-  });
-  const candidates = yield* listPathsRecursive(fs, baseDir).pipe(
-    Effect.catchTag(
-      "PlatformError",
-      (error): Effect.Effect<never, FunctionStaticPatternNoMatchError | NativeFailure> =>
-        error.reason._tag === "NotFound"
-          ? Effect.fail(noMatch())
-          : Effect.fail(nativePlatformFailure(error, baseDir)),
-    ),
-  );
+  const matcher = globToRegExp(toSlash(resolve(pattern)));
+  let candidates: ReadonlyArray<string>;
+  try {
+    candidates = await listPathsRecursive(baseDir);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(`no files matched pattern: ${pattern}`);
+    }
+    throw error;
+  }
   const matches = candidates.filter((candidate) => matcher.test(toSlash(resolve(candidate))));
   if (matches.length === 0) {
-    return yield* noMatch();
+    throw new Error(`no files matched pattern: ${pattern}`);
   }
   return matches;
-});
+}
 
-const forEachLocalImportMapTarget = Effect.fnUntraced(function* <E = never>(
+async function forEachLocalImportMapTarget(
   importMap: ImportMapFile,
-  onTarget: (pathname: string, kind: "import" | "scope") => Effect.Effect<void, E>,
+  onTarget: (pathname: string, kind: "import" | "scope") => Promise<void>,
 ) {
   for (const target of Object.values(importMap.imports)) {
     if (isRemoteImportTarget(target)) {
       continue;
     }
-    yield* onTarget(target, "import");
+    await onTarget(target, "import");
   }
   for (const scope of Object.values(importMap.scopes)) {
     for (const target of Object.values(scope)) {
       if (isRemoteImportTarget(target)) {
         continue;
       }
-      yield* onTarget(target, "scope");
+      await onTarget(target, "scope");
     }
   }
-});
+}
 
-const walkLocalImportMapTargetImports = Effect.fnUntraced(function* <EFile = never>(
-  fs: FileSystem.FileSystem,
+async function walkLocalImportMapTargetImports(
   importMap: ImportMapFile,
   pathname: string,
   allowedRoots: ReadonlyArray<string>,
   displayRoot: string,
-  onFile: (pathname: string, contents: Uint8Array) => Effect.Effect<void, EFile>,
-  onWarning: (message: string) => Effect.Effect<void>,
+  onFile: (pathname: string, contents: Uint8Array) => Promise<void>,
+  onWarning: (message: string) => Promise<void>,
 ) {
-  const info = yield* fs.stat(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-  if (info.type === "Directory") {
+  if ((await stat(pathname)).isDirectory()) {
     return;
   }
-  yield* walkImportPaths(fs, importMap, pathname, allowedRoots, displayRoot, onFile, onWarning);
-});
+  await walkImportPaths(importMap, pathname, allowedRoots, displayRoot, onFile, onWarning);
+}
 
-const isFile = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, pathname: string) {
-  return yield* fs.stat(pathname).pipe(
-    Effect.map((info) => info.type === "File"),
-    Effect.catchTag("PlatformError", () => Effect.succeed(false)),
-  );
-});
+async function isFile(pathname: string): Promise<boolean> {
+  try {
+    return (await stat(pathname)).isFile();
+  } catch {
+    return false;
+  }
+}
 
-const resolveImportMapAllowedRoots = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  projectRoot: string,
-  importMapPath: string,
-) {
-  const realProjectRoot = yield* fs
-    .realPath(projectRoot)
-    .pipe(Effect.mapError(nativeFsError(projectRoot)));
+async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: string) {
+  const realProjectRoot = await realpath(projectRoot);
   const allowedRoots = [realProjectRoot];
   if (importMapPath.length === 0) {
     return allowedRoots;
   }
 
-  const realImportMapPath = yield* fs
-    .realPath(importMapPath)
-    .pipe(Effect.mapError(nativeFsError(importMapPath)));
-  if (!isPathContainedInRoot(realProjectRoot, realImportMapPath)) {
+  const realImportMapPath = await realpath(importMapPath);
+  if (!isContainedPath(realProjectRoot, realImportMapPath)) {
     allowedRoots.push(dirname(realImportMapPath));
   }
   if (isDenoConfigFile(importMapPath)) {
-    const contents = yield* fs
-      .readFile(importMapPath)
-      .pipe(Effect.mapError(nativeFsError(importMapPath)));
-    const parsed = yield* decodeJsoncBytes(contents);
-    const importMap = yield* ImportMapFile.fromUnknown(parsed);
+    const contents = await readFile(importMapPath);
+    const parsed = JSON.parse(stripJsonComments(new TextDecoder().decode(contents)));
+    const importMap = ImportMapFile.fromUnknown(parsed);
     if (importMap.importMapReference.length > 0) {
-      const referencedPath = join(dirname(importMapPath), importMap.importMapReference);
-      const referencedImportMapPath = yield* fs
-        .realPath(referencedPath)
-        .pipe(Effect.mapError(nativeFsError(referencedPath)));
-      if (!isPathContainedInRoot(realProjectRoot, referencedImportMapPath)) {
+      const referencedImportMapPath = await realpath(
+        join(dirname(importMapPath), importMap.importMapReference),
+      );
+      if (!isContainedPath(realProjectRoot, referencedImportMapPath)) {
         allowedRoots.push(dirname(referencedImportMapPath));
       }
     }
   }
   return allowedRoots;
-});
+}
 
-const writeSourceDeployForm = Effect.fn("functions.deploy.writeSourceDeployForm")(function* (
-  fs: FileSystem.FileSystem,
+async function writeSourceDeployForm(
   sourceRoot: string,
   workdir: string,
   config: ResolvedDeployFunctionConfig,
+  metadata: SourceDeployMetadata,
   outputRaw: (text: string) => Effect.Effect<void, never>,
 ) {
-  const files: Array<File> = [];
-  const hasImportMap = config.importMap.length > 0;
-  const realSourceRoot = yield* fs
-    .realPath(sourceRoot)
-    .pipe(Effect.mapError(nativeFsError(sourceRoot)));
-  const importMapAllowedRoots = yield* resolveImportMapAllowedRoots(
-    fs,
-    sourceRoot,
-    config.importMap,
-  );
+  const form = new FormData();
+  form.append("metadata", JSON.stringify(metadata));
+  const realSourceRoot = await realpath(sourceRoot);
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const uploadedAssets = new Set<string>();
 
-  const appendAsset = Effect.fnUntraced(function* (
-    pathname: string,
-    contents: Uint8Array,
-    realPathname: string,
-  ) {
+  const appendAsset = async (pathname: string, contents: Uint8Array, realPathname: string) => {
     if (uploadedAssets.has(realPathname)) {
       return;
     }
@@ -1107,164 +1018,130 @@ const writeSourceDeployForm = Effect.fn("functions.deploy.writeSourceDeployForm"
     // `deployViaApi`.
     const relativePath = toApiRelativePath(workdir, pathname);
     if (hasParentPathSegment(relativePath)) {
-      return yield* new FunctionAssetOutsideRootError({
-        message: `failed to read file: open ${relativePath}: invalid argument`,
-      });
+      throw new Error(`failed to read file: open ${relativePath}: invalid argument`);
     }
-    yield* outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`);
-    files.push(new File([contents], relativePath));
-  });
+    await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
+    form.append("file", new File([contents], relativePath));
+  };
 
-  const uploadAsset = Effect.fnUntraced(function* (pathname: string, contents: Uint8Array) {
-    const realPathname = yield* fs
-      .realPath(pathname)
-      .pipe(Effect.mapError(nativeFsError(pathname)));
-    if (!isPathContainedInRoot(realSourceRoot, realPathname)) {
-      return yield* new FunctionAssetOutsideRootError({
-        message: `refusing to upload asset outside source root: ${pathname}`,
-      });
+  const uploadAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
+    if (!isContainedPath(realSourceRoot, realPathname)) {
+      throw new Error(`refusing to upload asset outside source root: ${pathname}`);
     }
-    yield* appendAsset(pathname, contents, realPathname);
-  });
+    await appendAsset(pathname, contents, realPathname);
+  };
 
-  const uploadImportMapAsset = Effect.fnUntraced(function* (
-    pathname: string,
-    contents: Uint8Array,
-  ) {
-    const realPathname = yield* fs
-      .realPath(pathname)
-      .pipe(Effect.mapError(nativeFsError(pathname)));
+  const uploadImportMapAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
     if (!isContainedInAnyPath(importMapAllowedRoots, realPathname)) {
-      return yield* new FunctionAssetOutsideRootError({
-        message: `refusing to upload import map outside allowed roots: ${pathname}`,
-      });
+      throw new Error(`refusing to upload import map outside allowed roots: ${pathname}`);
     }
-    yield* appendAsset(pathname, contents, realPathname);
-  });
+    await appendAsset(pathname, contents, realPathname);
+  };
 
-  const uploadImportMapTargetAsset = Effect.fnUntraced(function* (
-    pathname: string,
-    contents: Uint8Array,
-  ) {
-    const realPathname = yield* fs
-      .realPath(pathname)
-      .pipe(Effect.mapError(nativeFsError(pathname)));
+  const uploadImportMapTargetAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
     if (!isContainedInAnyPath(importMapAllowedRoots, realPathname)) {
-      yield* outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`);
+      await Effect.runPromise(
+        outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
+      );
       return;
     }
-    yield* appendAsset(pathname, contents, realPathname);
-  });
+    await appendAsset(pathname, contents, realPathname);
+  };
 
-  const uploadScopeTarget = Effect.fnUntraced(function* (pathname: string) {
-    const outcome = yield* fs.realPath(pathname).pipe(
-      Effect.flatMap((resolvedPath) =>
-        fs.stat(pathname).pipe(Effect.map((pathInfo) => Option.some({ resolvedPath, pathInfo }))),
-      ),
-      Effect.catchTag("PlatformError", (error) =>
-        fsErrorCode(error) === "ENOTDIR"
-          ? Effect.succeed(
-              Option.none<{
-                readonly resolvedPath: string;
-                readonly pathInfo: FileSystem.File.Info;
-              }>(),
-            )
-          : Effect.fail(nativePlatformFailure(error, pathname)),
-      ),
-    );
-    if (Option.isNone(outcome)) {
-      yield* outputRaw(`WARN: Skipping import map target that is not a directory: ${pathname}\n`);
-      return;
+  const uploadScopeTarget = async (pathname: string) => {
+    let resolvedPath: string;
+    let pathInfo: Awaited<ReturnType<typeof stat>>;
+    try {
+      resolvedPath = await realpath(pathname);
+      pathInfo = await stat(pathname);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOTDIR") {
+        await Effect.runPromise(
+          outputRaw(`WARN: Skipping import map target that is not a directory: ${pathname}\n`),
+        );
+        return;
+      }
+      throw error;
     }
-    const { resolvedPath, pathInfo } = outcome.value;
     if (!isContainedInAnyPath(importMapAllowedRoots, resolvedPath)) {
-      yield* outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`);
+      await Effect.runPromise(
+        outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
+      );
       return;
     }
-    if (pathInfo.type !== "Directory") {
-      const contents = yield* fs.readFile(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-      yield* uploadImportMapTargetAsset(pathname, contents);
-      yield* walkLocalImportMapTargetImports(
-        fs,
+    if (!pathInfo.isDirectory()) {
+      await uploadImportMapTargetAsset(pathname, await readFile(pathname));
+      await walkLocalImportMapTargetImports(
         importMap,
         pathname,
         importMapAllowedRoots,
         workdir,
         uploadImportMapTargetAsset,
-        outputRaw,
+        async (message) => {
+          await Effect.runPromise(outputRaw(message));
+        },
       );
       return;
     }
-    const nestedPaths = yield* listPathsRecursive(fs, pathname).pipe(
-      Effect.mapError(nativeFsError(pathname)),
-    );
+    const nestedPaths = await listPathsRecursive(pathname);
     for (const nestedPath of nestedPaths) {
-      const nestedInfo = yield* fs
-        .stat(nestedPath)
-        .pipe(Effect.mapError(nativeFsError(nestedPath)));
-      if (nestedInfo.type === "Directory") {
+      if ((await stat(nestedPath)).isDirectory()) {
         continue;
       }
-      const resolvedNestedPath = yield* fs
-        .realPath(nestedPath)
-        .pipe(Effect.mapError(nativeFsError(nestedPath)));
+      const resolvedNestedPath = await realpath(nestedPath);
       if (!isContainedInAnyPath(importMapAllowedRoots, resolvedNestedPath)) {
-        yield* outputRaw(`WARN: Skipping import path outside source root: ${nestedPath}\n`);
+        await Effect.runPromise(
+          outputRaw(`WARN: Skipping import path outside source root: ${nestedPath}\n`),
+        );
         continue;
       }
-      const nestedContents = yield* fs
-        .readFile(nestedPath)
-        .pipe(Effect.mapError(nativeFsError(nestedPath)));
-      yield* uploadImportMapTargetAsset(nestedPath, nestedContents);
+      await uploadImportMapTargetAsset(nestedPath, await readFile(nestedPath));
     }
-  });
+  };
 
-  if (hasImportMap) {
-    yield* loadImportMapFile(fs, config.importMap, uploadImportMapAsset);
+  if (metadata.import_map_path !== undefined && metadata.import_map_path.length > 0) {
+    await loadImportMapFile(config.importMap, uploadImportMapAsset);
   }
 
   for (const pattern of config.staticFiles) {
-    // Every typed expansion failure (no match, an unreadable directory, ...) is warned and
-    // skipped. Interruptions and defects are untouched — only the two declared tags are caught.
-    const warnAndSkip = (error: { readonly message: string }) =>
-      outputRaw(`WARN: ${error.message}\n`).pipe(Effect.as(undefined));
-    const files: ReadonlyArray<string> | undefined = yield* expandStaticPattern(fs, pattern).pipe(
-      Effect.catchTags({
-        FunctionStaticPatternNoMatchError: warnAndSkip,
-        NativeFailure: warnAndSkip,
-      }),
-    );
-    if (files === undefined) {
+    let files: ReadonlyArray<string>;
+    try {
+      files = await expandStaticPattern(pattern);
+    } catch (error) {
+      await Effect.runPromise(
+        outputRaw(`WARN: ${error instanceof Error ? error.message : String(error)}\n`),
+      );
       continue;
     }
     for (const pathname of files) {
-      const info = yield* fs.stat(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-      if (info.type === "Directory") {
-        return yield* new FunctionAssetIsDirectoryError({
-          message: `file path is a directory: ${pathname}`,
-        });
+      if ((await stat(pathname)).isDirectory()) {
+        throw new Error(`file path is a directory: ${pathname}`);
       }
-      const contents = yield* fs.readFile(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-      yield* uploadAsset(pathname, contents);
+      await uploadAsset(pathname, await readFile(pathname));
     }
   }
 
-  const importMap = hasImportMap
-    ? yield* loadImportMapFile(fs, config.importMap)
-    : new ImportMapFile();
-  yield* walkImportPaths(
-    fs,
+  const importMap =
+    metadata.import_map_path !== undefined && metadata.import_map_path.length > 0
+      ? await loadImportMapFile(config.importMap)
+      : new ImportMapFile();
+  await walkImportPaths(
     importMap,
     config.entrypoint,
     [realSourceRoot],
     workdir,
     uploadAsset,
-    outputRaw,
+    async (message) => {
+      await Effect.runPromise(outputRaw(message));
+    },
   );
-  yield* forEachLocalImportMapTarget(importMap, uploadScopeTarget);
+  await forEachLocalImportMapTarget(importMap, uploadScopeTarget);
 
-  return files;
-});
+  return form;
+}
 
 /**
  * Server-recorded metadata paths are anchored at the workdir, with forward slashes regardless of
@@ -1332,7 +1209,7 @@ function sanitizeDockerBinds(
 
 type DockerBindsOptions = {
   readonly additionalModuleRoots?: ReadonlyArray<string>;
-  readonly onWarning?: (message: string) => Effect.Effect<void>;
+  readonly onWarning?: (message: string) => Promise<void>;
   readonly skipMissingImportMapTargets?: boolean;
   /** Resolved marker presence, including an explicitly empty project value. */
   readonly bitbucketCloneDirDefined?: boolean;
@@ -1347,40 +1224,38 @@ export const buildDockerBinds = (
 ) =>
   resolveFunctionsSourceRoot(resolve(functionsDir, "..", "..")).pipe(
     Effect.flatMap((sourceRoot) =>
-      Effect.flatMap(FileSystem.FileSystem, (fs) =>
-        buildDockerBindsWithin(fs, sourceRoot, projectId, functionsDir, outputDir, config, options),
+      Effect.promise(() =>
+        buildDockerBindsWithin(sourceRoot, projectId, functionsDir, outputDir, config, options),
       ),
     ),
   );
 
-const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(function* (
-  fs: FileSystem.FileSystem,
+async function buildDockerBindsWithin(
   sourceRoot: string,
   projectId: string,
   functionsDir: string,
   outputDir: string,
   config: ResolvedDeployFunctionConfig,
   options: DockerBindsOptions,
-) {
+): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
-  const realSourceRoot = yield* fs
-    .realPath(sourceRoot)
-    .pipe(Effect.mapError(nativeFsError(sourceRoot)));
-  const resolvedAdditionalRoots = yield* Effect.forEach(
-    options.additionalModuleRoots ?? [],
-    (root) => fs.realPath(root).pipe(Effect.option),
-    { concurrency: "unbounded" },
-  );
+  const realSourceRoot = await realpath(sourceRoot);
   const moduleRoots = [
     realSourceRoot,
-    ...resolvedAdditionalRoots.flatMap((root) => (Option.isSome(root) ? [root.value] : [])),
+    ...(
+      await Promise.all(
+        (options.additionalModuleRoots ?? []).map(async (root) => {
+          try {
+            return await realpath(root);
+          } catch {
+            return undefined;
+          }
+        }),
+      )
+    ).flatMap((root) => (root === undefined ? [] : [root])),
   ];
-  const importMapAllowedRoots = yield* resolveImportMapAllowedRoots(
-    fs,
-    sourceRoot,
-    config.importMap,
-  );
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const binds: DockerBind[] = [
     {
       hostPath: hostFunctionsDir,
@@ -1408,18 +1283,11 @@ const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(fu
     });
   }
 
-  const onWarning = options.onWarning;
-  const warn = (message: string) => (onWarning === undefined ? Effect.void : onWarning(message));
+  const warn = options.onWarning ?? (async () => {});
   const extraBinds: DockerBind[] = [];
   const explicitScopeBinds = new Map<string, DockerBind>();
-  // Left as an untyped `PlatformError`, not wrapped into `NativeFailure`: the only caller that
-  // inspects a failure here — the scope-target walk below — classifies ENOTDIR/ENOENT off the
-  // platform tag.
-  const appendBindWithinRoots = Effect.fnUntraced(function* (
-    roots: ReadonlyArray<string>,
-    pathname: string,
-  ) {
-    const hostPath = yield* fs.realPath(pathname);
+  const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
+    const hostPath = await realpath(pathname);
     const contained = isContainedInAnyPath(roots, hostPath);
     if (contained) {
       extraBinds.push({
@@ -1430,19 +1298,21 @@ const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(fu
       });
     }
     return { hostPath, contained };
-  });
-  const appendProjectBind = (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots([realSourceRoot], pathname).pipe(Effect.asVoid);
-  const appendModuleBind = (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(moduleRoots, pathname).pipe(Effect.asVoid);
-  const appendImportMapBind = (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(importMapAllowedRoots, pathname).pipe(Effect.asVoid);
+  };
+  const appendProjectBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots([realSourceRoot], pathname);
+  };
+  const appendModuleBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(moduleRoots, pathname);
+  };
+  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(importMapAllowedRoots, pathname);
+  };
   const importMap =
     config.importMap.length > 0
-      ? yield* loadImportMapFile(fs, config.importMap, appendImportMapBind)
+      ? await loadImportMapFile(config.importMap, appendImportMapBind)
       : new ImportMapFile();
-  yield* walkImportPaths(
-    fs,
+  await walkImportPaths(
     importMap,
     config.entrypoint,
     moduleRoots,
@@ -1450,10 +1320,10 @@ const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(fu
     appendModuleBind,
     warn,
   );
-  yield* forEachLocalImportMapTarget(importMap, (target, kind) =>
-    Effect.gen(function* () {
-      const { hostPath, contained } = yield* appendBindWithinRoots(importMapAllowedRoots, target);
-      const isDirectory = (yield* fs.stat(target)).type === "Directory";
+  await forEachLocalImportMapTarget(importMap, async (target, kind) => {
+    try {
+      const { hostPath, contained } = await appendBindWithinRoots(importMapAllowedRoots, target);
+      const isDirectory = (await stat(target)).isDirectory();
       if (!contained && kind === "scope") {
         const scopeBind: DockerBind = {
           hostPath,
@@ -1466,46 +1336,44 @@ const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(fu
       if (isDirectory) {
         return;
       }
-      yield* walkLocalImportMapTargetImports(
-        fs,
+      await walkLocalImportMapTargetImports(
         importMap,
         target,
         importMapAllowedRoots,
         sourceRoot,
         appendImportMapBind,
-        () => Effect.void,
+        async () => {},
       );
-    }).pipe(
-      Effect.catchTag("PlatformError", (error) => {
+    } catch (error) {
+      if (error instanceof Error && "code" in error) {
         // ENOTDIR (a trailing-slash value routed through a file) is never a
         // walkable target regardless of caller: an import that actually
         // reaches through that file still fails via the walker's
         // FunctionImportNotDirectoryError.
-        if (fsErrorCode(error) === "ENOTDIR") {
-          return warn(`WARN: Skipping import map target that is not a directory: ${target}\n`);
+        if (error.code === "ENOTDIR") {
+          await warn(`WARN: Skipping import map target that is not a directory: ${target}\n`);
+          return;
         }
-        if (options.skipMissingImportMapTargets === true && error.reason._tag === "NotFound") {
-          return warn(`WARN: Skipping missing import map target: ${target}\n`);
+        if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
+          await warn(`WARN: Skipping missing import map target: ${target}\n`);
+          return;
         }
-        return Effect.fail(nativePlatformFailure(error, target));
-      }),
-    ),
-  );
+      }
+      throw error;
+    }
+  });
   for (const pattern of config.staticFiles) {
-    // Any expansion failure (no match, unreadable directory, ...) is silently skipped here,
-    // unlike the API-upload path's warned skip.
-    const files = yield* expandStaticPattern(fs, pattern).pipe(Effect.option);
-    if (Option.isNone(files)) {
+    let files: ReadonlyArray<string>;
+    try {
+      files = await expandStaticPattern(pattern);
+    } catch {
       continue;
     }
-    for (const pathname of files.value) {
-      const info = yield* fs.stat(pathname).pipe(Effect.mapError(nativeFsError(pathname)));
-      if (info.type === "Directory") {
-        return yield* new FunctionAssetIsDirectoryError({
-          message: `file path is a directory: ${pathname}`,
-        });
+    for (const pathname of files) {
+      if ((await stat(pathname)).isDirectory()) {
+        throw new Error(`file path is a directory: ${pathname}`);
       }
-      yield* appendProjectBind(pathname, new Uint8Array());
+      await appendProjectBind(pathname, new Uint8Array());
     }
   }
 
@@ -1520,31 +1388,29 @@ const buildDockerBindsWithin = Effect.fn("functions.deploy.buildDockerBinds")(fu
     }
     occupiedContainerPaths.add(bind.containerPath);
     uniqueScopeBinds.push(bind);
-    yield* warn(
+    await warn(
       `WARN: Mounting import map scope target outside the project root: ${bind.hostPath}\n`,
     );
   }
 
   return [...binds, ...sanitizedExtraBinds, ...uniqueScopeBinds];
-});
+}
 
 function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
   return isDenoConfigFile(importMap) && dirname(importMap) === dirname(entrypoint);
 }
 
-const shouldUsePackageJsonDiscovery = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  entrypoint: string,
-  importMap: string,
-) {
+async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: string) {
   if (importMap.length > 0) {
     return false;
   }
-  return yield* fs.stat(join(dirname(entrypoint), "package.json")).pipe(
-    Effect.as(true),
-    Effect.catchTag("PlatformError", () => Effect.succeed(false)),
-  );
-});
+  try {
+    await stat(join(dirname(entrypoint), "package.json"));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface BundleFunctionWithDockerOptions {
   readonly projectId: string;
@@ -1573,194 +1439,184 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
   } = options;
   const bitbucketCloneDirDefined = Option.isSome(yield* bitbucketCloneDir(projectEnvValues));
   const output = yield* Output;
-  const fs = yield* FileSystem.FileSystem;
   yield* output.raw(`Bundling Function: ${styleEmphasis(config.slug)}\n`, "stderr");
 
   const outputRoot = resolve(functionsDir, "..", ".temp");
-  yield* fs
-    .makeDirectory(outputRoot, { recursive: true })
-    .pipe(Effect.mapError(nativeFsError(outputRoot)));
-  // A generator `finally` does not run when a yielded effect fails or is interrupted.
-  return yield* Effect.acquireUseRelease(
-    fs
-      .makeTempDirectory({ directory: outputRoot, prefix: `.supabase-output-${config.slug}-` })
-      .pipe(Effect.mapError(nativeFsError(outputRoot))),
-    (outputDir) =>
-      Effect.gen(function* () {
-        // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
-        // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
-        if (shouldChmodBundleOutputDirectory(process.platform)) {
-          yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(nativeFsError(outputDir)));
-        }
-        const outputPath = join(outputDir, "output.eszip");
-        // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
-        // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
-        const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
-        const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
-          bitbucketCloneDirDefined,
-          onWarning: (message) => output.raw(message, "stderr"),
-        });
-        // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
-        // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
-        // cost is one cached `docker image inspect` per function.
-        const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
-        yield* ensureDockerNetwork(networkMode, projectId);
-        yield* ensureDockerNamedVolume(
-          edgeRuntimeCacheVolume(projectId).name,
-          projectId,
-          projectEnvValues,
-        );
-
-        const env: Array<string> = [];
-        if (!(yield* shouldUsePackageJsonDiscovery(fs, config.entrypoint, config.importMap))) {
-          env.push("DENO_NO_PACKAGE_JSON=1");
-        }
-        env.push(...dockerNpmEnv());
-
-        const containerArgs = [
-          "bundle",
-          "--entrypoint",
-          toDockerPath(config.entrypoint, { resolve }),
-          "--output",
-          toDockerPath(outputPath, { resolve }),
-        ];
-        if (
-          config.importMap.length > 0 &&
-          !shouldUseDenoJsonDiscovery(config.entrypoint, config.importMap)
-        ) {
-          containerArgs.push("--import-map", toDockerPath(config.importMap, { resolve }));
-        }
-        for (const staticFile of config.staticFiles) {
-          containerArgs.push("--static", toDockerPath(staticFile, { resolve }));
-        }
-        const debugEnv = yield* Config.option(Config.string("DEBUG"));
-        if (verbose || Option.contains(debugEnv, "true")) {
-          containerArgs.push("--verbose");
-        }
-
-        const command = buildFunctionsDockerRunArgs({
-          image,
-          projectId,
-          networkMode,
-          binds: binds.map(formatDockerBind),
-          env,
-          // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
-          // own `projectRoot`.
-          workingDir: toDockerPath(resolve(functionsDir, "..", ".."), { resolve }),
-          containerArgs,
-        });
-
-        // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
-        // until exit.
-        const result = yield* runChildProcess("docker", command, {
-          stdout: "pipe",
-          stderr: "pipe",
-          onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
-          onStderr: (chunk) => output.raw(chunk, "stderr"),
-        });
-        if (result.exitCode !== 0) {
-          return yield* new FunctionBundleFailedError({
-            message: `failed to bundle function: exit ${result.exitCode}`,
-          });
-        }
-
-        const eszip = yield* fs.readFile(outputPath).pipe(
-          Effect.mapError(
-            (error) =>
-              new FunctionBundleFailedError({
-                message: `failed to open eszip: ${nativePlatformFailure(error, outputPath).message}`,
-              }),
-          ),
-        );
-        const compressed = new Uint8Array(
-          Buffer.concat([
-            Buffer.from(COMPRESSED_ESZIP_MAGIC),
-            brotliCompressSync(eszip, {
-              params: {
-                [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
-              },
-            }),
-          ]),
-        );
-        const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
-        const hash = Buffer.from(sha256).toString("hex");
-        yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
-        return {
-          slug: config.slug,
-          metadata: createBundledMetadata(config, hash),
-          body: compressed,
-        } satisfies BundledFunction;
-      }),
-    (outputDir) =>
-      fs
-        .remove(outputDir, { recursive: true, force: true })
-        .pipe(Effect.orElseSucceed(() => undefined)),
+  yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
+  const outputDir = yield* Effect.tryPromise(() =>
+    mkdtemp(join(outputRoot, `.supabase-output-${config.slug}-`)),
   );
+  try {
+    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
+    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+    if (shouldChmodBundleOutputDirectory(process.platform)) {
+      yield* Effect.tryPromise({
+        try: () => chmod(outputDir, 0o777),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+    }
+    const outputPath = join(outputDir, "output.eszip");
+    // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
+    // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
+    const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
+      bitbucketCloneDirDefined,
+      onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+    });
+    // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
+    // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
+    // cost is one cached `docker image inspect` per function.
+    const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
+    yield* ensureDockerNetwork(networkMode, projectId);
+    yield* ensureDockerNamedVolume(
+      edgeRuntimeCacheVolume(projectId).name,
+      projectId,
+      projectEnvValues,
+    );
+
+    const env: Array<string> = [];
+    if (
+      !(yield* Effect.promise(() =>
+        shouldUsePackageJsonDiscovery(config.entrypoint, config.importMap),
+      ))
+    ) {
+      env.push("DENO_NO_PACKAGE_JSON=1");
+    }
+    env.push(...dockerNpmEnv());
+
+    const containerArgs = [
+      "bundle",
+      "--entrypoint",
+      toDockerPath(config.entrypoint, { resolve }),
+      "--output",
+      toDockerPath(outputPath, { resolve }),
+    ];
+    if (
+      config.importMap.length > 0 &&
+      !shouldUseDenoJsonDiscovery(config.entrypoint, config.importMap)
+    ) {
+      containerArgs.push("--import-map", toDockerPath(config.importMap, { resolve }));
+    }
+    for (const staticFile of config.staticFiles) {
+      containerArgs.push("--static", toDockerPath(staticFile, { resolve }));
+    }
+    if (verbose || process.env["DEBUG"] === "true") {
+      containerArgs.push("--verbose");
+    }
+
+    const command = buildFunctionsDockerRunArgs({
+      image,
+      projectId,
+      networkMode,
+      binds: binds.map(formatDockerBind),
+      env,
+      // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+      // own `projectRoot`.
+      workingDir: toDockerPath(resolve(functionsDir, "..", ".."), { resolve }),
+      containerArgs,
+    });
+
+    // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
+    // until exit.
+    const result = yield* runChildProcess("docker", command, {
+      stdout: "pipe",
+      stderr: "pipe",
+      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+      onStderr: (chunk) => output.raw(chunk, "stderr"),
+    });
+    if (result.exitCode !== 0) {
+      return yield* Effect.fail(new Error(`failed to bundle function: exit ${result.exitCode}`));
+    }
+
+    const eszip = yield* Effect.tryPromise({
+      try: () => readFile(outputPath),
+      catch: (error) =>
+        new Error(
+          `failed to open eszip: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    });
+    const compressed = new Uint8Array(
+      Buffer.concat([
+        Buffer.from(COMPRESSED_ESZIP_MAGIC),
+        brotliCompressSync(eszip, {
+          params: {
+            [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
+          },
+        }),
+      ]),
+    );
+    const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
+    const hash = Buffer.from(sha256).toString("hex");
+    yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
+    return {
+      slug: config.slug,
+      metadata: createBundledMetadata(config, hash),
+      body: compressed,
+    } satisfies BundledFunction;
+  } finally {
+    yield* Effect.tryPromise(() => rm(outputDir, { recursive: true, force: true })).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+  }
 });
-
-// Transient-API bound shared by the list/bulk-update retry policies below: 3 retries (4 attempts
-// total) with a 1s-base exponential backoff.
-const transientApiRetrySchedule = Schedule.exponential("1 second").pipe(
-  Schedule.upTo({ times: 3 }),
-);
-
-// Same 3-retry bound as `transientApiRetrySchedule`, with a 500ms base for `upsertBundledFunction`.
-const upsertRetrySchedule = Schedule.exponential("500 millis").pipe(Schedule.upTo({ times: 3 }));
-
-/** Retries a transport-ish failure or a 5xx/429 status; a decode failure or other 4xx is terminal. */
-function isRetryableFunctionsApiError(
-  error:
-    | FunctionsApiStatusError
-    | FunctionsApiTransportError
-    | SupabaseApiInputError
-    | HttpBody.HttpBodyError,
-): boolean {
-  return (
-    !(error instanceof FunctionsApiStatusError) ||
-    (error.decode !== true && (error.status >= 500 || error.status === 429))
-  );
-}
 
 const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(function* (
   api: ApiClient,
   projectRef: string,
 ) {
-  const attempt = Effect.gen(function* () {
-    const response = yield* api
+  let lastError: Error | FunctionsApiStatusError | undefined;
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
+    const result = yield* api
       .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
-      .pipe(Effect.mapError((error) => mapTransportError("failed to list functions", error)));
-    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    if (response.status === 200) {
-      // A 200 whose body is not the expected JSON is an API-response problem,
-      // not a transport failure — surface it via FunctionsApiStatusError so it
-      // classifies as api_status rather than network.
-      return yield* Effect.try({
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Schema.fromJsonString discards the native SyntaxError on malformed JSON (see decodeJsoncBytes); this raw JSON.parse keeps that message for the decode-error branch below
-        try: () => decodeFunctionListResponse(JSON.parse(body)),
-        catch: (error) =>
-          new FunctionsApiStatusError({
-            status: response.status,
-            message: `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
-            decode: true,
+      .pipe(
+        Effect.map((response) => ({ success: true as const, response })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            success: false as const,
+            error: mapTransportError("failed to list functions", error),
           }),
-      });
-    }
-    return yield* new FunctionsApiStatusError({
-      status: response.status,
-      message: `unexpected list functions status ${response.status}: ${body}`,
-    });
-  });
+        ),
+      );
 
-  return yield* attempt.pipe(
-    Effect.retry({ schedule: transientApiRetrySchedule, while: isRetryableFunctionsApiError }),
-  );
+    if (result.success) {
+      const body = yield* result.response.text.pipe(Effect.orElseSucceed(() => ""));
+      if (result.response.status === 200) {
+        // A 200 whose body is not the expected JSON is an API-response problem,
+        // not a transport failure — surface it via FunctionsApiStatusError so it
+        // classifies as api_status rather than network.
+        return yield* Effect.try({
+          try: () => decodeFunctionListResponse(JSON.parse(body)),
+          catch: (error) =>
+            new FunctionsApiStatusError({
+              status: result.response.status,
+              message: `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
+            }),
+        });
+      }
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected list functions status ${result.response.status}: ${body}`,
+      });
+      if (result.response.status < 500 && result.response.status !== 429) {
+        return yield* Effect.fail(lastError);
+      }
+    } else {
+      lastError = result.error;
+    }
+
+    if (attempt < 3) {
+      yield* Effect.sleep(Duration.millis(1_000 * 2 ** attempt));
+    }
+  }
+  return yield* Effect.fail(lastError ?? new Error("failed to list functions"));
 });
 
 function headerValue(headers: Readonly<Record<string, string | undefined>>, name: string) {
   return headers[name.toLowerCase()] ?? headers[name];
 }
 
-function parseRateLimitDelay(value: string | undefined, nowMillis: number): number | undefined {
+function parseRateLimitDelay(value: string | undefined): number | undefined {
   if (value === undefined || value.length === 0) {
     return undefined;
   }
@@ -1770,20 +1626,18 @@ function parseRateLimitDelay(value: string | undefined, nowMillis: number): numb
   }
   const timestamp = Date.parse(value);
   if (!Number.isNaN(timestamp)) {
-    return Math.max(timestamp - nowMillis, 0);
+    return Math.max(timestamp - Date.now(), 0);
   }
   return undefined;
 }
 
-/** `nowMillis` comes from the caller's `Schedule`/`Clock` metadata, never read from the system clock here. */
 function rateLimitDelayMillis(
   headers: Readonly<Record<string, string | undefined>>,
   attempt: number,
-  nowMillis: number,
 ) {
   return (
-    parseRateLimitDelay(headerValue(headers, "retry-after"), nowMillis) ??
-    parseRateLimitDelay(headerValue(headers, "x-ratelimit-reset"), nowMillis) ??
+    parseRateLimitDelay(headerValue(headers, "retry-after")) ??
+    parseRateLimitDelay(headerValue(headers, "x-ratelimit-reset")) ??
     1_000 * 2 ** Math.min(attempt, 5)
   );
 }
@@ -1792,40 +1646,30 @@ function rateLimitDelayText(milliseconds: number) {
   return `${Math.round(milliseconds / 1_000)}s`;
 }
 
-interface RateLimitableResponse<A> {
-  readonly status: number;
-  readonly headers: Readonly<Record<string, string | undefined>>;
-  readonly body: Effect.Effect<A, Error>;
-}
-
 const rateLimitedRequest = Effect.fnUntraced(function* <A>(
   action: string,
-  request: () => Effect.Effect<RateLimitableResponse<A>, Error>,
+  request: () => Effect.Effect<
+    {
+      readonly status: number;
+      readonly headers: Readonly<Record<string, string | undefined>>;
+      readonly body: Effect.Effect<A, Error>;
+    },
+    Error
+  >,
 ) {
   const output = yield* Output;
-  // Repeats on a 429, reporting the exact header- or backoff-derived delay through `Schedule`'s
-  // own metadata.
-  const schedule = Schedule.fromStepWithMetadata(
-    Effect.succeed((meta: Schedule.InputMetadata<RateLimitableResponse<A>>) => {
-      const previousAttempts = meta.attempt - 1;
-      if (meta.input.status !== 429 || previousAttempts >= DEPLOY_RATE_LIMIT_MAX_RETRIES) {
-        return Cause.done(meta.input);
-      }
-      const delayMs = rateLimitDelayMillis(meta.input.headers, previousAttempts, meta.now);
-      return output
-        .raw(
-          `Rate limit exceeded while ${action}. Retrying in ${rateLimitDelayText(delayMs)}.\n`,
-          "stderr",
-        )
-        .pipe(
-          Effect.as([meta.input, Duration.millis(delayMs)] as [
-            RateLimitableResponse<A>,
-            Duration.Duration,
-          ]),
-        );
-    }),
-  );
-  return yield* request().pipe(Effect.repeat({ schedule }));
+  for (let attempt = 0; ; attempt += 1) {
+    const response = yield* request();
+    if (response.status !== 429 || attempt >= DEPLOY_RATE_LIMIT_MAX_RETRIES) {
+      return response;
+    }
+    const delayMs = rateLimitDelayMillis(response.headers, attempt);
+    yield* output.raw(
+      `Rate limit exceeded while ${action}. Retrying in ${rateLimitDelayText(delayMs)}.\n`,
+      "stderr",
+    );
+    yield* Effect.sleep(Duration.millis(delayMs));
+  }
 });
 
 const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(function* (
@@ -1838,10 +1682,15 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   bundleOnly: boolean,
 ) {
   const output = yield* Output;
-  const fs = yield* FileSystem.FileSystem;
-  const files = yield* writeSourceDeployForm(fs, sourceRoot, workdir, config, (text) =>
-    output.raw(text, "stderr"),
-  );
+  const files = yield* Effect.tryPromise({
+    try: async () => {
+      const form = await writeSourceDeployForm(sourceRoot, workdir, config, metadata, (text) =>
+        output.raw(text, "stderr"),
+      );
+      return form.getAll("file").flatMap((part) => (part instanceof Blob ? [part] : []));
+    },
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  });
   const response = yield* rateLimitedRequest(`deploying function ${config.slug}`, () =>
     api
       .executeRaw(operationDefinitions.v1DeployAFunction, {
@@ -1868,16 +1717,17 @@ const uploadFunctionSource = Effect.fn("functions.deploy.uploadFunctionSource")(
   );
   const body = yield* response.body;
   if (response.status !== 201) {
-    return yield* new FunctionsApiStatusError({
-      status: response.status,
-      message: `unexpected deploy status ${response.status}: ${formatUnexpectedStatusBody(body)}`,
-    });
+    return yield* Effect.fail(
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `unexpected deploy status ${response.status}: ${formatUnexpectedStatusBody(body)}`,
+      }),
+    );
   }
   // A 201 whose body is not the expected JSON is an API-response problem, not a
   // transport failure — surface it via FunctionsApiStatusError so it classifies
   // as api_status rather than network.
   return yield* Effect.try({
-    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Schema.fromJsonString discards the native SyntaxError on malformed JSON (see decodeJsoncBytes); this raw JSON.parse keeps that message for the decode-error branch below
     try: () => decodeDeployFunctionResponse(JSON.parse(body)),
     catch: (error) =>
       new FunctionsApiStatusError({
@@ -1909,8 +1759,9 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
 ) {
-  const attempt = Effect.gen(function* () {
-    const response = yield* rateLimitedRequest("bulk updating functions", () =>
+  let lastError: Error | FunctionsApiStatusError | undefined;
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
+    const result = yield* rateLimitedRequest("bulk updating functions", () =>
       api
         .executeRaw(operationDefinitions.v1BulkUpdateFunctions, {
           ref: projectRef,
@@ -1926,23 +1777,37 @@ const bulkUpdateRemoteFunctions = Effect.fn("functions.deploy.bulkUpdateFunction
           })),
           Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
         ),
+    ).pipe(
+      Effect.map((response) => ({ success: true as const, response })),
+      Effect.catch((error) =>
+        Effect.succeed({
+          success: false as const,
+          error,
+        }),
+      ),
     );
-    if (response.status === 200) {
-      return;
-    }
-    const body = yield* response.body;
-    return yield* new FunctionsApiStatusError({
-      status: response.status,
-      message: `unexpected bulk update status ${response.status}: ${body}`,
-    });
-  });
 
-  yield* attempt.pipe(
-    Effect.retry({
-      schedule: transientApiRetrySchedule,
-      while: (error) => !(error instanceof FunctionsApiStatusError) || error.status >= 500,
-    }),
-  );
+    if (result.success) {
+      const body = yield* result.response.body;
+      if (result.response.status === 200) {
+        return;
+      }
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected bulk update status ${result.response.status}: ${body}`,
+      });
+      if (result.response.status < 500) {
+        return yield* Effect.fail(lastError);
+      }
+    } else {
+      lastError = result.error;
+    }
+
+    if (attempt < 3) {
+      yield* Effect.sleep(Duration.millis(1_000 * 2 ** attempt));
+    }
+  }
+  return yield* Effect.fail(lastError ?? new Error("failed to bulk update"));
 });
 
 const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(function* (
@@ -1951,10 +1816,10 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
   bundled: BundledFunction,
   exists: boolean,
 ) {
-  const shouldUpdateRef = yield* Ref.make(exists);
+  let shouldUpdate = exists;
+  let lastError: Error | FunctionsApiStatusError | undefined;
 
-  const attempt = Effect.gen(function* () {
-    const shouldUpdate = yield* Ref.get(shouldUpdateRef);
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
     const action = shouldUpdate ? "update" : "create";
     const updateInput = {
       ref: projectRef,
@@ -1980,50 +1845,52 @@ const upsertBundledFunction = Effect.fn("functions.deploy.upsertFunction")(funct
         })
       : api.executeRaw(operationDefinitions.v1CreateAFunction, createInput);
     const response = yield* request.pipe(
-      Effect.mapError((error) => mapTransportError(`failed to ${action} function`, error)),
+      Effect.map((value) => ({ success: true as const, value })),
+      Effect.catch((error) =>
+        Effect.succeed({
+          success: false as const,
+          error: mapTransportError(`failed to ${action} function`, error),
+        }),
+      ),
     );
 
-    const expectedStatus = shouldUpdate ? 200 : 201;
-    if (response.status === expectedStatus) {
-      // A success status with a malformed / unexpected JSON body is an
-      // API-response problem, not a transport failure — surface it via
-      // FunctionsApiStatusError so it classifies as api_status not network.
-      const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      return yield* Effect.try({
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Schema.fromJsonString discards the native SyntaxError on malformed JSON (see decodeJsoncBytes); this raw JSON.parse keeps that message for the decode-error branch below
-        try: () => decodeDeployFunctionResponse(JSON.parse(body)),
-        catch: (error) =>
-          new FunctionsApiStatusError({
-            status: response.status,
-            message: `failed to read function response: ${error instanceof Error ? error.message : String(error)}`,
-            decode: true,
-          }),
+    if (response.success) {
+      const expectedStatus = shouldUpdate ? 200 : 201;
+      if (response.value.status === expectedStatus) {
+        // A success status with a malformed / unexpected JSON body is an
+        // API-response problem, not a transport failure — surface it via
+        // FunctionsApiStatusError so it classifies as api_status not network.
+        const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
+        return yield* Effect.try({
+          try: () => decodeDeployFunctionResponse(JSON.parse(body)),
+          catch: (error) =>
+            new FunctionsApiStatusError({
+              status: response.value.status,
+              message: `failed to read function response: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
+            }),
+        });
+      }
+
+      const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
+      if (!shouldUpdate && body.includes("Duplicated function slug")) {
+        shouldUpdate = true;
+      }
+      lastError = new FunctionsApiStatusError({
+        status: response.value.status,
+        message: `unexpected ${action} function status ${response.value.status}: ${body}`,
+        notFoundIsInvalidInput: shouldUpdate,
       });
+    } else {
+      lastError = response.error;
     }
 
-    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    let nextShouldUpdate = shouldUpdate;
-    if (!shouldUpdate && body.includes("Duplicated function slug")) {
-      nextShouldUpdate = true;
-      yield* Ref.set(shouldUpdateRef, true);
+    if (attempt < 3) {
+      yield* Effect.sleep(Duration.millis(500 * 2 ** attempt));
     }
-    return yield* new FunctionsApiStatusError({
-      status: response.status,
-      message: `unexpected ${action} function status ${response.status}: ${body}`,
-      notFoundIsInvalidInput: nextShouldUpdate,
-    });
-  });
+  }
 
-  // Every failure here is retried up to the bound, except a decode failure on an
-  // already-successful status: an unexpected status can still flip `shouldUpdateRef` (a
-  // `Duplicated function slug` 4xx) and succeed on the retried request, but retrying a malformed
-  // 200/201 body would only repeat the same write.
-  return yield* attempt.pipe(
-    Effect.retry({
-      schedule: upsertRetrySchedule,
-      while: (error) => !(error instanceof FunctionsApiStatusError) || error.decode !== true,
-    }),
-  );
+  return yield* Effect.fail(lastError ?? new Error("failed to upsert function"));
 });
 
 const deleteRemoteFunction = Effect.fn("functions.deploy.deleteFunction")(function* (
@@ -2042,38 +1909,44 @@ const deleteRemoteFunction = Effect.fn("functions.deploy.deleteFunction")(functi
     return;
   }
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* new FunctionsApiStatusError({
-    status: response.status,
-    message: `unexpected delete function status ${response.status}: ${body}`,
-  });
+  return yield* Effect.fail(
+    new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected delete function status ${response.status}: ${body}`,
+    }),
+  );
 });
 
 export const discoverFunctionSlugs = Effect.fn("functions.deploy.discoverSlugs")(function* (
   projectRoot: string,
   configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const functionsDir = join(projectRoot, SUPABASE_FUNCTIONS_DIR);
   const slugs: string[] = [];
 
-  const entries = yield* fs.readDirectory(functionsDir).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("PlatformError", (error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed(Option.none<ReadonlyArray<string>>())
-        : Effect.fail(nativePlatformFailure(error, functionsDir)),
-    ),
+  const entries = yield* Effect.tryPromise({
+    try: () => readdir(functionsDir, { withFileTypes: true }),
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  }).pipe(
+    Effect.catch((error) => {
+      return "code" in error && error.code === "ENOENT"
+        ? Effect.succeed(undefined)
+        : Effect.fail(error);
+    }),
   );
-  if (Option.isSome(entries)) {
-    // The platform `FileSystem` has no Dirent-returning `readdir`, so there's no cheap
-    // `isDirectory() || isSymbolicLink()` filter to check first; the entrypoint check below
-    // already requires `<slug>/index.ts` to exist, which rules out a non-directory entry the
-    // same way a separate directory check would.
-    for (const slug of [...entries.value].sort((left, right) => left.localeCompare(right))) {
+  if (entries !== undefined) {
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+        continue;
+      }
+      const slug = entry.name;
       if (validateFunctionSlugMessage(slug) !== undefined) {
         continue;
       }
-      if (yield* isFile(fs, defaultFunctionEntrypoint(functionsDir, slug))) {
+      const hasDefaultEntrypoint = yield* Effect.promise(() =>
+        isFile(defaultFunctionEntrypoint(functionsDir, slug)),
+      );
+      if (hasDefaultEntrypoint) {
         slugs.push(slug);
       }
     }
@@ -2106,14 +1979,13 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
     readonly noVerifyJwtOverride: Option.Option<boolean>;
   }) {
     const output = yield* Output;
-    const fs = yield* FileSystem.FileSystem;
     const functionsDir = join(input.projectRoot, SUPABASE_FUNCTIONS_DIR);
     const seenDeprecatedImportMap = new Set<string>();
     const seenFallbackImportMap = new Set<string>();
     const resolved: ResolvedDeployFunctionConfig[] = [];
 
     const fallbackImportMapPath = join(functionsDir, "import_map.json");
-    const fallbackExists = yield* isFile(fs, fallbackImportMapPath);
+    const fallbackExists = yield* Effect.promise(() => isFile(fallbackImportMapPath));
 
     const importMapOverride = Option.match(input.importMapOverride, {
       onNone: () => "",
@@ -2168,11 +2040,11 @@ export const resolveFunctionConfigs = Effect.fn("functions.deploy.resolveConfigs
           const denoJsonc = join(functionDir, "deno.jsonc");
           const deprecatedImportMap = join(functionDir, "import_map.json");
 
-          if (yield* isFile(fs, denoJson)) {
+          if (yield* Effect.promise(() => isFile(denoJson))) {
             importMap = denoJson;
-          } else if (yield* isFile(fs, denoJsonc)) {
+          } else if (yield* Effect.promise(() => isFile(denoJsonc))) {
             importMap = denoJsonc;
-          } else if (yield* isFile(fs, deprecatedImportMap)) {
+          } else if (yield* Effect.promise(() => isFile(deprecatedImportMap))) {
             importMap = deprecatedImportMap;
             seenDeprecatedImportMap.add(slug);
           } else if (fallbackExists) {
@@ -2242,7 +2114,9 @@ const deployViaApi = Effect.fn("functions.deploy.viaApi")(function* (
   }
 
   if (enabled.length === 0) {
-    return yield* new NoFunctionsToDeployError({ message: "All Functions are up to date." });
+    return yield* Effect.fail(
+      new NoFunctionsToDeployError({ message: "All Functions are up to date." }),
+    );
   }
 
   const remoteBySlug = enabled.some((config) => config.verifyJwt === undefined)
@@ -2424,7 +2298,9 @@ const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
   ].join("\n")}\n\n`;
   const confirmed = yield* promptYesNo(output, yes, prompt, false);
   if (!confirmed) {
-    return yield* new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
+    return yield* Effect.fail(
+      new FunctionDeployCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
+    );
   }
 
   for (const slug of toDelete) {
@@ -2433,201 +2309,209 @@ const pruneFunctions = Effect.fn("functions.deploy.prune")(function* (
   }
 });
 
-export const deployFunctions = Effect.fn("functions.deploy")(function* <
-  ResolveError,
-  ResolveRequirements,
->(
+export function deployFunctions<ResolveError, ResolveRequirements>(
   flags: FunctionsDeployFlags,
   dependencies: DeployFunctionsDependencies<ResolveError, ResolveRequirements>,
 ) {
-  const output = yield* Output;
-  const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
-  const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
-  const commandPath = ["functions", "deploy"] as const;
-  // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
-  // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
-  // off the resolved `flags.useApi` value instead.
-  const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
-  const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
-  const explicitLegacyBundle = hasExplicitLongFlag(
-    dependencies.rawArgs,
-    commandPath,
-    "legacy-bundle",
-  );
-
-  const changedModes = [
-    explicitUseApi ? "use-api" : undefined,
-    explicitUseDocker ? "use-docker" : undefined,
-    explicitLegacyBundle ? "legacy-bundle" : undefined,
-  ].filter((flag): flag is string => flag !== undefined);
-
-  if (changedModes.length > 1) {
-    return yield* new ConflictingFunctionDeployFlagsError({
-      message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
-    });
-  }
-
-  // `--use-api=false` alone must not force the API path — it should fall through to whatever
-  // `--use-docker`/`--legacy-bundle` already resolved to.
-  const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
-  const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
-  const jobs = configuredJobs === 0 ? 1 : configuredJobs;
-  // Keyed on the resolved `--use-api` value alone, not on whether local bundling
-  // (Docker/legacy-bundle) is in play.
-  if (!flags.useApi && jobs > 1) {
-    return yield* new FunctionDeployJobsRequiresApiError({
-      message: "--jobs must be used together with --use-api",
-    });
-  }
-
-  const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-  // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
-  // already reflects any remote function/edge_runtime overrides, through the same
-  // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
-  // `functions-config.ts`). Must precede the slug-validation loop below, so an invalid
-  // `config.toml` is reported ahead of a malformed slug when both are wrong.
-  const context = yield* loadFunctionsCliConfig({
-    projectRoot: dependencies.projectRoot,
-    projectRef,
-    goConfigCompat: dependencies.goConfigCompat,
-  });
-
-  if (flags.functionNames.length > 0) {
-    for (const slug of flags.functionNames) {
-      yield* validateDeploySlug(slug);
-    }
-  }
-
-  const noVerifyJwtOverride = explicitBooleanFlag(
-    dependencies.rawArgs,
-    ["functions", "deploy"],
-    "no-verify-jwt",
-    flags.noVerifyJwt,
-  );
-  // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
-  // (same rule as `download.ts`'s own `--debug` read).
-  const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
-  const deployConfig = context.loaded?.config;
-  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-    context.denoVersion,
-    dependencies.edgeRuntimeVersion,
-  );
-  const configFunctions = yield* inferFunctionsManifest({
-    cwd: dependencies.projectRoot,
-    config: deployConfig,
-    // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
-    // past `dependencies.projectRoot` for either load, so they can never resolve two
-    // different projects.
-    search: dependencies.goConfigCompat === undefined,
-  });
-  const configDeclaredFunctions = deployConfig?.functions ?? {};
-  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
-  yield* validateConfigFunctionSlugs(configDeclaredFunctions);
-  const slugs =
-    flags.functionNames.length > 0
-      ? [...flags.functionNames]
-      : yield* discoverFunctionSlugs(dependencies.projectRoot, configDeclaredFunctions);
-
-  if (slugs.length === 0) {
-    return yield* new NoFunctionsToDeployError({
-      // Styling is text-mode only: in `--output-format json`/`stream-json` this message
-      // lands in the structured error payload, which must stay free of ANSI escapes.
-      message: `No Functions specified or found in ${
-        output.format === "text" ? styleEmphasis(SUPABASE_FUNCTIONS_DIR) : SUPABASE_FUNCTIONS_DIR
-      }`,
-    });
-  }
-
-  const uniqueSlugs = [...new Set(slugs)];
-  const configs = yield* resolveFunctionConfigs({
-    slugs: uniqueSlugs,
-    cwd: dependencies.flagCwd,
-    projectRoot: dependencies.projectRoot,
-    supabaseDir: dependencies.supabaseDir,
-    configFunctions,
-    configDeclaredFunctions,
-    rawConfigFunctions,
-    importMapOverride: flags.importMap,
-    noVerifyJwtOverride,
-  });
-  const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
-
-  const deployWithApi = deployViaApi(
-    projectRef,
-    dependencies.projectRoot,
-    configs,
-    dependencies.api,
-    jobs,
-  ).pipe(
-    Effect.as(true),
-    Effect.catchIf(Schema.is(NoFunctionsToDeployError), (error) =>
-      (output.format === "text"
-        ? output.raw(`${error.message}\n`, "stderr")
-        : output.success(error.message, {
-            project_ref: projectRef,
-            functions: uniqueSlugs,
-            dashboard_url: dashboardUrl,
-          })
-      ).pipe(Effect.as(false)),
-    ),
-  );
-
-  const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
-  const deployed = useLocalBundler
-    ? yield* Effect.gen(function* () {
-        if (!(yield* isDockerRunning())) {
-          yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
-          return yield* deployWithApi;
-        }
-
-        // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
-        // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
-        // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
-        // callers.
-        const networkMode = resolveDockerNetworkMode({
-          explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
-          envOverride:
-            context.projectEnvValues === undefined
-              ? undefined
-              : viperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", context.projectEnvValues),
-          projectId: context.projectId,
-        });
-        yield* deployViaDocker({
-          projectId: context.projectId,
-          projectRef,
-          edgeRuntimeVersion,
-          functionsDir: join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
-          configs,
-          api: dependencies.api,
-          networkMode,
-          verbose: debugEnabled,
-          styleEmphasis,
-          projectEnvValues: context.projectEnvValues,
-        });
-        return true;
-      })
-    : yield* deployWithApi;
-
-  if (!deployed) {
-    return;
-  }
-
-  if (output.format === "text") {
-    // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
-    // "foo, foo".
-    yield* output.raw(
-      `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
+  return Effect.gen(function* () {
+    const output = yield* Output;
+    const styleIdentifier = dependencies.styleIdentifier ?? ((text: string) => text);
+    const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
+    const commandPath = ["functions", "deploy"] as const;
+    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — used only for
+    // the mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard) key
+    // off the resolved `flags.useApi` value instead.
+    const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
+    const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
+    const explicitLegacyBundle = hasExplicitLongFlag(
+      dependencies.rawArgs,
+      commandPath,
+      "legacy-bundle",
     );
-    yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
-  } else {
-    yield* output.success("Deployed Functions.", {
-      project_ref: projectRef,
-      functions: uniqueSlugs,
-      dashboard_url: dashboardUrl,
-    });
-  }
 
-  if (flags.prune) {
-    yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
-  }
-});
+    const changedModes = [
+      explicitUseApi ? "use-api" : undefined,
+      explicitUseDocker ? "use-docker" : undefined,
+      explicitLegacyBundle ? "legacy-bundle" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
+
+    if (changedModes.length > 1) {
+      return yield* Effect.fail(
+        new ConflictingFunctionDeployFlagsError({
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
+        }),
+      );
+    }
+
+    // `--use-api=false` alone must not force the API path — it should fall through to whatever
+    // `--use-docker`/`--legacy-bundle` already resolved to.
+    const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
+    const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
+    const jobs = configuredJobs === 0 ? 1 : configuredJobs;
+    // Keyed on the resolved `--use-api` value alone, not on whether local bundling
+    // (Docker/legacy-bundle) is in play.
+    if (!flags.useApi && jobs > 1) {
+      return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
+    }
+
+    const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+    // `@supabase/config` merges the matching `[remotes.*]` block over the base config, so this
+    // already reflects any remote function/edge_runtime overrides, through the same
+    // `Config.Validate`/dotenv/env-override pipeline `start`/`stop`/`status` use (see
+    // `functions-config.ts`). Must precede the slug-validation loop below, so an invalid
+    // `config.toml` is reported ahead of a malformed slug when both are wrong.
+    const context = yield* loadFunctionsCliConfig({
+      projectRoot: dependencies.projectRoot,
+      projectRef,
+      goConfigCompat: dependencies.goConfigCompat,
+    });
+
+    if (flags.functionNames.length > 0) {
+      for (const slug of flags.functionNames) {
+        yield* validateDeploySlug(slug);
+      }
+    }
+
+    const noVerifyJwtOverride = explicitBooleanFlag(
+      dependencies.rawArgs,
+      ["functions", "deploy"],
+      "no-verify-jwt",
+      flags.noVerifyJwt,
+    );
+    // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
+    // (same rule as `download.ts`'s own `--debug` read).
+    const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
+    const deployConfig = context.loaded?.config;
+    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
+      context.denoVersion,
+      dependencies.edgeRuntimeVersion,
+    );
+    const configFunctions = yield* inferFunctionsManifest({
+      cwd: dependencies.projectRoot,
+      config: deployConfig,
+      // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
+      // past `dependencies.projectRoot` for either load, so they can never resolve two
+      // different projects.
+      search: dependencies.goConfigCompat === undefined,
+    });
+    const configDeclaredFunctions = deployConfig?.functions ?? {};
+    const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+    yield* validateConfigFunctionSlugs(configDeclaredFunctions);
+    const slugs =
+      flags.functionNames.length > 0
+        ? [...flags.functionNames]
+        : yield* discoverFunctionSlugs(dependencies.projectRoot, configDeclaredFunctions);
+
+    if (slugs.length === 0) {
+      return yield* Effect.fail(
+        new NoFunctionsToDeployError({
+          // Styling is text-mode only: in `--output-format json`/`stream-json` this message
+          // lands in the structured error payload, which must stay free of ANSI escapes.
+          message: `No Functions specified or found in ${
+            output.format === "text"
+              ? styleEmphasis(SUPABASE_FUNCTIONS_DIR)
+              : SUPABASE_FUNCTIONS_DIR
+          }`,
+        }),
+      );
+    }
+
+    const uniqueSlugs = [...new Set(slugs)];
+    const configs = yield* resolveFunctionConfigs({
+      slugs: uniqueSlugs,
+      cwd: dependencies.flagCwd,
+      projectRoot: dependencies.projectRoot,
+      supabaseDir: dependencies.supabaseDir,
+      configFunctions,
+      configDeclaredFunctions,
+      rawConfigFunctions,
+      importMapOverride: flags.importMap,
+      noVerifyJwtOverride,
+    });
+    const dashboardUrl = `${dependencies.dashboardUrl}/project/${projectRef}/functions`;
+
+    const deployWithApi = deployViaApi(
+      projectRef,
+      dependencies.projectRoot,
+      configs,
+      dependencies.api,
+      jobs,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error): error is NoFunctionsToDeployError => error instanceof NoFunctionsToDeployError,
+        (error) =>
+          (output.format === "text"
+            ? output.raw(`${error.message}\n`, "stderr")
+            : output.success(error.message, {
+                project_ref: projectRef,
+                functions: uniqueSlugs,
+                dashboard_url: dashboardUrl,
+              })
+          ).pipe(Effect.as(false)),
+      ),
+    );
+
+    const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
+    const deployed = useLocalBundler
+      ? yield* Effect.gen(function* () {
+          if (!(yield* isDockerRunning())) {
+            yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
+            return yield* deployWithApi;
+          }
+
+          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs "never touched"
+          // distinction `resolveDockerNetworkMode` needs — see that function's own doc comment.
+          // `SUPABASE_NETWORK_ID` (env or project dotenv) is CLI-only, `undefined` for library
+          // callers.
+          const networkMode = resolveDockerNetworkMode({
+            explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
+            envOverride:
+              context.projectEnvValues === undefined
+                ? undefined
+                : viperEnvStringWithProjectFallback(
+                    "SUPABASE_NETWORK_ID",
+                    context.projectEnvValues,
+                  ),
+            projectId: context.projectId,
+          });
+          yield* deployViaDocker({
+            projectId: context.projectId,
+            projectRef,
+            edgeRuntimeVersion,
+            functionsDir: join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
+            configs,
+            api: dependencies.api,
+            networkMode,
+            verbose: debugEnabled,
+            styleEmphasis,
+            projectEnvValues: context.projectEnvValues,
+          });
+          return true;
+        })
+      : yield* deployWithApi;
+
+    if (!deployed) {
+      return;
+    }
+
+    if (output.format === "text") {
+      // Joins the raw `slugs` list, not the deduped set, so `functions deploy foo foo` prints
+      // "foo, foo".
+      yield* output.raw(
+        `Deployed Functions on project ${styleIdentifier(projectRef)}: ${slugs.join(", ")}\n`,
+      );
+      yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
+    } else {
+      yield* output.success("Deployed Functions.", {
+        project_ref: projectRef,
+        functions: uniqueSlugs,
+        dashboard_url: dashboardUrl,
+      });
+    }
+
+    if (flags.prune) {
+      yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
+    }
+  }).pipe(Effect.withSpan("functions.deploy"));
+}

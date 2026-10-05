@@ -29,7 +29,7 @@ const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
 
 export function mockChildProcessSpawner(
   opts: {
-    exitCode?: number | ((record: SpawnRecord) => number);
+    exitCode?: number;
     stdout?: string[];
     stderr?: string[];
     beforeSpawn?: (record: SpawnRecord) => Effect.Effect<void>;
@@ -63,9 +63,10 @@ export function mockChildProcessSpawner(
                 cmd === process.execPath && !isOneShotSupervisor(args) ? "30 seconds" : "10 millis",
               );
               running = false;
-              const resolvedExitCode =
-                typeof opts.exitCode === "function" ? opts.exitCode(record) : (opts.exitCode ?? 0);
-              yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(resolvedExitCode));
+              yield* Deferred.succeed(
+                exitDeferred,
+                ChildProcessSpawner.ExitCode(opts.exitCode ?? 0),
+              );
             }),
           );
 

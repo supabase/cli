@@ -12,7 +12,6 @@
     "!apps/cli/src/shared/compute/**",
     "!apps/cli/src/shared/config/**",
     "!apps/cli/src/shared/feedback/**",
-    "!apps/cli/src/shared/functions/deploy.ts",
     "!apps/cli/src/shared/functions/functions-docker.ts",
     "!apps/cli/src/shared/functions/functions-docker.unit.test.ts",
     "!apps/cli/src/shared/functions/serve.ts",
