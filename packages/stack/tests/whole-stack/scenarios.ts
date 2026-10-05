@@ -133,7 +133,7 @@ const assertOwnedPathsGone = Effect.fn("WholeStack.assertOwnedPathsGone")((fixtu
     expect(yield* fs.exists(databasePath)).toBe(false);
     expect(yield* fs.exists(functionsPath)).toBe(false);
     expect(yield* fs.exists(statePath)).toBe(false);
-    expect(yield* fs.exists(`${fixture.locations.stateRoot}/${fixture.stack.id}`)).toBe(false);
+    expect((yield* fs.exists(dataRoot)) ? yield* fs.readDirectory(dataRoot) : []).toEqual([]);
   }),
 );
 

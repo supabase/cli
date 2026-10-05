@@ -186,7 +186,8 @@ describe("stack start (compiled e2e)", () => {
   const cleanup = Effect.gen(function* () {
     let cleanupComplete = stackDestroyed;
     if (!cleanupComplete && home !== undefined) {
-      const candidates = yield* readDirectory(join(home.dir, "stacks")).pipe(
+      const stacksDir = join(home.dir, "stacks");
+      const candidates = yield* readDirectory(stacksDir).pipe(
         Effect.catchIf(
           (cause) =>
             Predicate.isTagged(cause, "PlatformError") &&
@@ -194,7 +195,10 @@ describe("stack start (compiled e2e)", () => {
           () => Effect.succeed([]),
         ),
       );
-      const discovered = candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry));
+      const discovered = yield* Effect.filter(
+        candidates.filter((entry) => /^[0-9a-f]{64}$/u.test(entry)),
+        (entry) => access(join(stacksDir, entry, "state.json")).pipe(Effect.isSuccess),
+      );
       const ownedId = stackId ?? (discovered.length === 1 ? discovered[0] : undefined);
       if (ownedId !== undefined) {
         yield* destroyStack(home.dir, ownedId);
@@ -549,7 +553,9 @@ describe("stack start (compiled e2e)", () => {
           yield* destroyStack(homeDir.dir, idText);
           stackDestroyed = true;
 
-          const destroyed = yield* Effect.exit(access(join(homeDir.dir, "stacks", idText)));
+          const destroyed = yield* Effect.exit(
+            access(join(homeDir.dir, "stacks", idText, "state.json")),
+          );
           expect(Exit.isFailure(destroyed)).toBe(true);
         }),
       ),
