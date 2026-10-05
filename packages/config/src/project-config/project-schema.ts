@@ -87,7 +87,7 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST, path: ReadonlyArray<string>
   if (SchemaAST.isUnion(ast)) {
     return new SchemaAST.Union(
       ast.types.map((type) => toDeepOptionalHostedAst(type, path)),
-      ast.mode,
+      ast.options,
       ast.annotations,
       ast.checks,
       ast.encoding,
@@ -139,7 +139,7 @@ export const ProjectConfigSchema: StandardSchemaV1<
 /** JSON Schema (draft 2020-12) rendering of {@link ProjectConfigSchema}. */
 export function toProjectConfigJsonSchema() {
   const document = Schema.toJsonSchemaDocument(ProjectConfigSchema, {
-    additionalProperties: true,
+    onExcessProperty: "ignore",
   });
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
