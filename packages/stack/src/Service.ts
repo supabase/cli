@@ -84,7 +84,7 @@ export interface ServiceDefinition<Config> {
   readonly prepare?: (config: Config) => Effect.Effect<void, ServiceError>;
   /** Failures after resource acquisition carry the session for ordinary cleanup. */
   readonly launch: (
-    context: ServiceInstanceContext<Config>,
+    context: ServiceLaunchContext<Config>,
   ) => Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>;
   readonly removeData: (
     context: ServiceInstanceContext<Config>,
@@ -96,6 +96,11 @@ export interface ServiceInstanceContext<Config> {
   readonly config: Config;
   /** Owns auxiliary session resources; runtime stop/remove retain cleanup authority. */
   readonly scope: Scope.Closeable;
+}
+
+/** One launch of an instance; every output chunk the launch publishes carries its `launchId`. */
+export interface ServiceLaunchContext<Config> extends ServiceInstanceContext<Config> {
+  readonly launchId: number;
 }
 
 export interface ServiceInstance<Config> {
@@ -179,6 +184,8 @@ export const makeService = <Config>(
   options: {
     readonly id: string;
     readonly config: Config;
+    /** Launch ids continue after this one. */
+    readonly lastLaunchId?: number;
     readonly coordinate?: (
       operation: ServiceAdmission,
       transition: Effect.Effect<void, ServiceError>,
@@ -189,7 +196,7 @@ export const makeService = <Config>(
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const revision = yield* Ref.make(0);
-    const launchCounter = yield* Ref.make(0);
+    const launchCounter = yield* Ref.make(options.lastLaunchId ?? 0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
     // stopNow clears observation.launchId while keeping the error, so readiness must not read that field.
     const launchError = yield* Ref.make<
@@ -382,12 +389,17 @@ export const makeService = <Config>(
         );
         const runtimeScope = yield* Scope.fork(owner, "parallel");
         const launchExit = yield* Effect.exit(
-          definition.launch(contextFor(options.id, yield* Ref.get(config), runtimeScope)).pipe(
-            Effect.map((runtime) => ({ runtime, failure: undefined })),
-            Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
-              Effect.succeed({ runtime, failure }),
+          definition
+            .launch({
+              ...contextFor(options.id, yield* Ref.get(config), runtimeScope),
+              launchId,
+            })
+            .pipe(
+              Effect.map((runtime) => ({ runtime, failure: undefined })),
+              Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
+                Effect.succeed({ runtime, failure }),
+              ),
             ),
-          ),
         );
         if (Exit.isFailure(launchExit)) {
           yield* Scope.close(runtimeScope, launchExit);

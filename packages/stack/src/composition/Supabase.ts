@@ -105,13 +105,6 @@ const managedBindings: ReadonlyArray<{
     input: "analyticsUrl",
   },
   {
-    sourceKind: "analytics",
-    sourceEndpoint: "http",
-    output: "url",
-    targetKind: "vector",
-    input: "analyticsUrl",
-  },
-  {
     sourceKind: "functions",
     sourceEndpoint: "http",
     output: "url",

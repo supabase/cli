@@ -35,8 +35,8 @@ type PlainArguments<P extends ReadonlyArray<unknown>> = { [K in keyof P]: Plain<
 type Effectful = Effect.Effect<unknown, unknown, unknown>;
 /**
  * The Promise form of an Effect handle: an Effect becomes a call, an Effect-returning function
- * gains trailing call options and plain inputs, and a Stream becomes an async iterable. Results
- * are data; operations that return handles are adapted explicitly.
+ * gains trailing call options and plain inputs, and a Stream, or a function returning one, yields
+ * an async iterable. Results are data; operations that return handles are adapted explicitly.
  */
 export type Promised<T> = T extends Effectful
   ? (options?: CallOptions) => Promise<Effect.Success<T>>
@@ -45,7 +45,9 @@ export type Promised<T> = T extends Effectful
     : T extends (...args: infer P) => infer R
       ? R extends Effectful
         ? (...args: [...PlainArguments<P>, callOptions?: CallOptions]) => Promise<Effect.Success<R>>
-        : T
+        : R extends Stream.Stream<infer A, unknown, unknown>
+          ? (...args: PlainArguments<P>) => AsyncIterable<A>
+          : T
       : T extends object
         ? { readonly [K in keyof T]: Promised<T[K]> }
         : T;
@@ -264,7 +266,11 @@ const isCallOptions = (value: unknown): value is CallOptions =>
 /** Adapts the operations of an Effect handle; their results pass through as data. */
 const makeAdapter = (client: Client) => {
   const call = (result: unknown, options: CallOptions | undefined) =>
-    isOperation(result) ? client.run(result, options) : result;
+    isOperation(result)
+      ? client.run(result, options)
+      : isStream(result)
+        ? client.iterable(result)
+        : result;
   function promised<T>(value: T): Promised<T>;
   function promised(value: unknown): unknown {
     if (isStream(value)) return () => client.iterable(value);

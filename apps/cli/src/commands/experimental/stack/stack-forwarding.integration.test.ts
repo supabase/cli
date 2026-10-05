@@ -41,8 +41,6 @@ enabled = false
 enabled = false
 max_buckets = 3
 max_indexes = 2
-[analytics]
-vector_port = 59001
 `);
       const loaded = yield* loadStackConfig(root);
       const services = yield* loaded.creations("forwarding");
@@ -60,7 +58,6 @@ vector_port = 59001
       expect(
         realtime?.service === "realtime" ? realtime.config.secretKeyBase : undefined,
       ).toBeUndefined();
-      expect(services.find((s) => s.service === "vector")?.endpoints?.http?.port).toBe(59001);
       // A composition binds each database URL before launch.
       const bound = <C extends { readonly config: object }>(creation: C) => ({
         ...creation,

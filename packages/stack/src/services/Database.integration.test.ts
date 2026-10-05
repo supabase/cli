@@ -234,7 +234,7 @@ describe("database component", { timeout: 180_000 }, () => {
           });
           const observed = yield* Ref.make("");
           const caughtUp = yield* Deferred.make<void>();
-          yield* first.logs.pipe(
+          yield* Stream.fromSubscription(yield* first.logs).pipe(
             Stream.runForEach(({ bytes }) =>
               Ref.updateAndGet(observed, (text) => text + new TextDecoder().decode(bytes)).pipe(
                 Effect.flatMap((text) =>

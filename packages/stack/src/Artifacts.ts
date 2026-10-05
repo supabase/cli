@@ -19,8 +19,12 @@ export type ServiceKind =
   | "pgmeta"
   | "mail"
   | "analytics"
-  | "vector"
   | "pooler";
+
+/** A catalog artifact: a stack service kind, or an artifact only the legacy `supabase start` runs. */
+export type ArtifactKind = ServiceKind | "vector";
+
+const isServiceKind = (kind: ArtifactKind): kind is ServiceKind => kind !== "vector";
 
 export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly message: string;
@@ -60,7 +64,7 @@ export interface ArtifactPin {
 const releaseVersion = (pin: ArtifactPin): string => `${pin.upstreamVersion}-r${pin.revision}`;
 
 interface ArtifactResolution {
-  readonly service: ServiceKind;
+  readonly service: ArtifactKind;
   /** Upstream version. */
   readonly version: string;
   readonly releaseVersion: string;
@@ -71,7 +75,7 @@ interface ArtifactResolution {
 }
 
 export interface PreparedNativeArtifact {
-  readonly service: ServiceKind;
+  readonly service: ArtifactKind;
   readonly version: string;
   readonly root: string;
   readonly executable: string;
@@ -102,7 +106,7 @@ const definition = (
 
 const SLIM_IMAGE_GHCR_REGISTRY = "ghcr.io/supabase/cli/";
 
-const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
+const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   database: definition(
     "postgres",
     {
@@ -501,7 +505,7 @@ export const slimImageMirrors = (image: string): ReadonlyArray<string> =>
     : [];
 
 const artifactFor = (
-  service: ServiceKind,
+  service: ArtifactKind,
   resolved: ArtifactResolution,
   target: NativeTarget,
 ): SlimServicesArtifact => {
@@ -537,7 +541,7 @@ const artifactFor = (
 };
 
 export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* (request: {
-  readonly service: ServiceKind;
+  readonly service: ArtifactKind;
   readonly version?: string;
 }) {
   if (!Object.hasOwn(definitions, request.service))
@@ -567,8 +571,9 @@ export const postgresVersion = (version: string): string =>
   Object.keys(definitions.database.pins).find((candidate) => candidate.split(".")[0] === version) ??
   version;
 
-/** Service kinds in artifact catalog order. */
-export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.keys(definitions);
+/** Service kinds the stack runs, in artifact catalog order; legacy-only artifacts are omitted. */
+export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> =>
+  Record.keys(definitions).filter(isServiceKind);
 
 /**
  * Every catalog pin in catalog order, including additional upstream lines. `isDefault` marks the
@@ -576,12 +581,12 @@ export const artifactServiceKinds = (): ReadonlyArray<ServiceKind> => Record.key
  * other pin (postgres's 15.x additional line) carries `isDefault: false`.
  */
 export const catalogPins = (): ReadonlyArray<{
-  readonly service: ServiceKind;
+  readonly service: ArtifactKind;
   readonly sourceService: string;
   readonly pin: ArtifactPin;
   readonly isDefault: boolean;
 }> =>
-  artifactServiceKinds().flatMap((service) => {
+  Record.keys(definitions).flatMap((service) => {
     const { sourceService, defaultVersion, pins } = definitions[service];
     return Object.values(pins).map((pin) => ({
       service,
@@ -595,7 +600,7 @@ const artifactKey = (artifact: SlimServicesArtifact): string =>
   `slim-services/${artifact.service}/${artifact.version}/${artifact.target}`;
 
 export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact")(function* (
-  request: { readonly service: ServiceKind; readonly version?: string },
+  request: { readonly service: ArtifactKind; readonly version?: string },
   cacheRoot: string,
   platform: { readonly os: string; readonly arch: string } = {
     os: process.platform,

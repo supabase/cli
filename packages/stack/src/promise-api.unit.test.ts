@@ -77,6 +77,9 @@ describe("Promise API derived from the Effect API", () => {
     expectTypeOf<PromiseApi.DatabaseInstance["followStatus"]>().toEqualTypeOf<
       () => AsyncIterable<PromiseApi.Observation>
     >();
+    expectTypeOf<PromiseApi.ServiceInstance["readLogs"]>().toEqualTypeOf<
+      (options?: PromiseApi.ReadLogsOptions) => AsyncIterable<PromiseApi.LogRecord>
+    >();
   });
 
   it("types created and returned handles by service kind", () => {

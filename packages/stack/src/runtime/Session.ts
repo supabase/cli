@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Fiber, PubSub, Ref, Scope, Stream } from "effect";
+import { Cause, Clock, Effect, Exit, Fiber, PubSub, Ref, Scope, Semaphore, Stream } from "effect";
 import { failureMessage } from "../internal/failure-message.ts";
 import { ServiceError, type RuntimeSession } from "../Service.ts";
 import type { ContainerProcess } from "./Container.ts";
@@ -62,16 +62,58 @@ export const processExit = <E extends { readonly message: string }>(
   );
 
 /**
- * Forks stdout/stderr drains that publish to `logs`; returns the stderr fiber so callers can await
- * drain completion (e.g. before finalizing exit). Optionally captures a rolling stderr tail for
- * folding into exit failure messages.
+ * One output chunk of a launch, stamped with its publish time in epoch milliseconds. Each process
+ * of the launch is a `part`; `seq` counts the launch's chunks from zero across its streams and
+ * parts in publish order, so chunks dropped anywhere in the launch leave a gap.
+ */
+export interface LaunchOutput {
+  readonly stream: "stdout" | "stderr";
+  readonly bytes: Uint8Array;
+  readonly launchId: number;
+  readonly part: number;
+  readonly seq: number;
+  readonly time: number;
+}
+
+/** Publishes one chunk of a process's output. */
+export type PublishOutput = (stream: "stdout" | "stderr", bytes: Uint8Array) => Effect.Effect<void>;
+
+/** Tags a launch's output; each `part` call returns the publisher of the launch's next process. */
+export const launchOutputPublisher = (
+  logs: PubSub.PubSub<LaunchOutput>,
+  launchId: number,
+): Effect.Effect<{ readonly part: Effect.Effect<PublishOutput> }> =>
+  Effect.gen(function* () {
+    const parts = yield* Ref.make(0);
+    const sequence = yield* Ref.make(0);
+    // A sequence number is taken and published in one step, so subscribers see them in order.
+    const ordered = yield* Semaphore.make(1);
+    return {
+      part: Ref.getAndUpdate(parts, (next) => next + 1).pipe(
+        Effect.map(
+          (part): PublishOutput =>
+            (stream, bytes) =>
+              Effect.gen(function* () {
+                const seq = yield* Ref.getAndUpdate(sequence, (next) => next + 1);
+                const time = yield* Clock.currentTimeMillis;
+                yield* PubSub.publish(logs, { stream, bytes, launchId, part, seq, time });
+              }).pipe(ordered.withPermits(1)),
+        ),
+      ),
+    };
+  });
+
+/**
+ * Forks stdout/stderr drains that publish through `publish`; returns the stderr fiber so callers
+ * can await drain completion (e.g. before finalizing exit). Optionally captures a rolling stderr
+ * tail for folding into exit failure messages.
  */
 export const publishProcessLogs = (
   process: {
     readonly stdout: Stream.Stream<Uint8Array, unknown>;
     readonly stderr: Stream.Stream<Uint8Array, unknown>;
   },
-  logs: PubSub.PubSub<{ readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array }>,
+  publish: PublishOutput,
   scope: Scope.Closeable,
   stderrTail?: Ref.Ref<string>,
 ): Effect.Effect<Fiber.Fiber<void>> => {
@@ -85,7 +127,7 @@ export const publishProcessLogs = (
       Stream.runForEach((bytes) =>
         Effect.gen(function* () {
           if (decoder !== undefined) yield* appendTail(decoder.decode(bytes, { stream: true }));
-          yield* PubSub.publish(logs, { stream: name, bytes });
+          yield* publish(name, bytes);
         }),
       ),
       Effect.andThen(
