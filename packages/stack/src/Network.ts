@@ -1,7 +1,6 @@
 import {
   Context,
   Data,
-  type Duration,
   Effect,
   Exit,
   Layer,
@@ -21,13 +20,15 @@ import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 export type NetworkRuntime = "native" | "docker";
 
 /**
- * The shutdown-drain deadline (F5): established connections keep flowing until this elapses.
- * Internal only, following the `RegistrationCheckInterval` pattern: tests shorten it through this
- * reference; production never reads it from an environment variable or `Config`.
+ * The shutdown-drain deadline (F5): established connections keep flowing until this event
+ * completes. An injectable event rather than a duration (pass 3, F7), so a test can gate exactly
+ * when it fires through a `Deferred` instead of racing a shortened real timer; production always
+ * defaults to a plain 10-second sleep. Internal only, following the `RegistrationCheckInterval`
+ * pattern: production never reads it from an environment variable or `Config`.
  */
-export const ShutdownDrainDeadline = Context.Reference<Duration.Input>(
+export const ShutdownDrainDeadline = Context.Reference<Effect.Effect<void>>(
   "@supabase/stack/ShutdownDrainDeadline",
-  { defaultValue: () => "10 seconds" },
+  { defaultValue: () => Effect.sleep("10 seconds") },
 );
 
 /** The accept/outstanding/cut-all surface every listener kind (`TcpListener`, `HttpProxy`) shares. */
@@ -453,7 +454,7 @@ const makeNetwork = (options: {
         discard: true,
       }).pipe(
         Effect.as("quiesced" as const),
-        Effect.race(Effect.sleep(deadline).pipe(Effect.as("deadline" as const))),
+        Effect.race(deadline.pipe(Effect.as("deadline" as const))),
       );
       if (outcome === "deadline")
         yield* Effect.forEach(handles, (handle) => handle.cutAll, { discard: true });

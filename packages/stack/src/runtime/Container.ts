@@ -12,7 +12,6 @@ import {
   Fiber,
   Option,
   Path,
-  PlatformError,
   Ref,
   Schedule,
   Schema,
@@ -30,7 +29,6 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
-  readonly reason?: "engine-unavailable";
 }> {}
 
 interface ContainerSpec {
@@ -93,44 +91,12 @@ export interface ContainerRuntime {
   ) => Effect.Effect<ContainerProcess, ContainerError | ContainerLaunchError, Scope.Scope>;
 }
 
-/** A spawn failure for a missing engine CLI binary; it carries no message pattern to test. */
-const isMissingEngineBinary = (cause: unknown): boolean =>
-  cause instanceof PlatformError.PlatformError &&
-  cause.reason._tag === "NotFound" &&
-  cause.reason.method === "spawn";
-
-/**
- * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
- * rejects the caller. Windows' `error during connect` also wraps authentication and TLS failures,
- * so only its refused or missing-endpoint causes match. Matches regardless of which wrapping error
- * type carried the message (a bare `ContainerError`, or another operation's error whose message
- * preserves the underlying CLI failure text, such as a database storage cleanup failure).
- */
-const engineUnreachableMessage = (message: string): boolean =>
-  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
-    message,
-  );
-
-/**
- * Whether `cause` (a spawn failure for a missing engine binary) or `message` (the engine CLI's
- * own unreachable-daemon phrasing) signals a permanently unavailable engine (F3). Classified once,
- * here, at every engine invocation boundary (`errorFor`, below), and carried onward through
- * wrapping as the error's own `reason` rather than re-matched; a caller that only ever sees a
- * message (database storage, which invokes the engine CLI directly rather than through this
- * module's `ContainerError`) calls this too, at its own equivalent source.
- */
-export const isEngineUnavailable = (cause: unknown, message: string): boolean =>
-  isMissingEngineBinary(cause) || engineUnreachableMessage(message);
-
-const errorFor = (operation: string, cause: unknown): ContainerError => {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return new ContainerError({
+const errorFor = (operation: string, cause: unknown): ContainerError =>
+  new ContainerError({
     operation,
-    message,
+    message: cause instanceof Error ? cause.message : String(cause),
     cause,
-    ...(isEngineUnavailable(cause, message) ? { reason: "engine-unavailable" as const } : {}),
   });
-};
 
 /** Labels containers this run creates, when `SUPABASE_STACK_TEST_RUN` is set. */
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
@@ -149,9 +115,6 @@ const transientPullFailure = (error: ContainerError) =>
   /(?:Get|Head|Post|Put) "https?:\/\/(?!%2F)[^"]+": (?:unexpected )?EOF|connection reset by peer|i\/o timeout|TLS handshake timeout|net\/http: request canceled|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|received unexpected HTTP status: 5\d\d/iu.test(
     error.message,
   );
-
-/** Classified once, at construction (`errorFor`), and simply read back here. */
-export const engineUnreachable = (error: ContainerError) => error.reason === "engine-unavailable";
 
 /** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
 const runRaw = (
@@ -232,9 +195,24 @@ export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(fu
   return { engine: "docker", argv, daemonId };
 });
 
-/** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
-const retryablePull = (error: ContainerError) =>
-  (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
+/** A pull worth retrying: rate-limited or a dropped connection. */
+const retryablePull = (error: ContainerError) => rateLimited(error) || transientPullFailure(error);
+
+/**
+ * Probes the pinned engine target directly, with the cheapest real call (`info`), rather than
+ * classifying a failure's message (pass 3, B): a spawn failure (missing binary) or the daemon
+ * endpoint refusing the connection both resolve `false`; any other failure (a daemon-relayed
+ * error, for example a registry rejecting a pull while the daemon itself is up) never reaches
+ * this probe and so never resolves `false` through it.
+ */
+export const probeEngineReachable = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  target: EngineTarget,
+): Effect.Effect<boolean> =>
+  runRaw(spawner, [...target.argv, "info", "--format", "{{.ID}}"]).pipe(
+    Effect.map((id) => id.trim().length > 0),
+    Effect.orElseSucceed(() => false),
+  );
 
 const PULL_MAX_RETRIES = 4;
 
@@ -771,7 +749,6 @@ export const makeContainerRuntime = (options: {
                       operation: error.operation,
                       message: `${error.message} (container name ${name})`,
                       cause: error,
-                      ...(error.reason === undefined ? {} : { reason: error.reason }),
                     }),
               ),
               Effect.catchTag("TimeoutError", () =>
@@ -1074,10 +1051,52 @@ export const removeContainerById = Effect.fn("Container.removeContainerById")(
         }),
       ).pipe(
         Effect.timeout("30 seconds"),
-        // `errorFor` already classifies at construction; nothing further to reclassify here.
         Effect.mapError((cause) =>
           cause instanceof ContainerError ? cause : errorFor("cleanup", cause),
         ),
       );
     }),
+);
+
+/**
+ * Lists every container carrying this stack's identity label, through the pinned engine:
+ * service containers and every storage helper alike (per-instance and shared), independent of
+ * any in-memory registry's own bookkeeping (pass 3, C).
+ */
+const listStackContainers = Effect.fn("Container.listStackContainers")(function* (options: {
+  readonly target: EngineTarget;
+  readonly stackId: string;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = yield* runRaw(spawner, [
+    ...options.target.argv,
+    "ps",
+    "--all",
+    "--quiet",
+    "--no-trunc",
+    "--filter",
+    `label=com.supabase.stack=${options.stackId}`,
+  ]);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+});
+
+/**
+ * Removes every container carrying this stack's identity label and reports how many remain
+ * (normally 0): the registration-independent confirming sweep abandonment uses instead of
+ * depending on any helper registry's own bookkeeping (pass 3, C). A container that disappears
+ * between listing and removal is not an error, matching {@link removeContainerById}.
+ */
+export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
+  function* (options: { readonly target: EngineTarget; readonly stackId: string }) {
+    const ids = yield* listStackContainers(options);
+    yield* Effect.forEach(ids, (id) => removeContainerById({ target: options.target, id }), {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    const remaining = yield* listStackContainers(options);
+    return remaining;
+  },
 );

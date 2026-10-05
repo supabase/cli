@@ -327,6 +327,84 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 it.live.skipIf(process.platform === "win32")(
+  "removes an orphaned container by label alone, independent of any instance's own cleanup (pass 3, C)",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-label-" });
+        const stackId = `abandon-label-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot(
+          "stack-abandon-docker-label-data-",
+          stackId,
+        ).pipe(Effect.flatMap(fs.realPath));
+        const stateRoot = path.dirname(path.dirname(dataRoot));
+        const cacheRoot = `${base}/cache`;
+        const state = yield* stateFor(stateRoot);
+        yield* state.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project`,
+            branchContext: "abandon-docker-label-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached" as const,
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
+        const access = yield* launchHost(state, {
+          stateRoot,
+          cacheRoot,
+          stackId,
+          entrypoint: shortRegistrationPollFixture,
+        });
+        // No registered service at all, so the per-instance cleanup loop has nothing to do: this
+        // container carries only the stack's identity label, simulating a leaked storage helper
+        // no claim or helper-registry bookkeeping ever reaches (F5/pass 3, C). Only the
+        // registration-independent label sweep can remove it.
+        yield* docker([
+          "run",
+          "-d",
+          "--name",
+          `supabase-orphan-${stackId}`,
+          "--label",
+          `com.supabase.stack=${stackId}`,
+          "--label",
+          `com.supabase.stack-root=${dataRoot}`,
+          "--label",
+          "com.supabase.stack-managed=true",
+          helperImage,
+          "/bin/sh",
+          "-c",
+          "trap : TERM INT; while :; do sleep 3600; done",
+        ]);
+        expect(
+          (yield* containers(stackId, dataRoot)).length,
+          "the orphan container exists before abandonment",
+        ).toBeGreaterThan(0);
+
+        const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
+        yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+        yield* leaseReleased;
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("30 seconds"),
+        );
+
+        expect(
+          yield* containers(stackId, dataRoot),
+          "abandonment removes the orphan container by label alone",
+        ).toEqual([]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 180_000 },
+);
+
+it.live.skipIf(process.platform === "win32")(
   "removes its containers and exits when its whole state root is confirmed gone",
   () =>
     Effect.scoped(

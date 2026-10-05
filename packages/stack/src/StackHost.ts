@@ -18,6 +18,7 @@ import {
   Fiber,
   Layer,
   Option,
+  PlatformError,
   Queue,
   Ref,
   Scope,
@@ -44,7 +45,7 @@ import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Claims from "./namespace/Claims.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
-import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
+import { makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
@@ -83,6 +84,28 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
     cause,
     ...(reason === undefined ? {} : { reason }),
   });
+
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
+ * that rejects the caller (for example on permissions): the one startup-diagnostic distinction
+ * `StackHostError`'s own `reason` has carried since before phase 2d, so `destroy`/`shutdown`
+ * (`effect.ts`) know to leave a stack registered for retry instead of surfacing a hard failure.
+ * Unrelated to abandonment's own cleanup-retry decision, which probes the engine directly instead
+ * of matching a message at all (pass 3, B).
+ */
+const engineUnreachableAtStartup = (cause: unknown): boolean => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return (
+    (cause instanceof Object &&
+      "cause" in cause &&
+      cause.cause instanceof PlatformError.PlatformError &&
+      cause.cause.reason._tag === "NotFound" &&
+      cause.cause.reason.method === "spawn") ||
+    /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
+      message,
+    )
+  );
+};
 
 /** Binds the owner's loopback control listener on an OS-assigned port. */
 export const bindControl = Effect.fn("StackHost.bindControl")(function* () {
@@ -211,8 +234,9 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const exit = yield* Deferred.make<void>();
       const gate = yield* Semaphore.make(1);
+      type ShutdownMode = "stop" | "destroy" | "abandon";
       const current = yield* Ref.make<
-        { destroy: boolean; fiber: Fiber.Fiber<void, StackError> } | undefined
+        { readonly mode: ShutdownMode; readonly fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
       const watchResponse = (
         response: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -222,55 +246,78 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           responseClosed(response).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
           scope,
         );
+      // Each stage settles and logs independently: one stage's failure (for example a retained
+      // native command's termination that cannot be confirmed) must never skip the others.
+      const settled = <E>(label: string, stage: Effect.Effect<void, E>) =>
+        stage.pipe(
+          Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
+        );
 
-      const shutdown = Effect.fn("StackHost.shutdown")(
-        (destroy: boolean, response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>) =>
-          Effect.gen(function* () {
-            const fiber = yield* gate.withPermits(1)(
-              Effect.uninterruptibleMask(() =>
-                Effect.gen(function* () {
-                  const existing = yield* Ref.get(current);
-                  if (existing !== undefined) {
-                    if (existing.destroy && !destroy) return existing.fiber;
-                    if (!existing.destroy && destroy)
-                      return yield* new StackError({
-                        operation: "shutdown",
-                        message: "Shutdown mode is already selected",
-                      });
-                    return existing.fiber;
-                  }
-                  yield* owner.setDraining(true);
-                  const responseClosedSignal =
-                    response === undefined ? undefined : yield* Deferred.make<void>();
-                  if (response !== undefined && responseClosedSignal !== undefined)
-                    yield* watchResponse(response, responseClosedSignal);
-                  let retiringAfterDestroyFailure = false;
-                  const stopOwned = Effect.gen(function* () {
-                    yield* attachments.stopAll;
-                    yield* runner.cleanup;
-                    yield* owner.namespace.stop;
+      // Admits `mode`'s cleanup when nothing else is in flight: forks it, tracks it as `current`
+      // until it settles (success or failure alike), then clears `current` so a later claim —
+      // for example abandon after an in-flight stop or destroy — can be admitted again (pass 3,
+      // A). Only `stop` and `destroy` can actually fail; their own recovery (reopening admission)
+      // runs, and `current` is cleared, before `claim` below can ever admit anything else.
+      const begin = (
+        mode: ShutdownMode,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ): Effect.Effect<Fiber.Fiber<void, StackError>> =>
+        Effect.gen(function* () {
+          yield* owner.setDraining(true);
+          const responseClosedSignal =
+            response === undefined ? undefined : yield* Deferred.make<void>();
+          if (response !== undefined && responseClosedSignal !== undefined)
+            yield* watchResponse(response, responseClosedSignal);
+          const finish = Effect.gen(function* () {
+            if (response !== undefined) {
+              if (responseClosedSignal === undefined) return;
+              yield* Effect.forkIn(
+                Deferred.await(responseClosedSignal).pipe(
+                  Effect.andThen(closeConnections),
+                  Effect.andThen(Deferred.succeed(exit, undefined)),
+                ),
+                scope,
+              );
+            } else {
+              yield* closeConnections;
+              yield* Deferred.succeed(exit, undefined);
+            }
+          });
+          const stopOwned = Effect.gen(function* () {
+            yield* attachments.stopAll;
+            yield* runner.cleanup;
+            yield* owner.namespace.stop;
+          });
+          let retiringAfterDestroyFailure = false;
+          const body: Effect.Effect<void, StackError> =
+            mode === "abandon"
+              ? Effect.gen(function* () {
+                  // Attachment/command cleanup and namespace cleanup run concurrently; each
+                  // retries until confirmed (or the engine is confirmed unavailable), and this
+                  // waits for both before the owner is permitted to exit (pass 3, A).
+                  const commandCleanup = settled(
+                    "command cleanup",
+                    Owner.retryUntilConfirmed(
+                      attachments.stopAll.pipe(Effect.andThen(runner.cleanup)),
+                      owner.engineAvailable,
+                    ),
+                  );
+                  const namespaceCleanup = settled(
+                    "abandon namespace cleanup",
+                    owner.namespace.abandon,
+                  );
+                  yield* Effect.all([commandCleanup, namespaceCleanup], {
+                    concurrency: "unbounded",
+                    discard: true,
                   });
-                  const finish = Effect.gen(function* () {
-                    if (response !== undefined) {
-                      if (responseClosedSignal === undefined) return;
-                      yield* Effect.forkIn(
-                        Deferred.await(responseClosedSignal).pipe(
-                          Effect.andThen(closeConnections),
-                          Effect.andThen(Deferred.succeed(exit, undefined)),
-                        ),
-                        scope,
-                      );
-                    } else {
-                      yield* closeConnections;
-                      yield* Deferred.succeed(exit, undefined);
-                    }
-                  });
-                  const cleanup = Effect.gen(function* () {
-                    if (!destroy) {
-                      yield* stopOwned;
-                      yield* finish;
-                      return;
-                    }
+                  yield* finish;
+                })
+              : mode === "stop"
+                ? stopOwned.pipe(
+                    Effect.andThen(finish),
+                    Effect.mapError((cause) => stackError("shutdown", cause)),
+                  )
+                : Effect.gen(function* () {
                     const destroyExit = yield* Effect.gen(function* () {
                       yield* attachments.stopAll;
                       yield* runner.cleanup;
@@ -318,100 +365,94 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     retiringAfterDestroyFailure = true;
                     yield* finish;
                     return yield* Effect.failCause(destroyExit.cause);
-                  }).pipe(
-                    Effect.mapError((cause) => stackError("shutdown", cause)),
-                    Effect.catchCause((cause) =>
-                      retiringAfterDestroyFailure
-                        ? Effect.failCause(cause)
-                        : owner
-                            .setDraining(false)
-                            // F6: drain may already have run (and so left the network's own
-                            // admission closed) before this later stage failed; recovering it here
-                            // keeps a start/restart that follows from refusing as still draining.
-                            .pipe(
-                              Effect.andThen(owner.namespace.recoverDraining),
-                              Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                              Effect.andThen(Effect.failCause(cause)),
-                            ),
-                    ),
-                  );
-                  const fiber = yield* Effect.forkIn(cleanup, scope);
-                  yield* Ref.set(current, { destroy, fiber });
-                  return fiber;
+                  }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
+          const cleanup = body.pipe(
+            Effect.catchCause((cause) =>
+              mode !== "abandon" && !retiringAfterDestroyFailure
+                ? owner
+                    .setDraining(false)
+                    // F6: drain may already have run (and so left the network's own admission
+                    // closed) before this later stage failed; recovering it here keeps a
+                    // start/restart that follows from refusing as still draining.
+                    .pipe(
+                      Effect.andThen(owner.namespace.recoverDraining),
+                      Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
+                      Effect.andThen(Effect.failCause(cause)),
+                    )
+                : Effect.failCause(cause),
+            ),
+          );
+          const fiber = yield* Effect.forkIn(cleanup, scope);
+          yield* Ref.set(current, { mode, fiber });
+          return fiber;
+        });
+
+      // The one shutdown pipeline (pass 3, A): `stop`, `destroy` and `abandon` are claimed
+      // through the same gate and `current` record, never a separate join. If a shutdown is
+      // already in flight when abandonment is requested, this waits for it to settle (whatever
+      // its outcome) and then claims abandon fresh, unless that settlement was a confirmed
+      // successful destroy — ownership is already fully ended, so there is nothing left to
+      // abandon. Once abandon is claimed, nothing else can supersede it: it always joins.
+      const claim = (
+        mode: ShutdownMode,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ): Effect.Effect<void, StackError> =>
+        Effect.gen(function* () {
+          while (true) {
+            const decision = yield* gate.withPermits(1)(
+              Effect.uninterruptibleMask(() =>
+                Effect.gen(function* () {
+                  const existing = yield* Ref.get(current);
+                  if (existing === undefined) {
+                    const fiber = yield* begin(mode, response);
+                    return { _tag: "run", fiber } as const;
+                  }
+                  if (mode === "abandon")
+                    return existing.mode === "abandon"
+                      ? ({ _tag: "run", fiber: existing.fiber } as const)
+                      : ({
+                          _tag: "await",
+                          fiber: existing.fiber,
+                          priorMode: existing.mode,
+                        } as const);
+                  if (existing.mode === "abandon")
+                    return { _tag: "run", fiber: existing.fiber } as const;
+                  if (existing.mode === "destroy" && mode === "stop")
+                    return { _tag: "run", fiber: existing.fiber } as const;
+                  if (existing.mode === "stop" && mode === "destroy")
+                    return yield* new StackError({
+                      operation: "shutdown",
+                      message: "Shutdown mode is already selected",
+                    });
+                  return { _tag: "run", fiber: existing.fiber } as const;
                 }),
               ),
             );
-            yield* Fiber.join(fiber);
-          }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
-      );
-      // F6: a registration-loss poll drives this, never an RPC caller, so there is no response to
-      // watch and no registration left to touch. An in-flight shutdown already owns `current`;
-      // abandonment only joins it instead of racing its own cleanup against it.
-      // Each stage settles and logs independently: one stage's failure (for example a retained
-      // native command's termination that cannot be confirmed) must never skip the others (F4).
-      const settled = <E>(label: string, stage: Effect.Effect<void, E>) =>
-        stage.pipe(
-          Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
+            if (decision._tag === "run") {
+              yield* Fiber.join(decision.fiber);
+              return;
+            }
+            // "await": a prior stop or destroy, whether still running or already settled, is
+            // never cleared for its own sake (a repeated `shutdown` call must keep rejoining it
+            // for free); only abandon taking over after it clears the slot, so this loop's next
+            // pass can claim fresh.
+            const outcome = yield* Fiber.join(decision.fiber).pipe(Effect.exit);
+            if (decision.priorMode === "destroy" && Exit.isSuccess(outcome)) return;
+            yield* gate.withPermits(1)(
+              Ref.update(current, (value) => (value?.fiber === decision.fiber ? undefined : value)),
+            );
+          }
+        });
+      const shutdown = (
+        destroy: boolean,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ) =>
+        claim(destroy ? "destroy" : "stop", response).pipe(
+          Effect.mapError((cause) => stackError("shutdown", cause)),
         );
-      const abandonResources = settled("abandon namespace cleanup", owner.namespace.abandon);
-      // F5: a retained native command's termination can still be failing when this runs; retried
-      // under the same policy as every other abandonment cleanup stage (confirmed, or a confirmed
-      // permanently unreachable engine) before the owner is permitted to exit. Namespace cleanup
-      // below still runs on its own regardless of how long this takes.
-      const retainedCommandCleanup = settled(
-        "command runner cleanup",
-        runner.cleanup.pipe(Effect.retry(Owner.abandonCleanupSchedule)),
-      );
-      const abandon = Effect.fn("StackHost.abandon")(() =>
-        gate
-          .withPermits(1)(
-            Effect.uninterruptibleMask((restore) =>
-              Effect.gen(function* () {
-                const existing = yield* Ref.get(current);
-                if (existing !== undefined) return existing;
-                yield* owner.setDraining(true);
-                const cleanup = restore(
-                  Effect.gen(function* () {
-                    yield* settled("stopping attachments", attachments.stopAll);
-                    yield* retainedCommandCleanup;
-                    yield* abandonResources;
-                  }),
-                ).pipe(
-                  Effect.andThen(closeConnections),
-                  Effect.andThen(Deferred.succeed(exit, undefined)),
-                  Effect.asVoid,
-                );
-                const fiber = yield* Effect.forkIn(cleanup, scope);
-                const record = { destroy: false, fiber };
-                yield* Ref.set(current, record);
-                return record;
-              }),
-            ),
-          )
-          .pipe(
-            Effect.flatMap((record) =>
-              Fiber.join(record.fiber).pipe(
-                Effect.exit,
-                // `record.fiber` may be an in-flight normal shutdown, typed to report `StackError`;
-                // abandonment never fails the caller (the registration poll), so it is logged.
-                Effect.tap((joined) =>
-                  Exit.isFailure(joined)
-                    ? Effect.logError("Stack shutdown failed", joined.cause)
-                    : Effect.void,
-                ),
-                Effect.flatMap((joined) =>
-                  // F4: a joined destroy only confirmed both data removal and reservation release
-                  // when it actually succeeded; a failed destroy can have fallen back to a plain
-                  // stop (which preserves both) or failed before removing anything, so either way
-                  // F6 cleanup still has to run. Inspecting the outcome, not the requested mode,
-                  // is what tells the two apart; running it again on an already-confirmed destroy
-                  // is redundant but safe, since the shared cleanup path is idempotent.
-                  record.destroy && Exit.isSuccess(joined) ? Effect.void : abandonResources,
-                ),
-              ),
-            ),
-          ),
-      );
+      // F6: a registration-loss poll drives this, never an RPC caller, so there is no response to
+      // watch and no registration left to touch; `claim` never actually fails for this mode.
+      const abandon = claim("abandon").pipe(Effect.ignore);
       const handlers = StackRpc.of({
         ...owner.handlers,
         runCommand: (input: RunCommandPayload) => attachments.run(input),
@@ -466,7 +507,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         access,
         serve,
         shutdown,
-        abandon: abandon(),
+        abandon,
         closeConnections,
         exit,
       };
@@ -556,14 +597,6 @@ export const runStackHost = Effect.fn("StackHost.run")(
           yield* fs.makeDirectory(dataRootPath, { recursive: true });
           const dataRoot = yield* fs.realPath(dataRootPath);
           const project = projectSegmentFor(saved.identity, path);
-          const asHostError = (cause: unknown) =>
-            hostError(
-              "startup-cleanup",
-              cause,
-              cause instanceof Object && "reason" in cause && cause.reason === "engine-unavailable"
-                ? "runtime-unavailable"
-                : undefined,
-            );
           // Resolved once, here, for this owner's whole lifetime: the container runtime, the
           // storage helpers, the host-gateway probes and reconcile below all share this one
           // target instead of each resolving (and so potentially disagreeing on) their own.
@@ -576,12 +609,18 @@ export const runStackHost = Effect.fn("StackHost.run")(
                     hostError(
                       "startup-cleanup",
                       cause,
-                      engineUnreachable(cause) ? "runtime-unavailable" : undefined,
+                      engineUnreachableAtStartup(cause) ? "runtime-unavailable" : undefined,
                     ),
                   ),
                 );
           yield* Owner.sweepContainers(state, saved, dataRoot, engineTarget).pipe(
-            Effect.mapError(asHostError),
+            Effect.mapError((cause) =>
+              hostError(
+                "startup-cleanup",
+                cause,
+                engineUnreachableAtStartup(cause) ? "runtime-unavailable" : undefined,
+              ),
+            ),
           );
           const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(

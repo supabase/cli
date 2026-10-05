@@ -370,6 +370,74 @@ it.live("recovers network admission after a shutdown that fails once drain has b
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live(
+  "freezes admission and confirms cleanup when abandonment claims ownership after a failing stop settles (pass 3, A)",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-host-abandon-after-stop-",
+        });
+        const state = yield* stateFor(`${root}/state`);
+        const saved = {
+          id: "stack",
+          runtime: "native" as const,
+          identity: {
+            projectRoot: root,
+            branchContext: "main",
+            stackName: "host-abandon-after-stop",
+          },
+          instances: [],
+          lifetime: "detached" as const,
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        };
+        yield* state.save(saved);
+        const owner = yield* ownerFor({
+          saved,
+          state,
+          root: `${root}/data`,
+          cacheRoot: "/tmp/supabase-stack-artifacts",
+        });
+        const stopGate = yield* Deferred.make<void>();
+        const abandonEntered = yield* Deferred.make<void>();
+        const abandonGate = yield* Deferred.make<void>();
+        const failedOwner = {
+          ...owner,
+          namespace: {
+            ...owner.namespace,
+            stop: Deferred.await(stopGate).pipe(
+              Effect.andThen(
+                Effect.fail(new OrchestratorError({ operation: "stop", message: "stop failed" })),
+              ),
+            ),
+            abandon: Deferred.succeed(abandonEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(abandonGate)),
+              Effect.andThen(owner.namespace.abandon),
+            ),
+          },
+        };
+        const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
+        const stopFiber = yield* Effect.forkScoped(runtime.shutdown(false));
+        // Abandon is requested while the stop is still in flight, never after it has settled:
+        // the one shutdown pipeline (pass 3, A) waits for it, instead of racing its own cleanup.
+        const abandonFiber = yield* Effect.forkScoped(runtime.abandon);
+        yield* Deferred.succeed(stopGate, undefined);
+        expect(Exit.isFailure(yield* Fiber.join(stopFiber).pipe(Effect.exit))).toBe(true);
+        yield* Deferred.await(abandonEntered).pipe(Effect.timeout("2 seconds"));
+        // Admission stays frozen through abandonment's own cleanup, never left reopened by the
+        // failing stop's own recovery that preceded it (F2).
+        expect(yield* owner.getServing, "admission stays frozen while abandonment cleans up").toBe(
+          false,
+        );
+        yield* Deferred.succeed(abandonGate, undefined);
+        yield* Fiber.join(abandonFiber).pipe(Effect.timeout("2 seconds"));
+        yield* Deferred.await(runtime.exit).pipe(Effect.timeout("2 seconds"));
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("reports destroy and fallback stop failures together", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1161,28 +1229,32 @@ const withRunningMail = Effect.fn("Test.withRunningMail")(function* (prefix: str
  * socket that carried it, so a caller can later confirm that same connection's fate.
  */
 const httpRoundTrip = (port: number, agent: Http.Agent) =>
-  Effect.callback<{ readonly status: number; readonly socket: Net.Socket }, HostTestError>(
-    (resume) => {
-      const request = Http.request(
-        { host: "127.0.0.1", port, path: "/", method: "GET", agent },
-        (response) => {
-          // Captured immediately: the agent may detach `response.socket` once the response ends.
-          const socket = response.socket;
-          response.resume();
-          response.once("end", () => {
-            if (socket === null) {
-              resume(Effect.fail(new HostTestError({ message: "Response has no socket" })));
-              return;
-            }
-            resume(Effect.succeed({ status: response.statusCode ?? 0, socket }));
-          });
-        },
-      );
-      request.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
-      request.end();
-      return Effect.sync(() => request.destroy());
-    },
-  );
+  Effect.callback<
+    { readonly status: number; readonly socket: Net.Socket; readonly body: string },
+    HostTestError
+  >((resume) => {
+    const request = Http.request(
+      { host: "127.0.0.1", port, path: "/", method: "GET", agent },
+      (response) => {
+        // Captured immediately: the agent may detach `response.socket` once the response ends.
+        const socket = response.socket;
+        let body = "";
+        response.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        response.once("end", () => {
+          if (socket === null) {
+            resume(Effect.fail(new HostTestError({ message: "Response has no socket" })));
+            return;
+          }
+          resume(Effect.succeed({ status: response.statusCode ?? 0, socket, body }));
+        });
+      },
+    );
+    request.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
+    request.end();
+    return Effect.sync(() => request.destroy());
+  });
 
 /** `true` once a fresh one-shot request to `port` is refused (reset) rather than answered. */
 const isHttpRefused = (port: number) =>
@@ -1255,55 +1327,150 @@ it.live(
   { timeout: 60_000 },
 );
 
-// Drives the deadline with a shortened `Network.ShutdownDrainDeadline` (the internal reference
-// production always defaults to 10 s) rather than `TestClock`: this in-process owner's other
-// timers (lease, idle, cooldown, readiness polling) share the same `Clock` through one layer
-// composition, so virtualizing it for the deadline alone risks silently changing those unrelated
-// subsystems too. The shortened real deadline keeps this test's own timing assertion-free in turn:
-// ordering is observed (still open mid-drain, then cut once stop completes), never timed.
+/**
+ * Drives `network.drain` directly, against a raw backend this test fully controls (not the real
+ * mail service), so a response can be gated open exactly across the drain boundary instead of
+ * merely completing fast. The deadline is an injected event (pass 3, F7): `ShutdownDrainDeadline`
+ * now holds an `Effect<void>`, so the test supplies `Deferred.await(deadline)` and decides
+ * precisely when it fires, with no clock (real or virtual) involved at all.
+ */
 it.live(
-  "cuts a hanging connection at the drain deadline, then stop completes",
+  "drains an in-flight response, refuses new connections, and cuts a hanging one only once the deadline completes (F7)",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { runtime, port } = yield* withRunningMail("stack-host-drain-deadline-");
-        const agent = yield* Effect.acquireRelease(
-          Effect.sync(() => new Http.Agent({ keepAlive: true, maxSockets: 1 })),
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-network-drain-" });
+        const state = yield* stateFor(`${root}/state`);
+        const stackId = "drain-network-test";
+        yield* state.save({
+          id: stackId,
+          runtime: "native" as const,
+          identity: { projectRoot: root, branchContext: "main", stackName: stackId },
+          instances: [],
+          lifetime: "detached" as const,
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        const networkContext = yield* Layer.build(
+          Network.layer({ stackId, runtime: "native" }).pipe(
+            Layer.provide(Layer.succeed(StackNamespace.Service, state)),
+          ),
+        );
+        const network = Context.get(networkContext, Network.Service);
+
+        // A backend this test fully controls: each request is held open until its matching slot
+        // is released, so the first can be proven genuinely in flight across the drain boundary,
+        // and the second deliberately never completes on its own.
+        const slotA = {
+          received: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const slotB = {
+          received: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const slots = [slotA, slotB];
+        const nextSlot = yield* Ref.make(0);
+        const services = yield* Effect.context<never>();
+        const server = Http.createServer((_request, response) => {
+          Effect.runForkWith(services)(
+            Effect.gen(function* () {
+              const index = yield* Ref.getAndUpdate(nextSlot, (value) => value + 1);
+              const slot = slots[index];
+              if (slot === undefined) {
+                response.writeHead(503);
+                response.end();
+                return;
+              }
+              yield* Deferred.succeed(slot.received, undefined);
+              yield* Deferred.await(slot.release);
+              response.writeHead(200, { "content-type": "text/plain" });
+              response.end(`drained-ok-${index}`);
+            }),
+          );
+        });
+        const backendPort = yield* Effect.acquireRelease(
+          Effect.callback<number, never>((resume) => {
+            server.listen(0, "127.0.0.1", () => {
+              const address = server.address();
+              resume(
+                Effect.succeed(address !== null && typeof address === "object" ? address.port : 0),
+              );
+            });
+          }),
+          () =>
+            Effect.callback<void, never>((resume) => {
+              server.close(() => resume(Effect.void));
+            }),
+        );
+        const namespace = yield* network.register({
+          id: "backend",
+          endpoints: {
+            http: {
+              protocol: "http",
+              port: "auto",
+              backend: Effect.succeed({ host: "127.0.0.1", port: backendPort }),
+              enabled: Effect.succeed(true),
+            },
+          },
+        });
+        const bound = yield* namespace.bind;
+        const port = bound.find((endpoint) => endpoint.name === "http")?.port;
+        if (port === undefined) return yield* Effect.die("Missing http endpoint");
+
+        const agentA = yield* Effect.acquireRelease(
+          Effect.sync(() => new Http.Agent({ keepAlive: false })),
           (agent) => Effect.sync(() => agent.destroy()),
         );
-        // Establishes progress on the exact socket under test, not a different one: the listener
-        // has genuinely accepted and answered on it before drain, closing the race a bare
-        // client-side `connect` would otherwise leave against the server's own acceptance.
-        const first = yield* httpRoundTrip(port, agent);
-        expect(first.status, "the listener answers before the hang").toBe(200);
-        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
+        const agentB = yield* Effect.acquireRelease(
+          Effect.sync(() => new Http.Agent({ keepAlive: false })),
+          (agent) => Effect.sync(() => agent.destroy()),
+        );
+        // Both connections are established and in flight before drain starts: a connection made
+        // after accept has already closed would be refused outright, never "hanging".
+        const requestA = yield* Effect.forkScoped(httpRoundTrip(port, agentA));
+        yield* Deferred.await(slotA.received);
+        const requestB = yield* Effect.forkScoped(httpRoundTrip(port, agentB));
+        yield* Deferred.await(slotB.received);
+
+        const deadline = yield* Deferred.make<void>();
+        const drain = yield* Effect.forkScoped(
+          network.drain.pipe(
+            Effect.provideService(Network.ShutdownDrainDeadline, Deferred.await(deadline)),
+          ),
+        );
         yield* waitUntilRefused(port);
-        // A second, real in-flight request on that same connection, started only once drain is
-        // already refusing new ones, proves it keeps flowing mid-drain rather than merely sitting
-        // idle and unnoticed.
-        const second = yield* httpRoundTrip(port, agent);
-        expect(second.socket, "reuses the same established connection").toBe(first.socket);
-        expect(second.status, "a request on it still completes during drain").toBe(200);
+
+        // The in-flight response completes with status 200 and its expected body during drain.
+        yield* Deferred.succeed(slotA.release, undefined);
+        const resultA = yield* Fiber.join(requestA);
+        expect(resultA.status, "the in-flight response completes during drain").toBe(200);
+        expect(resultA.body, "with its expected body").toBe("drained-ok-0");
+
+        // The second connection, deliberately never released, stays open: nothing but the test
+        // itself decides when the deadline elapses.
         expect(
-          second.socket.destroyed,
-          "the established connection survives into the drain window",
-        ).toBe(false);
-        // Deliberately left idle (no further request, the agent never closed) past this point, so
-        // the deadline cut — not a voluntary close — is what ends it.
-        yield* Fiber.join(shutdown).pipe(
+          requestB.pollUnsafe(),
+          "the hanging connection stays open before the deadline completes",
+        ).toBeUndefined();
+
+        yield* Deferred.succeed(deadline, undefined);
+        yield* Fiber.join(drain).pipe(
           Effect.timeoutOrElse({
-            duration: "10 seconds",
+            duration: "5 seconds",
             orElse: () =>
               Effect.fail(
-                new HostTestError({ message: "Stop did not complete after the drain deadline" }),
+                new HostTestError({ message: "Drain did not complete after the deadline" }),
               ),
           }),
         );
-        expect(second.socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
+        const resultB = yield* Fiber.join(requestB).pipe(Effect.exit);
+        expect(
+          Exit.isFailure(resultB),
+          "the hanging connection is cut once the deadline completes",
+        ).toBe(true);
       }),
-    ).pipe(
-      Effect.provideService(Network.ShutdownDrainDeadline, "2 seconds"),
-      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
-    ),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 30_000 },
 );

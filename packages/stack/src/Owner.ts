@@ -1,15 +1,16 @@
 import {
+  Cause,
   Context,
   Crypto,
   Duration,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
   Option,
   Path,
   Ref,
-  Schedule,
   Schema,
   Scope,
   Semaphore,
@@ -65,7 +66,6 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
-import { DockerDatabaseStorageError } from "./storage/DockerDatabaseStorage.ts";
 import * as Claims from "./namespace/Claims.ts";
 import { namespaceError } from "./namespace/Capabilities.ts";
 import { lstatPath } from "./namespace/drivers/FileSystem.ts";
@@ -196,6 +196,8 @@ export interface Interface {
      */
     readonly recoverDraining: Effect.Effect<void>;
   };
+  /** Direct probe of the pinned engine target; always `true` for a native stack (pass 3, B). */
+  readonly engineAvailable: Effect.Effect<boolean>;
   readonly setDraining: (draining: boolean) => Effect.Effect<void>;
   readonly getServing: Effect.Effect<boolean>;
 }
@@ -230,49 +232,38 @@ const rpcError = (operation: string) =>
   Effect.mapError((cause: unknown) => stackError(operation, cause));
 
 /**
- * A container engine confirmed unreachable (F5): the shared cleanup path reports this as a plain
- * `ServiceError` wrapping whatever the failing operation raised (a `ContainerError` from workload
- * removal, or a `DockerDatabaseStorageError` from database volume cleanup, among others), so the
- * daemon's own unreachable-daemon phrasing in the message is the one signal common to all of them.
+ * Retries `operation` with a bounded, doubling backoff until it succeeds or `engineAvailable`
+ * resolves `false` (pass 3, B): engine availability is a direct probe, never a message or cause
+ * classification, so this is the one place every abandonment cleanup stage decides whether a
+ * failure is worth retrying. A `false` probe fails with the operation's own last error; an
+ * interruption or defect is never retried.
  */
-/**
- * A container engine confirmed unreachable (F5), checked as a typed reason through the cause
- * chain rather than by matching message text: a direct `ContainerError` from workload removal, or
- * a `DockerDatabaseStorageError` from database volume cleanup, whose own `reason` field is set
- * once, at the raw engine CLI invocation that is the only place either module can observe it.
- */
-const engineUnreachableCleanup = (error: ServiceError) =>
-  (error.cause instanceof Container.ContainerError &&
-    error.cause.reason === "engine-unavailable") ||
-  (Schema.is(DockerDatabaseStorageError)(error.cause) &&
-    error.cause.reason === "engine-unavailable");
-
-/**
- * Backoff for abandonment cleanup retries: bounded delay, unbounded attempts. Per F6's final
- * decision, cleanup retries until it is confirmed or the engine is confirmed permanently
- * unreachable — never until a fixed time budget runs out while the engine might still recover.
- * Exported so every abandonment cleanup stage shares one retry policy, including `StackHost.ts`'s
- * retained native-command cleanup, which is outside this module's own cleanup paths.
- */
-export const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(5))),
-  ),
-);
+export const retryUntilConfirmed = <A, E>(
+  operation: Effect.Effect<A, E>,
+  engineAvailable: Effect.Effect<boolean>,
+): Effect.Effect<A, E> =>
+  Effect.gen(function* () {
+    let delay = Duration.millis(200);
+    while (true) {
+      const result = yield* Effect.exit(operation);
+      if (Exit.isSuccess(result)) return result.value;
+      const failure = Cause.findErrorOption(result.cause);
+      if (Option.isNone(failure)) return yield* Effect.failCause(result.cause);
+      if (!(yield* engineAvailable)) return yield* Effect.fail(failure.value);
+      yield* Effect.sleep(delay);
+      delay = Duration.min(Duration.times(delay, 2), Duration.seconds(5));
+    }
+  });
 
 /**
  * Cleans up one abandoned instance through the same confirmed, serialized execution path destroy
  * uses (`core.removeData`, under the service's execution lock, retrying only steps a previous
  * attempt didn't finish), but without a `confirm` step: abandonment never touches the registration.
  * Retries transient failures; only a confirmed-unreachable engine is logged and left behind, so a
- * recoverable failure never blocks the owner's exit (F1, F5).
+ * recoverable failure never blocks the owner's exit.
  */
-const cleanupAbandonedInstance = (entry: Entry) =>
-  entry.core.removeData().pipe(
-    Effect.retry({
-      schedule: abandonCleanupSchedule,
-      while: (error) => !engineUnreachableCleanup(error),
-    }),
+const cleanupAbandonedInstance = (entry: Entry, engineAvailable: Effect.Effect<boolean>) =>
+  retryUntilConfirmed(entry.core.removeData(), engineAvailable).pipe(
     Effect.catch((error) =>
       Effect.logWarning(
         `Abandoned stack could not confirm cleanup of ${entry.service} ${entry.id}; leaving it behind`,
@@ -322,8 +313,15 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const crypto = Context.get(services, Crypto.Crypto);
   const path = Context.get(services, Path.Path);
   const fs = Context.get(services, FileSystem.FileSystem);
+  const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
   const network = yield* Network.Service;
   const portReservations = yield* PortReservations.Service;
+  // A native stack has no engine to lose, so every cleanup failure is retried forever; a docker
+  // stack probes the pinned target directly (pass 3, B), never by classifying a failure's cause.
+  const engineAvailable: Effect.Effect<boolean> =
+    options.engineTarget === undefined
+      ? Effect.succeed(true)
+      : Container.probeEngineReachable(spawner, options.engineTarget);
   // Shared per-launch environment-file scratch directory (Container.ts), owned by this stack as a
   // whole rather than any one instance; registration-independent so destroy and abandonment (F7)
   // both reach it without depending on `Registry.remove`, which never runs during abandonment.
@@ -935,22 +933,54 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         Effect.andThen(
           orchestrator.instances.pipe(
             Effect.flatMap((entries) =>
-              Effect.forEach(entries, cleanupAbandonedInstance, {
+              Effect.forEach(entries, (entry) => cleanupAbandonedInstance(entry, engineAvailable), {
                 concurrency: "unbounded",
                 discard: true,
               }),
             ),
           ),
         ),
-        // F7: retried until confirmed, like every other abandonment cleanup stage; its own
-        // `force: true` only tolerates an already-gone directory, never a transient failure.
-        // Port reservations are never released here (simplification over F2/F7): a stale
+        // Registration-independent confirming sweep (pass 3, C): every container carrying this
+        // stack's identity label, found through the pinned engine directly rather than through
+        // any in-memory helper registry's own bookkeeping — covers a shared storage helper the
+        // per-instance cleanup above never removes on its own.
+        Effect.andThen(
+          options.engineTarget === undefined
+            ? Effect.void
+            : retryUntilConfirmed(
+                Container.removeStackContainers({
+                  target: options.engineTarget,
+                  stackId,
+                }).pipe(
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  Effect.mapError(serviceError("cleanup")),
+                  Effect.filterOrFail(
+                    (remaining) => remaining.length === 0,
+                    (remaining) =>
+                      new ServiceError({
+                        operation: "cleanup",
+                        message: `Containers remain: ${remaining.join(", ")}`,
+                      }),
+                  ),
+                ),
+                engineAvailable,
+              ).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "Abandoned stack could not confirm every container removed; leaving it behind",
+                    cause,
+                  ),
+                ),
+              ),
+        ),
+        // Filesystem-only, so always retried to confirmation regardless of engine availability
+        // (F7): its own `force: true` tolerates an already-gone directory, never a transient
+        // failure. Port reservations are never released here (simplification over F2): a stale
         // reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
         // confirmed gone — exactly the abandonment trigger — so abandonment never touches
         // `Ports.ts`'s registry at all, even once the state root itself no longer exists.
         Effect.andThen(
-          removeContainerEnvRoot.pipe(
-            Effect.retry(abandonCleanupSchedule),
+          retryUntilConfirmed(removeContainerEnvRoot, Effect.succeed(true)).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Abandoned stack could not remove its container-env root", cause),
             ),
@@ -961,6 +991,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
       recoverDraining: network.recoverDrain,
     },
+    engineAvailable,
     setDraining: (value) => Ref.set(draining, value),
     getServing: Ref.get(draining).pipe(Effect.map((isDraining) => !isDraining)),
   } satisfies Interface;
