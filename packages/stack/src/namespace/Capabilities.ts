@@ -37,3 +37,14 @@ export const transientRetrySchedule = Schedule.exponential("10 millis", 2).pipe(
   ),
   Schedule.upTo({ times: 12 }),
 );
+
+/** Retries a read against `transientRetrySchedule` while it hits a sharing violation on `platform`. */
+export const retryTransientRead =
+  (platform?: NodeJS.Platform) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.retry({
+        schedule: transientRetrySchedule,
+        while: isSharingViolation(platform ?? process.platform),
+      }),
+    );

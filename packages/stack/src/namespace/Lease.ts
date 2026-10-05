@@ -1,11 +1,6 @@
-import { Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope, Semaphore } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope } from "effect";
 import type { DatabaseSync } from "node:sqlite";
-import {
-  isSharingViolation,
-  namespaceError,
-  transientRetrySchedule,
-  type NamespaceError,
-} from "./Capabilities.ts";
+import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, errcode, isBusy, isMissing, takeLock } from "./drivers/Sqlite.ts";
@@ -58,6 +53,9 @@ export interface Interface {
   readonly ownerLog: (id: string) => string;
 }
 
+export const OWNER_FILE = "owner.json";
+export const OWNER_LOG_FILE = "owner.log";
+
 const checkId = (id: string): Effect.Effect<void, NamespaceError> =>
   /^[a-zA-Z0-9_-]+$/u.test(id)
     ? Effect.void
@@ -80,11 +78,9 @@ export const make = (
     const path = yield* Path.Path;
     const stackRoot = (id: string) => path.join(options.root, id);
     const leasePath = (id: string) => path.join(stackRoot(id), "owner.lock");
-    const ownerPath = (id: string) => path.join(stackRoot(id), "owner.json");
-    const ownerLog = (id: string) => path.join(stackRoot(id), "owner.log");
-    const sharingViolation = isSharingViolation(options.platform ?? process.platform);
-    const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(Effect.retry({ schedule: transientRetrySchedule, while: sharingViolation }));
+    const ownerPath = (id: string) => path.join(stackRoot(id), OWNER_FILE);
+    const ownerLog = (id: string) => path.join(stackRoot(id), OWNER_LOG_FILE);
+    const retryRead = retryTransientRead(options.platform);
 
     /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
     const isMoved = (error: NamespaceError) =>
@@ -110,10 +106,6 @@ export const make = (
       const scope = yield* Scope.Scope;
       let held = false;
       let unlinked = false;
-      let closed = false;
-      // Shared by the mutations and the finalizer below, so a publish or retract already in
-      // flight finishes before the finalizer marks the handle closed and releases the connection.
-      const gate = yield* Semaphore.make(1);
       yield* Effect.addFinalizer(() =>
         held
           ? (unlinked ? Effect.void : removeLeaseFile(id)).pipe(
@@ -178,17 +170,6 @@ export const make = (
                 attemptScope,
                 removeLeaseFile(id).pipe(Effect.map((removed) => (unlinked = removed))),
               );
-              // Registered last so it runs first: taking the gate here waits for a publish or
-              // retract already in flight, so no mutation can resume after the connection below
-              // (registered earlier, so it releases after this) is gone.
-              yield* Scope.addFinalizer(
-                attemptScope,
-                gate.withPermit(
-                  Effect.sync(() => {
-                    closed = true;
-                  }),
-                ),
-              );
               return { ownerLog: ownerLog(id) };
             }
             yield* Scope.close(attemptScope, Exit.void);
@@ -210,26 +191,6 @@ export const make = (
             }),
         ),
       );
-      // A handle plucked out of its scope (for example, stored past the scope that acquired it)
-      // must not mutate another holder's live record once that scope has closed; checking under
-      // the same gate the finalizer takes rules out a mutation that is already past this check
-      // resuming after the finalizer has closed the handle and released the connection. Waiting
-      // for the gate stays interruptible, but once acquired, `effect` runs uninterruptibly: a
-      // filesystem callback that is already in flight (for example `fs.rm`'s) has no cancellation
-      // of its own, so interrupting mid-flight would free the gate while that work is still
-      // pending, letting a later holder's record publish before this removal finally lands on it.
-      const guarded = <A, R>(effect: Effect.Effect<A, NamespaceError, R>) =>
-        gate.withPermit(
-          Effect.uninterruptible(
-            Effect.suspend(() =>
-              closed
-                ? Effect.fail(
-                    namespaceError("lease", `The lease handle for stack ${id} has already closed`),
-                  )
-                : effect,
-            ),
-          ),
-        );
       return {
         stackId: id,
         ownerLog: outcome.ownerLog,
@@ -240,19 +201,16 @@ export const make = (
           // The lease already guarantees a single writer, so an atomic rename over any existing
           // record (a live one, or a crashed holder's stale one) is enough: a reader never sees a
           // gap where the file briefly doesn't exist, unlike a prior remove followed by a publish.
-          yield* guarded(
-            Publication.publish(fs, path, {
-              target: ownerPath(id),
-              content: serialized,
-              platform: options.platform,
-            }),
-          );
+          yield* Publication.publish(fs, path, {
+            target: ownerPath(id),
+            content: serialized,
+            platform: options.platform,
+          });
         }),
-        retractHolder: guarded(
-          fs
-            .remove(ownerPath(id), { force: true })
-            .pipe(Effect.mapError((cause) => namespaceError("remove", cause))),
-        ).pipe(Effect.withSpan("Namespace.Lease.retractHolder")),
+        retractHolder: fs.remove(ownerPath(id), { force: true }).pipe(
+          Effect.mapError((cause) => namespaceError("remove", cause)),
+          Effect.withSpan("Namespace.Lease.retractHolder"),
+        ),
       } satisfies LeaseHandle;
     });
 
@@ -277,7 +235,7 @@ export const make = (
       const target = ownerPath(id);
       // The holder may retract its record at any moment, so a missing record is not an error.
       const text = yield* fs.readFileString(target).pipe(
-        retryTransientRead,
+        retryRead,
         Effect.map(Option.some),
         Effect.catchIf(
           (error) => error.reason._tag === "NotFound",

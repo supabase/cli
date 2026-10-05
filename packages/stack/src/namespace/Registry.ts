@@ -1,13 +1,9 @@
 import { Effect, Exit, FileSystem, Path, Schedule, Schema, Scope } from "effect";
 import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
-import {
-  isSharingViolation,
-  namespaceError,
-  transientRetrySchedule,
-  type NamespaceError,
-} from "./Capabilities.ts";
+import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
 import { CLAIMS_FILE } from "./Claims.ts";
+import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
@@ -136,18 +132,17 @@ export const make = (
 
     const stackRoot = (id: string) => path.join(root, id);
     const statePath = (id: string) => path.join(stackRoot(id), "state.json");
-    const sharingViolation = isSharingViolation(options.platform ?? process.platform);
-    const retryTransientRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    const retryRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        Effect.retry({ schedule: transientRetrySchedule, while: sharingViolation }),
+        retryTransientRead(options.platform),
         Effect.mapError((cause) => namespaceError("read", cause)),
       );
     const read = Effect.fn("Namespace.Registry.read")(function* (id: string) {
       yield* checkId(id);
       const target = statePath(id);
-      const exists = yield* fs.exists(target).pipe(retryTransientRead);
+      const exists = yield* fs.exists(target).pipe(retryRead);
       if (!exists) return undefined;
-      const text = yield* fs.readFileString(target).pipe(retryTransientRead);
+      const text = yield* fs.readFileString(target).pipe(retryRead);
       const state = yield* decodeState(text, id, target);
       if (state.id !== id)
         return yield* namespaceError("identity", "State document identity does not match its path");
@@ -192,8 +187,8 @@ export const make = (
       yield* checkId(id);
       for (const file of [
         statePath(id),
-        path.join(stackRoot(id), "owner.json"),
-        path.join(stackRoot(id), "owner.log"),
+        path.join(stackRoot(id), OWNER_FILE),
+        path.join(stackRoot(id), OWNER_LOG_FILE),
         path.join(stackRoot(id), CLAIMS_FILE),
       ])
         yield* fs
