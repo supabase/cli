@@ -12,9 +12,11 @@ with either selector. Explicit legacy `-o/--output` is rejected; use
 `--output-format` instead.
 
 Discovery probes saved owners before shutdown. If no owner is reachable, the
-command reports `No owner is reachable; workload state is unavailable.` It
-neither starts an owner nor claims workloads have stopped. If an owner disappears
-after that preflight, the shutdown error remains a failure.
+command does not start one; it reclaims the stack's leftover workloads under the
+stack lease and reports `Stack <id> was not running; leftover resources were reclaimed.`
+It fails when another process holds the lease or the cleanup fails, so a stack
+whose owner exited after a failed stop can be stopped again. If an owner
+disappears after discovery, the shutdown error remains a failure.
 
 Before any service stops, the owner stops accepting new connections on every
 stack listener and lets connections already established keep flowing for up to
@@ -22,12 +24,12 @@ stack listener and lets connections already established keep flowing for up to
 issued can still complete, at the cost of the command waiting up to that long
 longer for shutdown to finish.
 
-Text confirms each successful shutdown and identifies each unavailable owner.
-JSON and stream-json success data contain `stopped` and `unavailable` ID arrays.
+Text confirms each successful shutdown and identifies each stack that had no owner.
+JSON and stream-json success data contain `stopped` and `notRunning` ID arrays.
 A missing default selection reports `found: false`; an unknown explicit name or
 ID fails. A single selection reads only the selected stack's state document; an
 unreadable document fails the selection instead of being reported as missing.
-`--all` attempts every selected reachable owner and reports failures with their
+`--all` attempts every selected stack and reports failures with their
 IDs. It skips state entries that cannot be read or decoded with a warning on
 stderr identifying each stack; only a failure to read the stacks directory
 itself fails discovery.
@@ -45,8 +47,8 @@ same way. No caller-owned upload files are removed.
 
 ## Exit codes and telemetry
 
-Exit 0 on successful shutdown, absent default selection, or unavailable owner;
-1 for invalid flags, selection/registry failure, or shutdown failure; 130 on
+Exit 0 on successful shutdown or reclaim, or absent default selection;
+1 for invalid flags, selection/registry failure, or shutdown or reclaim failure; 130 on
 interruption. The command wrapper retains standard command telemetry, with no
 custom events. Telemetry flushes on success and failure to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

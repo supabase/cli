@@ -1,12 +1,13 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Ref } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Ref, Scope } from "effect";
 import { StackError } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import * as StackNamespace from "../../../../../../../packages/stack/src/StackNamespace.ts";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackStop } from "./stop.handler.ts";
 
@@ -56,24 +57,28 @@ describe("stack stop", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("stop all preserves an offline registry without claiming stopped workloads", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      yield* f.api.create({
-        ...f.locations,
-        projectRoot: f.root,
-        name: "second",
-        runtime: "native",
-      });
-      yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
-      yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
-      expect(f.output.stdoutText.match(/workload state is unavailable/g)).toHaveLength(4);
-      expect(f.output.stdoutText).not.toContain("stopped.");
-      expect((yield* f.api.discover(f.locations)).every(({ host }) => host === undefined)).toBe(
-        true,
-      );
-      expect(f.telemetry.flushed).toBe(true);
-    }).pipe(Effect.provide(live)),
+  it.live(
+    "stop all reclaims ownerless stacks and keeps their definitions without claiming a stop",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
+        expect(
+          f.output.stdoutText.match(/was not running; leftover resources were reclaimed/g),
+        ).toHaveLength(4);
+        expect(f.output.stdoutText).not.toContain("stopped.");
+        expect((yield* f.api.discover(f.locations)).every(({ host }) => host === undefined)).toBe(
+          true,
+        );
+        expect(f.telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(live)),
   );
 
   it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
@@ -92,7 +97,7 @@ describe("stack stop", () => {
           fs.chmod(locked, 0o700).pipe(Effect.orDie),
         );
         yield* stackStop({ ...flags(), all: Option.some(true) }).pipe(Effect.provide(f.layer));
-        expect(f.output.stdoutText.match(/workload state is unavailable/g)).toHaveLength(1);
+        expect(f.output.stdoutText.match(/was not running/g)).toHaveLength(1);
         expect(f.output.stderrText).toContain("Warning: skipping invalid stack broken");
         expect(f.output.stderrText).toContain("Warning: skipping invalid stack locked");
         expect(f.output.stdoutText).not.toContain("Warning");
@@ -139,6 +144,34 @@ describe("stack stop", () => {
       expect(error.reason).toBe("unknown");
       expect(error.detail).toContain(`${f.stack.id}: owner disconnected`);
       expect(f.output.stdoutText).toBe("");
+      expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("fails when an ownerless stack's lease is held by another process", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const state = yield* StackNamespace.Service.pipe(
+        Effect.provide(StackNamespace.layer({ root: f.locations.stateRoot })),
+      );
+      const holder = yield* Scope.make();
+      const lease = yield* state.acquireLease(f.stack.id).pipe(Scope.provide(holder));
+      yield* lease.publishHolder({
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const error = yield* stackStop(flags(f.stack.id)).pipe(
+        Effect.provide(f.layer),
+        Effect.flip,
+        Effect.ensuring(Scope.close(holder, Exit.void)),
+      );
+      expect(error.reason).toBe("unknown");
+      expect(error.detail).toContain(`${f.stack.id}: Another process holds the stack lease`);
+      expect(f.output.stdoutText).toBe("");
+      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
+        f.stack.id,
+      ]);
       expect(f.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(live)),
   );

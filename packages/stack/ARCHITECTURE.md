@@ -523,7 +523,8 @@ During Draining:
 
 **Connection drain.** Stop and destroy share one drain step, run before any service stops: accept
 closes on every stack listener, public and internal dependency traffic alike (they are the same
-listeners), so no new connection is admitted. Drain then waits, for at most 10 seconds, only for
+listeners), so no new connection is admitted, and a request or upgrade arriving on an established HTTP
+connection is refused (503 with `Connection: close`, or a destroyed socket). Drain then waits, for at most 10 seconds, only for
 observable work: HTTP requests in flight and upgraded sockets such as WebSockets. TCP connections
 never count, so an idle pooled connection (PostgREST's database pool, for example) cannot delay
 shutdown. Services then stop, and listener scopes close afterward through the ordinary

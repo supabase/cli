@@ -438,6 +438,12 @@ export const makeHttpProxy = (options: {
       if (!accepting) server.closeIdleConnections();
     };
     const server = createServer((request, response) => {
+      if (!accepting) {
+        response.statusCode = 503;
+        response.setHeader("Connection", "close");
+        response.end("Service Unavailable");
+        return;
+      }
       Effect.runSyncWith(services)(
         SubscriptionRef.update(outstandingConnections, (count) => count + 1),
       );
@@ -496,6 +502,10 @@ export const makeHttpProxy = (options: {
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());
+      if (!accepting) {
+        socket.destroy();
+        return;
+      }
       Effect.runSyncWith(services)(
         SubscriptionRef.update(outstandingConnections, (count) => count + 1),
       );

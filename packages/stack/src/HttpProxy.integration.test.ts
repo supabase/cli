@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, SubscriptionRef } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -1239,6 +1239,63 @@ it.live(
 
         expect(yield* connectionRefused(proxy.port, proxy.host)).toBe(true);
         yield* Fiber.join(closed);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "answers a request submitted on an established connection after stopAccepting with 503 while the in-flight response completes",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let received = 0;
+        const backend = createServer((_incoming, outgoing) => {
+          received += 1;
+          outgoing.writeHead(200, { "content-length": "9" });
+          // Held open: the test finishes this response after the late request has been sent.
+        });
+        const backendAddress = yield* listen(backend);
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([
+          { id: "api", prefix: "/", target: Effect.succeed(backendAddress) },
+        ]);
+
+        const heldResponseFiber = yield* Effect.callback<ServerResponse, HttpProxyTestError>(
+          (resume) => {
+            const onRequest = (_incoming: unknown, outgoing: ServerResponse) =>
+              resume(Effect.succeed(outgoing));
+            backend.once("request", onRequest);
+            return Effect.sync(() => backend.off("request", onRequest));
+          },
+        ).pipe(Effect.forkScoped);
+        const client = yield* connectRaw(proxy.port, proxy.host);
+        const closed = yield* Effect.callback<string, never>((resume) => {
+          const chunks: Array<Buffer> = [];
+          client.on("data", (chunk: Buffer) => chunks.push(chunk));
+          client.once("close", () => resume(Effect.succeed(Buffer.concat(chunks).toString())));
+          return Effect.void;
+        }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
+        client.write("GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+        const heldResponse = yield* Fiber.join(heldResponseFiber);
+        expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(1);
+
+        yield* proxy.stopAccepting;
+        client.write("GET /late HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+        heldResponse.end("slow-body");
+
+        const transcript = yield* Fiber.join(closed);
+        const inFlight = transcript.indexOf("HTTP/1.1 200");
+        const late = transcript.indexOf("HTTP/1.1 503");
+        expect(inFlight).toBeGreaterThanOrEqual(0);
+        expect(late).toBeGreaterThan(inFlight);
+        expect(transcript.slice(inFlight, late)).toContain("slow-body");
+        expect(transcript.slice(late).toLowerCase()).toContain("connection: close");
+        expect(received).toBe(1);
+        yield* SubscriptionRef.changes(proxy.outstandingConnections).pipe(
+          Stream.filter((count) => count === 0),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

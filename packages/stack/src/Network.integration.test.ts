@@ -693,9 +693,16 @@ it.live("drains past an idle TCP connection without ever reaching the deadline",
       });
       yield* service.bind;
       const address = yield* service.address("sql", "host");
+      // A keep-alive round trip through the TCP endpoint proves the listener accepted and tracks
+      // this connection; the socket then sits idle through drain.
       const socket = yield* Effect.callback<Net.Socket, FixtureError>((resume) => {
         const connection = Net.createConnection({ host: address.host, port: address.port });
-        connection.once("connect", () => resume(Effect.succeed(connection)));
+        connection.once("connect", () =>
+          connection.write(
+            `GET /hello HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\nConnection: keep-alive\r\n\r\n`,
+          ),
+        );
+        connection.once("data", () => resume(Effect.succeed(connection)));
         connection.on("error", (cause) =>
           resume(Effect.fail(new FixtureError({ message: cause.message }))),
         );

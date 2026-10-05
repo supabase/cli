@@ -299,7 +299,7 @@ retained in stack state, so starting without `--exclude` restores the project's 
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
 directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
-success or unavailable summary is emitted when a stop fails.
+success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.
