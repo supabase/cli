@@ -233,7 +233,6 @@ const makeSpec = (
 
 export const makeRecipe = Effect.fn("Functions.makeRecipe")(
   (
-    creation: Creation,
     options: CatalogOptions,
     deps: ProcessDependencies,
   ): Effect.Effect<ProcessRecipeResult<Creation>, CatalogError> =>
@@ -269,7 +268,6 @@ export const makeRecipe = Effect.fn("Functions.makeRecipe")(
         ),
       );
       return yield* makeProcessRecipe(
-        creation,
         options,
         deps,
         makeSpec(functionsRoot, bootstrap, deps.path, deps.fs),

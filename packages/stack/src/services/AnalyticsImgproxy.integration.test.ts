@@ -4,7 +4,7 @@ import { Effect, Exit, Fiber, FileSystem, Layer, Redacted, Scope } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeService, type ServiceInstance } from "../Service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
+import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 
 const options = (root: string) => ({
@@ -103,65 +103,6 @@ describe("service catalog", () => {
             ),
           );
           expect(analyticsResponse.status).toBe(200);
-          yield* analytics.stop;
-        }),
-      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-    { timeout: 120_000 },
-  );
-
-  it.live(
-    "serves Vector against the owned Analytics endpoint",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const client = yield* HttpClient.HttpClient;
-          const analyticsRecipe = yield* makeServiceRecipe(
-            {
-              service: "analytics",
-              config: { databaseUrl, backend: "postgres", apiKey: "catalog-analytics" },
-            },
-            dockerOptions(root),
-            Effect.succeed([]),
-          );
-          const analytics = yield* makeService(analyticsRecipe.definition, {
-            id: "analytics",
-            config: analyticsRecipe.creation,
-          });
-          yield* analytics.start;
-          yield* analytics.ready;
-          const analyticsRelay = yield* makeDockerHttpRelay(analyticsRecipe.endpoint("http"));
-
-          const vectorRecipe = yield* makeServiceRecipe(
-            {
-              service: "vector",
-              config: {
-                analyticsUrl: `http://${analyticsRelay.host}:${analyticsRelay.port}`,
-                apiKey: "catalog-analytics",
-                configPath: `${root}/vector.yaml`,
-              },
-            },
-            dockerOptions(root),
-            Effect.succeed([]),
-          );
-          yield* fs.writeFileString(
-            `${root}/vector.yaml`,
-            "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
-              "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
-          );
-          const vector = yield* makeService(vectorRecipe.definition, {
-            id: "vector",
-            config: vectorRecipe.creation,
-          });
-          yield* vector.start;
-          yield* vector.ready;
-          const vectorEndpoint = yield* vectorRecipe.endpoint("http");
-          const vectorResponse = yield* client.execute(
-            HttpClientRequest.get(`http://${vectorEndpoint.host}:${vectorEndpoint.port}/health`),
-          );
-          expect(vectorResponse.status).toBe(200);
-
-          yield* vector.stop;
           yield* analytics.stop;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

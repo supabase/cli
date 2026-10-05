@@ -343,8 +343,8 @@ importers:
         specifier: 'catalog:'
         version: 2.112.4
       '@supabase/typegen':
-        specifier: 0.2.1
-        version: 0.2.1(oxfmt@0.66.0)
+        specifier: 0.2.2
+        version: 0.2.2(oxfmt@0.66.0)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -718,11 +718,11 @@ packages:
       zod:
         optional: true
 
-  '@ark/schema@0.56.2':
-    resolution: {integrity: sha512-Qx4D2JFbBWpntiHZaTv7bGG4H/M2rigiknezKg/WVyDSaLdE4YCcWAOoFB7pjjDqHbbV2OqRfntm1nnXvwMexg==}
+  '@ark/schema@0.56.4':
+    resolution: {integrity: sha512-nd4OqaWdKZJeGF5zNmZysDQO7NyyJ1ycl4S7i16Hj1VxqL+x72Z66lOn7ErpsoMUZtCtslAMHMjqJhuQSxciyw==}
 
-  '@ark/util@0.56.2':
-    resolution: {integrity: sha512-9kU2sUE38FZEGG7l3hamYMBieLYEJh2L1mrYD2eXpT+78EnQSV1bhjxJhnxGBMSTbtwpBSDNSK+K60WvaI/DTQ==}
+  '@ark/util@0.56.4':
+    resolution: {integrity: sha512-KKqwGSia44cvuuDY70jGfbiUdG2E8F2cM4npdqvJ22S5a0LknlwG6nIrfQG1nF8fzxpzP30098wp0a8ASs0prQ==}
 
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
@@ -2909,8 +2909,8 @@ packages:
     resolution: {integrity: sha512-uaubtPSeg2TR4wrtfQoQWgkTAe+a0qWX2KhmwvTfNl5mGN9+U7owiJt6abk3o/V6O899PSRD1yzxs5RlF4xTug==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/postgrest-typegen@0.3.1':
-    resolution: {integrity: sha512-FxgP+13VCH0ho3LKAhFHA6+vPk3Rbw54eZmGcDbFUcFzhjigSp8HBrgMJHVcNwjRrHpmItL0SvXAeAkOYxO7hQ==}
+  '@supabase/postgrest-typegen@0.4.0':
+    resolution: {integrity: sha512-WxQ+/LWQYhAHADiSHVhxHghcc0w6U8B6eQ0WTE0CSkNsfqpoX3RGa9odmL/3l/oGpqcy51ajQOK5CKv9mNBpZA==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       oxfmt: 0.66.0
@@ -2935,8 +2935,8 @@ packages:
       '@opentelemetry/api':
         optional: true
 
-  '@supabase/typegen@0.2.1':
-    resolution: {integrity: sha512-7M86EUD/zp9e3arbcBwXAPlUYowKEfhXXx5lgizjAqXzJeN4LZX8jeN8v+EYBWn3c8O1xXpl+HVG08V1MFLflQ==}
+  '@supabase/typegen@0.2.2':
+    resolution: {integrity: sha512-aFz0tBMbwHNluW0LHFwdPCiKDEjH0ZSUBZp4C4k4CuPz18BDmxjId6OWP+mGGByqm1JXl3dTckbfDc8iADi/aA==}
     engines: {node: '>=22.12.0'}
     peerDependencies:
       oxfmt: 0.66.0
@@ -3441,11 +3441,11 @@ packages:
     resolution: {integrity: sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==}
     engines: {node: '>=10'}
 
-  arkregex@0.0.8:
-    resolution: {integrity: sha512-PJcx6G1kQTgLKPUbeYlYecDRaKq15AMSGVajlKFYWlPeJRQL+j3dKE6tyMs40HZ99djS1l9Vhl3ezAHy9JBIqQ==}
+  arkregex@0.0.10:
+    resolution: {integrity: sha512-+iDWBYBjH8w7wqEv8VY4loBwRldFxX84KNwKbobH3FJPay/18XI9sTesmXYpKyIrgbC5z/s16+vSJYHCC9FEvQ==}
 
-  arktype@2.2.3:
-    resolution: {integrity: sha512-7W+0RLTUNJiBFIIZXwOQxSR8Z273IAd6IvqBeG9+gHnQKFsIx2C0iOtGTmMrPnlX4qLXyc5+ll7A0BIj9WrbTg==}
+  arktype@2.2.5:
+    resolution: {integrity: sha512-c9oqY1eBab2LceqvpWX50xae2HB8P/nJPxRhuhPVf5lEDi3WQpf7WQflJFMsyCiA3NGh6zENOlse30gWBzlwDg==}
 
   array-flatten@1.1.1:
     resolution: {integrity: sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==}
@@ -6903,11 +6903,11 @@ snapshots:
     optionalDependencies:
       zod: 4.5.4
 
-  '@ark/schema@0.56.2':
+  '@ark/schema@0.56.4':
     dependencies:
-      '@ark/util': 0.56.2
+      '@ark/util': 0.56.4
 
-  '@ark/util@0.56.2': {}
+  '@ark/util@0.56.4': {}
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -8694,9 +8694,9 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/postgrest-typegen@0.3.1(oxfmt@0.66.0)':
+  '@supabase/postgrest-typegen@0.4.0(oxfmt@0.66.0)':
     dependencies:
-      arktype: 2.2.3
+      arktype: 2.2.5
     optionalDependencies:
       oxfmt: 0.66.0
 
@@ -8718,9 +8718,9 @@ snapshots:
       '@supabase/realtime-js': 2.112.4
       '@supabase/storage-js': 2.112.4
 
-  '@supabase/typegen@0.2.1(oxfmt@0.66.0)':
+  '@supabase/typegen@0.2.2(oxfmt@0.66.0)':
     dependencies:
-      '@supabase/postgrest-typegen': 0.3.1(oxfmt@0.66.0)
+      '@supabase/postgrest-typegen': 0.4.0(oxfmt@0.66.0)
     optionalDependencies:
       oxfmt: 0.66.0
 
@@ -9196,15 +9196,15 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  arkregex@0.0.8:
+  arkregex@0.0.10:
     dependencies:
-      '@ark/util': 0.56.2
+      '@ark/util': 0.56.4
 
-  arktype@2.2.3:
+  arktype@2.2.5:
     dependencies:
-      '@ark/schema': 0.56.2
-      '@ark/util': 0.56.2
-      arkregex: 0.0.8
+      '@ark/schema': 0.56.4
+      '@ark/util': 0.56.4
+      arkregex: 0.0.10
 
   array-flatten@1.1.1: {}
 

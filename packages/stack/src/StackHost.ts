@@ -437,6 +437,15 @@ export const runStackHost = Effect.fn("StackHost.run")(
               ),
             ),
           );
+          // After the sweep, so no leftover Vector container still mounts the files it removes.
+          // The loaded state already omits Vector, so a failed migration waits for a later start.
+          yield* state
+            .migrate(id)
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(`Unable to migrate the saved state of stack ${id}`, error),
+              ),
+            );
           const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(
             Layer.merge(

@@ -66,7 +66,10 @@ disables formatting without disabling safe compaction.
 
 ## Docker
 
-- Edge-runtime container (migra engine only).
+- Edge-runtime container (migra engine only). It mounts the `supabase_edge_runtime_<project_id>`
+  Deno-cache volume, first created by `docker volume create` with the `com.supabase.cli.project`/
+  `com.docker.compose.project` labels so `stop --no-backup` removes it (skipped under Bitbucket
+  Pipelines, which drops the mount).
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource` in
   `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Torn down with

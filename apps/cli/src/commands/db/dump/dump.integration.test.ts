@@ -124,7 +124,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       registered: true,
     }),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () =>
       Effect.succeed({ databaseUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres" }),
     saveSnapshot: () => Effect.die("unused"),

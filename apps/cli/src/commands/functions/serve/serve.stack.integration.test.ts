@@ -16,6 +16,7 @@ import {
 } from "effect";
 import {
   StackError,
+  type LogRecord,
   type Observation,
   type ServiceCreation,
   type ServiceCreationInput,
@@ -117,6 +118,7 @@ const fixture = (
     readonly savedGotrueJwtKeys?: string;
     readonly savedJwks?: string;
     readonly savedRemoteJwks?: string;
+    readonly functionsLogs?: FunctionsInstance["readLogs"];
     readonly restartGate?: {
       readonly entered: Deferred.Deferred<void>;
       readonly release: Deferred.Deferred<void>;
@@ -187,7 +189,7 @@ const fixture = (
       }),
       prepare: Effect.void,
       followStatus: Stream.never,
-      logs: Stream.never,
+      readLogs: () => Stream.never,
     };
     const database: DatabaseInstance = {
       id: "database",
@@ -205,7 +207,7 @@ const fixture = (
       saveSnapshot: () => Effect.die("unused"),
       restoreSnapshot: () => Effect.die("unused"),
       followStatus: Stream.never,
-      logs: Stream.never,
+      readLogs: () => Stream.never,
     };
     const functions: FunctionsInstance = {
       id: "functions",
@@ -244,7 +246,7 @@ const fixture = (
       }),
       prepare: Effect.void,
       followStatus: Stream.never,
-      logs: Stream.never,
+      readLogs: options.functionsLogs ?? (() => Stream.never),
     };
     const stack = {
       id: "a".repeat(64),
@@ -506,6 +508,47 @@ describe("experimental Stack Functions serve", () => {
       yield* Deferred.succeed(state.signal, undefined);
       yield* Fiber.join(run);
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("forwards Functions output written since serve started and reports lost output", () =>
+    Effect.gen(function* () {
+      const drained = yield* Deferred.make<void>();
+      const records: ReadonlyArray<LogRecord> = [
+        { kind: "stdout", timestamp: "2000-01-01T00:00:00.000Z", launchId: 1, text: "old" },
+        { kind: "launch", timestamp: "2999-01-01T00:00:00.000Z", launchId: 2 },
+        { kind: "stdout", timestamp: "2999-01-01T00:00:00.001Z", launchId: 2, text: "hello" },
+        { kind: "stderr", timestamp: "2999-01-01T00:00:00.002Z", launchId: 2, text: "oops" },
+        { kind: "lost", timestamp: "2999-01-01T00:00:00.003Z", stream: "stdout", count: 2 },
+      ];
+      // Honors `since` like the owner, so replaying earlier launches would surface "old".
+      const state = yield* fixture({
+        functionsLogs: (options) =>
+          Stream.fromIterable(
+            records.filter(
+              ({ timestamp }) => options?.since === undefined || timestamp >= options.since,
+            ),
+          ).pipe(
+            Stream.concat(
+              Stream.fromEffect(Deferred.succeed(drained, undefined)).pipe(Stream.drain),
+            ),
+            Stream.concat(Stream.never),
+          ),
+      });
+      const run = yield* functionsServeStack(flags()).pipe(
+        Effect.provide(state.layer),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(drained);
+      yield* Deferred.succeed(state.signal, undefined);
+      yield* Fiber.join(run);
+
+      const forwarded = state.output.rawChunks.filter(({ text }) => !text.startsWith("Serving"));
+      expect(forwarded).toEqual([
+        { text: "hello\n", stream: "stdout" },
+        { text: "oops\n", stream: "stderr" },
+        { text: "--- 2 stdout chunks lost ---\n", stream: "stderr" },
+      ]);
+    }),
   );
 
   it.live("restores an overridden composed Functions config on SIGINT", () =>
