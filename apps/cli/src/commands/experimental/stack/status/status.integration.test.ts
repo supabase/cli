@@ -137,7 +137,7 @@ const makeService = (input: {
       : Effect.succeed(input.observation);
   }),
   followStatus: Stream.empty,
-  logs: Stream.empty,
+  readLogs: () => Stream.empty,
   credentials: () =>
     input.rejectCredentials
       ? Effect.die("credentials must not run")

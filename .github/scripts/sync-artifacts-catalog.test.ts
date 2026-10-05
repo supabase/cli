@@ -1506,35 +1506,4 @@ describe("against the real catalog", () => {
     expect(refreshed.source).toContain(second["darwin-arm64"].manifest);
     expect(refreshed.source).toContain(`upstreamImage: "supabase/gotrue:${pinnedVersion}"`);
   });
-
-  test("the OrioleDB line and stock 17 update independently", async () => {
-    const catalog = await Bun.file(CATALOG_PATH).text();
-    expect(
-      planSlimUpdates(catalog, "postgres", [
-        "postgres-17.11.0.002-r0",
-        "postgres-17.11.0.003-r0",
-        "postgres-17.11.0.002-orioledb-r0",
-        "postgres-17.11.0.002-orioledb-r1",
-      ]).updates,
-    ).toEqual([
-      {
-        kind: "upgrade",
-        line: "17",
-        branch: "slim-bump/postgres-17",
-        title: "chore(stack): bump postgres to 17.11.0.003-r0",
-        fromRelease: "17.11.0.002-r0",
-        toUpstream: "17.11.0.003",
-        toRelease: "17.11.0.003-r0",
-      },
-      {
-        kind: "hotfix",
-        line: "17-orioledb",
-        branch: "slim-hotfix/postgres-17-orioledb",
-        title: "chore(stack): pin postgres 17.11.0.002-orioledb-r1",
-        fromRelease: "17.11.0.002-orioledb-r0",
-        toUpstream: "17.11.0.002-orioledb",
-        toRelease: "17.11.0.002-orioledb-r1",
-      },
-    ]);
-  });
 });

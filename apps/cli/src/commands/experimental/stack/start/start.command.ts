@@ -19,7 +19,7 @@ const config = {
   exclude: excludeFlag,
   stack: Flag.string("stack").pipe(Flag.withDescription("Name this stack."), Flag.optional),
   stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Open an existing stack by id."),
+    Flag.withDescription("Open an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
   runtime: Flag.choice("runtime", ["auto", "docker", "podman", "native"] as const).pipe(

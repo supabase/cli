@@ -10,7 +10,7 @@ const config = {
     Flag.optional,
   ),
   stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Restart an existing stack by id."),
+    Flag.withDescription("Restart an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
 } as const;

@@ -1,5 +1,12 @@
 import { Config, Effect, Option } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { isBitbucketPipeline } from "../../../command-internal/bitbucket-pipeline.ts";
+import {
+  COMPOSE_PROJECT_LABEL,
+  ensureVolume,
+} from "../../../command-internal/db-bootstrap/container-lifecycle.ts";
+import { CLI_PROJECT_LABEL } from "../../../command-internal/docker-ids.ts";
 import { NetworkIdFlag } from "../../../command-internal/global-flags.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -247,6 +254,31 @@ const diffMigraBash = Effect.fn("Migra.diffBash")(function* (params: {
   return new TextDecoder().decode(result.stdout);
 });
 
+/** Pre-creates the project-labeled Deno-cache volume so `stop --no-backup` prunes it. */
+const ensureCacheVolume = Effect.fn("Migra.ensureCacheVolume")(function* (ctx: PgDeltaContext) {
+  const inBitbucket = yield* isBitbucketPipeline(ctx.projectEnv).pipe(
+    Effect.mapError(
+      (error) =>
+        new MigraDiffError({
+          message: `error diffing schema: failed to resolve Docker environment: ${error.message}`,
+        }),
+    ),
+  );
+  if (inBitbucket) return;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  yield* ensureVolume(spawner, edgeRuntimeId(ctx.projectId), {
+    [CLI_PROJECT_LABEL]: ctx.projectId,
+    [COMPOSE_PROJECT_LABEL]: ctx.projectId,
+  }).pipe(
+    Effect.mapError((cause) => {
+      const message = `error diffing schema: ${cause.message}`;
+      return cause.reason === "runtime"
+        ? new MigraDiffError({ message, docker: "daemon" })
+        : new MigraDiffError({ message });
+    }),
+  );
+});
+
 /**
  * Diffs SOURCE → TARGET with migra via the edge-runtime template, falling back to the
  * `supabase/migra` Docker image when the edge-runtime worker runs out of memory.
@@ -263,6 +295,7 @@ export const diffMigra = Effect.fn("Migra.diff")(function* (
 ) {
   const edgeRuntime = yield* EdgeRuntimeScript;
   const env = yield* buildMigraEnv(params);
+  yield* ensureCacheVolume(ctx);
   const result = yield* edgeRuntime
     .run({
       script: migraDiffScript,

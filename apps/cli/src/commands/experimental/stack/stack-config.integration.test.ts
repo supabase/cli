@@ -80,7 +80,6 @@ enabled = true
       expect(recipes.get("analytics")?.endpoints).toEqual({ http: { port: "auto" } });
       const storage = recipes.get("storage");
       expect(storage?.service === "storage" && storage.config.fileSizeLimit).toBe("52428800");
-      expect(recipes.has("vector")).toBe(true);
       expect(recipes.has("functions")).toBe(true);
     }).pipe(Effect.provide(BunServices.layer)),
   );

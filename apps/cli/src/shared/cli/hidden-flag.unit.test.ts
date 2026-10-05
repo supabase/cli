@@ -1,7 +1,7 @@
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Schema } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { dbCommand } from "../../commands/db/db.command.ts";
 import { functionsCommand } from "../../commands/functions/functions.command.ts";
@@ -15,7 +15,18 @@ import { startCommand } from "../../commands/start/start.command.ts";
 import { stopCommand } from "../../commands/stop/stop.command.ts";
 import { GLOBAL_FLAGS } from "../../command-internal/global-flags.ts";
 import { GoProxy } from "../../command-internal/go-proxy.service.ts";
+import { TestDbMutuallyExclusiveFlagsError } from "../../command-internal/test-db.errors.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockTelemetryRuntime,
+  mockTty,
+  processEnvLayer,
+} from "../../../tests/helpers/mocks.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { CliArgs } from "./cli-args.service.ts";
 
 interface CommandImpl {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
@@ -37,6 +48,24 @@ function mockGoProxy() {
 
   return { layer, calls };
 }
+
+const testRootLayer = (
+  proxy: Layer.Layer<GoProxy>,
+  formatter: CliOutput.Formatter,
+  args: ReadonlyArray<string>,
+) =>
+  Layer.mergeAll(
+    proxy,
+    CliOutput.layer(formatter),
+    Layer.succeed(CliArgs, { args }),
+    mockOutput({ format: "text" }).layer,
+    BunServices.layer,
+    mockRuntimeInfo(),
+    mockAnalytics().layer,
+    mockTelemetryRuntime(),
+    mockTty(),
+    mockProcessControl().layer,
+  );
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([
@@ -63,6 +92,8 @@ function parserCommand<Name extends string, Input, ContextInput, E, R>(
     ),
   );
 }
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const silentCliOutputFormatter: CliOutput.Formatter = {
   formatCliError: () => "",
@@ -123,7 +154,7 @@ describe("native hidden flags", () => {
     ]);
   });
 
-  it("passes hidden flag values to handlers by exact name", async () => {
+  it.effect("passes hidden flag values to handlers by exact name", () => {
     const parsed: Array<unknown> = [];
     const parserFunctionsCommand = Command.make("functions").pipe(
       Command.withSubcommands([
@@ -148,64 +179,57 @@ describe("native hidden flags", () => {
         Effect.provide(parserLayer),
       );
 
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          // Recorder handlers cover parser-to-handler values without running command runtimes.
-          yield* runParser(["start", "--preview"]);
-          yield* runParser(["stop", "--backup=false"]);
-          yield* runParser([
-            "functions",
-            "download",
-            "hello",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--use-docker=false",
-          ]);
-          yield* runParser([
-            "functions",
-            "download",
-            "hello",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--legacy-bundle",
-          ]);
-          yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
-          yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
-          yield* runParser(["functions", "serve", "--all=false"]);
-        }),
-      ),
-    );
-    expect(parsed).toEqual([
-      expect.objectContaining({ preview: true }),
-      expect.objectContaining({ backup: false }),
-      expect.objectContaining({ useDocker: false }),
-      expect.objectContaining({ legacyBundle: true }),
-      expect.objectContaining({ useDocker: false }),
-      expect.objectContaining({ legacyBundle: true }),
-      expect.objectContaining({ all: false }),
-    ]);
+    return Effect.gen(function* () {
+      // Recorder handlers cover parser-to-handler values without running command runtimes.
+      yield* runParser(["start", "--preview"]);
+      yield* runParser(["stop", "--backup=false"]);
+      yield* runParser([
+        "functions",
+        "download",
+        "hello",
+        "--project-ref",
+        "abcdefghijklmnopqrst",
+        "--use-docker=false",
+      ]);
+      yield* runParser([
+        "functions",
+        "download",
+        "hello",
+        "--project-ref",
+        "abcdefghijklmnopqrst",
+        "--legacy-bundle",
+      ]);
+      yield* runParser(["functions", "deploy", "hello", "--use-docker=false"]);
+      yield* runParser(["functions", "deploy", "hello", "--legacy-bundle"]);
+      yield* runParser(["functions", "serve", "--all=false"]);
+      expect(parsed).toEqual([
+        expect.objectContaining({ preview: true }),
+        expect.objectContaining({ backup: false }),
+        expect.objectContaining({ useDocker: false }),
+        expect.objectContaining({ legacyBundle: true }),
+        expect.objectContaining({ useDocker: false }),
+        expect.objectContaining({ legacyBundle: true }),
+        expect.objectContaining({ all: false }),
+      ]);
+    });
   });
 
-  it("does not leak hidden flag names through unknown-flag suggestions", async () => {
-    const proxy = mockGoProxy();
+  it.effect("does not leak hidden flag names through unknown-flag suggestions", () =>
+    Effect.gen(function* () {
+      const proxy = mockGoProxy();
+      const args = ["projects", "create", "demo", "--pla"];
 
-    const exit = await Effect.runPromise(
-      Command.runWith(testRoot, { version: "0.0.0-test" })([
-        "projects",
-        "create",
-        "demo",
-        "--pla",
-      ]).pipe(
-        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(silentCliOutputFormatter))),
+      const exit = yield* Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(testRootLayer(proxy.layer, silentCliOutputFormatter, args)),
         Effect.exit,
-      ) as Effect.Effect<unknown, never, never>,
-    );
+      );
 
-    expect((exit as { _tag: string })._tag).toBe("Failure");
-    expect(JSON.stringify(exit)).toContain('"suggestions":[]');
-    expect(JSON.stringify(exit)).not.toContain("--plan");
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      const exitJson = yield* encodeJson(exit);
+      expect(exitJson).toContain('"suggestions":[]');
+      expect(exitJson).not.toContain("--plan");
+    }),
+  );
 });
 
 describe("hidden subcommands", () => {
@@ -236,53 +260,49 @@ describe("hidden subcommands", () => {
     ]);
   });
 
-  it("still executes hidden subcommands by exact name", async () => {
-    const proxy = mockGoProxy();
+  it.effect("still executes hidden subcommands by exact name", () =>
+    Effect.gen(function* () {
+      const proxy = mockGoProxy();
+      const run = (args: ReadonlyArray<string>) =>
+        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
+        );
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
-        yield* Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "remote", "changes"]);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
-      ) as Effect.Effect<void>,
-    );
+      yield* run(["db", "branch", "list"]);
+      yield* run(["db", "remote", "changes"]);
 
-    expect(proxy.calls).toEqual([
-      ["db", "branch", "list"],
-      ["db", "remote", "changes"],
-    ]);
-  });
+      expect(proxy.calls).toEqual([
+        ["db", "branch", "list"],
+        ["db", "remote", "changes"],
+      ]);
+    }),
+  );
 
-  it("still executes the native `db test` hidden alias by exact name (CLI-1962)", async () => {
-    // This test's minimal layer doesn't wire the services the native handler needs, so dispatch
-    // reaching the handler (a Die on a missing service, not success) is what's being proven.
-    const proxy = mockGoProxy();
-    const layer = Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()));
+  it.effect("still executes the native `db test` hidden alias by exact name (CLI-1962)", () =>
+    Effect.gen(function* () {
+      // `--local --linked` fail inside the native handler's mutual-exclusivity check before any
+      // DB/docker IO, so that typed failure (not success) is what proves dispatch reached it.
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-hidden-flag-" });
+      const proxy = mockGoProxy();
+      const run = (args: ReadonlyArray<string>) =>
+        Command.runWith(testRoot, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(testRootLayer(proxy.layer, textCliOutputFormatter(), args)),
+          Effect.exit,
+        );
 
-    const causeOf = (exit: unknown) =>
-      (exit as { cause: { reasons: Array<{ _tag: string; defect?: unknown; error?: unknown }> } })
-        .cause;
+      const dbTestExit = yield* run(["db", "test", "--local", "--linked"]).pipe(
+        Effect.provide(processEnvLayer({ SUPABASE_HOME: home })),
+      );
+      expect(Exit.isFailure(dbTestExit)).toBe(true);
+      if (!Exit.isFailure(dbTestExit)) return;
+      expect(Cause.squash(dbTestExit.cause)).toBeInstanceOf(TestDbMutuallyExclusiveFlagsError);
 
-    const dbTestExit = await Effect.runPromise(
-      Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "test"]).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      ) as Effect.Effect<unknown, never, never>,
-    );
-    expect((dbTestExit as { _tag: string })._tag).toBe("Failure");
-    expect(causeOf(dbTestExit).reasons[0]?._tag).toBe("Die");
-    expect(String(causeOf(dbTestExit).reasons[0]?.defect)).toContain(
-      "Service not found: supabase/telemetry/Analytics",
-    );
-
-    const unknownExit = await Effect.runPromise(
-      Command.runWith(testRoot, { version: "0.0.0-test" })(["db", "not-a-real-command"]).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      ) as Effect.Effect<unknown, never, never>,
-    );
-    expect(JSON.stringify(unknownExit)).toContain("UnknownSubcommand");
-    expect(causeOf(unknownExit).reasons[0]?._tag).toBe("Fail");
-  });
+      const unknownExit = yield* run(["db", "not-a-real-command"]);
+      expect(yield* encodeJson(unknownExit)).toContain("UnknownSubcommand");
+      expect(Exit.isFailure(unknownExit)).toBe(true);
+      if (!Exit.isFailure(unknownExit)) return;
+      expect(Cause.hasFails(unknownExit.cause)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

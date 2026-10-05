@@ -129,7 +129,7 @@ const instance = (
     prepare: Effect.void,
     status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
@@ -194,8 +194,6 @@ const instance = (
       return { ...base, service: "mail" };
     case "analytics":
       return { ...base, service: "analytics" };
-    case "vector":
-      return { ...base, service: "vector" };
     case "pooler":
       return { ...base, service: "pooler" };
   }
@@ -741,6 +739,16 @@ describe("experimental stack start", () => {
       expect(text.stdoutText).toContain(
         `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
       );
+
+      yield* fixture.stack.composition.stop;
+      const byPrefix = mockOutput();
+      yield* stackStart({
+        ...flags(excluded),
+        stackId: Option.some(fixture.stack.id.slice(0, 8)),
+      }).pipe(Effect.provide(layers(root, fixture, byPrefix, true, true)));
+      expect(byPrefix.stdoutText).toContain(
+        `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -815,7 +823,7 @@ describe("experimental stack start", () => {
             message: "Composition start had failures",
             outcomes: [
               { id: "database-member-1", succeeded: true },
-              { id: "vector-member-1", succeeded: false, error: "Service health timed out" },
+              { id: "analytics-member-1", succeeded: false, error: "Service health timed out" },
             ],
           }),
         ),
@@ -826,7 +834,7 @@ describe("experimental stack start", () => {
       expect(error).toBeInstanceOf(StackCommandStartError);
       expect(error).toMatchObject({
         message: "Composition start had failures",
-        detail: "vector (vector-member-1): Service health timed out",
+        detail: "analytics (analytics-member-1): Service health timed out",
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );

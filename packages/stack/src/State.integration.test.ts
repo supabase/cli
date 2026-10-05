@@ -611,6 +611,90 @@ describe("durable stack state", () => {
     ),
   );
 
+  it.live("removes persisted logs with the stack, retrying a Windows sharing violation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-remove-logs-" });
+        const held = yield* Ref.make(2);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (
+                target.endsWith(`${path.sep}logs`) &&
+                (yield* Ref.getAndUpdate(held, (n) => n - 1)) > 0
+              )
+                return yield* PlatformError.systemError({
+                  _tag: "Busy",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                  cause: Object.assign(new Error("open by a reader"), { code: "EBUSY" }),
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          State.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        const segment = path.join(store.logsRoot(initial.id), "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        yield* store.remove(initial.id);
+
+        expect(yield* fs.exists(path.join(root, initial.id))).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("keeps a stack listed when its logs cannot be removed, so a second removal retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-remove-failed-" });
+        const denied = yield* Ref.make(true);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (target.endsWith(`${path.sep}logs`) && (yield* Ref.get(denied)))
+                return yield* PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          State.layer({ root }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, State.Service)));
+        yield* store.save(initial);
+        const segment = path.join(store.logsRoot(initial.id), "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        const failed = yield* store.remove(initial.id).pipe(Effect.exit);
+        const listed = (yield* store.list).map(({ id }) => id);
+        const logsKept = yield* fs.exists(segment);
+        yield* Ref.set(denied, false);
+        yield* store.remove(initial.id);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(listed).toEqual([initial.id]);
+        expect(logsKept).toBe(true);
+        expect(yield* store.read(initial.id)).toBeUndefined();
+        expect(yield* fs.exists(path.join(root, initial.id))).toBe(false);
+      }),
+    ),
+  );
+
   it.live.skipIf(process.platform === "win32")(
     "restricts the state root to its owner while keeping a traverse-only grant",
     () =>

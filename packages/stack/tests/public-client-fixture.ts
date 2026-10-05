@@ -20,8 +20,8 @@ try {
   });
   // oxlint-disable-next-line effecttsgo/async-function -- This fixture exercises the Promise client API.
   readLogs = (async () => {
-    for await (const entry of mail.logs()) {
-      logs += `[${entry.stream}] ${new TextDecoder().decode(entry.bytes)}`;
+    for await (const record of mail.readLogs({ follow: true })) {
+      if (record.text !== undefined) logs += `[${record.kind}] ${record.text}\n`;
     }
   })().catch((cause) => {
     logReaderFailure = cause;

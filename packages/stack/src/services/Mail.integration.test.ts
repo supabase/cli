@@ -64,6 +64,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           dockerOptions(root),
+          Effect.succeed([]),
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
@@ -90,7 +91,11 @@ describe("service catalog", () => {
           const path = yield* Path.Path;
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-isolation-" });
           const recipeFor = (instanceId: string) =>
-            makeServiceRecipe({ service: "mail", config: {} }, { ...options(root), instanceId });
+            makeServiceRecipe(
+              { service: "mail", config: {} },
+              { ...options(root), instanceId },
+              Effect.succeed([]),
+            );
           const first = yield* recipeFor("mail-a");
           const second = yield* recipeFor("mail-b");
           const firstInstance = yield* makeService(first.definition, {
@@ -121,7 +126,11 @@ describe("service catalog", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-persistence-" });
-        const recipe = yield* makeServiceRecipe({ service: "mail", config: {} }, options(root));
+        const recipe = yield* makeServiceRecipe(
+          { service: "mail", config: {} },
+          options(root),
+          Effect.succeed([]),
+        );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
@@ -155,6 +164,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           dockerOptions(root),
+          Effect.succeed([]),
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
@@ -185,7 +195,11 @@ describe("service catalog", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "catalog-mail-destroy-" });
-        const recipe = yield* makeServiceRecipe({ service: "mail", config: {} }, options(root));
+        const recipe = yield* makeServiceRecipe(
+          { service: "mail", config: {} },
+          options(root),
+          Effect.succeed([]),
+        );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",
           config: recipe.creation,
@@ -209,6 +223,7 @@ describe("service catalog", () => {
         const recipe = yield* makeServiceRecipe(
           { service: "mail", config: {} },
           { ...options(root), instanceId: "../escaped" },
+          Effect.succeed([]),
         );
         const instance = yield* makeService(recipe.definition, {
           id: "mail",

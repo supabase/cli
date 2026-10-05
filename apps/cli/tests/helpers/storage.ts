@@ -180,7 +180,7 @@ const instance = <K extends ServiceCreation["service"]>(
   prepare: Effect.void,
   status,
   followStatus: Stream.empty,
-  logs: Stream.empty,
+  readLogs: () => Stream.empty,
   credentials: () => Effect.succeed({}),
 });
 

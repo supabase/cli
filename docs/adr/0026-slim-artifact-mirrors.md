@@ -166,11 +166,17 @@ the manual invocation below. The fallback, if the push or PR step fails, is a do
 by `apps/cli/scripts/render-service-dockerfile.ts` — the release itself is already committed by
 then, so a failure here means "open the pull request by hand", not "republish".
 
-The app token (contents and pull-requests write) never reaches third-party code or disk: `git
-push` takes it only inside an explicit URL (`PUSH_REMOTE_URL` overrides it, so a dry run can
-target a local bare repository), and each `gh` call gets it inline. The sync script, the
-Dockerfile generator and the formatter all run with it unset, so a compromised transitive
-dependency of any of them cannot read it.
+Each opened or rewritten PR is approved by `supabase-oss`, which co-owns the generated files in
+`.github/CODEOWNERS` because the app cannot approve its own PR, and has auto-merge enabled, so a
+green PR enters the merge queue without a human review. The approval token lives in the
+`auto-approve` environment, which only deploys from the default branch, so a workflow on any other
+branch cannot approve with it.
+
+The app token (contents and pull-requests write) and the approval token never reach third-party
+code or disk: `git push` takes the app token only inside an explicit URL (`PUSH_REMOTE_URL`
+overrides it, so a dry run can target a local bare repository), and each `gh` call gets its token
+inline. The sync script, the Dockerfile generator and the formatter all run with both unset, so a
+compromised transitive dependency of any of them cannot read them.
 
 ### Registry and bucket mirrors
 

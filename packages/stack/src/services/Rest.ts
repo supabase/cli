@@ -42,6 +42,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           : { PGRST_DB_EXTRA_SEARCH_PATH: creation.config.extraSearchPath }),
         PGRST_DB_ANON_ROLE: creation.config.anonRole ?? "anon",
         PGRST_DB_MAX_ROWS: String(creation.config.maxRows ?? 1000),
+        // `info` logs every request, which Studio's PostgREST logs page shows.
+        PGRST_LOG_LEVEL: "info",
         ...(jwtSecret === undefined ? {} : { PGRST_JWT_SECRET: jwtSecret }),
         ...(creation.config.externalApiUrl === undefined
           ? {}
