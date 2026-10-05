@@ -201,7 +201,7 @@ it.live.skipIf(process.platform === "win32")(
         const swept = yield* Effect.all(
           [
             awaitDestroyed(orphan, since),
-            awaitRemoval(rootA, sessionId),
+            awaitRemoval(path.join(rootA, sessionId), "state.json"),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],
           { concurrency: "unbounded" },

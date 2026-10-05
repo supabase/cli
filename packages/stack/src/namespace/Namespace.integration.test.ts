@@ -321,7 +321,7 @@ describe("durable registry", () => {
     ),
   );
 
-  it.live("removes empty stack parents without deleting unowned data", () =>
+  it.live("unregisters a stack and empties its data without deleting unowned data", () =>
     run(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -331,7 +331,8 @@ describe("durable registry", () => {
         yield* store.save(initial);
         yield* fs.makeDirectory(path.join(root, initial.id, "data"), { recursive: true });
         yield* store.remove(initial.id);
-        expect(yield* fs.exists(path.join(root, initial.id))).toBe(false);
+        expect(yield* fs.exists(path.join(root, initial.id, "state.json"))).toBe(false);
+        expect(yield* fs.readDirectory(path.join(root, initial.id, "data"))).toEqual([]);
 
         yield* store.save(initial);
         yield* fs.makeDirectory(path.join(root, initial.id, "data"), { recursive: true });

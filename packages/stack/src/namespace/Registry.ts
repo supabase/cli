@@ -5,7 +5,6 @@ import { namespaceError, retryTransientRead, type NamespaceError } from "./Capab
 import { CLAIMS_FILE } from "./Claims.ts";
 import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import * as Publication from "./Publication.ts";
-import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
 
 const SafeId = Schema.String.pipe(
@@ -194,11 +193,8 @@ export const make = (
         yield* fs
           .remove(file, { force: true })
           .pipe(Effect.mapError((cause) => namespaceError("remove", cause)));
-      // The container-env scratch directory is removed registration-independently by the owner
-      // (Owner.ts's `removeContainerEnvRoot`, shared by destroy and abandonment); by the time this
-      // runs for a confirmed destroy, `data` is already empty of it.
-      yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
-      yield* removeEmptyDirectory(stackRoot(id));
+      // The stack and data directories stay: deleting and recreating them for a restart under the
+      // same id lets the container engine's file share report fresh bind sources as missing.
     });
     /**
      * One attempt: forks `attemptScope` under `guardScope` before opening anything, so there is

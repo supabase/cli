@@ -211,7 +211,9 @@ it.live(
 
       expect(Exit.isSuccess(yield* Fiber.await(snapshot))).toBe(true);
       expect(yield* discover({ stateRoot })).toEqual([]);
-      expect(yield* fs.exists(path.join(stateRoot, test.stack.id))).toBe(false);
+      expect(yield* fs.exists(path.join(stateRoot, test.stack.id, "state.json"))).toBe(false);
+      const data = path.join(stateRoot, test.stack.id, "data");
+      expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

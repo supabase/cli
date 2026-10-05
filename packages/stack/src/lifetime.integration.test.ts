@@ -129,7 +129,7 @@ it.live.skipIf(process.platform === "win32")(
       const owned = yield* descendantsOf(ownerPid);
       expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
 
-      const removed = yield* watchEntry(stateRoot, stackId, false);
+      const removed = yield* watchEntry(`${stateRoot}/${stackId}`, "state.json", false);
       const released = yield* watchLeaseRelease(stateRoot, stackId);
       yield* creator.kill({ killSignal: "SIGKILL" });
       yield* removed.pipe(
@@ -143,7 +143,7 @@ it.live.skipIf(process.platform === "win32")(
       // Releasing the lease is the owner's last act, after its native processes have exited.
       yield* released;
       expect(owned.filter(alive), "native processes die with their owner").toEqual([]);
-      expect(yield* fs.exists(`${stateRoot}/${stackId}`)).toBe(false);
+      expect(yield* fs.exists(`${stateRoot}/${stackId}/state.json`)).toBe(false);
       expect(yield* state.read(stackId)).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(layer)),
   { timeout: 180_000 },
@@ -169,7 +169,7 @@ it.live("destroys a session stack when its creating handle closes", () =>
     yield* assertOwnerExited(ownerPid);
     const state = yield* stateFor(locations.stateRoot);
     expect(yield* state.read(id)).toBeUndefined();
-    expect(yield* fs.exists(`${locations.stateRoot}/${id}`)).toBe(false);
+    expect(yield* fs.exists(`${locations.stateRoot}/${id}/state.json`)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
