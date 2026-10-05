@@ -9,6 +9,7 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { Schema, SchemaAST } from "effect";
 import { CliConfigSchema } from "../base.ts";
+import { toPublishedJsonSchemaDocument } from "../json-schema-document.ts";
 import { isDocumentOnlyLocalPath } from "./hosted-sections.ts";
 import type { ProjectConfig } from "./project-config.ts";
 
@@ -138,12 +139,7 @@ export const ProjectConfigSchema: StandardSchemaV1<
 
 /** JSON Schema (draft 2020-12) rendering of {@link ProjectConfigSchema}. */
 export function toProjectConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema, {
-    onExcessProperty: "ignore",
-  });
-  return {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    ...document.schema,
-    ...(Object.keys(document.definitions).length > 0 ? { $defs: document.definitions } : {}),
-  };
+  return toPublishedJsonSchemaDocument(
+    Schema.toJsonSchemaDocument(ProjectConfigSchema, { onExcessProperty: "ignore" }),
+  );
 }
