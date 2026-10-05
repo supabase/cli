@@ -32,6 +32,10 @@ export const ShutdownDrainDeadline = Context.Reference<Effect.Effect<void>>(
 interface ListenerHandle {
   readonly stopAccepting: Effect.Effect<void>;
   readonly resumeAccepting: Effect.Effect<void>;
+  /**
+   * What counts as active is listener-specific: every TCP connection, or an HTTP connection only
+   * while it has a request in flight or is upgraded, excluding idle keep-alive sockets.
+   */
   readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
   readonly cutAll: Effect.Effect<void>;
 }

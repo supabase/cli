@@ -49,7 +49,10 @@ export interface HttpProxy {
   readonly stopAccepting: Effect.Effect<void>;
   /** Reverses `stopAccepting`: recovers a listener left refusing after a failed drain. */
   readonly resumeAccepting: Effect.Effect<void>;
-  /** The count of established client connections, observable until it reaches 0. */
+  /**
+   * The count of connections with active work, observable until it reaches 0: a request in
+   * flight or an upgraded socket, never an idle keep-alive connection.
+   */
   readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
   /** Destroys every established connection immediately. */
   readonly cutAll: Effect.Effect<void>;
@@ -432,10 +435,16 @@ export const makeHttpProxy = (options: {
     const services = yield* Effect.context<never>();
     const sockets = new Set<Socket>();
     const outstandingConnections = yield* SubscriptionRef.make(0);
-    // `server.close()` also tears down idle keep-alive sockets immediately, which would end
-    // established connections instead of letting them keep flowing; track acceptance separately.
+    // `server.close()` also tears down active connections immediately, not just idle ones, so
+    // draining tracks acceptance separately and closes idle sockets explicitly instead.
     let accepting = true;
+    const closeNowIdle = () => {
+      if (!accepting) server.closeIdleConnections();
+    };
     const server = createServer((request, response) => {
+      Effect.runSyncWith(services)(
+        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
+      );
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {
@@ -470,6 +479,12 @@ export const makeHttpProxy = (options: {
               );
             }
           }),
+        ).pipe(
+          Effect.ensuring(
+            SubscriptionRef.update(outstandingConnections, (count) => count - 1).pipe(
+              Effect.andThen(Effect.sync(closeNowIdle)),
+            ),
+          ),
         ),
       );
     });
@@ -479,18 +494,15 @@ export const makeHttpProxy = (options: {
         return;
       }
       sockets.add(socket);
-      Effect.runSyncWith(services)(
-        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
-      );
       socket.once("close", () => {
         sockets.delete(socket);
-        Effect.runSyncWith(services)(
-          SubscriptionRef.update(outstandingConnections, (count) => count - 1),
-        );
       });
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());
+      Effect.runSyncWith(services)(
+        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
+      );
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {
@@ -508,6 +520,8 @@ export const makeHttpProxy = (options: {
                 Effect.catch(() => Effect.sync(() => socket.destroy())),
               );
           }),
+        ).pipe(
+          Effect.ensuring(SubscriptionRef.update(outstandingConnections, (count) => count - 1)),
         ),
       );
     });
@@ -539,6 +553,7 @@ export const makeHttpProxy = (options: {
         ),
       stopAccepting: Effect.sync(() => {
         accepting = false;
+        server.closeIdleConnections();
       }),
       resumeAccepting: Effect.sync(() => {
         accepting = true;

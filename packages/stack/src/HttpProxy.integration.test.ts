@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect";
+import { Data, Deferred, Effect, Fiber, Layer, SubscriptionRef } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { createServer, type Server, type ServerResponse } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw server fixture.
 import { createServer as createTcpServer, Socket, type Server as NetServer } from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- raw disconnect fixture.
@@ -1209,15 +1209,11 @@ it.live(
 );
 
 it.live(
-  "refuses a new connection after stopAccepting while an established connection keeps completing requests until it closes",
+  "closes an idle established connection once stopAccepting runs, while still refusing new connections",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        let requests = 0;
-        const backend = createServer((_request, response) => {
-          requests += 1;
-          response.end(requests === 1 ? "first-response" : "second-response");
-        });
+        const backend = createServer((_request, response) => response.end("first-response"));
         const backendAddress = yield* listen(backend);
         const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
         yield* proxy.setRoutes([
@@ -1225,29 +1221,24 @@ it.live(
         ]);
 
         const client = yield* connectRaw(proxy.port, proxy.host);
-        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
         const first = yield* readFullResponse(client);
         expect(first.status).toBe(200);
         expect(first.body).toBe("first-response");
-        expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(1);
+        // The request already finished, so the connection sits idle with no active work.
+        expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(0);
+
+        const closed = yield* Effect.callback<void, never>((resume) => {
+          const onClose = () => resume(Effect.void);
+          client.once("close", onClose);
+          if (client.destroyed) onClose();
+          return Effect.sync(() => client.off("close", onClose));
+        }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
 
         yield* proxy.stopAccepting;
 
         expect(yield* connectionRefused(proxy.port, proxy.host)).toBe(true);
-
-        client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-        const second = yield* readFullResponse(client);
-        expect(second.status).toBe(200);
-        expect(second.body).toBe("second-response");
-
-        const reachedZero = yield* Stream.runHead(
-          Stream.filter(
-            SubscriptionRef.changes(proxy.outstandingConnections),
-            (count) => count === 0,
-          ),
-        ).pipe(Effect.forkScoped);
-        yield* Effect.sync(() => client.end());
-        yield* Fiber.join(reachedZero);
+        yield* Fiber.join(closed);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -1265,7 +1256,8 @@ it.live("destroys every established connection immediately when cutAll runs", ()
       const response = yield* readFullResponse(client);
       expect(response.status).toBe(200);
       expect(response.body).toBe("ok");
-      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(1);
+      // The request already finished, so the connection sits idle with no active work.
+      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(0);
 
       const closed = yield* Effect.callback<void, never>((resume) => {
         const onClose = () => resume(Effect.void);
