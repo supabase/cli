@@ -21,7 +21,6 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
-import type * as Claims from "../namespace/Claims.ts";
 import { CONTAINER_ENV_DIRNAME } from "../namespace/Paths.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
@@ -360,11 +359,6 @@ export const makeContainerRuntime = (options: {
    * for containers that do not rely on reaching the host over IPv4.
    */
   readonly awaitHostGateway?: boolean;
-  /**
-   * Journals each container's exact identity before it is created, so a crashed owner leaves it
-   * recoverable; required so a container creation that forgets to wire claims does not compile.
-   */
-  readonly claims: Claims.ContainerClaims;
 }): Effect.Effect<
   ContainerRuntime,
   never,
@@ -533,13 +527,8 @@ export const makeContainerRuntime = (options: {
         const token = yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => errorFor("identity", cause)),
         );
-        // Not an instance container: no instance label, so it is never mistaken for one. It is
-        // still named and claimed before the engine creates it, so a crashed owner's reconcile
-        // loop can still find and remove it instead of leaking it.
+        // Not an instance container: no instance label, so it is never mistaken for one.
         const { name } = identifyContainer(spec, token, true);
-        yield* options.claims
-          .claim(name, options.target.daemonId)
-          .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
         const hosts = yield* run(
           [
             "run",
@@ -562,9 +551,6 @@ export const makeContainerRuntime = (options: {
           { timeout: undefined },
         );
         yield* awaitRemoved(name);
-        yield* options.claims
-          .unclaim(name)
-          .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
         return hosts;
       }).pipe(Effect.timeout(HOST_GATEWAY_PROBE_TIMEOUT));
     /** Resolves the IPv4 host address the engine writes itself, since it rejects `host-gateway`. */
@@ -662,13 +648,6 @@ export const makeContainerRuntime = (options: {
         Effect.mapError((cause) => errorFor("identity", cause)),
       );
       const { name, composeProject, composeService } = identifyContainer(spec, token, oneOff);
-      // Journaled before the engine creates anything, so a crashed owner leaves an exact,
-      // recoverable identity instead of one the next owner must guess by label. The daemon id
-      // lets a later reconcile against a different daemon keep this claim rather than remove (or
-      // mistake) an identity that daemon has never heard of.
-      yield* options.claims
-        .claim(name, options.target.daemonId)
-        .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
       const hostAlias = yield* hostAliasTarget(image, spec);
       const testRunLabel = yield* testRunLabelArgs;
       const createArgs = (target: string | undefined) => [
@@ -853,11 +832,6 @@ export const makeContainerRuntime = (options: {
             yield* run(["rm", name]).pipe(Effect.catchTag("ContainerError", reconcileAbsent));
             yield* Ref.set(stopped, true);
             yield* Ref.set(removed, true);
-            // Cleanup authority now belongs entirely to this normal teardown; a crash before this
-            // point still leaves the claim for the next owner's reconcile loop.
-            yield* options.claims
-              .unclaim(name)
-              .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
           });
           yield* Scope.addFinalizer(
             owner,
@@ -1023,12 +997,11 @@ export const makeContainerRuntime = (options: {
   });
 
 /**
- * Removes a container by its exact recorded identity, succeeding when it is already absent. The
- * namespace's reconcile loop uses this instead of discovering candidates by label, through the
- * same pinned {@link EngineTarget} it resolved identity through, so a context switch in between
- * can never split the two.
+ * Removes a container by its exact id, succeeding when it is already absent, through the same
+ * pinned {@link EngineTarget} it was discovered through, so a context switch in between can never
+ * split the two.
  */
-export const removeContainerById = Effect.fn("Container.removeContainerById")(
+const removeContainerById = Effect.fn("Container.removeContainerById")(
   (options: { readonly target: EngineTarget; readonly id: string }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

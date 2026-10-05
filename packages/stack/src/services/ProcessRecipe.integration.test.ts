@@ -48,11 +48,7 @@ import {
 import type { CatalogOptions, RecipeCreation } from "./Recipe.ts";
 import * as Realtime from "./Realtime.ts";
 import * as Pooler from "./Pooler.ts";
-import {
-  noContainerClaims,
-  noDirectoryClaims,
-  noPublicPortReservations,
-} from "../../tests/claims.ts";
+import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 
 type TestCreation = RecipeCreation<"rest", Record<string, never>> & {
   readonly service: "rest";
@@ -80,7 +76,6 @@ const options: CatalogOptions = {
   root: "/tmp/process-recipe-test",
   cacheRoot: "/tmp/process-recipe-test-cache",
   runtime: "docker",
-  containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
   isPubliclyReserved: noPublicPortReservations,
 };
@@ -465,7 +460,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
   const recipe = yield* makeProcessRecipe(
     creation,
     {
-      containerClaims: noContainerClaims,
       directoryClaims: noDirectoryClaims,
       isPubliclyReserved: noPublicPortReservations,
       stackId: "process-recipe-test",
@@ -964,7 +958,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-race",
@@ -1043,7 +1036,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-port-exhaustion",
@@ -1185,7 +1177,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-deadline",
@@ -1252,7 +1243,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-unrelated-failure",
@@ -1361,7 +1351,6 @@ describe("process recipe startup", () => {
         const recipe = yield* makeProcessRecipe(
           creation,
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             stackId: "process-recipe-exit-failure",

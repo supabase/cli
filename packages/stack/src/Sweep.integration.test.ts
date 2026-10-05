@@ -22,7 +22,6 @@ import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.t
 import * as StackNamespace from "./StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
-import { noContainerClaims } from "../tests/claims.ts";
 
 class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly message: string }> {}
 
@@ -174,7 +173,6 @@ it.live.skipIf(process.platform === "win32")(
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const target = yield* resolveEngineTarget(spawner);
         const helper = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target,
           root: dataA,
         });
@@ -188,10 +186,6 @@ it.live.skipIf(process.platform === "win32")(
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))
           .endpoint;
         const orphan = yield* createOwnedContainer(deadId, dataA);
-        // The dead owner claimed this container before it was killed; the reconcile loop that
-        // replaces label-based sweeping only ever acts on recorded claims, never on labels alone.
-        // Recorded against this real daemon's own id: a claim with none is now always kept.
-        yield* state.claim(deadId, { kind: "container", id: orphan, daemonId: target.daemonId });
         const otherRoot = yield* createOwnedContainer(deadId, dataB);
         const deadReleased = yield* watchLeaseRelease(rootA, deadId);
         yield* Effect.sync(() => process.kill(dead.pid, "SIGKILL"));

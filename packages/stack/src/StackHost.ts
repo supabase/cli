@@ -42,7 +42,6 @@ import {
 } from "./HostProcess.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
-import * as Claims from "./namespace/Claims.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
 import { makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
@@ -288,7 +287,6 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
             yield* runner.cleanup;
             yield* owner.namespace.stop;
           });
-          let retiringAfterDestroyFailure = false;
           const body: Effect.Effect<void, StackError> =
             mode === "abandon"
               ? Effect.gen(function* () {
@@ -318,57 +316,16 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     Effect.mapError((cause) => stackError("shutdown", cause)),
                   )
                 : Effect.gen(function* () {
-                    const destroyExit = yield* Effect.gen(function* () {
-                      yield* attachments.stopAll;
-                      yield* runner.cleanup;
-                      yield* owner.namespace.destroy;
-                    }).pipe(Effect.exit);
-                    if (Exit.isSuccess(destroyExit)) {
-                      yield* finish;
-                      return;
-                    }
-                    const stopExit = yield* stopOwned.pipe(Effect.exit);
-                    if (Exit.isFailure(stopExit)) {
-                      const describeCause = (cause: Cause.Cause<unknown>) => {
-                        const error = Option.match(Cause.findErrorOption(cause), {
-                          onNone: () =>
-                            new StackError({
-                              operation: "shutdown",
-                              message: Cause.pretty(cause),
-                            }),
-                          onSome: (value) => stackError("shutdown", value),
-                        });
-                        const failedOutcomes = error.outcomes
-                          ?.filter(({ succeeded }) => !succeeded)
-                          .map(({ id, error: reason }) => `${id}: ${reason ?? "failed"}`)
-                          .join("; ");
-                        return {
-                          error,
-                          message:
-                            failedOutcomes === undefined || failedOutcomes.length === 0
-                              ? error.message
-                              : `${error.message} (${failedOutcomes})`,
-                        };
-                      };
-                      const destroyFailure = describeCause(destroyExit.cause);
-                      const stopFailure = describeCause(stopExit.cause);
-                      const outcomes = [
-                        ...(destroyFailure.error.outcomes ?? []),
-                        ...(stopFailure.error.outcomes ?? []),
-                      ];
-                      return yield* new StackError({
-                        operation: "shutdown",
-                        message: `${destroyFailure.message}; fallback stop failed: ${stopFailure.message}`,
-                        ...(outcomes.length === 0 ? {} : { outcomes }),
-                      });
-                    }
-                    retiringAfterDestroyFailure = true;
-                    yield* finish;
-                    return yield* Effect.failCause(destroyExit.cause);
-                  }).pipe(Effect.mapError((cause) => stackError("shutdown", cause)));
+                    yield* attachments.stopAll;
+                    yield* runner.cleanup;
+                    yield* owner.namespace.destroy;
+                  }).pipe(
+                    Effect.andThen(finish),
+                    Effect.mapError((cause) => stackError("shutdown", cause)),
+                  );
           const cleanup = body.pipe(
             Effect.catchCause((cause) =>
-              mode !== "abandon" && !retiringAfterDestroyFailure
+              mode !== "abandon"
                 ? owner
                     .setDraining(false)
                     // Drain may already have run (and so left the network's own admission
@@ -648,7 +605,6 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
-                claims: Claims.forStack(state, saved.id).containers,
                 hostGateway,
                 engineTarget,
               }),

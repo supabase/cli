@@ -32,9 +32,10 @@ reached, destruction removes nothing: the registration, port claims and host
 data stay as they are, stderr warns that Docker resources were not removed, and
 the command exits 0 reporting the stack as not destroyed. Run destroy again once
 Docker is reachable. Any other engine failure, an owner starting during
-destruction, or resource claims the owner cannot reconcile (for example a
-container on a different daemon) fails the command and keeps the stack
-registered; the error lists the remaining claims and the `claims.json` path.
+destruction, a directory claim the owner cannot reconcile (for example one
+outside every owned root), or a labelled container that survives removal,
+fails the command and keeps the stack registered; the error lists what
+remains, including the `claims.json` path for any directory claims.
 
 ## Files and network
 

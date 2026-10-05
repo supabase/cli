@@ -1,8 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { create, discover } from "./effect.ts";
-import * as StackNamespace from "./StackNamespace.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -43,39 +42,8 @@ const shimDocker = Effect.fn("shimDocker")(function* (root: string, script: stri
   );
 });
 
-/** Opens the real namespace at `stateRoot`, bypassing any owner, to seed or read claims directly. */
-const withNamespace = <A, E, R>(
-  stateRoot: string,
-  use: (state: StackNamespace.Interface) => Effect.Effect<A, E, R>,
-) =>
-  Effect.scoped(
-    Layer.build(StackNamespace.layer({ root: stateRoot })).pipe(
-      Effect.flatMap((context) => use(Context.get(context, StackNamespace.Service))),
-    ),
-  );
-
-/** Records a container claim as if a now-dead owner had created it before being interrupted. */
-const seedContainerClaim = (
-  stateRoot: string,
-  id: string,
-  containerId: string,
-  daemonId?: string,
-) =>
-  withNamespace(stateRoot, (state) =>
-    state.claim(id, {
-      kind: "container",
-      id: containerId,
-      ...(daemonId === undefined ? {} : { daemonId }),
-    }),
-  );
-
-const readClaimIds = (stateRoot: string, id: string) =>
-  withNamespace(stateRoot, (state) => state.readClaims(id)).pipe(
-    Effect.map((claims) => claims.map((claim) => claim.id)),
-  );
-
 it.live(
-  "keeps a stack's registration and claims when destroy finds no owner and its engine is unreachable, then finishes the cleanup once a later owner can start",
+  "keeps a stack registered when destroy finds no owner and its engine is unreachable, then finishes the cleanup once a later owner can start",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -92,23 +60,12 @@ it.live(
         runtime: "docker",
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
-      // Recorded against the daemon the engine will report once it is back: the second destroy
-      // attempt below, once the engine is reachable again, is expected to finish the cleanup.
-      yield* seedContainerClaim(
-        options.stateRoot,
-        stack.id,
-        "offline0000000000000000000000000001",
-        "fake-daemon-id",
-      );
 
       const result = yield* stack.destroy;
       expect(result).toEqual({ runtimeCleanup: "skipped", engine: "docker" });
       expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
-      expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
-        "offline0000000000000000000000000001",
-      ]);
 
-      // The engine is back: destroy retried finishes the exact claimed cleanup automatically.
+      // The engine is back: destroy retried finishes the cleanup automatically.
       yield* shimDocker(
         root,
         '#!/bin/sh\nif [ "$1" = "info" ]; then\n  echo \'fake-daemon-id\'\nfi\nexit 0\n',
@@ -135,7 +92,6 @@ it.live("keeps a stack registered when Windows reports its Docker daemon pipe is
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
-    yield* seedContainerClaim(stateRoot, stack.id, "windows000000000000000000000000001");
 
     const result = yield* stack.destroy;
 
@@ -155,7 +111,6 @@ it.live("keeps a stack registered when its engine CLI is not installed", () =>
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
-    yield* seedContainerClaim(stateRoot, stack.id, "nocli00000000000000000000000000001");
     yield* fs.makeDirectory(`${root}/empty-bin`);
     // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
     const originalPath = process.env.PATH;
@@ -190,7 +145,6 @@ it.live("keeps a stack registered when Docker reports its API socket is missing"
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     });
-    yield* seedContainerClaim(stateRoot, stack.id, "socket0000000000000000000000000001");
 
     const result = yield* stack.destroy;
 
@@ -215,7 +169,6 @@ it.live("keeps a stack registered when its container engine rejects the listing"
       runtime: "docker",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    yield* seedContainerClaim(options.stateRoot, stack.id, "permission00000000000000000000001");
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     // The socket itself refuses the owner's own startup, resolving its pinned engine target:
@@ -223,9 +176,6 @@ it.live("keeps a stack registered when its container engine rejects the listing"
     expect(destroyFailure.message).toContain("permission denied");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
-    expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
-      "permission00000000000000000000001",
-    ]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -233,15 +183,21 @@ it.live("keeps a stack registered when its container engine is reachable but cle
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-cleanup-failure-" });
+    // The daemon is reachable and identifiable, and its label listing finds this stack's own
+    // container; only the targeted removal fails.
+    const containerId = "cleanupfail0000000000000000000001";
     yield* shimDocker(
       root,
       [
         "#!/bin/sh",
+        'if [ "$1" = "ps" ]; then',
+        `  echo '${containerId}'`,
+        "  exit 0",
+        "fi",
         'if [ "$1" = "rm" ]; then',
         "  echo 'docker: Error response from daemon: container removal failed' >&2",
         "  exit 1",
         "fi",
-        // The daemon is reachable and identifiable; only the targeted removal fails.
         'if [ "$1" = "info" ]; then',
         "  echo 'fake-daemon-id'",
         "fi",
@@ -257,22 +213,10 @@ it.live("keeps a stack registered when its container engine is reachable but cle
       runtime: "docker",
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
-    // Recorded against the daemon this reconcile run will match: the engine is reachable and
-    // identifiable here, so only the targeted removal itself is expected to fail.
-    yield* seedContainerClaim(
-      options.stateRoot,
-      stack.id,
-      "cleanupfail0000000000000000000001",
-      "fake-daemon-id",
-    );
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     expect(destroyFailure.message).toContain("container removal failed");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
-    // Cleanup authority never transferred away from the claim, so a later retry can still finish it.
-    expect(yield* readClaimIds(options.stateRoot, stack.id)).toEqual([
-      "cleanupfail0000000000000000000001",
-    ]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );

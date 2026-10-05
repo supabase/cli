@@ -25,7 +25,7 @@ import { makeDatabase } from "./services/Database.ts";
 import { makeStandaloneService } from "../tests/standalone-service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
-import { noContainerClaims, noDirectoryClaims } from "../tests/claims.ts";
+import { noDirectoryClaims } from "../tests/claims.ts";
 import { dockerEngineTarget } from "../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
@@ -43,7 +43,6 @@ const makeTestCommandRunner = (options: {
   Layer.build(
     CommandRunner.layer({
       ...options,
-      claims: noContainerClaims,
       ...(options.runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
     }),
   ).pipe(Effect.map((context) => Context.get(context, CommandRunner.Service)));
@@ -90,7 +89,6 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               ? yield* makeDockerDatabaseRoot("stack-tools-", stackId)
               : yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const database = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             root,
             cacheRoot,
@@ -243,7 +241,6 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
                 ? yield* makeDockerDatabaseRoot(`stack-pgprove-${major}-`, stackId)
                 : yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const database = yield* makeDatabase({
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               root,
               cacheRoot,

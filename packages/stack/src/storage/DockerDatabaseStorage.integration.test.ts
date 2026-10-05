@@ -2,7 +2,6 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ConfigProvider,
-  Context,
   Crypto,
   Data,
   Deferred,
@@ -22,15 +21,12 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
-import * as Claims from "../namespace/Claims.ts";
 import { makeContainerRuntime, type EngineTarget } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
-import * as StackNamespace from "../StackNamespace.ts";
 import { makeDockerDatabaseStorage } from "./DockerDatabaseStorage.ts";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
 import { removeTestRunVolumes } from "../../tests/docker-volume-run.ts";
 import type { DockerHelperRegistry } from "./DockerHelperRegistry.ts";
-import { noContainerClaims } from "../../tests/claims.ts";
 
 // An unpinned target: these tests exercise storage marker/volume logic, not endpoint pinning.
 const dockerTarget: EngineTarget = { engine: "docker", argv: [], daemonId: "test-daemon-id" };
@@ -196,7 +192,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           }),
         );
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: "helper-create-cancel",
@@ -241,14 +236,12 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "database");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
           imageMirrors: () => [helperMirror],
         });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: "storage-helper-mirror",
@@ -272,84 +265,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         expect(
           engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
         ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
-  });
-
-  it.live("claims a helper container before creating it, and unclaims it after removal", () => {
-    // Assigned once `state` exists below; the mock engine calls it synchronously at the exact
-    // moment the "run" command (the one the claim must precede) fires.
-    let onCreate: () => Effect.Effect<void> = () => Effect.void;
-    const engine = fakeHelperEngine(() => onCreate());
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "storage-helper-claims-" });
-        const storageRoot = path.join(root, "state", "stack", "data");
-        const cacheRoot = path.join(root, "cache");
-        const instanceRoot = path.join(storageRoot, "database");
-        yield* fs.makeDirectory(instanceRoot, { recursive: true });
-        const state = Context.get(
-          yield* Layer.build(StackNamespace.layer({ root: path.join(root, "state", "stack") })),
-          StackNamespace.Service,
-        );
-        const stackId = "storage-helper-claims";
-        const claims = Claims.forStack(state, stackId).containers;
-        const claimedAtCreate = yield* Deferred.make<ReadonlyArray<Claims.ResourceClaim>>();
-        onCreate = () =>
-          state.readClaims(stackId).pipe(
-            Effect.flatMap((current) => Deferred.succeed(claimedAtCreate, current)),
-            Effect.asVoid,
-            Effect.orDie,
-          );
-        // Scoped on its own: the helper is a reusable resource unclaimed only when the
-        // storage's own scope closes (its removeHelper finalizer), not merely after one
-        // operation, so that close must happen before the unclaim assertion below.
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const container = yield* makeContainerRuntime({
-              claims,
-              target: dockerTarget,
-              root,
-              imageMirrors: () => [helperMirror],
-            });
-            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-            const storage = yield* makeDockerDatabaseStorage({
-              claims,
-              runtime: "docker",
-              target: dockerTarget,
-              stackId,
-              instanceId: "database",
-              instanceRoot,
-              root: storageRoot,
-              cacheRoot,
-              fs,
-              path,
-              crypto,
-              container,
-              spawner,
-            });
-
-            yield* storage.prepare("17");
-            yield* storage.removeData("17");
-          }),
-        );
-
-        // No sleeps or polling: the deferred is only ever resolved from inside the mock engine,
-        // synchronously at the claim-then-create boundary.
-        const atCreate = yield* Deferred.await(claimedAtCreate);
-        expect(atCreate).toHaveLength(1);
-        expect(atCreate[0]).toMatchObject({ kind: "container" });
-        const runCommand = engine.commands.find((args) => args[0] === "run");
-        const nameIndex = runCommand?.indexOf("--name") ?? -1;
-        const namedByEngine = nameIndex === -1 ? undefined : runCommand?.[nameIndex + 1];
-        expect(namedByEngine).toBeDefined();
-        // The journaled identity is exactly the one the engine was told to create, not merely
-        // some container identity: a mismatch would let reconcile remove the wrong resource.
-        expect(atCreate[0]?.id).toBe(namedByEngine);
-        expect(yield* state.readClaims(stackId)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, engine.layer)));
   });
@@ -399,7 +314,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           marker,
         );
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
           imageMirrors: () => [helperMirror],
@@ -407,7 +321,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const helpers = yield* makeDockerHelperRegistry("mirror-test");
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId,
@@ -451,7 +364,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -459,7 +371,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const stackId = `storage-pg15-${yield* crypto.randomUUIDv4}`;
         const makeStorage = (instanceId: string, instanceRoot: string) =>
           makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId,
@@ -560,7 +471,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -572,7 +482,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           cacheRootValue: string,
         ) =>
           makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId: "storage-test",
@@ -759,7 +668,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const instanceRoot = path.join(storageRoot, "database");
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -769,7 +677,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         // This run id overrides the ambient one, so the shared run teardown never sees the volume.
         yield* Effect.addFinalizer(() => removeTestRunVolumes(testRunId).pipe(Effect.orDie));
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId,
@@ -819,7 +726,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-storage-empty-" });
         const instanceRoot = path.join(root, "state", "stack", "data", "empty");
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: "storage-empty-test",
@@ -859,7 +765,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           const markerPath = path.join(instanceRoot, ".supabase-database-storage.json");
           const helperImage = yield* postgresImage("17");
           const storage = yield* makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId: "storage-crash-test",
@@ -871,7 +776,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
             path,
             crypto,
             container: yield* makeContainerRuntime({
-              claims: noContainerClaims,
               target: dockerTarget,
               root: instanceRoot,
             }),
@@ -1025,13 +929,11 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           "chown -R 100:101 /instance/data /instance/.supabase-snapshots; chmod -R 700 /instance/data /instance/.supabase-snapshots",
         ]);
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: `storage-unmarked-${yield* crypto.randomUUIDv4}`,
@@ -1073,7 +975,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(dataRoot, { recursive: true });
         yield* fs.writeFileString(path.join(dataRoot, "PG_VERSION"), "17\n");
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: "storage-docker-unmarked",
@@ -1085,7 +986,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           path,
           crypto,
           container: yield* makeContainerRuntime({
-            claims: noContainerClaims,
             target: dockerTarget,
             root,
           }),
@@ -1115,7 +1015,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -1128,7 +1027,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           Effect.provideService(Scope.Scope, helperScope),
         );
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId,
@@ -1182,7 +1080,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -1213,7 +1110,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         );
         const makeStorage = (helpers: DockerHelperRegistry) =>
           makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId,
@@ -1280,7 +1176,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(instanceRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -1288,7 +1183,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const stackId = `storage-missing-${yield* crypto.randomUUIDv4}`;
         const makeStorage = () =>
           makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId,
@@ -1367,7 +1261,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
           const container = yield* makeContainerRuntime({
-            claims: noContainerClaims,
             target: dockerTarget,
             root,
           });
@@ -1376,7 +1269,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           // One storage object spans the whole case, the way an Owner keeps one per instance for
           // the stack's lifetime: its resolved identity stays in memory across the sleep below.
           const storage = yield* makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId,
@@ -1454,7 +1346,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           yield* fs.makeDirectory(instanceRoot, { recursive: true });
           yield* fs.makeDirectory(cacheRoot, { recursive: true });
           const container = yield* makeContainerRuntime({
-            claims: noContainerClaims,
             target: dockerTarget,
             root,
           });
@@ -1463,7 +1354,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           // One storage object spans the whole case, the way an Owner keeps one per instance for
           // the stack's lifetime: its resolved identity stays in memory across the sleep below.
           const storage = yield* makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId,
@@ -1557,7 +1447,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           '{"version":"17","runtime":"docker","profile":"supabase"}',
         );
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -1573,7 +1462,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           "chown -R 100:101 /instance/data; chmod 700 /instance/data",
         ]);
         const storage = yield* makeDockerDatabaseStorage({
-          claims: noContainerClaims,
           runtime: "docker",
           target: dockerTarget,
           stackId: "storage-host-test",
@@ -1677,7 +1565,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* fs.makeDirectory(targetRoot, { recursive: true });
         yield* fs.makeDirectory(cacheRoot, { recursive: true });
         const container = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target: dockerTarget,
           root,
         });
@@ -1688,7 +1575,6 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
           cacheRootValue: string,
         ) =>
           makeDockerDatabaseStorage({
-            claims: noContainerClaims,
             runtime: "docker",
             target: dockerTarget,
             stackId: "storage-reopen-test",

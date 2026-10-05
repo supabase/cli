@@ -9,7 +9,6 @@ import { makeDockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 import { shellQuote } from "../storage/DockerSnapshotBackend.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { makeDatabaseSnapshots, type SnapshotScope } from "./DatabaseSnapshot.ts";
-import { noContainerClaims } from "../../tests/claims.ts";
 
 // Derived from the real catalog (not hardcoded), so a Postgres pin bump never makes this go stale.
 const version = postgresVersion("17");
@@ -186,7 +185,6 @@ const docker = Effect.fnUntraced(function* () {
   const image = (yield* resolveArtifact({ service: "database", version }).pipe(Effect.orDie)).image;
   const target = yield* resolveEngineTarget(spawner);
   const container = yield* makeContainerRuntime({
-    claims: noContainerClaims,
     target,
     root,
   });
@@ -248,7 +246,6 @@ const docker = Effect.fnUntraced(function* () {
       const instanceRoot = `${root}/${name}`;
       yield* fs.makeDirectory(instanceRoot, { recursive: true });
       const storage = yield* makeDockerDatabaseStorage({
-        claims: noContainerClaims,
         runtime: "docker",
         target,
         stackId,

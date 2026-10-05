@@ -16,7 +16,6 @@ import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/u
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
-import type * as Claims from "../namespace/Claims.ts";
 import * as Publication from "../namespace/Publication.ts";
 import type { ContainerRuntime, EngineTarget } from "../runtime/Container.ts";
 import { composeProjectFor } from "../runtime/ContainerName.ts";
@@ -136,8 +135,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
     readonly container: ContainerRuntime | undefined;
     readonly spawner: ChildProcessSpawnerService["Service"];
     readonly helpers?: DockerHelperRegistry;
-    /** Journals each helper container before it is created, for the namespace's reconcile loop. */
-    readonly claims: Claims.ContainerClaims;
   }): Effect.Effect<DockerDatabaseStorage, DockerDatabaseStorageError, Scope.Scope> =>
     Effect.gen(function* () {
       const markerPath = options.path.join(options.instanceRoot, ".supabase-database-storage.json");
@@ -521,11 +518,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                   /no such container/iu.test(cause.message) ? Effect.void : Effect.fail(cause),
                 ),
               );
-              // Cleanup authority now belongs entirely to this normal teardown; a crash before
-              // this point still leaves the claim for the next owner's reconcile loop.
-              yield* options.claims
-                .unclaim(current)
-                .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
               yield* Ref.set(helperId, undefined);
               yield* Ref.set(helperImage, undefined);
               yield* Ref.set(helperCleanupPending, false);
@@ -583,15 +575,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
               const name = `supabase-db-helper-${token}`;
               const testRunLabel = yield* testRunLabelArgs();
               // Register the deterministic owned name before the remote create starts so an
-              // interrupted docker run can still be removed by the same scope, and journal it so a
-              // SIGKILL that skips that scope still leaves it recoverable by the next reconcile.
-              // Required, the same as launch: a container must never be created with an
-              // unverifiable daemon identity, since a crashed owner could then leave a claim no
-              // reconcile can ever trust.
-              const resolvedDaemonId = options.target.daemonId;
-              yield* options.claims
-                .claim(name, resolvedDaemonId)
-                .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
+              // interrupted docker run can still be removed by the same scope.
               yield* Ref.set(helperId, name);
               yield* Ref.set(helperImage, image);
               const created = yield* engineCommand([
@@ -643,9 +627,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           Effect.catchTag("DockerDatabaseStorageError", (cause) =>
             missingContainer(cause.message) ? Effect.void : Effect.fail(cause),
           ),
-          Effect.andThen(
-            options.claims.unclaim(id).pipe(Effect.mapError((cause) => errorFor("claim", cause))),
-          ),
           Effect.asVoid,
         );
       // A container left in `created` cannot exec; remove it and start another.
@@ -688,14 +669,6 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             .prepareImage(image)
             .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
           const testRunLabel = yield* testRunLabelArgs();
-          // Journaled before the create starts, so a SIGKILL leaves this shared helper's identity
-          // recoverable by the next reconcile instead of leaked. Required, the same as launch: a
-          // container must never be created with an unverifiable daemon identity, since a crashed
-          // owner could then leave a claim no reconcile can ever trust.
-          const resolvedDaemonId = options.target.daemonId;
-          yield* options.claims
-            .claim(name, resolvedDaemonId)
-            .pipe(Effect.mapError((cause) => errorFor("claim", cause)));
           return yield* Effect.uninterruptible(
             engineCommand([
               "run",

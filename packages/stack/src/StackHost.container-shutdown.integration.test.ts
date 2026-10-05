@@ -30,7 +30,6 @@ import {
 import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
-import { noContainerClaims } from "../tests/claims.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
@@ -221,7 +220,6 @@ it.live.skipIf(process.platform === "win32")(
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const target = yield* resolveEngineTarget(spawner);
         const helper = yield* makeContainerRuntime({
-          claims: noContainerClaims,
           target,
           root: dataA,
         });

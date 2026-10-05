@@ -1,31 +1,11 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Fiber, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, Fiber, FileSystem, Layer, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { create, discover } from "./effect.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
-import * as StackNamespace from "./StackNamespace.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-
-/** Seeds a container claim for a not-yet-created stack id, as an orphaned claim would be found. */
-const seedContainerClaim = (
-  stateRoot: string,
-  id: string,
-  containerId: string,
-  daemonId?: string,
-) =>
-  Effect.scoped(
-    Layer.build(StackNamespace.layer({ root: stateRoot })).pipe(
-      Effect.flatMap((context) =>
-        Context.get(context, StackNamespace.Service).claim(id, {
-          kind: "container",
-          id: containerId,
-          ...(daemonId === undefined ? {} : { daemonId }),
-        }),
-      ),
-    ),
-  );
 
 it.live(
   "removes a stack it just registered when the owner fails to launch, and lets a retry succeed",
@@ -61,9 +41,6 @@ it.live(
       } satisfies Parameters<typeof create>[0];
       const identity = yield* resolveStackIdentity(options);
       const id = yield* deriveStackId(identity);
-      // An orphaned claim from a never-fully-registered prior attempt, found by this owner's
-      // startup reconcile before it finishes registering.
-      yield* seedContainerClaim(options.stateRoot, id, "rollback0000000000000000000000001");
 
       const launchFailure = yield* Effect.flip(create({ ...options, startOwner: true }));
       expect(launchFailure.message).toContain("Cannot connect to the Docker daemon");
@@ -95,11 +72,14 @@ it.live("removes a stack it just registered when its owner launch is interrupted
     const binDir = path.join(root, "bin");
     yield* fs.makeDirectory(binDir, { recursive: true });
     const dockerShim = path.join(binDir, "docker");
+    // An orphaned container from a never-fully-registered prior attempt, found by this owner's
+    // startup label sweep before it finishes registering.
+    const orphanId = "interrupt0000000000000000000000001";
     yield* fs.writeFileString(
       dockerShim,
       // The leading check strips the pinned `--host <endpoint>` prefix every invocation now
       // carries (fixed below via DOCKER_HOST), so "$1" below still sees the real command.
-      `#!/bin/sh\nif [ "$1" = "--host" ]; then shift 2; fi\nif [ "$1" = "rm" ]; then echo started > '${started}'; exec sleep 60; fi\nif [ "$1" = "info" ]; then echo fake-daemon-id; fi\nexit 0\n`,
+      `#!/bin/sh\nif [ "$1" = "--host" ]; then shift 2; fi\nif [ "$1" = "ps" ]; then echo '${orphanId}'; exit 0; fi\nif [ "$1" = "rm" ]; then echo started > '${started}'; exec sleep 60; fi\nif [ "$1" = "info" ]; then echo fake-daemon-id; fi\nexit 0\n`,
     );
     yield* fs.chmod(dockerShim, 0o755);
     // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
@@ -129,16 +109,6 @@ it.live("removes a stack it just registered when its owner launch is interrupted
       cacheRoot: `${root}/cache`,
       runtime: "docker",
     } satisfies Parameters<typeof create>[0];
-    const identity = yield* resolveStackIdentity(options);
-    const id = yield* deriveStackId(identity);
-    // Recorded against the daemon this reconcile run will match: the engine is reachable and
-    // identifiable here, so the interrupted launch's own rollback is what's under test.
-    yield* seedContainerClaim(
-      options.stateRoot,
-      id,
-      "interrupt0000000000000000000000001",
-      "fake-daemon-id",
-    );
     const creating = yield* create({ ...options, startOwner: true }).pipe(Effect.forkChild);
     yield* fs.readFileString(started);
     yield* Fiber.interrupt(creating);

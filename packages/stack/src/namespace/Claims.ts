@@ -3,15 +3,12 @@ import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import * as Publication from "./Publication.ts";
 
 /**
- * A resource the stack is about to create outside its own process lifetime: a container or a
- * directory whose creation can be interrupted partway. Identity is exact, so reconciliation never
- * guesses by name or label. `daemonId` records which engine daemon a container claim belongs to,
- * so reconcile never removes (or mistakes) an identity recorded against a different daemon.
+ * A directory the stack is about to create outside its own process lifetime, whose creation can
+ * be interrupted partway. Identity is exact, so reconciliation never guesses by name or label.
  */
 export const ResourceClaim = Schema.Struct({
-  kind: Schema.Literals(["container", "directory"]),
+  kind: Schema.Literals(["directory"]),
   id: Schema.String,
-  daemonId: Schema.optionalKey(Schema.String),
 });
 export interface ResourceClaim extends Schema.Schema.Type<typeof ResourceClaim> {}
 
@@ -125,33 +122,17 @@ export const make = (
     return { claim, unclaim, readClaims };
   });
 
-/** A narrow capability a container runtime uses to journal exact container identities. */
-export interface ContainerClaims {
-  /** `daemonId`, when known, is recorded so reconcile never drops a claim seen from another daemon. */
-  readonly claim: (id: string, daemonId?: string) => Effect.Effect<void, NamespaceError>;
-  readonly unclaim: (id: string) => Effect.Effect<void, NamespaceError>;
-}
-
 /** A narrow capability for journaling a directory outside the owner's normal data tree. */
 export interface DirectoryClaims {
   readonly claim: (directoryPath: string) => Effect.Effect<void, NamespaceError>;
   readonly unclaim: (directoryPath: string) => Effect.Effect<void, NamespaceError>;
 }
 
-/** Scopes the claims journal to one stack, exposing only its container and directory operations. */
+/** Scopes the claims journal to one stack, exposing only its directory operations. */
 export const forStack = (
   state: Interface,
   stackId: string,
-): { readonly containers: ContainerClaims; readonly directories: DirectoryClaims } => ({
-  containers: {
-    claim: (id, daemonId) =>
-      state.claim(stackId, {
-        kind: "container",
-        id,
-        ...(daemonId === undefined ? {} : { daemonId }),
-      }),
-    unclaim: (id) => state.unclaim(stackId, { kind: "container", id }),
-  },
+): { readonly directories: DirectoryClaims } => ({
   directories: {
     claim: (directoryPath) => state.claim(stackId, { kind: "directory", id: directoryPath }),
     unclaim: (directoryPath) => state.unclaim(stackId, { kind: "directory", id: directoryPath }),
@@ -160,10 +141,9 @@ export const forStack = (
 
 /**
  * Reads a stack's recorded claims and, for each one still present, asks `remove` to reconcile it:
- * `"removed"` drops the claim, `"kept"` leaves it (for example a container claim recorded against
- * a different daemon than the one reconcile is currently running against). A claim whose removal
- * fails stays recorded, along with every claim after it, for the next acquisition to retry; it
- * reports the first failure.
+ * `"removed"` drops the claim, `"kept"` leaves it. A claim whose removal fails stays recorded,
+ * along with every claim after it, for the next acquisition to retry; it reports the first
+ * failure.
  */
 export const reconcile = Effect.fn("Namespace.Claims.reconcile")(function* <E, R>(
   claimsInterface: Pick<Interface, "readClaims" | "unclaim">,

@@ -18,7 +18,7 @@ import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
-import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
+import { noDirectoryClaims } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const config: DatabaseConfig = {
@@ -72,7 +72,6 @@ describe("database component", { timeout: 180_000 }, () => {
                 ? yield* makeDockerDatabaseRoot("stack-default-key-", "default-key-test")
                 : yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
             const recipe = yield* makeDatabase({
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               stackId: "default-key-test",
               instanceId: "database",
@@ -133,7 +132,6 @@ describe("database component", { timeout: 180_000 }, () => {
             ).toEqual([{ decrypted_secret: "preserved-value" }]);
             if (target.runtime === "native") {
               const second = yield* makeDatabase({
-                containerClaims: noContainerClaims,
                 directoryClaims: noDirectoryClaims,
                 stackId: "default-key-test",
                 instanceId: "database-second",
@@ -169,7 +167,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-hba-" });
         const database = yield* makeDatabase({
-          containerClaims: noContainerClaims,
           directoryClaims: noDirectoryClaims,
           stackId: "stack-integration",
           instanceId: "hba",
@@ -233,7 +230,6 @@ describe("database component", { timeout: 180_000 }, () => {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-" });
           const cacheRoot = artifactCacheRoot;
           const first = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "first",
@@ -311,7 +307,6 @@ describe("database component", { timeout: 180_000 }, () => {
           expect(incomplete.message).toContain("major does not match");
 
           const reopened = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "first",
@@ -339,7 +334,6 @@ describe("database component", { timeout: 180_000 }, () => {
 
           const secondRoot = path.join(root, "second-root");
           const second = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "second",
@@ -395,7 +389,6 @@ describe("database component", { timeout: 180_000 }, () => {
           );
           const cacheRoot = artifactCacheRoot;
           const database = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             stackId: "stack-integration-container",
             instanceId: "database",
@@ -453,7 +446,6 @@ describe("database component", { timeout: 180_000 }, () => {
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           const reopened = yield* makeDatabase({
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             stackId: "stack-integration-container",
             instanceId: "database",
@@ -491,7 +483,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const stackId = "stack-compose-group";
         const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
         const database = yield* makeDatabase({
-          containerClaims: noContainerClaims,
           directoryClaims: noDirectoryClaims,
           stackId,
           instanceId: "database",
@@ -537,7 +528,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const stackId = "stack-fast-shutdown";
         const root = yield* makeDockerDatabaseRoot("stack-database-shutdown-", stackId);
         const database = yield* makeDatabase({
-          containerClaims: noContainerClaims,
           directoryClaims: noDirectoryClaims,
           stackId,
           instanceId: "database",

@@ -3,7 +3,7 @@ import type { Stream } from "effect";
 import type { Effect, Ref } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
 import type { ServiceDefinition } from "../Service.ts";
-import type { ContainerClaims, DirectoryClaims } from "../namespace/Claims.ts";
+import type { DirectoryClaims } from "../namespace/Claims.ts";
 import type { PortError } from "../Ports.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
@@ -60,8 +60,6 @@ export interface CatalogOptions {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Journals this service's containers before they are created, for the namespace's reconcile loop. */
-  readonly containerClaims: ContainerClaims;
   /** Journals directories a service creates outside its data root (for example under `/tmp`). */
   readonly directoryClaims: DirectoryClaims;
   /** Read-only: true when the per-user registry holds `port` for any stack's public listener. */

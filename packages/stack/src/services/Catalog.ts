@@ -331,7 +331,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
           ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
-          containerClaims: options.containerClaims,
           directoryClaims: options.directoryClaims,
         }).pipe(
           Effect.mapError(
@@ -354,7 +353,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
               root: options.root,
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
-              claims: options.containerClaims,
             });
       const borrowCallerPath = (candidate: string) =>
         borrow(fs, path, candidate, options.root, (operation, cause) => {

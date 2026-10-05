@@ -12,7 +12,6 @@ import {
 import { PreparationError } from "../preparation/Errors.ts";
 import type { StackCredentials } from "../StackNamespace.ts";
 import * as CommandRunner from "./CommandRunner.ts";
-import { noContainerClaims } from "../../tests/claims.ts";
 
 const target =
   process.platform === "darwin" && process.arch === "arm64"
@@ -67,7 +66,6 @@ const prepareAuthArtifact = Effect.fn(function* (cacheRoot: string, script: stri
 
 const makeRunner = Effect.fn(function* (root: string, cacheRoot: string) {
   const layer = CommandRunner.layer({
-    claims: noContainerClaims,
     stackId: "initialization-command-test",
     root,
     cacheRoot,

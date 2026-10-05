@@ -39,7 +39,6 @@ import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
-import { noContainerClaims } from "../tests/claims.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
@@ -236,7 +235,6 @@ const inProcessRuntime = (
     const acquired = yield* bindControl();
     const toolContext = yield* Layer.build(
       CommandRunner.layer({
-        claims: noContainerClaims,
         stackId: "stack",
         root,
         cacheRoot: "/tmp/supabase-stack-artifacts",
@@ -527,7 +525,7 @@ it.live(
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("reports destroy and fallback stop failures together", () =>
+it.live("reports a destroy failure and leaves the owner running", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -549,68 +547,42 @@ it.live("reports destroy and fallback stop failures together", () =>
         root: `${root}/data`,
         cacheRoot: "/tmp/supabase-stack-artifacts",
       });
-      const failureWithOutcome = (
-        operation: "destroy" | "stop",
-        message: string,
-        id: string,
-        reason: string,
-      ) =>
-        new OrchestratorError({
-          operation,
-          message,
-          outcomes: [
-            {
-              id,
-              result: Exit.fail(new OrchestratorError({ operation, message: reason })),
-            },
-          ],
-        });
       const failedOwner = {
         ...owner,
         namespace: {
           ...owner.namespace,
           destroy: Effect.fail(
-            failureWithOutcome(
-              "destroy",
-              "Namespace destroy had failures",
-              "database-destroy",
-              "data removal refused",
-            ),
-          ),
-          stop: Effect.fail(
-            failureWithOutcome(
-              "stop",
-              "Composition stop had failures",
-              "database-stop",
-              "process stop refused",
-            ),
+            new OrchestratorError({
+              operation: "destroy",
+              message: "Namespace destroy had failures",
+              outcomes: [
+                {
+                  id: "database-destroy",
+                  result: Exit.fail(
+                    new OrchestratorError({
+                      operation: "destroy",
+                      message: "data removal refused",
+                    }),
+                  ),
+                },
+              ],
+            }),
           ),
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
       const failure = yield* shutdownOwner(runtime.access, true).pipe(Effect.flip);
       expect(failure.message).toContain("Namespace destroy had failures");
-      expect(failure.message).toContain("database-destroy:");
-      expect(failure.message).toContain("data removal refused");
-      expect(failure.message).toContain("fallback stop failed: Composition stop had failures");
-      expect(failure.message).toContain("database-stop:");
-      expect(failure.message).toContain("process stop refused");
       expect("outcomes" in failure).toBe(true);
       if (!("outcomes" in failure)) return yield* Effect.die("shutdown outcomes were missing");
-      expect(failure.outcomes).toEqual(
-        expect.arrayContaining([
-          {
-            id: "database-destroy",
-            succeeded: false,
-            error: expect.stringContaining("data removal refused"),
-          },
-          {
-            id: "database-stop",
-            succeeded: false,
-            error: expect.stringContaining("process stop refused"),
-          },
-        ]),
-      );
+      expect(failure.outcomes).toEqual([
+        {
+          id: "database-destroy",
+          succeeded: false,
+          error: expect.stringContaining("data removal refused"),
+        },
+      ]);
+      // A failed destroy does not fall back to stop: retry destroy or call `stack stop` instead.
       expect(yield* Deferred.isDone(runtime.exit)).toBe(false);
       expect(yield* owner.getServing).toBe(true);
     }),

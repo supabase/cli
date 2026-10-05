@@ -12,7 +12,6 @@ import {
 } from "../preparation/ArtifactStore.ts";
 import { PreparationError } from "../preparation/Errors.ts";
 import * as CommandRunner from "./CommandRunner.ts";
-import { noContainerClaims } from "../../tests/claims.ts";
 
 const target =
   process.platform === "darwin" && process.arch === "arm64"
@@ -114,7 +113,6 @@ it.live.skipIf(target === undefined || process.platform === "win32")(
           }),
         );
         const layer = CommandRunner.layer({
-          claims: noContainerClaims,
           stackId: "native-cleanup-test",
           root,
           cacheRoot,

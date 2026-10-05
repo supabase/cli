@@ -6,11 +6,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import {
-  noContainerClaims,
-  noDirectoryClaims,
-  noPublicPortReservations,
-} from "../../tests/claims.ts";
+import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -19,7 +15,6 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
-  containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
   isPubliclyReserved: noPublicPortReservations,
 });

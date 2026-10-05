@@ -103,10 +103,13 @@ const directoryClaimExists = Effect.fn("Owner.directoryClaimExists")(function* (
 });
 
 /**
- * Removes this stack's claimed resources by exact identity, through the owner's pinned engine target.
- * Container claims from another or unknown daemon, and directory claims outside every owned root,
- * are kept and reported, so recovery (possibly as root) never deletes what it does not own. A claim
- * naming a path that no longer exists in any form is simply dropped, nothing left to remove.
+ * Reconciles this stack's directory claims by exact identity, then removes every container
+ * carrying this stack's identity and data-root labels through the owner's pinned engine target.
+ * A directory claim outside every owned root is kept and reported, so recovery (possibly as root)
+ * never deletes what it does not own; one naming a path that no longer exists in any form is
+ * simply dropped, nothing left to remove. A container that survives removal fails the sweep, so
+ * the caller (startup, stop, or destroy) can report it and retry instead of proceeding as if the
+ * stack were fully torn down.
  */
 export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
   state: StackNamespace.Interface,
@@ -123,41 +126,38 @@ export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
   yield* Claims.reconcile(
     state,
     saved.id,
-    (
-      claim,
-    ): Effect.Effect<
-      "removed" | "kept",
-      Container.ContainerError | PlatformError | StackNamespace.NamespaceError,
-      ChildProcessSpawner.ChildProcessSpawner
-    > => {
-      if (claim.kind === "directory")
-        return directoryClaimExists(claim.id).pipe(
-          Effect.flatMap((present) =>
-            !present
-              ? Effect.succeed("removed" as const)
-              : Paths.isWithinOwnedRoots(fs, path, claim.id, ownedRoots, (_operation, cause) =>
-                  namespaceError("cleanup", cause),
-                ).pipe(
-                  Effect.flatMap((within) =>
-                    within
-                      ? fs
-                          .remove(claim.id, { recursive: true, force: true })
-                          .pipe(Effect.as("removed" as const))
-                      : Effect.logWarning(
-                          `Claimed directory ${claim.id} resolves outside every owned root; keeping it`,
-                        ).pipe(Effect.as("kept" as const)),
-                  ),
+    (claim): Effect.Effect<"removed" | "kept", PlatformError | StackNamespace.NamespaceError> =>
+      directoryClaimExists(claim.id).pipe(
+        Effect.flatMap((present) =>
+          !present
+            ? Effect.succeed("removed" as const)
+            : Paths.isWithinOwnedRoots(fs, path, claim.id, ownedRoots, (_operation, cause) =>
+                namespaceError("cleanup", cause),
+              ).pipe(
+                Effect.flatMap((within) =>
+                  within
+                    ? fs
+                        .remove(claim.id, { recursive: true, force: true })
+                        .pipe(Effect.as("removed" as const))
+                    : Effect.logWarning(
+                        `Claimed directory ${claim.id} resolves outside every owned root; keeping it`,
+                      ).pipe(Effect.as("kept" as const)),
                 ),
-          ),
-        );
-      if (target === undefined) return Effect.succeed("kept" as const);
-      if (claim.daemonId === undefined || claim.daemonId !== target.daemonId)
-        return Effect.succeed("kept" as const);
-      return Container.removeContainerById({ target, id: claim.id }).pipe(
-        Effect.as("removed" as const),
-      );
-    },
+              ),
+        ),
+      ),
   );
+  if (target === undefined) return;
+  const remaining = yield* Container.removeStackContainers({
+    target,
+    stackId: saved.id,
+    stackRoot: path.resolve(root),
+  });
+  if (remaining.length > 0)
+    return yield* new StackNamespace.NamespaceError({
+      operation: "cleanup",
+      message: `Containers remain: ${remaining.join(", ")}`,
+    });
 });
 
 type NamespaceError =
@@ -491,7 +491,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
-      containerClaims: claims.containers,
       directoryClaims: claims.directories,
       isPubliclyReserved,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
@@ -892,9 +891,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         Effect.andThen(network.drain),
         Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
-        // A claim reconcile deliberately kept (for example one recorded against a different
-        // daemon) must not be lost to a full deregistration; the stack stays registered so a
-        // later acquisition's reconcile, against the right daemon, can still finish it.
+        // A directory claim deliberately kept (for example one resolving outside every owned
+        // root) must not be lost to a full deregistration; the stack stays registered so a later
+        // acquisition's reconcile can still finish it.
         Effect.andThen(options.state.readClaims(stackId)),
         Effect.flatMap((remaining) =>
           remaining.length === 0
@@ -903,22 +902,15 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
                 Effect.andThen(options.state.remove(stackId)),
               )
             : Effect.gen(function* () {
-                const currentDaemonId = options.engineTarget?.daemonId;
                 const claimsPath = path.join(options.state.root, stackId, Claims.CLAIMS_FILE);
-                const listed = remaining
-                  .map(
-                    (claim) =>
-                      `  - ${claim.kind} ${claim.id} (daemon ${claim.daemonId ?? "unknown"})`,
-                  )
-                  .join("\n");
+                const listed = remaining.map((claim) => `  - ${claim.kind} ${claim.id}`).join("\n");
                 return yield* new StackNamespace.NamespaceError({
                   operation: "destroy",
                   message: [
                     `${remaining.length} resource claim(s) could not be reconciled; stack stays registered for retry.`,
                     listed,
-                    `Current daemon: ${currentDaemonId ?? "unreachable"}.`,
-                    "To recover: stop this owner, confirm the lease is free, then run `supabase stack destroy` again once the original engine is back. " +
-                      `If that engine is permanently gone, remove the listed claim entries from ${claimsPath} and retry.`,
+                    `To recover: confirm the listed directories are safe to remove, then run \`supabase stack destroy\` again. ` +
+                      `If they are not, remove the listed claim entries from ${claimsPath} and retry.`,
                   ].join("\n"),
                 });
               }),

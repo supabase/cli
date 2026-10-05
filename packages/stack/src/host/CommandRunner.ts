@@ -21,7 +21,6 @@ import {
   resolveArtifact,
   useNativeArtifact,
 } from "../Artifacts.ts";
-import type * as Claims from "../namespace/Claims.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { borrow } from "../namespace/Paths.ts";
 import { makeContainerRuntime, type EngineTarget, type HostGateway } from "../runtime/Container.ts";
@@ -82,8 +81,6 @@ const makeCommandRunner = (options: {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Journals each job container before it is created, for the namespace's reconcile loop. */
-  readonly claims: Claims.ContainerClaims;
 }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -100,7 +97,6 @@ const makeCommandRunner = (options: {
             root: options.root,
             imageMirrors: slimImageMirrors,
             ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
-            claims: options.claims,
           });
     const borrowCallerPath = (candidate: string) =>
       borrow(fs, path, candidate, options.root, (_operation, cause) => failure(cause));
@@ -338,6 +334,4 @@ export const layer = (options: {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Journals each job container before it is created, for the namespace's reconcile loop. */
-  readonly claims: Claims.ContainerClaims;
 }) => Layer.effect(Service, makeCommandRunner(options).pipe(Effect.map(Service.of)));

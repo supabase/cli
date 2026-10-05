@@ -3,7 +3,6 @@ import { Console, Crypto, Effect, FileSystem, Layer, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeContainerRuntime } from "../src/runtime/Container.ts";
 import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
-import { noContainerClaims } from "./claims.ts";
 
 const [instanceRoot, root, cacheRoot] = process.argv.slice(2);
 if (instanceRoot === undefined || root === undefined || cacheRoot === undefined)
@@ -38,12 +37,10 @@ const program = Effect.scoped(
     // marker the caller's `prepare` already published through it.
     const target = { engine: "docker" as const, argv: [], daemonId: "test-daemon-id" };
     const container = yield* makeContainerRuntime({
-      claims: noContainerClaims,
       target,
       root: instanceRoot,
     });
     const storage = yield* makeDockerDatabaseStorage({
-      claims: noContainerClaims,
       runtime: "docker",
       target,
       stackId: "storage-crash-test",

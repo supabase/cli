@@ -145,8 +145,6 @@ export interface DatabaseOptions {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Journals this database's container before it is created, for the namespace's reconcile loop. */
-  readonly containerClaims: Claims.ContainerClaims;
   /** Journals the native socket directory this database creates under `/tmp`, outside its data root. */
   readonly directoryClaims: Claims.DirectoryClaims;
 }
@@ -469,7 +467,6 @@ export const makeDatabase = (
             root: options.root,
             imageMirrors: slimImageMirrors,
             ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
-            claims: options.containerClaims,
             // PostgreSQL's outbound HTTP falls back across address families.
             awaitHostGateway: false,
           });
@@ -491,7 +488,6 @@ export const makeDatabase = (
             container,
             spawner,
             ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
-            claims: options.containerClaims,
           }).pipe(Effect.mapError((cause) => databaseError("storage", cause)));
 
     const snapshots = (version: string) =>

@@ -22,11 +22,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
-import {
-  noContainerClaims,
-  noDirectoryClaims,
-  noPublicPortReservations,
-} from "../../tests/claims.ts";
+import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -106,7 +102,6 @@ describe("service catalog", () => {
               },
             },
             {
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...dockerOptions(root),
@@ -171,7 +166,6 @@ describe("service catalog", () => {
             config: { functionsRoot, databaseUrl: "postgres://functions-db" },
           },
           {
-            containerClaims: noContainerClaims,
             directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             ...options(root),
@@ -267,7 +261,6 @@ describe("service catalog", () => {
                 },
               },
               {
-                containerClaims: noContainerClaims,
                 directoryClaims: noDirectoryClaims,
                 isPubliclyReserved: noPublicPortReservations,
                 ...options(stackRoot),
@@ -341,7 +334,6 @@ describe("service catalog", () => {
               },
             },
             {
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
@@ -418,7 +410,6 @@ describe("service catalog", () => {
               },
             },
             {
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
@@ -534,7 +525,6 @@ for (const runtime of ["native", "docker"] as const) {
               },
             },
             {
-              containerClaims: noContainerClaims,
               directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
@@ -658,7 +648,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const recipe = yield* makeProcessRecipe(
         creation,
         {
-          containerClaims: noContainerClaims,
           directoryClaims: noDirectoryClaims,
           isPubliclyReserved: noPublicPortReservations,
           stackId: "e".repeat(64),

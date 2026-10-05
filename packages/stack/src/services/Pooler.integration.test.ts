@@ -7,11 +7,7 @@ import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import {
-  noContainerClaims,
-  noDirectoryClaims,
-  noPublicPortReservations,
-} from "../../tests/claims.ts";
+import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -20,7 +16,6 @@ const options = (root: string) => ({
   root,
   cacheRoot: "/tmp/supabase-stack-artifacts",
   runtime: "native" as const,
-  containerClaims: noContainerClaims,
   directoryClaims: noDirectoryClaims,
   isPubliclyReserved: noPublicPortReservations,
 });
