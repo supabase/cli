@@ -63,6 +63,20 @@ describe("operation-table", () => {
     expect(refMatch.kind === "matched" && refMatch.operation.operationId).toBe("v1-get-project");
   });
 
+  it("doesn't let a doubled slash stand in for a placeholder's value", () => {
+    const match = matchOperation(
+      "GET",
+      "https://api.supabase.com/v1/projects//abcdefghijklmnopqrst",
+    );
+    expect(match.kind).toBe("unmatched");
+  });
+
+  it("resolves a path-only URL whose query string embeds an absolute URL, instead of throwing", () => {
+    const match = matchOperation("GET", "/v1/projects?redirect=https://example.com");
+    expect(match.kind).toBe("matched");
+    expect(match.kind === "matched" && match.operation.operationId).toBe("v1-list-all-projects");
+  });
+
   it("has no same-method, equal-literal-count path template collision the tie-break can't resolve", () => {
     function segments(template: string): ReadonlyArray<string> {
       return template.split("/").filter((segment) => segment.length > 0);

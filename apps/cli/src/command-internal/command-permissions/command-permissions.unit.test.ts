@@ -9,7 +9,7 @@ import {
 } from "../../docs/docs-introspection.ts";
 import { unwrapToSingleParam } from "../param-introspection.ts";
 import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
-import { COMMAND_PERMISSIONS, PENDING_COMMANDS, PERMISSION_GROUPS } from "./index.ts";
+import { COMMAND_PERMISSIONS, PENDING_COMMANDS, PERMISSION_GROUPS } from "./registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "./global-flags.ts";
 import type { FlagCondition, OperationEntry } from "./model.ts";
 
@@ -41,10 +41,14 @@ function flagNames(params: ReadonlyArray<unknown>): ReadonlyArray<string> {
   });
 }
 
-/** A command's own flags: its `config.flags` plus whatever it registers via `withGlobalFlags` (e.g. `seed`'s persistent `--linked`/`--local`), which never appear in `config.flags`. */
+/** A command's own flags: `config.flags`, `contextConfig.flags` (`withSharedFlags`), and whatever it registers via `withGlobalFlags` (e.g. `seed`'s persistent `--linked`/`--local`). */
 function ownFlagsOf(command: Command.Command.Any): ReadonlyArray<string> {
   const internals = commandInternals(command);
-  return [...flagNames(internals.config.flags), ...flagNames(userGlobalFlagParams(command))];
+  return [
+    ...flagNames(internals.config.flags),
+    ...flagNames(internals.contextConfig.flags),
+    ...flagNames(userGlobalFlagParams(command)),
+  ];
 }
 
 function walk(
