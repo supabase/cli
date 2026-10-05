@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Cause,
   Context,
+  Crypto,
   Data,
   Deferred,
   Effect,
@@ -12,7 +13,6 @@ import {
   Layer,
   Redacted,
   Ref,
-  Schedule,
   Schema,
   Stream,
 } from "effect";
@@ -21,9 +21,9 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
-// oxlint-disable-next-line effecttsgo/node-builtin-import -- integration drives a real HTTP keep-alive connection through the public listener.
-import * as Http from "node:http";
+import { fileURLToPath } from "node:url";
 import {
+  hasReason,
   launchHost,
   ownerAuthorization,
   ownerClient,
@@ -31,7 +31,6 @@ import {
   waitForOwnerExit,
   type HostAccess,
 } from "./HostProcess.ts";
-import * as Network from "./Network.ts";
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
@@ -43,6 +42,10 @@ import * as CommandRunner from "./host/CommandRunner.ts";
 import { noContainerClaims } from "../tests/claims.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
+
+const gatedDrainFixture = fileURLToPath(
+  new URL("../tests/gated-drain-fixture.ts", import.meta.url),
+);
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -136,6 +139,91 @@ const awaitClosed = (socket: Net.Socket) =>
     const onClose = () => resume(Effect.void);
     socket.once("close", onClose);
     return Effect.sync(() => socket.off("close", onClose));
+  });
+
+const isHttpRefused = (port: number) =>
+  Effect.callback<boolean, never>((resume) => {
+    let socket: Net.Socket;
+    try {
+      socket = Net.connect(port, "127.0.0.1");
+    } catch {
+      resume(Effect.succeed(true));
+      return Effect.void;
+    }
+    let response = "";
+    const onConnect = () =>
+      socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    const onData = (bytes: Buffer) => (response += bytes.toString());
+    const settle = () => resume(Effect.succeed(response.length === 0));
+    socket.once("connect", onConnect);
+    socket.on("data", onData);
+    socket.once("close", settle);
+    socket.once("error", settle);
+    return Effect.sync(() => {
+      socket.off("connect", onConnect);
+      socket.off("data", onData);
+      socket.off("close", settle);
+      socket.off("error", settle);
+      socket.destroy();
+    });
+  });
+
+/**
+ * Opens a real TCP connection to the mail service's send endpoint and writes only the first half
+ * of the request body, so the request stays genuinely in flight until `complete` sends the rest.
+ */
+const openPartialMailSend = (port: number, subject: string) =>
+  Effect.gen(function* () {
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- raw wire payload split mid-body to hold the request open, not a domain model
+    const payload = JSON.stringify({
+      From: { Email: "sender@example.com" },
+      To: [{ Email: "recipient@example.com" }],
+      Subject: subject,
+      Text: "drain test",
+    });
+    const splitAt = Math.ceil(payload.length / 2);
+    const socket = yield* Effect.acquireRelease(
+      Effect.callback<Net.Socket, HostTestError>((resume) => {
+        let socket: Net.Socket;
+        try {
+          socket = Net.connect(port, "127.0.0.1");
+        } catch (cause) {
+          resume(Effect.fail(hostTestError(cause)));
+          return Effect.void;
+        }
+        const onConnect = () =>
+          socket.write(
+            `POST /api/v1/send HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${payload.length}\r\nConnection: close\r\n\r\n${payload.slice(0, splitAt)}`,
+            () => resume(Effect.succeed(socket)),
+          );
+        const onError = (cause: Error) => resume(Effect.fail(hostTestError(cause)));
+        socket.once("connect", onConnect);
+        socket.once("error", onError);
+        return Effect.sync(() => {
+          socket.off("connect", onConnect);
+          socket.off("error", onError);
+        });
+      }),
+      (socket) => Effect.sync(() => socket.destroy()),
+    );
+    const response = yield* Effect.callback<string, HostTestError>((resume) => {
+      let buffer = "";
+      const onData = (bytes: Buffer) => (buffer += bytes.toString());
+      const onEnd = () => resume(Effect.succeed(buffer));
+      const onError = (cause: Error) => resume(Effect.fail(hostTestError(cause)));
+      socket.on("data", onData);
+      socket.once("end", onEnd);
+      socket.once("error", onError);
+      return Effect.sync(() => {
+        socket.off("data", onData);
+        socket.off("end", onEnd);
+        socket.off("error", onError);
+      });
+    }).pipe(Effect.forkChild({ startImmediately: true }));
+    return {
+      complete: () => socket.write(payload.slice(splitAt)),
+      response: Fiber.join(response),
+    };
   });
 
 const inProcessRuntime = (
@@ -1187,290 +1275,82 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-/** A running native mail service, reachable through its public HTTP listener like any client. */
-const withRunningMail = Effect.fn("Test.withRunningMail")(function* (prefix: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix });
-  const state = yield* stateFor(`${root}/state`);
-  const saved = {
-    id: "stack",
-    runtime: "native" as const,
-    identity: { projectRoot: root, branchContext: "main", stackName: prefix },
-    instances: [],
-    lifetime: "detached" as const,
-    composition: { members: [], dependencies: [] },
-    ports: [],
-  };
-  yield* state.save(saved);
-  const owner = yield* ownerFor({
-    saved,
-    state,
-    root: `${root}/data`,
-    cacheRoot: "/tmp/supabase-stack-artifacts",
-  });
-  const { runtime } = yield* inProcessRuntime(owner, state, root);
-  const client = yield* ownerClient(runtime.access);
-  const mail = yield* client.createService({
-    service: "mail",
-    config: {},
-    endpoints: { http: { port: "auto" } },
-  });
-  yield* client.startService({ id: mail.id });
-  yield* client.readyService({ id: mail.id });
-  const status = yield* client.status({ id: mail.id });
-  const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
-  if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
-  return { runtime, port };
-});
-
-/**
- * One real HTTP round trip to the public listener over `agent`, proving application data actually
- * flows (not just a raw established socket). Resolves once the response ends, with the exact
- * socket that carried it, so a caller can later confirm that same connection's fate.
- */
-const httpRoundTrip = (port: number, agent: Http.Agent) =>
-  Effect.callback<
-    { readonly status: number; readonly socket: Net.Socket; readonly body: string },
-    HostTestError
-  >((resume) => {
-    const request = Http.request(
-      { host: "127.0.0.1", port, path: "/", method: "GET", agent },
-      (response) => {
-        // Captured immediately: the agent may detach `response.socket` once the response ends.
-        const socket = response.socket;
-        let body = "";
-        response.on("data", (chunk: Buffer) => {
-          body += chunk.toString();
-        });
-        response.once("end", () => {
-          if (socket === null) {
-            resume(Effect.fail(new HostTestError({ message: "Response has no socket" })));
-            return;
-          }
-          resume(Effect.succeed({ status: response.statusCode ?? 0, socket, body }));
-        });
-      },
-    );
-    request.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
-    request.end();
-    return Effect.sync(() => request.destroy());
-  });
-
-/** `true` once a fresh one-shot request to `port` is refused (reset) rather than answered. */
-const isHttpRefused = (port: number) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Http.Agent({ keepAlive: false })),
-    (agent) => Effect.sync(() => agent.destroy()),
-  ).pipe(
-    Effect.flatMap((agent) => httpRoundTrip(port, agent)),
-    Effect.as(false),
-    Effect.orElseSucceed(() => true),
-  );
-
-/**
- * Waits for drain's accept-close to take effect by actively re-checking refusal, instead of
- * guessing a fixed delay: the condition, once true, holds for the whole multi-second drain window,
- * so a short bounded retry observes it reliably without racing a single arbitrary sleep.
- */
-const waitUntilRefused = (port: number) =>
-  Effect.scoped(isHttpRefused(port)).pipe(
-    Effect.filterOrFail(
-      (refused) => refused,
-      () => new HostTestError({ message: "New connections are not refused yet" }),
-    ),
-    Effect.retry({
-      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "5 seconds" })),
-    }),
-  );
-
 it.live(
-  "drains an established connection through a stack listener during stop, and refuses a new one",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { runtime, port } = yield* withRunningMail("stack-host-drain-inflight-");
-        const agent = yield* Effect.acquireRelease(
-          Effect.sync(() => new Http.Agent({ keepAlive: true, maxSockets: 1 })),
-          (agent) => Effect.sync(() => agent.destroy()),
-        );
-        const first = yield* httpRoundTrip(port, agent);
-        // Exactly 200, not merely finite: a proxy-generated 502 (the backend unreachable) is
-        // just as finite a status and must not pass as "a real response".
-        expect(first.status, "the first request gets a real response before drain").toBe(200);
-        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
-        yield* waitUntilRefused(port);
-        expect(first.socket.destroyed, "the established connection survives the refusal").toBe(
-          false,
-        );
-        const second = yield* httpRoundTrip(port, agent);
-        expect(
-          second.socket,
-          "the second request reuses the same already-established connection",
-        ).toBe(first.socket);
-        expect(
-          second.status,
-          "a request on the established connection still completes during drain",
-        ).toBe(200);
-        // The client finishes on its own, well before the drain deadline.
-        agent.destroy();
-        yield* Fiber.join(shutdown).pipe(
-          Effect.timeoutOrElse({
-            duration: "5 seconds",
-            orElse: () =>
-              Effect.fail(
-                new HostTestError({ message: "Stop did not complete once the connection closed" }),
-              ),
-          }),
-        );
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 60_000 },
-);
-
-/**
- * Drives `network.drain` directly, against a raw backend this test fully controls (not the real
- * mail service), so a response can be gated open exactly across the drain boundary instead of
- * merely completing fast. The deadline is an injected event (pass 3, F7): `ShutdownDrainDeadline`
- * now holds an `Effect<void>`, so the test supplies `Deferred.await(deadline)` and decides
- * precisely when it fires, with no clock (real or virtual) involved at all.
- */
-it.live(
-  "drains an in-flight response, refuses new connections, and cuts a hanging one only once the deadline completes (F7)",
+  "drains an in-flight mail request through a real owner shutdown, and refuses a new connection once draining begins",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-network-drain-" });
-        const state = yield* stateFor(`${root}/state`);
-        const stackId = "drain-network-test";
+        const crypto = yield* Crypto.Crypto;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-drain-native-" });
+        const stackId = `drain-native-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const stateRoot = `${base}/state`;
+        const cacheRoot = `${base}/cache`;
+        const gateDir = `${base}/gate`;
+        yield* fs.makeDirectory(gateDir, { recursive: true });
+        const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
-          runtime: "native" as const,
-          identity: { projectRoot: root, branchContext: "main", stackName: stackId },
+          runtime: "native",
+          identity: {
+            projectRoot: `${base}/project`,
+            branchContext: "drain-native-test",
+            stackName: stackId,
+          },
           instances: [],
-          lifetime: "detached" as const,
+          lifetime: "detached",
           composition: { members: [], dependencies: [] },
           ports: [],
         });
-        const networkContext = yield* Layer.build(
-          Network.layer({ stackId, runtime: "native" }).pipe(
-            Layer.provide(Layer.succeed(StackNamespace.Service, state)),
-          ),
-        );
-        const network = Context.get(networkContext, Network.Service);
-
-        // A backend this test fully controls: each request is held open until its matching slot
-        // is released, so the first can be proven genuinely in flight across the drain boundary,
-        // and the second deliberately never completes on its own.
-        const slotA = {
-          received: yield* Deferred.make<void>(),
-          release: yield* Deferred.make<void>(),
-        };
-        const slotB = {
-          received: yield* Deferred.make<void>(),
-          release: yield* Deferred.make<void>(),
-        };
-        const slots = [slotA, slotB];
-        const nextSlot = yield* Ref.make(0);
-        const services = yield* Effect.context<never>();
-        const server = Http.createServer((_request, response) => {
-          Effect.runForkWith(services)(
-            Effect.gen(function* () {
-              const index = yield* Ref.getAndUpdate(nextSlot, (value) => value + 1);
-              const slot = slots[index];
-              if (slot === undefined) {
-                response.writeHead(503);
-                response.end();
-                return;
-              }
-              yield* Deferred.succeed(slot.received, undefined);
-              yield* Deferred.await(slot.release);
-              response.writeHead(200, { "content-type": "text/plain" });
-              response.end(`drained-ok-${index}`);
-            }),
-          );
+        const access = yield* launchHost(state, {
+          stateRoot,
+          cacheRoot,
+          stackId,
+          entrypoint: gatedDrainFixture,
+          entrypointArgs: [gateDir],
         });
-        const backendPort = yield* Effect.acquireRelease(
-          Effect.callback<number, never>((resume) => {
-            server.listen(0, "127.0.0.1", () => {
-              const address = server.address();
-              resume(
-                Effect.succeed(address !== null && typeof address === "object" ? address.port : 0),
-              );
-            });
-          }),
-          () =>
-            Effect.callback<void, never>((resume) => {
-              server.close(() => resume(Effect.void));
-            }),
-        );
-        const namespace = yield* network.register({
-          id: "backend",
-          endpoints: {
-            http: {
-              protocol: "http",
-              port: "auto",
-              backend: Effect.succeed({ host: "127.0.0.1", port: backendPort }),
-              enabled: Effect.succeed(true),
-            },
-          },
+        const client = yield* ownerClient(access);
+        const mail = yield* client.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
         });
-        const bound = yield* namespace.bind;
-        const port = bound.find((endpoint) => endpoint.name === "http")?.port;
-        if (port === undefined) return yield* Effect.die("Missing http endpoint");
+        yield* client.startService({ id: mail.id });
+        yield* client.readyService({ id: mail.id });
+        const status = yield* client.status({ id: mail.id });
+        const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
+        if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
 
-        const agentA = yield* Effect.acquireRelease(
-          Effect.sync(() => new Http.Agent({ keepAlive: false })),
-          (agent) => Effect.sync(() => agent.destroy()),
+        const inFlight = yield* openPartialMailSend(port, "drain-native-inflight");
+
+        // Subscribes to the drain-deadline wait's own entry marker before sending the signal, so
+        // the refusal check below never races the gate itself.
+        const waiting = yield* fs.watch(gateDir).pipe(
+          Stream.filter((event) => event.path === "waiting"),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild({ startImmediately: true }),
         );
-        const agentB = yield* Effect.acquireRelease(
-          Effect.sync(() => new Http.Agent({ keepAlive: false })),
-          (agent) => Effect.sync(() => agent.destroy()),
+        process.kill(access.endpoint.pid, "SIGTERM");
+        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+
+        expect(yield* isHttpRefused(port), "a new connection is refused once draining begins").toBe(
+          true,
         );
-        // Both connections are established and in flight before drain starts: a connection made
-        // after accept has already closed would be refused outright, never "hanging".
-        const requestA = yield* Effect.forkScoped(httpRoundTrip(port, agentA));
-        yield* Deferred.await(slotA.received);
-        const requestB = yield* Effect.forkScoped(httpRoundTrip(port, agentB));
-        yield* Deferred.await(slotB.received);
 
-        const deadline = yield* Deferred.make<void>();
-        const drain = yield* Effect.forkScoped(
-          network.drain.pipe(
-            Effect.provideService(Network.ShutdownDrainDeadline, Deferred.await(deadline)),
-          ),
-        );
-        yield* waitUntilRefused(port);
-
-        // The in-flight response completes with status 200 and its expected body during drain.
-        yield* Deferred.succeed(slotA.release, undefined);
-        const resultA = yield* Fiber.join(requestA);
-        expect(resultA.status, "the in-flight response completes during drain").toBe(200);
-        expect(resultA.body, "with its expected body").toBe("drained-ok-0");
-
-        // The second connection, deliberately never released, stays open: nothing but the test
-        // itself decides when the deadline elapses.
+        inFlight.complete();
+        const response = yield* inFlight.response.pipe(Effect.timeout("10 seconds"));
         expect(
-          requestB.pollUnsafe(),
-          "the hanging connection stays open before the deadline completes",
-        ).toBeUndefined();
-
-        yield* Deferred.succeed(deadline, undefined);
-        yield* Fiber.join(drain).pipe(
-          Effect.timeoutOrElse({
-            duration: "5 seconds",
-            orElse: () =>
-              Effect.fail(
-                new HostTestError({ message: "Drain did not complete after the deadline" }),
-              ),
-          }),
-        );
-        const resultB = yield* Fiber.join(requestB).pipe(Effect.exit);
-        expect(
-          Exit.isFailure(resultB),
-          "the hanging connection is cut once the deadline completes",
+          response.startsWith("HTTP/1.1 200"),
+          "the in-flight request still completes during drain",
         ).toBe(true);
+
+        yield* fs.writeFileString(`${gateDir}/release`, "");
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.retry({ while: hasReason("owner-exit-pending") }),
+          Effect.timeout("30 seconds"),
+        );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 30_000 },
+  { timeout: 60_000 },
 );

@@ -21,10 +21,7 @@ export type NetworkRuntime = "native" | "docker";
 
 /**
  * The shutdown-drain deadline: established connections keep flowing until this event
- * completes. An injectable event rather than a duration, so a test can gate when it fires
- * through a `Deferred` instead of racing a shortened real timer; production always
- * defaults to a plain 10-second sleep. Internal only, following the `RegistrationCheckInterval`
- * pattern: production never reads it from an environment variable or `Config`.
+ * completes. An event rather than a duration so a test can gate exactly when it fires.
  */
 export const ShutdownDrainDeadline = Context.Reference<Effect.Effect<void>>(
   "@supabase/stack/ShutdownDrainDeadline",
