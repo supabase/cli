@@ -208,14 +208,6 @@ interface Entry extends Orchestrator.RegisteredInstance {
   /** The saved creation, which composition wiring and launches update. */
   readonly creation: Ref.Ref<ServiceCreation>;
   readonly namespace: NetworkNamespace;
-  /**
-   * Removes this instance's containers, storage namespace and network namespace, independent of
-   * the saved registration: used by destroy (which then publishes the registration removal) and
-   * reusable as-is by a future abandonment path, which releases without touching the registration.
-   */
-  readonly cleanupResources: (
-    context: ServiceInstanceContext<ServiceCreation>,
-  ) => Effect.Effect<void, ServiceError>;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -513,14 +505,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       });
     const initial = recipe.creation;
     const creation = yield* Ref.make(initial);
-    // Independent of the saved registration and of on-disk discovery: removes containers and the
-    // owned storage namespace. Shared as-is by destroy and abandonment, through `core.removeData`;
-    // neither reads or writes the registration. Network reservations are never part of this: they
-    // are destroy's own separate `release` step (`Orchestrator.destroy`), never abandonment's,
-    // since a stale reservation stays for `Ports.ts`'s lazy reclamation once the holder's
-    // registration is confirmed gone, the abandonment trigger.
-    const cleanupResources = (context: ServiceInstanceContext<ServiceCreation>) =>
-      recipe.definition.removeData(context);
     const core = yield* makeService(
       {
         ...recipe.definition,
@@ -529,10 +513,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             Effect.mapError(serviceError("state")),
             Effect.andThen(recipe.definition.launch(context)),
           ),
-        // Registration-free: `core.removeData` runs this inside its execution lock and, only when
-        // a `confirm` step is given, publishes the registration removal afterward (destroy passes
-        // it; abandonment never does). This is the one path both destroy and abandonment share.
-        removeData: cleanupResources,
       },
       { id, config: initial, report: orchestrator.report },
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
@@ -582,7 +562,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       recipe,
       creation,
       namespace,
-      cleanupResources,
       confirmRemoved: removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
       release: namespace.release.pipe(Effect.mapError(serviceError("release"))),
       launch: (generation, inputs, candidate) =>
