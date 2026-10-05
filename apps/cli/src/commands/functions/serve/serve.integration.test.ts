@@ -541,7 +541,6 @@ const decodeFunctionsContainerConfig = Schema.decodeEffect(
       }),
     ),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 const decodeJwks = Schema.decodeEffect(
@@ -552,7 +551,6 @@ const decodeJwks = Schema.decodeEffect(
       ),
     }),
   ),
-  { onExcessProperty: "preserve" },
 );
 
 beforeEach(() => {
