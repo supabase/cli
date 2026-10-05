@@ -164,7 +164,9 @@ then, so a failure here means "open the pull request by hand", not "republish".
 
 Each opened or rewritten PR is approved by `supabase-oss`, which co-owns the generated files in
 `.github/CODEOWNERS` because the app cannot approve its own PR, and has auto-merge enabled, so a
-green PR enters the merge queue without a human review.
+green PR enters the merge queue without a human review. The approval token lives in the
+`auto-approve` environment, which only deploys from the default branch, so a workflow on any other
+branch cannot approve with it.
 
 The app token (contents and pull-requests write) and the approval token never reach third-party
 code or disk: `git push` takes the app token only inside an explicit URL (`PUSH_REMOTE_URL`

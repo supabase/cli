@@ -23,6 +23,8 @@ jobs:
     # Setup (~10 min) + release visibility (<1 min) + the S3-mirror wait (up to ~10 min, normally only
     # for the first planned item) + pin, render and push per item + the merge-queue wait (up to 30 min).
     timeout-minutes: 75
+    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
+    environment: auto-approve
     permissions:
       contents: read
     steps:
