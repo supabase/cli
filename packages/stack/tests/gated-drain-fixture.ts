@@ -1,8 +1,9 @@
-import { Cause, Effect, Exit, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
 import * as Network from "../src/Network.ts";
 import { runStackHost, StackHostError } from "../src/StackHost.ts";
+import { watchEntry } from "./watch-entry.ts";
 
 /**
  * A real owner entrypoint, identical to `internal/host-process.ts`, except it overrides
@@ -14,21 +15,13 @@ import { runStackHost, StackHostError } from "../src/StackHost.ts";
 const awaitRelease = (gateDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const target = path.join(gateDir, "release");
     // Subscribes before signaling "waiting" below, so a `release` written the instant a test
     // observes that signal can never land in the gap between the signal and this watch attaching.
-    const released = yield* fs.watch(gateDir).pipe(
-      Stream.filter((event) => event.path === "release" || event.path === target),
-      Stream.take(1),
-      Stream.runDrain,
-      Effect.forkChild({ startImmediately: true }),
-    );
+    const released = yield* watchEntry(gateDir, "release", true);
     // Marks entry into the drain-deadline wait itself, so a test can subscribe to this instead
     // of a sleep before it is safe to act on the assumption that drain has actually begun.
-    yield* fs.writeFileString(path.join(gateDir, "waiting"), "");
-    if (yield* fs.exists(target)) return;
-    yield* Fiber.join(released);
+    yield* fs.writeFileString(`${gateDir}/waiting`, "");
+    yield* released;
   });
 
 const writeLine = (value: unknown) =>

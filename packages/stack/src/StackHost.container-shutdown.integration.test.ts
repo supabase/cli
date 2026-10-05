@@ -31,6 +31,7 @@ import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.t
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { noContainerClaims } from "../tests/claims.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
   new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
@@ -596,14 +597,9 @@ it.live.skipIf(process.platform === "win32")(
 
         // Subscribes to the drain-deadline wait's own entry marker before sending the signal that
         // triggers it, so the registration deletion below never races the gate itself.
-        const waiting = yield* fs.watch(gateDir).pipe(
-          Stream.filter((event) => event.path === "waiting"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const waiting = yield* watchEntry(gateDir, "waiting", true);
         process.kill(access.endpoint.pid, "SIGTERM");
-        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+        yield* waiting.pipe(Effect.timeout("30 seconds"));
 
         yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
         yield* fs.writeFileString(`${gateDir}/release`, "");
@@ -878,14 +874,9 @@ it.live.skipIf(process.platform === "win32")(
 
         const inFlight = yield* openPartialMailSend(port, "drain-docker-inflight");
 
-        const waiting = yield* fs.watch(gateDir).pipe(
-          Stream.filter((event) => event.path === "waiting"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const waiting = yield* watchEntry(gateDir, "waiting", true);
         process.kill(access.endpoint.pid, "SIGTERM");
-        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+        yield* waiting.pipe(Effect.timeout("30 seconds"));
 
         expect(yield* isHttpRefused(port), "a new connection is refused once draining begins").toBe(
           true,
@@ -992,14 +983,9 @@ it.live.skipIf(process.platform === "win32")(
           (connection) => Effect.sync(() => connection.destroy()),
         );
 
-        const waiting = yield* fs.watch(gateDir).pipe(
-          Stream.filter((event) => event.path === "waiting"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const waiting = yield* watchEntry(gateDir, "waiting", true);
         process.kill(access.endpoint.pid, "SIGTERM");
-        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+        yield* waiting.pipe(Effect.timeout("30 seconds"));
 
         yield* sql.unsafe("SELECT 1");
 

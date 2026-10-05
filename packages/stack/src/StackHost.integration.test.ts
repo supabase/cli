@@ -40,6 +40,7 @@ import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { noContainerClaims } from "../tests/claims.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -1325,14 +1326,9 @@ it.live(
 
         // Subscribes to the drain-deadline wait's own entry marker before sending the signal, so
         // the refusal check below never races the gate itself.
-        const waiting = yield* fs.watch(gateDir).pipe(
-          Stream.filter((event) => event.path === "waiting"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const waiting = yield* watchEntry(gateDir, "waiting", true);
         process.kill(access.endpoint.pid, "SIGTERM");
-        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+        yield* waiting.pipe(Effect.timeout("30 seconds"));
 
         expect(yield* isHttpRefused(port), "a new connection is refused once draining begins").toBe(
           true,

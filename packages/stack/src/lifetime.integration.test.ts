@@ -1,17 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import {
-  Context,
-  Data,
-  Effect,
-  Fiber,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Schema,
-  Stream,
-} from "effect";
+import { Context, Data, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -24,6 +13,7 @@ import {
   shutdownOwner,
   watchLeaseRelease,
 } from "../tests/owner.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
@@ -87,20 +77,6 @@ const alive = (pid: number) => {
   }
 };
 
-/** Completes once `entry` disappears from `directory`; subscribe before triggering the removal. */
-const awaitRemoval = (directory: string, entry: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const target = path.join(directory, entry);
-    yield* fs.watch(directory).pipe(
-      Stream.filter((event) => event.path === entry || event.path === target),
-      Stream.mapEffect(() => fs.exists(target)),
-      Stream.takeUntil((exists) => !exists),
-      Stream.runDrain,
-    );
-  });
-
 it.live.skipIf(process.platform === "win32")(
   "destroys a session stack and its native processes when the creating process is killed",
   () =>
@@ -153,12 +129,10 @@ it.live.skipIf(process.platform === "win32")(
       const owned = yield* descendantsOf(ownerPid);
       expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
 
-      const removed = yield* awaitRemoval(stateRoot, stackId).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
+      const removed = yield* watchEntry(stateRoot, stackId, false);
       const released = yield* watchLeaseRelease(stateRoot, stackId);
       yield* creator.kill({ killSignal: "SIGKILL" });
-      yield* Fiber.join(removed).pipe(
+      yield* removed.pipe(
         Effect.timeoutOrElse({
           duration: "1 minute",
           orElse: () =>

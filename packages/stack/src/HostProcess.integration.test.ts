@@ -31,6 +31,7 @@ import {
 } from "./HostProcess.ts";
 import { discover } from "./effect.ts";
 import { watchLeaseRelease } from "../tests/owner.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
@@ -227,30 +228,29 @@ const closeServer = (server: Net.Server) =>
     server.close(() => resume(Effect.void));
   });
 
+/** Attaches now; the returned effect awaits the marker and reads its value. Subscribe before
+ * triggering the fixture that writes the marker, then await the returned effect after. */
 const waitForMarker = (marker: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* fs.watch(path.dirname(marker)).pipe(
-      Stream.filter((event) => event.path === path.basename(marker)),
-      Stream.runHead,
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.fail(new ProcessTestError({ message: "marker watcher ended" })),
-          onSome: Effect.succeed,
+    const ready = yield* watchEntry(path.dirname(marker), path.basename(marker), true);
+    return yield* Effect.succeed(
+      ready.pipe(
+        Effect.flatMap(() =>
+          fs.readFileString(marker).pipe(
+            Effect.map(Number),
+            Effect.mapError(() => new ProcessTestError({ message: "marker read failed" })),
+          ),
+        ),
+        Effect.timeoutOrElse({
+          duration: "10 seconds",
+          orElse: () =>
+            Effect.fail(new ProcessTestError({ message: "slow fixture did not start" })),
         }),
       ),
     );
-    return yield* fs.readFileString(marker).pipe(
-      Effect.map(Number),
-      Effect.mapError(() => new ProcessTestError({ message: "marker read failed" })),
-    );
-  }).pipe(
-    Effect.timeoutOrElse({
-      duration: "10 seconds",
-      orElse: () => Effect.fail(new ProcessTestError({ message: "slow fixture did not start" })),
-    }),
-  );
+  });
 
 it.live("starts exactly one owner for concurrent launchers and attaches the others", () =>
   Effect.scoped(
@@ -460,16 +460,14 @@ it.live("terminates a detached child when readiness is interrupted", () =>
         new URL("../tests/host-process-fixture.ts", import.meta.url),
       );
       const marker = path.join(root, "slow-handshake.pid");
-      const markerReady = yield* waitForMarker(marker).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
+      const markerReady = yield* waitForMarker(marker);
       const launch = yield* launchHost(state, {
         stateRoot: root,
         cacheRoot: root,
         stackId: "stack",
         entrypoint,
       }).pipe(Effect.forkChild);
-      const pid = yield* Fiber.join(markerReady);
+      const pid = yield* markerReady;
       expect(Number.isInteger(pid) && pid > 0).toBe(true);
       expect(() => process.kill(pid, 0)).not.toThrow();
       yield* Fiber.interrupt(launch);
