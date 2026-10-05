@@ -31,3 +31,10 @@
 # CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
 /apps/cli-go/pkg/api/*.gen.go
 /packages/api/src/generated/
+
+# Bot-generated pins and snapshots. `supabase-oss` approves the sync PRs that rewrite them
+# (slim-release-published.yml, cli-go-api-sync.yml) so they can be auto-merged; human PRs
+# touching these files still need a @supabase/cli review.
+/packages/stack/src/Artifacts.ts @supabase/cli @supabase-oss
+/apps/cli-go/pkg/config/templates/Dockerfile @supabase/cli @supabase-oss
+/apps/cli-go/api/v1-openapi.yaml @supabase/cli @supabase-oss
