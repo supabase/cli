@@ -93,7 +93,6 @@ const observation = (
   cleanupError: undefined,
   exit: undefined,
   launchId: 1,
-  intentRevision: 1,
   wakeEnabled: false,
   registered: true,
   ...overrides,

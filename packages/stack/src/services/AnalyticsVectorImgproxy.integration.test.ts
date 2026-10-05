@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
@@ -58,7 +58,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -74,7 +74,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const analytics = yield* makeService(analyticsRecipe.definition, {
+          const analytics = yield* makeStandaloneService(analyticsRecipe.definition, {
             id: "analytics",
             config: analyticsRecipe.creation,
           });
@@ -105,7 +105,7 @@ describe("service catalog", () => {
             "sources:\n  dummy:\n    type: demo_logs\n    format: syslog\n    interval: 60\n" +
               "sinks:\n  print:\n    type: console\n    inputs: [dummy]\n    encoding:\n      codec: json\n",
           );
-          const vector = yield* makeService(vectorRecipe.definition, {
+          const vector = yield* makeStandaloneService(vectorRecipe.definition, {
             id: "vector",
             config: vectorRecipe.creation,
           });
@@ -123,7 +123,7 @@ describe("service catalog", () => {
             { service: "imgproxy", config: { filePath: imageRoot } },
             dockerOptions(root),
           );
-          const imgproxy = yield* makeService(imgproxyRecipe.definition, {
+          const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
             id: "imgproxy",
             config: imgproxyRecipe.creation,
           });

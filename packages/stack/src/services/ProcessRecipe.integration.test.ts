@@ -38,7 +38,8 @@ import {
   type ContainerProcess,
   type ContainerRuntime,
 } from "../runtime/Container.ts";
-import { makeService, ServiceError } from "../Service.ts";
+import { ServiceError } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import {
   makeProcessRecipe,
   type ProcessDependencies,
@@ -201,7 +202,7 @@ describe("ProcessRecipe launch cleanup", () => {
             isPubliclyReserved: noPublicPortReservations,
           } satisfies ProcessDependencies;
           const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
-          const service = yield* makeService(recipe.definition, {
+          const service = yield* makeStandaloneService(recipe.definition, {
             id: `rest-process-recipe-${scenario}`,
             config: creation,
           });
@@ -290,7 +291,7 @@ describe("ProcessRecipe launch cleanup", () => {
           isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-native",
           config: creation,
         });
@@ -402,7 +403,7 @@ describe("ProcessRecipe launch cleanup", () => {
           isPubliclyReserved: noPublicPortReservations,
         } satisfies ProcessDependencies;
         const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
-        const service = yield* makeService(recipe.definition, {
+        const service = yield* makeStandaloneService(recipe.definition, {
           id: "rest-process-recipe-port-order",
           config: creation,
         });
@@ -485,7 +486,7 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     },
     Realtime.makeSpec(),
   );
-  return yield* makeService(recipe.definition, { id: "realtime", config: creation });
+  return yield* makeStandaloneService(recipe.definition, { id: "realtime", config: creation });
 });
 
 const platform = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -765,7 +766,10 @@ describe("process recipe startup", () => {
             `server.listen(Number(process.env.PORT), "127.0.0.1");\n`,
           collidingSpawner,
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         yield* service.ready;
@@ -819,7 +823,10 @@ describe("process recipe startup", () => {
             {},
             (line) => line.includes("listener bound"),
           );
-          const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+          const service = yield* makeStandaloneService(recipe.definition, {
+            id: "rest",
+            config: creation,
+          });
 
           yield* service.start;
           const failure = yield* Effect.flip(service.ready);
@@ -864,7 +871,10 @@ describe("process recipe startup", () => {
           spawner,
           { PID_FILE: pidFile },
         );
-        const service = yield* makeService(recipe.definition, { id: "rest", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "rest",
+          config: creation,
+        });
 
         yield* service.start;
         const failure = yield* Effect.flip(service.ready);
@@ -1055,7 +1065,10 @@ describe("process recipe startup", () => {
           },
           Pooler.makeSpec(),
         );
-        const service = yield* makeService(recipe.definition, { id: "pooler", config: creation });
+        const service = yield* makeStandaloneService(recipe.definition, {
+          id: "pooler",
+          config: creation,
+        });
         const subscribed = yield* Deferred.make<void>();
         const exitObserved = yield* Deferred.make<void>();
         yield* service.observation.pipe(

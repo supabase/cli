@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted } from "effect";
 import { PgClient } from "@effect/sql-pg";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
@@ -52,7 +52,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -81,7 +81,7 @@ describe("service catalog", () => {
                 },
                 runtime === "native" ? options(root) : dockerOptions(root),
               );
-              const pooler = yield* makeService(poolerRecipe.definition, {
+              const pooler = yield* makeStandaloneService(poolerRecipe.definition, {
                 id: `pooler-${runtime}-${poolMode}`,
                 config: poolerRecipe.creation,
               });

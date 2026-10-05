@@ -18,7 +18,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { FunctionsBootstrapOwner } from "../functions/FunctionsBootstrap.ts";
 import { ContainerError, type ContainerRuntime } from "../runtime/Container.ts";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
@@ -114,7 +114,7 @@ describe("service catalog", () => {
               instanceId,
             },
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: instanceId,
             config: recipe.creation,
           });
@@ -283,7 +283,7 @@ describe("service catalog", () => {
               ),
               Effect.forkScoped({ startImmediately: true }),
             );
-            const instance = yield* makeService(recipe.definition, {
+            const instance = yield* makeStandaloneService(recipe.definition, {
               id: "ancestor",
               config: recipe.creation,
             });
@@ -357,7 +357,7 @@ describe("service catalog", () => {
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "deno-config",
             config: recipe.creation,
           });
@@ -441,7 +441,7 @@ describe("service catalog", () => {
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "plain-deno-config",
             config: recipe.creation,
           });
@@ -552,7 +552,7 @@ for (const runtime of ["native", "docker"] as const) {
             ),
             Effect.forkScoped({ startImmediately: true }),
           );
-          const instance = yield* makeService(recipe.definition, {
+          const instance = yield* makeStandaloneService(recipe.definition, {
             id: "configured",
             config: recipe.creation,
           });

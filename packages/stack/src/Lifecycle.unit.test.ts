@@ -352,7 +352,8 @@ describe("Lifecycle reducer", () => {
     expect(state.services.get("c")?.phase).toEqual({ _tag: "Running", generation: 1, ready: true });
 
     const blocked = run(state, [{ event: open("c", 2), now: 50 }]);
-    expect(tagsOf(blocked.commandsByStep[0])).toEqual(["ArmWaiterTimeout"]);
+    expect(tagsOf(blocked.commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
+    expect(commandTagged(at(blocked.commandsByStep, 0), "Reprobe").id).toBe("a");
     expect(blocked.state.services.get("c")?.waiters.size).toBe(1);
 
     const expired = run(blocked.state, [
@@ -763,7 +764,7 @@ describe("Lifecycle reducer", () => {
     });
 
     const readyRequiring = run(state, [{ event: open("functions", 2), now: 20 }]);
-    expect(tagsOf(readyRequiring.commandsByStep[0])).toEqual(["ArmWaiterTimeout"]);
+    expect(tagsOf(readyRequiring.commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
 
     const inspector = run(state, [
       {
@@ -778,7 +779,7 @@ describe("Lifecycle reducer", () => {
     expect(tagsOf(inspector.commandsByStep[0])).toEqual(["AdmitConnection"]);
   });
 
-  it("treats a readiness loss as non-terminal with a reprobe, unlike an exit which counts toward the breaker", () => {
+  it("treats a readiness loss as non-terminal, re-probing once for the next waiter, unlike an exit which counts toward the breaker", () => {
     const graph = makeGraph([lazy("api")]);
     const { state: ready } = run(initialState(graph, 0), [
       { event: open("api", 1), now: 0 },
@@ -791,7 +792,7 @@ describe("Lifecycle reducer", () => {
         now: 20,
       },
     ]);
-    expect(tagsOf(lostCommands[0])).toEqual(["Reprobe"]);
+    expect(lostCommands[0]).toEqual([]);
     expect(afterReadinessLoss.services.get("api")?.phase).toEqual({
       _tag: "Running",
       generation: 1,
@@ -799,9 +800,17 @@ describe("Lifecycle reducer", () => {
     });
     expect(afterReadinessLoss.services.get("api")?.breaker.consecutiveFailures).toBe(0);
 
-    const { state: recovered } = run(afterReadinessLoss, [
+    const { state: probing, commandsByStep: probeCommands } = run(afterReadinessLoss, [
+      { event: open("api", 2), now: 21 },
+      { event: open("api", 3), now: 22 },
+    ]);
+    expect(tagsOf(probeCommands[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
+    expect(tagsOf(probeCommands[1])).toEqual(["ArmWaiterTimeout"]);
+
+    const { state: recovered, commandsByStep: recoveredCommands } = run(probing, [
       { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 30 },
     ]);
+    expect(tagsOf(recoveredCommands[0])).toEqual(["AdmitConnection", "AdmitConnection"]);
     expect(recovered.services.get("api")?.phase).toEqual({
       _tag: "Running",
       generation: 1,
@@ -908,6 +917,91 @@ describe("Lifecycle reducer", () => {
         { event: LifecycleEvent.StorageReleased({ id: "database" }), now: 3 },
       ]);
       expect(tagsOf(released.commandsByStep[0])).toEqual(["Launch"]);
+    });
+
+    it("hands a running storage operation's reservation to a destroy requested meanwhile", () => {
+      const graph = makeGraph([lazy("database")]);
+      let state = initialState(graph, 0);
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
+        { event: LifecycleEvent.StorageReserved({ id: "database" }), now: 1 },
+        { event: LifecycleEvent.DestroyRequested({ id: "database" }), now: 2 },
+      ]));
+      expect(state.services.get("database")?.destroy).toBe("requested");
+
+      const refused = run(state, [
+        { event: LifecycleEvent.StorageReserved({ id: "database" }), now: 3 },
+        { event: LifecycleEvent.StartRequested({ id: "database" }), now: 3 },
+      ]);
+      expect(refused.commandsByStep.map(tagsOf)).toEqual([
+        ["RequestRejected"],
+        ["RequestRejected"],
+      ]);
+      expect(canRunStorage(refused.state, "database")).toBe(false);
+
+      ({ state } = run(refused.state, [
+        { event: LifecycleEvent.StorageReleased({ id: "database" }), now: 4 },
+      ]));
+      expect(state.services.get("database")).toMatchObject({
+        destroy: "reserved",
+        storageReserved: true,
+      });
+    });
+
+    it("reserves storage for a destroy once its running service has stopped", () => {
+      const graph = makeGraph([lazy("database")]);
+      let state = initialState(graph, 0);
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
+      ]));
+      const generation = startingGeneration(state, "database");
+
+      const requested = run(state, [
+        { event: LifecycleEvent.DestroyRequested({ id: "database" }), now: 1 },
+      ]);
+      expect(tagsOf(requested.commandsByStep[0])).toEqual(["Stop"]);
+      expect(requested.state.services.get("database")?.destroy).toBe("requested");
+
+      ({ state } = run(requested.state, [
+        {
+          event: LifecycleEvent.Exited({
+            id: "database",
+            generation,
+            cause: undefined,
+            requested: true,
+          }),
+          now: 2,
+        },
+      ]));
+      expect(state.services.get("database")).toMatchObject({
+        phase: { _tag: "Stopped" },
+        destroy: "reserved",
+        storageReserved: true,
+      });
+    });
+
+    it("makes a service usable again once a destroy releases it", () => {
+      const graph = makeGraph([lazy("database")]);
+      let state = initialState(graph, 0);
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
+        { event: LifecycleEvent.DestroyRequested({ id: "database" }), now: 1 },
+      ]));
+      expect(state.services.get("database")?.destroy).toBe("reserved");
+      // A storage operation's release can't end the destroy's own reservation.
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StorageReleased({ id: "database" }), now: 2 },
+      ]));
+      expect(canRunStorage(state, "database")).toBe(false);
+
+      ({ state } = run(state, [
+        { event: LifecycleEvent.DestroyReleased({ id: "database" }), now: 3 },
+      ]));
+      expect(state.services.get("database")).toMatchObject({
+        destroy: undefined,
+        storageReserved: false,
+      });
+      expect(canRunStorage(state, "database")).toBe(true);
     });
   });
 
@@ -1290,5 +1384,339 @@ describe("Lifecycle reducer", () => {
       { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 120_041 },
     ]));
     expect(state.services.get("api")?.idleArmedEpoch).toBe(2);
+  });
+
+  it("fails only the waiters awaiting a failed readiness check, keeping the session and inspector waiters", () => {
+    const graph = makeGraph([lazy("database"), lazy("api", { prerequisites: ["database"] })]);
+    let state = initialState(graph, 0);
+    ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
+    ({ state } = run(state, [
+      { event: LifecycleEvent.LaunchSucceeded({ id: "database", generation: 1 }), now: 1 },
+      { event: LifecycleEvent.SessionAvailable({ id: "api", generation: 1 }), now: 2 },
+      { event: open("api", 2, false), now: 3 },
+    ]));
+
+    const lost = run(state, [
+      { event: LifecycleEvent.ReadinessLost({ id: "api", generation: 1, cause: "503" }), now: 4 },
+    ]);
+    const failed = commandTagged(at(lost.commandsByStep, 0), "FailConnection");
+    expect(failed).toMatchObject({ waiterId: 1, message: "api is not ready", cause: "503" });
+    expect(tagsOf(lost.commandsByStep[0])).toEqual(["FailConnection"]);
+    expect(lost.state.services.get("api")?.phase).toEqual({
+      _tag: "Running",
+      generation: 1,
+      ready: false,
+    });
+    expect(lost.state.services.get("api")?.leases).toBe(1);
+  });
+
+  it("gives an explicit readiness wait no budget and no lease, while it still wakes the service", () => {
+    let state = initialState(makeGraph([lazy("api")]), 0);
+    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+    ({ state, commandsByStep } = run(state, [
+      {
+        event: LifecycleEvent.ReadinessAwaited({ id: "api", waiterId: 1, requireReady: true }),
+        now: 0,
+      },
+    ]));
+    expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
+
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 500_000 },
+    ]));
+    expect(tagsOf(commandsByStep[0])).toEqual(["AdmitConnection", "ArmIdleTimer"]);
+    expect(state.services.get("api")?.leases).toBe(0);
+  });
+
+  it("adds services unarmed through a graph update until an arm or start request", () => {
+    let state = initialState(makeGraph([]), 0);
+    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+    const graph = makeGraph([
+      { id: "database", activation: "eager", prerequisites: [] },
+      lazy("api", { prerequisites: ["database"] }),
+    ]);
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.GraphUpdated({ graph }), now: 0 },
+    ]));
+    expect(commandsByStep[0]).toEqual([]);
+    expect(state.services.get("database")?.intent).toBe("stopped");
+    expect(state.services.get("api")?.intent).toBe("stopped");
+
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.ArmRequested({ id: "api" }), now: 1 },
+    ]));
+    expect(commandsByStep[0]).toEqual([]);
+    expect(state.services.get("api")?.intent).toBe("lazy");
+    expect(state.services.get("database")?.intent).toBe("stopped");
+
+    ({ commandsByStep } = run(state, [
+      { event: LifecycleEvent.ArmRequested({ id: "database" }), now: 2 },
+    ]));
+    expect(commandTagged(at(commandsByStep, 0), "Launch").id).toBe("database");
+  });
+
+  it("lets an eager service's standing demand lapse once it fails, until traffic re-wakes it", () => {
+    const graph = makeGraph([{ id: "database", activation: "eager", prerequisites: [] }]);
+    let state = initialState(graph, 0);
+    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
+      {
+        event: LifecycleEvent.LaunchFailed({ id: "database", generation: 1, cause: "boom" }),
+        now: 1,
+      },
+    ]));
+    expect(commandsByStep[1]).toEqual([]);
+    expect(state.services.get("database")?.phase._tag).toBe("Failed");
+
+    ({ commandsByStep } = run(state, [{ event: open("database", 1), now: 2 }]));
+    expect(commandTagged(at(commandsByStep, 0), "Launch").generation).toBe(2);
+  });
+
+  it("ends an explicit wait on a dependent with its prerequisite's failure, while traffic keeps waiting", () => {
+    const graph = makeGraph([lazy("database"), lazy("api", { prerequisites: ["database"] })]);
+    let state = initialState(graph, 0);
+    ({ state } = run(state, [
+      { event: open("api", 1), now: 0 },
+      {
+        event: LifecycleEvent.ReadinessAwaited({ id: "api", waiterId: 2, requireReady: false }),
+        now: 0,
+      },
+    ]));
+
+    const failed = run(state, [
+      {
+        event: LifecycleEvent.LaunchFailed({ id: "database", generation: 1, cause: "boom" }),
+        now: 1,
+      },
+    ]);
+    const failure = commandTagged(at(failed.commandsByStep, 0), "FailConnection");
+    expect(failure).toMatchObject({
+      id: "api",
+      waiterId: 2,
+      message: "prerequisite database failed",
+    });
+    expect([...(failed.state.services.get("api")?.waiters.keys() ?? [])]).toEqual([1]);
+  });
+
+  describe("re-checking a blocking session", () => {
+    const blocked = () => {
+      const graph = makeGraph([
+        lazy("analytics"),
+        lazy("studio", { prerequisites: ["analytics"] }),
+      ]);
+      let state = initialState(graph, 0);
+      ({ state } = run(state, [
+        { event: open("studio", 1), now: 0 },
+        { event: LifecycleEvent.SessionAvailable({ id: "analytics", generation: 1 }), now: 1 },
+      ]));
+      return state;
+    };
+    const lost = (now: number) => ({
+      event: LifecycleEvent.ReadinessLost({ id: "analytics", generation: 1, cause: "503" }),
+      now,
+    });
+
+    it("keeps re-probing one at a time, spaced after a failed reprobe, until the dependent is served", () => {
+      const { state, commandsByStep } = run(blocked(), [
+        lost(2),
+        { event: open("studio", 2), now: 3 },
+        lost(4),
+        lost(1_005),
+        {
+          event: LifecycleEvent.ReadinessRecovered({ id: "analytics", generation: 1 }),
+          now: 2_006,
+        },
+      ]);
+      expect(commandTagged(at(commandsByStep, 0), "Reprobe")).toMatchObject({
+        id: "analytics",
+        generation: 1,
+        delayMillis: 0,
+      });
+      expect(tagsOf(commandsByStep[1])).toEqual(["ArmWaiterTimeout"]);
+      expect(commandTagged(at(commandsByStep, 2), "Reprobe").delayMillis).toBe(1_000);
+      expect(commandTagged(at(commandsByStep, 3), "Reprobe").delayMillis).toBe(1_000);
+      expect(commandTagged(at(commandsByStep, 4), "Launch").id).toBe("studio");
+      expect(state.services.get("analytics")?.reprobing).toBe(false);
+    });
+
+    it("stops re-probing once no waiter is blocked or the generation ends", () => {
+      let state = blocked();
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state } = run(state, [lost(2)]));
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.WaiterExpired({ id: "studio", waiterId: 1 }), now: 3 },
+        lost(4),
+      ]));
+      expect(tagsOf(commandsByStep[1])).toEqual([]);
+
+      ({ state } = run(state, [{ event: open("studio", 2), now: 5 }]));
+      ({ commandsByStep } = run(state, [
+        {
+          event: LifecycleEvent.Exited({
+            id: "analytics",
+            generation: 1,
+            cause: "gone",
+            requested: false,
+          }),
+          now: 6,
+        },
+        lost(7),
+      ]));
+      expect(tagsOf(commandsByStep[1]).includes("Reprobe")).toBe(false);
+    });
+  });
+
+  describe("failed cleanup", () => {
+    const runningApi = () => {
+      let state = initialState(makeGraph([lazy("api")]), 0);
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
+      ]));
+      return state;
+    };
+
+    it("holds the generation in cleanup until a retried stop confirms it, refusing storage and launches", () => {
+      let state = runningApi();
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 2 },
+        {
+          event: LifecycleEvent.StopFailed({ id: "api", generation: 1, cause: "busy" }),
+          now: 3,
+        },
+      ]));
+      expect(tagsOf(commandsByStep[0])).toEqual(["Stop"]);
+      expect(commandsByStep[1]).toEqual([]);
+      expect(state.services.get("api")?.phase).toEqual({ _tag: "Stopping", generation: 1 });
+      expect(canRunStorage(state, "api")).toBe(false);
+
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.StorageReserved({ id: "api" }), now: 4 },
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 5 },
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 6 },
+      ]));
+      expect(tagsOf(commandsByStep[0])).toEqual(["RequestRejected"]);
+      expect(commandTagged(at(commandsByStep, 1), "Stop").generation).toBe(1);
+      expect(commandsByStep[2]).toEqual([]);
+
+      ({ state } = run(state, [
+        {
+          event: LifecycleEvent.Exited({
+            id: "api",
+            generation: 1,
+            cause: undefined,
+            requested: true,
+          }),
+          now: 7,
+        },
+      ]));
+      expect(canRunStorage(state, "api")).toBe(true);
+    });
+
+    it("counts a crash whose cleanup failed once, not again when the retried cleanup confirms it", () => {
+      let state = runningApi();
+      ({ state } = run(state, [
+        {
+          event: LifecycleEvent.StopFailed({
+            id: "api",
+            generation: 1,
+            cause: "busy",
+            failure: "segfault",
+          }),
+          now: 2,
+        },
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 3 },
+        {
+          event: LifecycleEvent.StopFailed({ id: "api", generation: 1, cause: "busy" }),
+          now: 4,
+        },
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 5 },
+        {
+          event: LifecycleEvent.Exited({
+            id: "api",
+            generation: 1,
+            cause: undefined,
+            requested: true,
+          }),
+          now: 6,
+        },
+      ]));
+      expect(state.services.get("api")?.breaker).toMatchObject({
+        consecutiveFailures: 1,
+        lastCause: "segfault",
+      });
+    });
+
+    it("fails a restart's waiters when the stop fails, and retries the cleanup for the next waiter", () => {
+      let state = runningApi();
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state, commandsByStep } = run(state, [
+        { event: LifecycleEvent.RestartRequested({ id: "api" }), now: 2 },
+        {
+          event: LifecycleEvent.ReadinessAwaited({ id: "api", waiterId: 1, requireReady: false }),
+          now: 2,
+        },
+        {
+          event: LifecycleEvent.StopFailed({ id: "api", generation: 1, cause: "busy" }),
+          now: 3,
+        },
+      ]));
+      expect(commandTagged(at(commandsByStep, 2), "FailConnection")).toMatchObject({
+        waiterId: 1,
+        message: "api cleanup failed",
+        cause: "busy",
+      });
+      expect(state.services.get("api")?.relaunchForced).toBe(false);
+
+      ({ commandsByStep } = run(state, [{ event: open("api", 2), now: 4 }]));
+      expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Stop"]);
+    });
+  });
+
+  it("caps only traffic waiters and dates a waiter's budget from the client's arrival", () => {
+    let state = initialState(makeGraph([lazy("api", { waiterBudgetMillis: 100 })]), 0);
+    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+    ({ state } = run(
+      state,
+      Array.from({ length: 256 }, (_, index) => ({ event: open("api", index), now: 0 })),
+    ));
+    ({ state, commandsByStep } = run(state, [
+      { event: open("api", 1_000), now: 0 },
+      {
+        event: LifecycleEvent.ReadinessAwaited({ id: "api", waiterId: 1_001, requireReady: true }),
+        now: 0,
+      },
+      {
+        event: LifecycleEvent.ConnectionOpened({
+          id: "api",
+          waiterId: 1_002,
+          requireReady: true,
+          openedAt: 0,
+        }),
+        now: 40,
+      },
+    ]));
+    expect(commandTagged(at(commandsByStep, 0), "FailConnection").message).toBe(
+      "api has too many waiters",
+    );
+    expect(commandsByStep[1]).toEqual([]);
+    expect(state.services.get("api")?.waiters.has(1_001)).toBe(true);
+    expect(tagsOf(commandsByStep[2])).toEqual(["FailConnection"]);
+
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.WaiterCancelled({ id: "api", waiterId: 0 }), now: 50 },
+      {
+        event: LifecycleEvent.ConnectionOpened({
+          id: "api",
+          waiterId: 1_003,
+          requireReady: true,
+          openedAt: 20,
+        }),
+        now: 50,
+      },
+    ]));
+    expect(commandTagged(at(commandsByStep, 1), "ArmWaiterTimeout").deadline).toBe(120);
   });
 });

@@ -114,7 +114,6 @@ const instance = (
     exit: undefined,
     currentOperation: undefined,
     launchId: undefined,
-    intentRevision: 0,
     wakeEnabled: wakeEnabled(),
     registered: true,
   });

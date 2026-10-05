@@ -1,7 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import {
   noContainerClaims,
@@ -36,7 +36,7 @@ describe("studio recipe", () => {
             { service: "studio", config: { functionsRoot: siblingInstance } },
             options(root),
           );
-          const studio = yield* makeService(recipe.definition, {
+          const studio = yield* makeStandaloneService(recipe.definition, {
             id: "studio",
             config: recipe.creation,
           });

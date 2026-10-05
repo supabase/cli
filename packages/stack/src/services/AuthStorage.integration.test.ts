@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
@@ -58,7 +58,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -73,7 +73,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const auth = yield* makeService(authRecipe.definition, {
+          const auth = yield* makeStandaloneService(authRecipe.definition, {
             id: "auth",
             config: authRecipe.creation,
           });
@@ -114,7 +114,7 @@ describe("service catalog", () => {
             { service: "imgproxy", config: { filePath: storageRoot } },
             dockerOptions(root),
           );
-          const imgproxy = yield* makeService(imgproxyRecipe.definition, {
+          const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
             id: "imgproxy",
             config: imgproxyRecipe.creation,
           });
@@ -133,7 +133,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const storage = yield* makeService(storageRecipe.definition, {
+          const storage = yield* makeStandaloneService(storageRecipe.definition, {
             id: "storage",
             config: storageRecipe.creation,
           });

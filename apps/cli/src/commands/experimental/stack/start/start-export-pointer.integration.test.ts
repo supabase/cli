@@ -69,7 +69,6 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     exit: undefined,
     currentOperation: undefined,
     launchId: undefined,
-    intentRevision: 1,
     wakeEnabled: false,
     registered: true,
   };

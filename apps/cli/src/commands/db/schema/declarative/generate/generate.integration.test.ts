@@ -130,7 +130,6 @@ function generateStackApi(workdir: string) {
       health: "healthy",
       registered: true,
       wakeEnabled: true,
-      intentRevision: 0,
       currentOperation: undefined,
       launchId: undefined,
       exit: undefined,

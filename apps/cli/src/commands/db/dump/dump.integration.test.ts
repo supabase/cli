@@ -119,7 +119,6 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       exit: undefined,
       currentOperation: undefined,
       launchId: undefined,
-      intentRevision: 0,
       wakeEnabled: true,
       registered: true,
     }),

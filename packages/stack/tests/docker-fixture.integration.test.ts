@@ -3,7 +3,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Context, Effect, FileSystem, Layer, Redacted, Schema, Stream } from "effect";
-import { makeService } from "../src/Service.ts";
+import { makeStandaloneService } from "./standalone-service.ts";
 import { makeDatabase, type BackendEndpoint } from "../src/services/Database.ts";
 import { makeDockerDatabaseRoot } from "./docker-fixture.ts";
 import { noContainerClaims, noDirectoryClaims } from "./claims.ts";
@@ -81,7 +81,7 @@ describe("Docker database fixture isolation", { timeout: 180_000 }, () => {
           });
         const [first, second] = yield* Effect.all([make(firstRoot), make(secondRoot)]);
         const [firstService, secondService] = yield* Effect.all([
-          makeService(first.definition, {
+          makeStandaloneService(first.definition, {
             id: "docker-fixture-first",
             config: {
               version: "17",
@@ -90,7 +90,7 @@ describe("Docker database fixture isolation", { timeout: 180_000 }, () => {
               jwtExpiry: 3600,
             },
           }),
-          makeService(second.definition, {
+          makeStandaloneService(second.definition, {
             id: "docker-fixture-second",
             config: {
               version: "17",

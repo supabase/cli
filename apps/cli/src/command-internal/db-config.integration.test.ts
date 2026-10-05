@@ -460,7 +460,6 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         exit: undefined,
         currentOperation: undefined,
         launchId: undefined,
-        intentRevision: 0,
         wakeEnabled: state === "running",
         registered: true,
       }),

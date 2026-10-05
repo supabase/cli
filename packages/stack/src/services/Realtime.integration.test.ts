@@ -2,7 +2,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
@@ -51,7 +51,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -64,7 +64,7 @@ describe("service catalog", () => {
             { service: "realtime", config: { databaseUrl, jwtSecret: secret } },
             dockerOptions(root),
           );
-          const realtime = yield* makeService(realtimeRecipe.definition, {
+          const realtime = yield* makeStandaloneService(realtimeRecipe.definition, {
             id: "realtime",
             config: realtimeRecipe.creation,
           });
@@ -82,7 +82,7 @@ describe("service catalog", () => {
             { service: "pgmeta", config: { databaseUrl } },
             dockerOptions(root),
           );
-          const pgmeta = yield* makeService(pgmetaRecipe.definition, {
+          const pgmeta = yield* makeStandaloneService(pgmetaRecipe.definition, {
             id: "pgmeta",
             config: pgmetaRecipe.creation,
           });
@@ -110,7 +110,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const studio = yield* makeService(studioRecipe.definition, {
+          const studio = yield* makeStandaloneService(studioRecipe.definition, {
             id: "studio",
             config: studioRecipe.creation,
           });

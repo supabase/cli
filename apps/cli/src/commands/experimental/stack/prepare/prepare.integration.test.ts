@@ -101,7 +101,6 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       exit: undefined,
       currentOperation: undefined,
       launchId: undefined,
-      intentRevision: 0,
       wakeEnabled: false,
       registered: true,
     }),

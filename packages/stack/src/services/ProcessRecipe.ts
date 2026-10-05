@@ -221,6 +221,11 @@ const emptyNativePortSet: ReadonlySet<number> = new Set();
 const startupTimeoutSeconds = 60;
 const nativeLaunchAttempts = 3;
 const probeTimeout = Duration.seconds(10);
+/**
+ * Bounds one readiness HTTP call: a request that connects but never answers is retried instead
+ * of spending the whole check on that one attempt.
+ */
+const readinessAttemptTimeout = Duration.seconds(3);
 const outputDrainGrace = Duration.seconds(2);
 const startupOutputTailLines = 20;
 const startupOutputLineChars = 1_000;
@@ -386,6 +391,7 @@ const readiness = Effect.fn("ProcessRecipe.readiness")(function* (
               new ServiceError({ operation: "health", message: `HTTP ${response.status}` }),
             ),
       ),
+      Effect.timeout(readinessAttemptTimeout),
     );
   return yield* withAttemptCount(attempt, (counted) =>
     counted.pipe(

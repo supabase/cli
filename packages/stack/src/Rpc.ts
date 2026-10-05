@@ -129,7 +129,6 @@ export const Observation = Schema.Struct({
     Schema.Literals(["start", "stop", "restart", "storage", "destroy", "sleep"]),
   ),
   launchId: Schema.UndefinedOr(Schema.Int),
-  intentRevision: Schema.Int,
   wakeEnabled: Schema.Boolean,
   registered: Schema.Boolean,
 });

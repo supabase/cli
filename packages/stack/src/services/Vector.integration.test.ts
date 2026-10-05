@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { tmpdir } from "node:os";
 import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import {
   noContainerClaims,
@@ -44,7 +44,7 @@ describe("vector recipe", () => {
               },
               options(root, runtime),
             );
-            const vector = yield* makeService(recipe.definition, {
+            const vector = yield* makeStandaloneService(recipe.definition, {
               id: "vector",
               config: recipe.creation,
             });
@@ -89,7 +89,7 @@ describe("vector recipe", () => {
             },
             options(root, "docker"),
           );
-          const vector = yield* makeService(recipe.definition, {
+          const vector = yield* makeStandaloneService(recipe.definition, {
             id: "vector",
             config: recipe.creation,
           });
@@ -119,7 +119,7 @@ describe("vector recipe", () => {
             },
             options(root, "docker"),
           );
-          const vector = yield* makeService(recipe.definition, {
+          const vector = yield* makeStandaloneService(recipe.definition, {
             id: "vector",
             config: recipe.creation,
           });
@@ -173,7 +173,7 @@ describe("vector recipe", () => {
               },
               options(root, "docker"),
             );
-            const vector = yield* makeService(recipe.definition, {
+            const vector = yield* makeStandaloneService(recipe.definition, {
               id: "vector",
               config: recipe.creation,
             });

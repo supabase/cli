@@ -7,7 +7,7 @@ import { SignJWT } from "jose";
 import { tmpdir } from "node:os";
 import * as Network from "../Network.ts";
 import * as StackNamespace from "../StackNamespace.ts";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
@@ -85,7 +85,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -150,7 +150,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const rest = yield* makeService(restRecipe.definition, {
+          const rest = yield* makeStandaloneService(restRecipe.definition, {
             id: "rest",
             config: restRecipe.creation,
           });
@@ -227,7 +227,7 @@ describe("service catalog", () => {
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
         );
-        const database = yield* makeService(databaseRecipe.definition, {
+        const database = yield* makeStandaloneService(databaseRecipe.definition, {
           id: "database",
           config: databaseRecipe.creation,
         });
@@ -267,7 +267,7 @@ describe("service catalog", () => {
           },
           { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
         );
-        const rest = yield* makeService(restRecipe.definition, {
+        const rest = yield* makeStandaloneService(restRecipe.definition, {
           id: "rest",
           config: restRecipe.creation,
         });

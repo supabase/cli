@@ -170,6 +170,56 @@ it.live(
 );
 
 it.live(
+  "destroys a stack after the snapshot running at the time finishes, removing its data",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-testing-snapshot-" });
+      const test = yield* makeTestStack({ runtime: "native", stateRoot });
+      const database = test.services.database;
+      const { databaseUrl } = yield* database.credentials();
+      if (databaseUrl === undefined) return yield* Effect.die("Database URL missing");
+      // Enough data that the snapshot is still copying when the destroy arrives.
+      yield* sql(
+        test.stack,
+        databaseUrl,
+        "CREATE TABLE filler AS SELECT g, repeat('x', 200) AS value FROM generate_series(1, 200000) g",
+      );
+      yield* database.stop;
+      const subscribed = yield* Deferred.make<void>();
+      const storing = yield* Deferred.make<void>();
+      yield* database.followStatus.pipe(
+        Stream.runForEach((status) =>
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.andThen(
+              status.currentOperation === "storage"
+                ? Deferred.succeed(storing, undefined)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
+
+      const snapshot = yield* database
+        .saveSnapshot("before-destroy", { scope: "instance" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(storing);
+      yield* test.stack.destroy;
+
+      expect(Exit.isSuccess(yield* Fiber.await(snapshot))).toBe(true);
+      expect(yield* discover({ stateRoot })).toEqual([]);
+      expect(yield* fs.exists(path.join(stateRoot, test.stack.id))).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    ),
+  { timeout: 120_000 },
+);
+
+it.live(
   "names the failure, service states and owner log, then removes the stack when test startup fails",
   () =>
     Effect.gen(function* () {

@@ -22,7 +22,7 @@ import * as CommandRunner from "./host/CommandRunner.ts";
 import { CommandError } from "./host/CommandRunner.ts";
 import type { PgProveOptions, PostgresCommand } from "./Commands.ts";
 import { makeDatabase } from "./services/Database.ts";
-import { makeService } from "./Service.ts";
+import { makeStandaloneService } from "../tests/standalone-service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { noContainerClaims, noDirectoryClaims } from "../tests/claims.ts";
@@ -99,7 +99,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             runtime,
             ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
           });
-          const service = yield* makeService(database.definition, {
+          const service = yield* makeStandaloneService(database.definition, {
             id: "database",
             config: {
               version: "17",
@@ -252,7 +252,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               runtime,
               ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
             });
-            const service = yield* makeService(database.definition, {
+            const service = yield* makeStandaloneService(database.definition, {
               id: "database",
               config: {
                 version: String(major),

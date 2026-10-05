@@ -27,10 +27,8 @@ import type { CompositionConfig } from "./Orchestrator.ts";
 import {
   makeService,
   ServiceError,
-  type ServiceAdmission,
   type ServiceInstance,
   type ServiceInstanceContext,
-  type ServiceObservation,
 } from "./Service.ts";
 import { ProxyError } from "./Proxy.ts";
 import {
@@ -161,7 +159,7 @@ export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
 
 type NamespaceError =
   | Orchestrator.OrchestratorError
-  | Orchestrator.LifecycleError
+  | ServiceError
   | Network.NetworkError
   | StackNamespace.NamespaceError
   | Effect.Error<ReturnType<typeof sweepContainers>>;
@@ -242,8 +240,6 @@ const withoutInstance = (current: SavedStack, id: string): SavedStack =>
     },
   });
 
-const drainingBlocks: ReadonlyArray<ServiceAdmission> = ["start", "arm", "restart", "storage"];
-
 const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const services = yield* Effect.context<
     | FileSystem.FileSystem
@@ -269,10 +265,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           }),
       ),
     );
-  const orchestrator = yield* Orchestrator.make<Entry>();
+  const draining = yield* Ref.make(false);
+  const rejectWhileDraining = Ref.get(draining).pipe(
+    Effect.flatMap((isDraining) =>
+      isDraining
+        ? Effect.fail(new ServiceError({ operation: "draining", message: "Owner is draining" }))
+        : Effect.void,
+    ),
+  );
+  const orchestrator = yield* Orchestrator.make<Entry>({ admit: () => rejectWhileDraining });
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
   const definitionGate = yield* Semaphore.make(1);
-  const draining = yield* Ref.make(false);
   const { id: stackId, runtime } = options.saved;
   const project = projectSegmentFor(options.saved.identity, path);
   const routeKeys = {
@@ -282,32 +285,41 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     serviceRoleKey: options.saved.credentials?.serviceRoleKey ?? "",
   };
 
-  const rejectWhileDraining = Ref.get(draining).pipe(
-    Effect.flatMap((isDraining) =>
-      isDraining
-        ? Effect.fail(new ServiceError({ operation: "draining", message: "Owner is draining" }))
-        : Effect.void,
-    ),
-  );
-
-  // Mask only the permit handoff; admitted definition changes belong to the owner scope. A change
-  // arriving while draining fails before waiting behind the shutdown that holds the permit.
+  // Admitted definition changes run in the owner scope, so a caller cancelled after admission
+  // detaches from them; one still queued for the permit is withdrawn. A change arriving while
+  // draining fails before waiting behind the shutdown that holds the permit.
   const definitionChange = <A, E>(work: Effect.Effect<A, E>) =>
-    Effect.uninterruptibleMask((restore) =>
-      Effect.gen(function* () {
-        yield* rejectWhileDraining;
-        yield* restore(definitionGate.take(1));
-        const fiber = yield* Effect.forkIn(
-          rejectWhileDraining.pipe(
-            Effect.andThen(work),
-            Effect.ensuring(definitionGate.release(1)),
-          ),
-          ownerScope,
-          { uninterruptible: false },
-        );
-        return yield* restore(Fiber.join(fiber));
-      }),
-    );
+    Effect.gen(function* () {
+      yield* rejectWhileDraining;
+      const claim = yield* Ref.make<"queued" | "admitted" | "withdrawn">("queued");
+      const settle = (to: "admitted" | "withdrawn") =>
+        Ref.modify(claim, (current) => (current === "queued" ? [true, to] : [false, current]));
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const worker = yield* Effect.forkIn(
+            definitionGate.withPermit(
+              settle("admitted").pipe(
+                Effect.flatMap((admitted) =>
+                  admitted
+                    ? rejectWhileDraining.pipe(Effect.andThen(work), Effect.map(Option.some))
+                    : Effect.succeed(Option.none<A>()),
+                ),
+              ),
+            ),
+            ownerScope,
+            { uninterruptible: false },
+          );
+          const outcome = yield* restore(Fiber.join(worker)).pipe(
+            Effect.onInterrupt(() =>
+              settle("withdrawn").pipe(
+                Effect.flatMap((withdrawn) => (withdrawn ? Fiber.interrupt(worker) : Effect.void)),
+              ),
+            ),
+          );
+          return Option.isSome(outcome) ? outcome.value : yield* Effect.interrupt;
+        }),
+      );
+    });
 
   const readSaved = options.state.read(stackId).pipe(
     Effect.flatMap((saved) =>
@@ -346,8 +358,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         ...configuration.dependencies.flatMap(({ from, to }) => [from, to]),
       ]),
       (id) =>
-        orchestrator.get(id).pipe(
-          Effect.flatMap((entry) => entry.core.get),
+        orchestrator.status(id).pipe(
           Effect.flatMap(({ lifecycle, wakeEnabled }) =>
             lifecycle === "stopped" && !wakeEnabled
               ? Effect.void
@@ -451,23 +462,21 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             ),
           ),
       },
-      {
-        id,
-        config: initial,
-        coordinate: (operation, transition) =>
-          (drainingBlocks.includes(operation) ? rejectWhileDraining : Effect.void).pipe(
-            Effect.andThen(orchestrator.admissionFor(id)(operation, transition)),
-          ),
-      },
+      { id, config: initial, report: orchestrator.report },
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
-    const enabled = core.get.pipe(
+    // Listeners stay open while the service runs or demand can still wake it.
+    const enabled = orchestrator.status(id).pipe(
       Effect.map(
-        (observation) =>
-          observation.registered &&
-          observation.lifecycle !== "stopped" &&
-          !(observation.exit !== undefined && !observation.wakeEnabled),
+        (status) => status.registered && (status.wakeEnabled || status.lifecycle !== "stopped"),
       ),
+      Effect.orElseSucceed(() => false),
     );
+    const configFor = (inputs: Record<string, string>, candidate: unknown) =>
+      Ref.get(creation).pipe(
+        Effect.flatMap((current) => restartCreation(current, candidate)),
+        Effect.flatMap((next) => mergeInputs(next, inputs)),
+        Effect.flatMap(requireInputs),
+      );
     const endpoints = Object.fromEntries(
       endpointNames(initial).map((name) => {
         const shared = sharedRoutes(initial, name, routeKeys);
@@ -503,19 +512,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       creation,
       namespace,
       cleanupResources,
-      startAt: (revision, inputs, wake, guard) =>
-        Ref.get(creation).pipe(
-          Effect.flatMap((current) => mergeInputs(current, inputs)),
-          Effect.flatMap(requireInputs),
-          Effect.flatMap((candidate) => core.startAt(revision, candidate, wake, guard)),
+      launch: (generation, inputs, candidate) =>
+        configFor(inputs, candidate).pipe(
+          Effect.flatMap((config) => core.launch(generation, config)),
         ),
-      restart: (revision, inputs, candidate, guard) =>
-        Ref.get(creation).pipe(
-          Effect.flatMap((current) => restartCreation(current, candidate)),
-          Effect.flatMap((next) => mergeInputs(next, inputs)),
-          Effect.flatMap(requireInputs),
-          Effect.flatMap((next) => core.restart(next, revision, guard)),
-        ),
+      prepare: (inputs, candidate) =>
+        configFor(inputs, candidate).pipe(Effect.flatMap((config) => core.prepare(config))),
       bind: namespace.bind.pipe(Effect.mapError(serviceError("bind"))),
       close: namespace.close.pipe(Effect.mapError(serviceError("close"))),
       hasEndpoint: endpointNames(initial).length > 0,
@@ -550,7 +552,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 
   type ComposeError =
     | Effect.Error<ReturnType<typeof addInstance>>
-    | Orchestrator.LifecycleError
+    | ServiceError
     | Network.NetworkError;
 
   const configure = (configuration: CompositionConfig) =>
@@ -584,7 +586,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
               Effect.flatMap((entry) => Ref.get(entry.creation)),
               Effect.map((creation) => ({ id, creation })),
             ),
-          status: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.core.get)),
+          status: orchestrator.status,
           create: addInstance,
           destroy: orchestrator.destroy,
           bind: (id) => orchestrator.get(id).pipe(Effect.flatMap((entry) => entry.bind)),
@@ -647,18 +649,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     return yield* orchestrator.restart(id, next);
   });
 
-  const observe = (entry: Entry, value: ServiceObservation<ServiceCreation>) =>
+  const observe = (entry: Entry, value: Orchestrator.Status) =>
     Effect.all({ config: Ref.get(entry.creation), endpoints: entry.namespace.bindings }).pipe(
       Effect.map((current) => ({ ...value, ...current })),
     );
   const observation = (id: string) =>
-    orchestrator
-      .get(id)
-      .pipe(
-        Effect.flatMap((entry) =>
-          entry.core.get.pipe(Effect.flatMap((value) => observe(entry, value))),
-        ),
-      );
+    Effect.all([orchestrator.get(id), orchestrator.status(id)]).pipe(
+      Effect.flatMap(([entry, value]) => observe(entry, value)),
+    );
   const observeAll = (values: ReadonlyArray<{ readonly id: string }>) =>
     Effect.forEach(values, ({ id }) => observation(id));
 
@@ -677,7 +675,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         operation: "storage",
         message: "Snapshots and data reset are only supported for databases",
       });
-    return yield* entry.core.storage(
+    return yield* orchestrator.storage(
+      id,
       Effect.acquireUseRelease(
         Scope.make("parallel"),
         (scope) =>
@@ -707,11 +706,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         }),
       ).pipe(rpcError("createService")),
     startService: ({ id }) => orchestrator.start(id).pipe(rpcError("startService")),
-    readyService: ({ id }) =>
-      orchestrator.get(id).pipe(
-        Effect.flatMap((entry) => entry.core.ready),
-        rpcError("readyService"),
-      ),
+    readyService: ({ id }) => orchestrator.ready(id).pipe(rpcError("readyService")),
     stopService: ({ id }) => orchestrator.stop(id).pipe(rpcError("stopService")),
     // A config-changing restart can adopt saved credentials, so it serializes with definition
     // changes that introduce or roll them back.
@@ -739,7 +734,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           .get(id)
           .pipe(
             Effect.map((entry) =>
-              entry.core.observation.pipe(Stream.mapEffect((value) => observe(entry, value))),
+              orchestrator.changes(id).pipe(Stream.mapEffect((value) => observe(entry, value))),
             ),
           ),
       ).pipe(Stream.mapError((cause) => stackError("followStatus", cause))),

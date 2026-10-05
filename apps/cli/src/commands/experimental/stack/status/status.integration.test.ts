@@ -106,7 +106,6 @@ const makeObservation = (
   exit: undefined,
   currentOperation: undefined,
   launchId: undefined,
-  intentRevision: 1,
   wakeEnabled: true,
   registered: true,
   ...input,

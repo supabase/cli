@@ -15,7 +15,7 @@ import {
 } from "effect";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
 import { noContainerClaims, noDirectoryClaims } from "../../tests/claims.ts";
@@ -88,7 +88,7 @@ describe("database component", { timeout: 180_000 }, () => {
               jwtSecret: config.jwtSecret,
               jwtExpiry: config.jwtExpiry,
             };
-            const service = yield* makeService(recipe.definition, {
+            const service = yield* makeStandaloneService(recipe.definition, {
               id: "database",
               config: defaults,
             });
@@ -141,7 +141,7 @@ describe("database component", { timeout: 180_000 }, () => {
                 cacheRoot: artifactCacheRoot,
                 runtime: target.runtime,
               });
-              const secondService = yield* makeService(second.definition, {
+              const secondService = yield* makeStandaloneService(second.definition, {
                 id: "database-second",
                 config: { ...defaults, rootKey: Redacted.make("b".repeat(64)) },
               });
@@ -177,7 +177,10 @@ describe("database component", { timeout: 180_000 }, () => {
           cacheRoot: artifactCacheRoot,
           runtime: "native",
         });
-        const service = yield* makeService(database.definition, { id: "database:hba", config });
+        const service = yield* makeStandaloneService(database.definition, {
+          id: "database:hba",
+          config,
+        });
         yield* service.start;
         yield* service.ready;
         const endpoint = yield* database.endpoint;
@@ -239,7 +242,7 @@ describe("database component", { timeout: 180_000 }, () => {
             runtime: "native",
           });
           const loggedConfig: DatabaseConfig = { ...config, settings: { log_statement: "all" } };
-          const service = yield* makeService(first.definition, {
+          const service = yield* makeStandaloneService(first.definition, {
             id: "database:first",
             config: loggedConfig,
           });
@@ -316,7 +319,7 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot,
             runtime: "native",
           });
-          const reopenedService = yield* makeService(reopened.definition, {
+          const reopenedService = yield* makeStandaloneService(reopened.definition, {
             id: "database:first-reopened",
             config,
           });
@@ -344,7 +347,7 @@ describe("database component", { timeout: 180_000 }, () => {
             cacheRoot,
             runtime: "native",
           });
-          const secondService = yield* makeService(second.definition, {
+          const secondService = yield* makeStandaloneService(second.definition, {
             id: "database:second",
             config,
           });
@@ -401,7 +404,7 @@ describe("database component", { timeout: 180_000 }, () => {
             runtime: "docker",
             engineTarget: dockerEngineTarget,
           });
-          const service = yield* makeService(database.definition, {
+          const service = yield* makeStandaloneService(database.definition, {
             id: "database:container",
             config: databaseConfig,
           });
@@ -460,7 +463,7 @@ describe("database component", { timeout: 180_000 }, () => {
             engineTarget: dockerEngineTarget,
           });
           const replacementPassword = Redacted.make("reopened-target-password");
-          const reopenedService = yield* makeService(reopened.definition, {
+          const reopenedService = yield* makeStandaloneService(reopened.definition, {
             id: "database:reopened",
             config: { ...databaseConfig, databasePassword: replacementPassword },
           });
@@ -498,7 +501,7 @@ describe("database component", { timeout: 180_000 }, () => {
           runtime: "docker",
           engineTarget: dockerEngineTarget,
         });
-        const service = yield* makeService(database.definition, {
+        const service = yield* makeStandaloneService(database.definition, {
           id: "database:group",
           config,
         });
@@ -543,7 +546,7 @@ describe("database component", { timeout: 180_000 }, () => {
           runtime: "docker",
           engineTarget: dockerEngineTarget,
         });
-        const service = yield* makeService(database.definition, {
+        const service = yield* makeStandaloneService(database.definition, {
           id: "database:shutdown",
           config: { ...config, stopGraceSeconds: 30 },
         });

@@ -160,7 +160,6 @@ const observation = (
   exit: undefined,
   currentOperation: undefined,
   launchId: undefined,
-  intentRevision: 1,
   wakeEnabled,
   registered: true,
 });

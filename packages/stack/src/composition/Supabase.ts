@@ -624,9 +624,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
             creation.service !== "database" &&
             endpointNames(creation).length > 0;
           return lazy
-            ? creation.service === "functions"
-              ? { id, activation: "lazy" as const }
-              : { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
+            ? { id, activation: "lazy" as const, idleMillis: idleMillisFor(creation.service) }
             : { id, activation: "eager" as const };
         });
         yield* operations.configure({

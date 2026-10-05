@@ -60,9 +60,6 @@ const assertDefaultPolicy = (fixture: WholeStack) =>
       if (name === "database") {
         expect(member.activation).toBe("eager");
         expect(member.idleMillis).toBeUndefined();
-      } else if (name === "functions") {
-        expect(member.activation).toBe("lazy");
-        expect(member.idleMillis).toBeUndefined();
       } else {
         expect(member.activation).toBe("lazy");
         expect(member.idleMillis).toBe(name === "studio" ? 300_000 : 60_000);

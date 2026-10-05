@@ -132,7 +132,6 @@ function syncStackApi(workdir: string, port: number) {
       health: "healthy",
       registered: true,
       wakeEnabled: true,
-      intentRevision: 0,
       currentOperation: undefined,
       launchId: undefined,
       exit: undefined,
