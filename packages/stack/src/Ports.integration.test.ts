@@ -204,8 +204,9 @@ it.live(
         yield* saveStack(state, root, id);
         const ports = yield* makePorts(state);
         const realRoot = yield* fs.realPath(root);
-        const portReservations = yield* PortReservations.Service.pipe(
-          Effect.provide(PortReservations.layer),
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
         );
 
         // Stands in for a probe or bind that never settles: the first candidate's row is
@@ -305,8 +306,9 @@ it.live(
         if (mail === undefined) return yield* Effect.die("mail missing from the composition");
 
         const realStateRoot = yield* fs.realPath(`${root}/state`);
-        const portReservations = yield* PortReservations.Service.pipe(
-          Effect.provide(PortReservations.layer),
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
         );
         expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
 
@@ -352,14 +354,16 @@ it.live("a destroy that cannot remove the registration keeps every reservation",
       const unremovableState: StackNamespace.Interface = {
         ...state,
         remove: (target) =>
-          removable
-            ? state.remove(target)
-            : Effect.fail(
-                new StackNamespace.NamespaceError({
-                  operation: "remove",
-                  message: "injected failure",
-                }),
-              ),
+          Effect.suspend(() =>
+            removable
+              ? state.remove(target)
+              : Effect.fail(
+                  new StackNamespace.NamespaceError({
+                    operation: "remove",
+                    message: "injected failure",
+                  }),
+                ),
+          ),
       };
       const owner = yield* ownerFor({
         saved,
@@ -379,8 +383,9 @@ it.live("a destroy that cannot remove the registration keeps every reservation",
       const mail = definitions.find((entry) => entry.creation.service === "mail");
       if (mail === undefined) return yield* Effect.die("mail missing from the composition");
       const realStateRoot = yield* fs.realPath(`${root}/state`);
-      const portReservations = yield* PortReservations.Service.pipe(
-        Effect.provide(PortReservations.layer),
+      const portReservations = Context.get(
+        yield* Layer.build(PortReservations.layer),
+        PortReservations.Service,
       );
       const assigned = yield* portReservations.find(realStateRoot, id, `${mail.id}:http`);
       expect(assigned).toBeDefined();

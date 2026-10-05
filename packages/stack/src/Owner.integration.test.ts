@@ -977,8 +977,9 @@ it.live(
         yield* owner.rpc.readyService({ id: created.id });
 
         const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
-        const portReservations = yield* PortReservations.Service.pipe(
-          Effect.provide(PortReservations.layer),
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
         );
         expect(
           yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
@@ -1046,8 +1047,9 @@ it.live(
         yield* owner.rpc.readyService({ id: created.id });
 
         const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
-        const portReservations = yield* PortReservations.Service.pipe(
-          Effect.provide(PortReservations.layer),
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
         );
         expect(
           yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
