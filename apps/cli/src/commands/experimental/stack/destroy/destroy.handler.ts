@@ -8,22 +8,14 @@ import { CommandSettings } from "../../../../config/command-settings.service.ts"
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
 import {
   StackApi,
-  StackTargetError,
   rejectStackOutput,
   skippedRuntimeCleanupWarning,
   StackTargetResolver,
+  mapTargetError,
   validateStackTarget,
 } from "../stack.shared.ts";
 import type { StackDestroyFlags } from "./destroy.command.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
-
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandDestroyError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
 
 const destroyError = (cause: StackError) =>
   new StackCommandDestroyError({
@@ -41,11 +33,13 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const settings = yield* CommandSettings;
     const api = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
-    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* rejectStackOutput(outputFlag).pipe(
+      Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))),
+    );
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))));
 
     const resolver = yield* StackTargetResolver;
     const path = yield* Path.Path;
@@ -56,7 +50,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
         runtime: "auto",
       })
-      .pipe(Effect.mapError(mapTargetError));
+      .pipe(Effect.mapError(mapTargetError((props) => new StackCommandDestroyError(props))));
     if (target.id === undefined)
       return yield* new StackCommandDestroyError({
         reason: "flags",

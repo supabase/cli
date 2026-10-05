@@ -44,6 +44,24 @@ export class StackTargetError extends Data.TaggedError("ExperimentalStackTargetE
   }
 }
 
+/** Rewraps a `StackTargetError` into a command's own error type, preserving reason, message, and suggestion. */
+export const mapTargetError =
+  <E>(
+    make: (props: {
+      readonly reason: StackTargetError["reason"];
+      readonly message: string;
+      readonly suggestion?: string;
+      readonly cause: StackTargetError;
+    }) => E,
+  ) =>
+  (error: StackTargetError): E =>
+    make({
+      reason: error.reason,
+      message: error.message,
+      ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
+      cause: error,
+    });
+
 interface StackTargetResolverShape {
   readonly resolve: (input: {
     readonly projectRoot: string;

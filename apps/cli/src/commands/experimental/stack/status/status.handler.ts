@@ -20,8 +20,8 @@ import {
 } from "../stack-summary.ts";
 import {
   StackApi,
-  StackTargetError,
   StackTargetResolver,
+  mapTargetError,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -81,14 +81,6 @@ type StackReport = {
   /** The `status --env` connection map, degrading to what's available when credentials or the owner are unreachable. */
   readonly env: Readonly<Record<string, string>>;
 };
-
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandStatusError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
 
 const mapStackError = (error: StackError) =>
   new StackCommandStatusError({
@@ -263,7 +255,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       ...(id === undefined ? {} : { id }),
       runtime: "auto",
     })
-    .pipe(Effect.mapError(mapTargetError));
+    .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
@@ -373,7 +365,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
     if (!flags.env && flags.overrideName.length > 0)
       return yield* new StackCommandStatusError({
         reason: "flags",

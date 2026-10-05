@@ -154,13 +154,8 @@ example. Failures retain typed command errors and package diagnostics. Telemetry
 after success or failure.
 
 A rejected configuration change additionally carries `stack_changes` on the JSON/stream-json error
-envelope: one entry per affected service/path pair (a shared setting such as the API port appears
-once per API-backed service even though the text message deduplicates it to one line; a service
-with more than one incompatible path, such as a changed endpoint alongside an artifact version
-change, gets one entry per path), each with `service`, `path` (the composition planner's dotted
-path, e.g. `endpoints.http.port`, not a `config.toml` key — an added or dropped endpoint instead
-reports `endpoints.<name>`, since the planner only reports the bare `endpoints` path for that
-case), `key`, `saved`, `requested`, and `editable`. `recreate_command` is the exact `supabase stack
-destroy --stack-id <id>` invocation, without `--yes`, since destroy deletes local database data;
-running it non-interactively or with `--output-format json`/`--output-format stream-json` requires
-passing `--yes` explicitly.
+envelope: one entry per affected service/path pair, each with `service`, `path` (the composition
+planner's dotted path, e.g. `endpoints.http.port`), `saved`, and `requested`. `recreate_command` is
+the exact `supabase stack destroy --stack-id <id>` invocation, without `--yes`, since destroy
+deletes local database data; running it non-interactively or with `--output-format
+json`/`--output-format stream-json` requires passing `--yes` explicitly.

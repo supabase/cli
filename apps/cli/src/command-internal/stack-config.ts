@@ -162,18 +162,9 @@ const envNestedPortOrConfigured = (
   return typeof nested?.[key] === "number" ? configured : undefined;
 };
 
-/** A setting's `config.toml` key and the `SUPABASE_*` env var that overrides it. */
-export interface StackEndpointSetting {
-  readonly configPath: string;
+/** A port setting's `config.toml` section/key and the `SUPABASE_*` env var that overrides it. */
+interface PortSetting {
   readonly envVar: string;
-}
-
-/**
- * A port setting's `config.toml` key and env var, shared by `createCreations` and
- * `stackEndpointSetting` so both report the same names; a new endpoint still needs an entry in
- * `endpointSettingsByServiceEndpoint`.
- */
-interface PortSetting extends StackEndpointSetting {
   readonly section: string;
   readonly nestedSection?: string;
   readonly key: string;
@@ -183,62 +174,52 @@ const DB_PORT: PortSetting = {
   envVar: "SUPABASE_DB_PORT",
   section: "db",
   key: "port",
-  configPath: "db.port",
 };
 const API_PORT: PortSetting = {
   envVar: "SUPABASE_API_PORT",
   section: "api",
   key: "port",
-  configPath: "api.port",
 };
 const STUDIO_PORT: PortSetting = {
   envVar: "SUPABASE_STUDIO_PORT",
   section: "studio",
   key: "port",
-  configPath: "studio.port",
 };
 const DB_POOLER_PORT: PortSetting = {
   envVar: "SUPABASE_DB_POOLER_PORT",
   section: "db",
   nestedSection: "pooler",
   key: "port",
-  configPath: "db.pooler.port",
 };
 const LOCAL_SMTP_PORT: PortSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_PORT",
   section: "local_smtp",
   key: "port",
-  configPath: "local_smtp.port",
 };
 const LOCAL_SMTP_SMTP_PORT: PortSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_SMTP_PORT",
   section: "local_smtp",
   key: "smtp_port",
-  configPath: "local_smtp.smtp_port",
 };
 const LOCAL_SMTP_POP3_PORT: PortSetting = {
   envVar: "SUPABASE_LOCAL_SMTP_POP3_PORT",
   section: "local_smtp",
   key: "pop3_port",
-  configPath: "local_smtp.pop3_port",
 };
 const ANALYTICS_PORT: PortSetting = {
   envVar: "SUPABASE_ANALYTICS_PORT",
   section: "analytics",
   key: "port",
-  configPath: "analytics.port",
 };
 const ANALYTICS_VECTOR_PORT: PortSetting = {
   envVar: "SUPABASE_ANALYTICS_VECTOR_PORT",
   section: "analytics",
   key: "vector_port",
-  configPath: "analytics.vector_port",
 };
 const EDGE_RUNTIME_INSPECTOR_PORT: PortSetting = {
   envVar: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
   section: "edge_runtime",
   key: "inspector_port",
-  configPath: "edge_runtime.inspector_port",
 };
 
 /** Resolves one `PortSetting` against the loaded document and env, picking the nested variant when needed. */
@@ -259,44 +240,6 @@ const resolvePort = (
         configured,
         env,
       );
-
-/**
- * Maps a saved stack endpoint (service + endpoint name) to the `PortSetting` that controls it.
- * An endpoint missing here (e.g. `pooler.http`, `realtime.rpc`) is always automatic.
- */
-const endpointSettingsByServiceEndpoint: Readonly<Record<string, StackEndpointSetting>> = {
-  "database.sql": DB_PORT,
-  "pooler.sql": DB_POOLER_PORT,
-  "analytics.http": ANALYTICS_PORT,
-  "vector.http": ANALYTICS_VECTOR_PORT,
-  "studio.http": STUDIO_PORT,
-  "mail.http": LOCAL_SMTP_PORT,
-  "mail.smtp": LOCAL_SMTP_SMTP_PORT,
-  "mail.pop3": LOCAL_SMTP_POP3_PORT,
-  "functions.inspector": EDGE_RUNTIME_INSPECTOR_PORT,
-  "rest.http": API_PORT,
-  "auth.http": API_PORT,
-  "realtime.http": API_PORT,
-  "storage.http": API_PORT,
-  "functions.http": API_PORT,
-};
-
-/** The config.toml key and env var override for a service endpoint, when the CLI exposes one. */
-export const stackEndpointSetting = (
-  service: string,
-  endpoint: string,
-): StackEndpointSetting | undefined => endpointSettingsByServiceEndpoint[`${service}.${endpoint}`];
-
-/**
- * `db.major_version`'s config key and `SUPABASE_DB_MAJOR_VERSION` override. Unlike the ports
- * above, `envOverrideMajorVersion` (shared with `db-bootstrap` and the legacy local stack) hardcodes
- * its own name/field, so there is no single call site to read this from without widening that
- * shared helper's signature; the two literals here are kept in sync by hand.
- */
-export const stackMajorVersionSetting: StackEndpointSetting = {
-  configPath: "db.major_version",
-  envVar: "SUPABASE_DB_MAJOR_VERSION",
-};
 
 const authProviderNames = [
   "apple",
