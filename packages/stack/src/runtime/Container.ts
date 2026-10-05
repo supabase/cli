@@ -200,7 +200,7 @@ const retryablePull = (error: ContainerError) => rateLimited(error) || transient
 
 /**
  * Probes the pinned engine target directly, with the cheapest real call (`info`), rather than
- * classifying a failure's message (pass 3, B): a spawn failure (missing binary) or the daemon
+ * classifying a failure's message: a spawn failure (missing binary) or the daemon
  * endpoint refusing the connection both resolve `false`; any other failure (a daemon-relayed
  * error, for example a registry rejecting a pull while the daemon itself is up) never reaches
  * this probe and so never resolves `false` through it.
@@ -638,10 +638,10 @@ export const makeContainerRuntime = (options: {
         .pipe(Effect.mapError((cause) => errorFor("environment", cause)));
       // Not `makeTempDirectoryScoped`: its scoped cleanup removes without `force`, then dies on
       // any failure, including a confirmed ENOENT when this stack's whole root (this directory's
-      // owned ancestor) is already gone — turning an ordinary stop into an unrecoverable defect
-      // (F5/F1 root cause). `acquireRelease` keeps the plain `makeTempDirectory` and installing its
-      // tolerant, `force: true` finalizer uninterruptible together (F8), so an interruption between
-      // the two can never leave the directory created but unregistered for cleanup.
+      // owned ancestor) is already gone — turning an ordinary stop into an unrecoverable defect.
+      // `acquireRelease` keeps the plain `makeTempDirectory` and installing its tolerant,
+      // `force: true` finalizer uninterruptible together, so an interruption between the two
+      // can never leave the directory created but unregistered for cleanup.
       const directory = yield* Effect.acquireRelease(
         fs
           .makeTempDirectory({ directory: containerEnvRoot, prefix: "container-" })
@@ -1059,13 +1059,16 @@ export const removeContainerById = Effect.fn("Container.removeContainerById")(
 );
 
 /**
- * Lists every container carrying this stack's identity label, through the pinned engine:
- * service containers and every storage helper alike (per-instance and shared), independent of
- * any in-memory registry's own bookkeeping (pass 3, C).
+ * Lists every container carrying this stack's identity and data-root labels, through the pinned
+ * engine: service containers and every storage helper alike (per-instance and shared),
+ * independent of any in-memory registry's own bookkeeping. The data-root label is required
+ * alongside the stack id label because a stack id alone does not identify a stack: two owners can
+ * share one id while rooted at different data directories.
  */
 const listStackContainers = Effect.fn("Container.listStackContainers")(function* (options: {
   readonly target: EngineTarget;
   readonly stackId: string;
+  readonly stackRoot: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* runRaw(spawner, [
@@ -1076,6 +1079,8 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
     "--no-trunc",
     "--filter",
     `label=com.supabase.stack=${options.stackId}`,
+    "--filter",
+    `label=com.supabase.stack-root=${options.stackRoot}`,
   ]);
   return output
     .split("\n")
@@ -1084,13 +1089,17 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
 });
 
 /**
- * Removes every container carrying this stack's identity label and reports how many remain
- * (normally 0): the registration-independent confirming sweep abandonment uses instead of
- * depending on any helper registry's own bookkeeping (pass 3, C). A container that disappears
+ * Removes every container carrying this stack's identity and data-root labels and reports how
+ * many remain (normally 0): the registration-independent confirming sweep abandonment uses
+ * instead of depending on any helper registry's own bookkeeping. A container that disappears
  * between listing and removal is not an error, matching {@link removeContainerById}.
  */
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
-  function* (options: { readonly target: EngineTarget; readonly stackId: string }) {
+  function* (options: {
+    readonly target: EngineTarget;
+    readonly stackId: string;
+    readonly stackRoot: string;
+  }) {
     const ids = yield* listStackContainers(options);
     yield* Effect.forEach(ids, (id) => removeContainerById({ target: options.target, id }), {
       concurrency: "unbounded",

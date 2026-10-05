@@ -383,7 +383,8 @@
         "packages/stack/tests/effect-timeout.fixture.ts",
         "packages/stack/tests/host-process-fixture.ts",
         "packages/stack/tests/failing-owner-fixture.ts",
-        "packages/stack/tests/short-registration-poll-fixture.ts"
+        "packages/stack/tests/short-registration-poll-fixture.ts",
+        "packages/stack/tests/gated-drain-fixture.ts"
       ],
       "rules": {
         "no-restricted-imports": [

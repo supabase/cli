@@ -635,7 +635,7 @@ describe("service execution", () => {
   );
 
   it.live(
-    "reports confirmed termination when removeData cleans up a session a failed stop retained (F1)",
+    "reports confirmed termination when removeData cleans up a session a failed stop retained",
     () =>
       Effect.scoped(
         Effect.gen(function* () {

@@ -492,7 +492,7 @@ export const makeService = <Config>(
             const leftover = yield* Ref.get(current);
             if (leftover !== undefined) {
               yield* stopRecord(leftover, true);
-              // F1: a previous stop attempt may have failed and reported `StopFailed`, leaving the
+              // A previous stop attempt may have failed and reported `StopFailed`, leaving the
               // reducer in `Stopping` forever; this retry's own confirmed termination must reach it
               // too, the same way `stop`'s own successful path does, or the reducer (and anything
               // gated on it, such as `NetworkNamespace.release`'s endpoint check) never learns.

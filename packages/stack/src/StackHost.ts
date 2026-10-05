@@ -52,7 +52,7 @@ import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 
 /**
- * How often an owner confirms its own registration still exists (F6). Internal only: tests shorten
+ * How often an owner confirms its own registration still exists. Internal only: tests shorten
  * it through a dedicated entrypoint that overrides this reference, never through env or `Config`.
  */
 export const RegistrationCheckInterval = Context.Reference<Duration.Input>(
@@ -91,7 +91,7 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
  * `StackHostError`'s own `reason` has carried since before phase 2d, so `destroy`/`shutdown`
  * (`effect.ts`) know to leave a stack registered for retry instead of surfacing a hard failure.
  * Unrelated to abandonment's own cleanup-retry decision, which probes the engine directly instead
- * of matching a message at all (pass 3, B).
+ * of matching a message at all.
  */
 const engineUnreachableAtStartup = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -192,7 +192,7 @@ export interface StackHostRuntime {
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
   ) => Effect.Effect<void, StackError>;
-  /** F6: ends ownership after a confirmed-gone registration; joins an already-running shutdown. */
+  /** Ends ownership after a confirmed-gone registration; joins an already-running shutdown. */
   readonly abandon: Effect.Effect<void>;
   readonly exit: Deferred.Deferred<void>;
 }
@@ -255,9 +255,9 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
 
       // Admits `mode`'s cleanup when nothing else is in flight: forks it, tracks it as `current`
       // until it settles (success or failure alike), then clears `current` so a later claim —
-      // for example abandon after an in-flight stop or destroy — can be admitted again (pass 3,
-      // A). Only `stop` and `destroy` can actually fail; their own recovery (reopening admission)
-      // runs, and `current` is cleared, before `claim` below can ever admit anything else.
+      // for example abandon after an in-flight stop or destroy — can be admitted again. Only
+      // `stop` and `destroy` can actually fail; their own recovery (reopening admission) runs,
+      // and `current` is cleared, before `claim` below can ever admit anything else.
       const begin = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -294,7 +294,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               ? Effect.gen(function* () {
                   // Attachment/command cleanup and namespace cleanup run concurrently; each
                   // retries until confirmed (or the engine is confirmed unavailable), and this
-                  // waits for both before the owner is permitted to exit (pass 3, A).
+                  // waits for both before the owner is permitted to exit.
                   const commandCleanup = settled(
                     "command cleanup",
                     Owner.retryUntilConfirmed(
@@ -371,7 +371,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               mode !== "abandon" && !retiringAfterDestroyFailure
                 ? owner
                     .setDraining(false)
-                    // F6: drain may already have run (and so left the network's own admission
+                    // Drain may already have run (and so left the network's own admission
                     // closed) before this later stage failed; recovering it here keeps a
                     // start/restart that follows from refusing as still draining.
                     .pipe(
@@ -387,7 +387,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           return fiber;
         });
 
-      // The one shutdown pipeline (pass 3, A): `stop`, `destroy` and `abandon` are claimed
+      // The one shutdown pipeline: `stop`, `destroy` and `abandon` are claimed
       // through the same gate and `current` record, never a separate join. If a shutdown is
       // already in flight when abandonment is requested, this waits for it to settle (whatever
       // its outcome) and then claims abandon fresh, unless that settlement was a confirmed
@@ -450,7 +450,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         claim(destroy ? "destroy" : "stop", response).pipe(
           Effect.mapError((cause) => stackError("shutdown", cause)),
         );
-      // F6: a registration-loss poll drives this, never an RPC caller, so there is no response to
+      // A registration-loss poll drives this, never an RPC caller, so there is no response to
       // watch and no registration left to touch; `claim` never actually fails for this mode.
       const abandon = claim("abandon").pipe(Effect.ignore);
       const handlers = StackRpc.of({
@@ -517,9 +517,28 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
 type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone" | "registration-gone";
 
 /**
- * Polls for a confirmed-gone registration (F6) and offers `registration-gone` once. Any other
- * error (permissions, an unmounted root mid-read) keeps the owner running; only a confirmed ENOENT
- * (`state.read` returning `undefined`) counts as abandonment.
+ * True only on a confirmed ENOENT (`state.read` returning `undefined`); any other error
+ * (permissions, an unmounted root mid-read) keeps the owner running, so it reads as "not
+ * confirmed gone" rather than abandonment.
+ */
+const registrationConfirmedGone = Effect.fn("StackHost.registrationConfirmedGone")(function* (
+  state: StackNamespace.Interface,
+  id: string,
+) {
+  const saved = yield* state.read(id).pipe(
+    Effect.tapError((cause) =>
+      Effect.logWarning(
+        "Could not confirm the stack registration; keeping the owner running",
+        cause,
+      ),
+    ),
+    Effect.option,
+  );
+  return Option.isSome(saved) && saved.value === undefined;
+});
+
+/**
+ * Polls for a confirmed-gone registration and offers `registration-gone` once.
  */
 const pollRegistration = Effect.fn("StackHost.pollRegistration")(function* (
   state: StackNamespace.Interface,
@@ -529,16 +548,7 @@ const pollRegistration = Effect.fn("StackHost.pollRegistration")(function* (
   const interval = yield* RegistrationCheckInterval;
   while (true) {
     yield* Effect.sleep(interval);
-    const saved = yield* state.read(id).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning(
-          "Could not confirm the stack registration; keeping the owner running",
-          cause,
-        ),
-      ),
-      Effect.option,
-    );
-    if (Option.isSome(saved) && saved.value === undefined) {
+    if (yield* registrationConfirmedGone(state, id)) {
       yield* Queue.offer(events, "registration-gone");
       return;
     }
@@ -733,7 +743,12 @@ export const runStackHost = Effect.fn("StackHost.run")(
             Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
             Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
           );
-          if (shutdownSucceeded) break;
+          if (!shutdownSucceeded) continue;
+          // A registration deletion that arrives while this data-preserving stop is already
+          // running only reaches `events` as a queued, now-unread `registration-gone`: a direct
+          // re-read through the same state API the poll uses catches it before the owner exits.
+          if (yield* registrationConfirmedGone(state, id)) yield* started.abandon;
+          break;
         }
       }),
     ).pipe(

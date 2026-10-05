@@ -346,6 +346,8 @@ export interface LaunchOptions {
   readonly cacheRoot: string;
   readonly stackId: string;
   readonly entrypoint?: string;
+  /** Extra positional arguments a non-default `entrypoint` reads, ahead of `register`. */
+  readonly entrypointArgs?: ReadonlyArray<string>;
   /** Registers this definition once the spawned owner holds the lease. */
   readonly register?: SavedStack;
   /** Ties a spawned owner to the enclosing scope, whose closure destroys the stack. */
@@ -463,7 +465,14 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
             try: () => {
               const started = spawn(
                 process.execPath,
-                [entrypoint, options.stateRoot, options.cacheRoot, options.stackId, ...register],
+                [
+                  entrypoint,
+                  options.stateRoot,
+                  options.cacheRoot,
+                  options.stackId,
+                  ...(options.entrypointArgs ?? []),
+                  ...register,
+                ],
                 {
                   cwd: process.cwd(),
                   detached: true,

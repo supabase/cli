@@ -84,7 +84,7 @@ export interface RegisteredInstance {
    * Releases this instance's network reservations once its data is confirmed removed: destroy's
    * own step, run right after `core.removeData` succeeds. Abandonment never calls it — a stale
    * reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
-   * confirmed gone, exactly the abandonment trigger, so abandonment has nothing to release itself.
+   * confirmed gone, the abandonment trigger, so abandonment has nothing to release itself.
    */
   readonly release: Effect.Effect<void, ServiceError>;
   readonly hasEndpoint: boolean;

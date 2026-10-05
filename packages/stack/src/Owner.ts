@@ -182,21 +182,19 @@ export interface Interface {
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
     /**
-     * Ends ownership after a confirmed-gone registration (F6): drains, stops every workload and
-     * removes what it created through the same registration-independent `cleanupResources` path as
-     * destroy. Never reads or writes the registration, which is already gone, and never releases
-     * port reservations either: a stale one stays for `Ports.ts`'s own lazy reclamation once the
-     * holder's registration is confirmed gone — exactly this trigger. A leftover resource past the
-     * engine-unreachable backstop is logged, not thrown.
+     * Ends ownership after a confirmed-gone registration: drains, stops every workload, and
+     * removes what it created through the same registration-independent cleanup path as destroy,
+     * without touching the registration or releasing port reservations. A leftover resource past
+     * the engine-unreachable backstop is logged, not thrown.
      */
     readonly abandon: Effect.Effect<void>;
     /**
-     * Recovers network admission after a shutdown that failed once drain had already begun (F6):
-     * see {@link Network.Interface.recoverDrain}.
+     * Recovers network admission after a shutdown that failed once drain had already begun; see
+     * {@link Network.Interface.recoverDrain}.
      */
     readonly recoverDraining: Effect.Effect<void>;
   };
-  /** Direct probe of the pinned engine target; always `true` for a native stack (pass 3, B). */
+  /** Direct probe of the pinned engine target; always `true` for a native stack. */
   readonly engineAvailable: Effect.Effect<boolean>;
   readonly setDraining: (draining: boolean) => Effect.Effect<void>;
   readonly getServing: Effect.Effect<boolean>;
@@ -232,8 +230,18 @@ const rpcError = (operation: string) =>
   Effect.mapError((cause: unknown) => stackError(operation, cause));
 
 /**
+ * The first backoff delay {@link retryUntilConfirmed} sleeps between attempts, doubling up to 5
+ * seconds. Internal only: a test overrides this reference to observe several attempts without
+ * waiting through a production-length backoff, never through an env var or `Config`.
+ */
+export const RetryUntilConfirmedInitialDelay = Context.Reference<Duration.Input>(
+  "@supabase/stack/RetryUntilConfirmedInitialDelay",
+  { defaultValue: () => Duration.millis(200) },
+);
+
+/**
  * Retries `operation` with a bounded, doubling backoff until it succeeds or `engineAvailable`
- * resolves `false` (pass 3, B): engine availability is a direct probe, never a message or cause
+ * resolves `false`: engine availability is a direct probe, never a message or cause
  * classification, so this is the one place every abandonment cleanup stage decides whether a
  * failure is worth retrying. A `false` probe fails with the operation's own last error; an
  * interruption or defect is never retried.
@@ -243,7 +251,7 @@ export const retryUntilConfirmed = <A, E>(
   engineAvailable: Effect.Effect<boolean>,
 ): Effect.Effect<A, E> =>
   Effect.gen(function* () {
-    let delay = Duration.millis(200);
+    let delay = Duration.fromInputUnsafe(yield* RetryUntilConfirmedInitialDelay);
     while (true) {
       const result = yield* Effect.exit(operation);
       if (Exit.isSuccess(result)) return result.value;
@@ -317,14 +325,14 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const network = yield* Network.Service;
   const portReservations = yield* PortReservations.Service;
   // A native stack has no engine to lose, so every cleanup failure is retried forever; a docker
-  // stack probes the pinned target directly (pass 3, B), never by classifying a failure's cause.
+  // stack probes the pinned target directly, never by classifying a failure's cause.
   const engineAvailable: Effect.Effect<boolean> =
     options.engineTarget === undefined
       ? Effect.succeed(true)
       : Container.probeEngineReachable(spawner, options.engineTarget);
   // Shared per-launch environment-file scratch directory (Container.ts), owned by this stack as a
-  // whole rather than any one instance; registration-independent so destroy and abandonment (F7)
-  // both reach it without depending on `Registry.remove`, which never runs during abandonment.
+  // whole rather than any one instance; registration-independent so destroy and abandonment both
+  // reach it without depending on `Registry.remove`, which never runs during abandonment.
   const removeContainerEnvRoot = fs
     .remove(path.join(options.root, Paths.CONTAINER_ENV_DIRNAME), { recursive: true, force: true })
     .pipe(Effect.mapError(serviceError("cleanup")));
@@ -511,7 +519,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     // neither reads or writes the registration. Network reservations are never part of this: they
     // are destroy's own separate `release` step (`Orchestrator.destroy`), never abandonment's,
     // since a stale reservation stays for `Ports.ts`'s lazy reclamation once the holder's
-    // registration is confirmed gone — exactly the abandonment trigger.
+    // registration is confirmed gone, the abandonment trigger.
     const cleanupResources = (context: ServiceInstanceContext<ServiceCreation>) =>
       recipe.definition.removeData(context);
     const core = yield* makeService(
@@ -866,7 +874,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     handlers,
     getStackCredentials,
     namespace: {
-      // Shutdown drain (F5): accept closes on every listener before any service stops, and the
+      // Shutdown drain: accept closes on every listener before any service stops, and the
       // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
       stop: network.drain.pipe(
         Effect.andThen(orchestrator.stopNamespace),
@@ -919,7 +927,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),
-      // F6: settles admitted definition work under the same gate as stop/destroy first. Never
+      // Settles admitted definition work under the same gate as stop/destroy first. Never
       // reads or writes the registration (already confirmed gone), so every step below is
       // best-effort and logs rather than fails; the caller must still be able to exit.
       abandon: network.drain.pipe(
@@ -940,10 +948,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             ),
           ),
         ),
-        // Registration-independent confirming sweep (pass 3, C): every container carrying this
-        // stack's identity label, found through the pinned engine directly rather than through
-        // any in-memory helper registry's own bookkeeping — covers a shared storage helper the
-        // per-instance cleanup above never removes on its own.
+        // Registration-independent confirming sweep: every container carrying this stack's
+        // identity and data-root labels, found through the pinned engine directly rather than
+        // through any in-memory helper registry's own bookkeeping — covers a shared storage
+        // helper the per-instance cleanup above never removes on its own. The data-root label
+        // keeps this scoped to this owner's own containers even when another owner shares the
+        // same stack id under a different root.
         Effect.andThen(
           options.engineTarget === undefined
             ? Effect.void
@@ -951,6 +961,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
                 Container.removeStackContainers({
                   target: options.engineTarget,
                   stackId,
+                  stackRoot: path.resolve(options.root),
                 }).pipe(
                   Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                   Effect.mapError(serviceError("cleanup")),
@@ -973,12 +984,11 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
                 ),
               ),
         ),
-        // Filesystem-only, so always retried to confirmation regardless of engine availability
-        // (F7): its own `force: true` tolerates an already-gone directory, never a transient
-        // failure. Port reservations are never released here (simplification over F2): a stale
-        // reservation stays for `Ports.ts`'s lazy reclamation once the holder's registration is
-        // confirmed gone — exactly the abandonment trigger — so abandonment never touches
-        // `Ports.ts`'s registry at all, even once the state root itself no longer exists.
+        // Filesystem-only, so always retried to confirmation regardless of engine availability:
+        // its own `force: true` tolerates an already-gone directory, never a transient failure.
+        // Port reservations are never released here: a stale reservation stays for `Ports.ts`'s
+        // own lazy reclamation once the holder's registration is confirmed gone, the abandonment
+        // trigger, so abandonment never touches `Ports.ts`'s registry at all.
         Effect.andThen(
           retryUntilConfirmed(removeContainerEnvRoot, Effect.succeed(true)).pipe(
             Effect.catch((cause) =>

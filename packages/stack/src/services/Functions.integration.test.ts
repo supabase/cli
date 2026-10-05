@@ -187,9 +187,9 @@ describe("service catalog", () => {
         const outside = yield* fs.makeTempDirectoryScoped({
           prefix: "functions-symlink-outside-",
         });
-        // The pre-F2 removeData reached for `<runtime>/functions` specifically, not the whole
-        // runtime directory; the sentinel sits exactly there so this test actually proves that
-        // previously endangered data survives, not just the symlink target's top level.
+        // removeData reaches for `<runtime>/functions` specifically, not the whole runtime
+        // directory; the sentinel sits there so this test proves that previously endangered
+        // data survives, not just the symlink target's top level.
         const sentinel = path.join(outside, "functions", "sentinel");
         yield* fs.makeDirectory(path.join(outside, "functions"), { recursive: true });
         yield* fs.writeFileString(sentinel, "do not remove me");

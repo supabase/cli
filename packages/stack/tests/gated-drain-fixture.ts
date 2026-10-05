@@ -1,15 +1,36 @@
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Fiber, FileSystem, Option, Path, Schema, Stream } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
-import { SavedStack } from "../src/StackNamespace.ts";
-import { RegistrationCheckInterval, runStackHost, StackHostError } from "../src/StackHost.ts";
+import * as Network from "../src/Network.ts";
+import { runStackHost, StackHostError } from "../src/StackHost.ts";
 
 /**
- * A real owner entrypoint, identical to `internal/host-process.ts`, except it overrides the
- * registration-loss poll interval through the sanctioned internal `Context.Reference` so an
- * abandonment test does not wait a real 30 seconds. Production code never reads this from an
- * environment variable or `Config`; only this dedicated test fixture supplies a different value.
+ * A real owner entrypoint, identical to `internal/host-process.ts`, except it overrides
+ * `Network.ShutdownDrainDeadline` to wait for a `release` file in `gateDir` instead of racing a
+ * real timer, so a test can hold a shutdown's drain open deterministically from outside the
+ * subprocess. Production code never reads this from an environment variable or `Config`; only
+ * this dedicated test fixture supplies a different value.
  */
+const awaitRelease = (gateDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const target = path.join(gateDir, "release");
+    // Subscribes before signaling "waiting" below, so a `release` written the instant a test
+    // observes that signal can never land in the gap between the signal and this watch attaching.
+    const released = yield* fs.watch(gateDir).pipe(
+      Stream.filter((event) => event.path === "release" || event.path === target),
+      Stream.take(1),
+      Stream.runDrain,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    // Marks entry into the drain-deadline wait itself, so a test can subscribe to this instead
+    // of a sleep before it is safe to act on the assumption that drain has actually begun.
+    yield* fs.writeFileString(path.join(gateDir, "waiting"), "");
+    if (yield* fs.exists(target)) return;
+    yield* Fiber.join(released);
+  });
+
 const writeLine = (value: unknown) =>
   Effect.gen(function* () {
     const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
@@ -35,27 +56,20 @@ const writeLine = (value: unknown) =>
     ),
   );
 
-const [stateRoot, cacheRoot, stackId, register, ...rest] = process.argv.slice(2);
+const [stateRoot, cacheRoot, stackId, gateDir, ...rest] = process.argv.slice(2);
 
 const program = Effect.gen(function* () {
   if (
     stateRoot === undefined ||
     cacheRoot === undefined ||
     stackId === undefined ||
+    gateDir === undefined ||
     rest.length > 0
   )
     return yield* new StackHostError({
       operation: "startup",
-      message: "Expected stateRoot, cacheRoot, stackId and an optional stack to register",
+      message: "Expected stateRoot, cacheRoot, stackId and gateDir",
     });
-  const registered =
-    register === undefined
-      ? undefined
-      : yield* Schema.decodeEffect(Schema.fromJsonString(SavedStack))(register).pipe(
-          Effect.mapError(
-            (cause) => new StackHostError({ operation: "startup", message: cause.message }),
-          ),
-        );
   let reported = false;
   const report = (value: unknown) =>
     Effect.suspend(() => {
@@ -67,9 +81,9 @@ const program = Effect.gen(function* () {
     stateRoot,
     cacheRoot,
     stackId,
-    ...(registered === undefined ? {} : { register: registered }),
     onReady: ({ endpoint, secret }) => report({ type: "ready", endpoint, secret }),
   }).pipe(
+    Effect.provideService(Network.ShutdownDrainDeadline, awaitRelease(gateDir)),
     Effect.catchCause((cause) => {
       const failure = Option.getOrUndefined(Cause.findErrorOption(cause));
       return report({
@@ -79,7 +93,7 @@ const program = Effect.gen(function* () {
       }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
     }),
   );
-}).pipe(Effect.provideService(RegistrationCheckInterval, "200 millis"));
+});
 
 const flushed = (stream: NodeJS.WriteStream) =>
   Effect.callback<void>((resume) => {

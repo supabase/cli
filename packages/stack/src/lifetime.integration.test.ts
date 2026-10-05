@@ -248,7 +248,7 @@ it.live.skipIf(process.platform === "win32")(
         composition: { members: [], dependencies: [] },
         ports: [],
       });
-      // The shortened poll interval (F6) comes only from this dedicated test entrypoint, through
+      // The shortened poll interval comes only from this dedicated test entrypoint, through
       // the internal `Context.Reference`; production startup never reads an env var or `Config`.
       const access = yield* launchHost(state, {
         stateRoot,
@@ -272,7 +272,7 @@ it.live.skipIf(process.platform === "win32")(
       expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
 
       // Subscribes to the owner's own exit signal (its lease release, the owner's last act) before
-      // triggering the deletion, rather than polling for it afterward (F9).
+      // triggering the deletion, rather than polling for it afterward.
       const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
       yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
       yield* leaseReleased;

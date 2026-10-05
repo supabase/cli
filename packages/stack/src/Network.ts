@@ -20,9 +20,9 @@ import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 export type NetworkRuntime = "native" | "docker";
 
 /**
- * The shutdown-drain deadline (F5): established connections keep flowing until this event
- * completes. An injectable event rather than a duration (pass 3, F7), so a test can gate exactly
- * when it fires through a `Deferred` instead of racing a shortened real timer; production always
+ * The shutdown-drain deadline: established connections keep flowing until this event
+ * completes. An injectable event rather than a duration, so a test can gate when it fires
+ * through a `Deferred` instead of racing a shortened real timer; production always
  * defaults to a plain 10-second sleep. Internal only, following the `RegistrationCheckInterval`
  * pattern: production never reads it from an environment variable or `Config`.
  */
@@ -99,14 +99,14 @@ export interface Interface {
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
   }) => Effect.Effect<NetworkNamespace, NetworkError>;
   /**
-   * Shutdown drain (F5): closes accept on every stack listener, public and dependency alike, then
+   * Shutdown drain: closes accept on every stack listener, public and dependency alike, then
    * lets established connections keep flowing until each reaches 0 or `ShutdownDrainDeadline`
    * elapses, whichever comes first. At the deadline every remaining connection is cut. Listener
    * scopes are untouched; the caller closes them afterward through the ordinary stop/destroy path.
    */
   readonly drain: Effect.Effect<void>;
   /**
-   * Recovers from a shutdown that failed after {@link drain} began (F6): resets the drain flag
+   * Recovers from a shutdown that failed after {@link drain} began: resets the drain flag
    * `bind` checks and resumes accepting on every currently tracked listener, so a start/restart
    * that follows a failed shutdown binds normally instead of refusing as still draining forever.
    * Paired with the owner's own admission recovery; never called while a shutdown might still
@@ -141,7 +141,7 @@ const makeNetwork = (options: {
     // Set under `gate` by `drain`, before it snapshots `listeners`; checked under the same gate by
     // `bind`, so a bind that hasn't yet acquired the gate when drain starts either completes
     // before drain's snapshot (and so is captured by it) or observes this and refuses outright
-    // (F2) — never slips a new, untracked listener past both the snapshot and the accept cut.
+    // so neither slips a new, untracked listener past both the snapshot and the accept cut.
     const draining = yield* Ref.make(false);
     // Every bound listener (the shared API proxy under "api", every dedicated endpoint under
     // "id:name"), tracked only for shutdown drain; registration and deregistration are tied to the
@@ -440,8 +440,8 @@ const makeNetwork = (options: {
     const drain = Effect.fn("Network.drain")(function* () {
       const deadline = yield* ShutdownDrainDeadline;
       // Setting `draining` and snapshotting `listeners` atomically under the same gate `bind`
-      // holds for its whole call (F2) means no bind can complete after this snapshot without
-      // either being captured by it or observing `draining` and refusing before creating anything.
+      // holds for its whole call means no bind can complete after this snapshot without either
+      // being captured by it or observing `draining` and refusing before creating anything.
       const handles = yield* gate.withPermits(1)(
         Ref.set(draining, true).pipe(
           Effect.andThen(Ref.get(listeners)),

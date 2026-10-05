@@ -5,6 +5,7 @@ import {
   Crypto,
   Effect,
   FileSystem,
+  Fiber,
   Layer,
   Path,
   Redacted,
@@ -12,6 +13,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- forces an outstanding connection during a gated drain.
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "./StackNamespace.ts";
 import {
@@ -28,6 +30,9 @@ import { noContainerClaims } from "../tests/claims.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
   new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
+);
+const gatedDrainFixture = fileURLToPath(
+  new URL("../tests/gated-drain-fixture.ts", import.meta.url),
 );
 
 const helperImage =
@@ -100,7 +105,7 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
   });
 
 it.live.skipIf(process.platform === "win32")(
-  "stops only containers owned by the same stack id and data root",
+  "stops, destroys, and abandons only containers owned by the same stack id and data root",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -237,13 +242,108 @@ it.live.skipIf(process.platform === "win32")(
         activeB = undefined;
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
         expect(yield* (yield* stateFor(rootB)).read(stackId)).toBeUndefined();
+
+        // Abandonment phase: two fresh owners share this id again, each under its own root.
+        // Abandoning A must only ever reach containers carrying A's own `stack-root` label.
+        const stateA3 = yield* stateFor(rootA);
+        const stateB3 = yield* stateFor(rootB);
+        yield* stateA3.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project-a`,
+            branchContext: "container-shutdown-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached",
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        yield* stateB3.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project-b`,
+            branchContext: "container-shutdown-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached",
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        const accessA3 = yield* launchHost(stateA3, {
+          stateRoot: rootA,
+          cacheRoot,
+          stackId,
+          entrypoint: shortRegistrationPollFixture,
+        });
+        activeA = accessA3.endpoint;
+        stoppedA = false;
+        const accessB3 = yield* launchHost(stateB3, { stateRoot: rootB, cacheRoot, stackId });
+        activeB = accessB3.endpoint;
+        stoppedB = false;
+
+        const clientA3 = yield* ownerClient(accessA3);
+        const clientB3 = yield* ownerClient(accessB3);
+        const mailA3 = yield* clientA3.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* clientA3.startService({ id: mailA3.id });
+        yield* clientA3.readyService({ id: mailA3.id });
+        const mailB3 = yield* clientB3.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* clientB3.startService({ id: mailB3.id });
+        yield* clientB3.readyService({ id: mailB3.id });
+
+        expect(
+          (yield* containers(stackId, dataA)).length,
+          "A runs its mail container",
+        ).toBeGreaterThan(0);
+        const idsB3 = yield* containers(stackId, dataB);
+        expect(idsB3.length, "B runs its mail container").toBeGreaterThan(0);
+
+        const leaseReleasedA3 = yield* watchLeaseRelease(rootA, stackId);
+        yield* fs.remove(`${rootA}/${stackId}/state.json`);
+        yield* leaseReleasedA3;
+        yield* waitForOwnerExit(accessA3.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("30 seconds"),
+        );
+        stoppedA = true;
+        activeA = undefined;
+
+        expect(
+          yield* containers(stackId, dataA),
+          "abandoning A removes only A's containers",
+        ).toEqual([]);
+        expect(
+          yield* containers(stackId, dataB),
+          "abandoning A leaves B's containers running",
+        ).toEqual(idsB3);
+        // B's own container still answers a real readiness probe, proving abandonment never
+        // touched it.
+        yield* clientB3.readyService({ id: mailB3.id });
+
+        yield* shutdownOwner(accessB3, true);
+        yield* waitForOwnerExit(accessB3.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("15 seconds"),
+        );
+        stoppedB = true;
+        activeB = undefined;
+        expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "removes its containers and exits when its registration is confirmed gone (F6)",
+  "removes its containers and exits when its registration is confirmed gone",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -272,7 +372,7 @@ it.live.skipIf(process.platform === "win32")(
           ports: [],
         });
         yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        // The shortened poll interval (F6) comes only from this dedicated test entrypoint, through
+        // The shortened poll interval comes only from this dedicated test entrypoint, through
         // the internal `Context.Reference`; production startup never reads an env var or `Config`.
         const access = yield* launchHost(state, {
           stateRoot,
@@ -304,7 +404,7 @@ it.live.skipIf(process.platform === "win32")(
         ).toBe(true);
 
         // Subscribes to the owner's own exit signal (its lease release) before triggering the
-        // deletion, rather than polling for it afterward (F9).
+        // deletion, rather than polling for it afterward.
         const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
         yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
         yield* leaseReleased;
@@ -319,7 +419,7 @@ it.live.skipIf(process.platform === "win32")(
         ).toBe(false);
         expect(
           yield* fs.exists(containerEnvRoot),
-          "abandonment removes the shared container-env scratch directory (F7)",
+          "abandonment removes the shared container-env scratch directory",
         ).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -327,7 +427,115 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "removes an orphaned container by label alone, independent of any instance's own cleanup (pass 3, C)",
+  "abandons a stack whose registration disappears while a signal-driven stop is still draining",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-gated-" });
+        const stackId = `abandon-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-gated-data-", stackId).pipe(
+          Effect.flatMap(fs.realPath),
+        );
+        const stateRoot = path.dirname(path.dirname(dataRoot));
+        const cacheRoot = `${base}/cache`;
+        const gateDir = `${base}/gate`;
+        yield* fs.makeDirectory(gateDir, { recursive: true });
+        const state = yield* stateFor(stateRoot);
+        yield* state.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project`,
+            branchContext: "abandon-gated-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached",
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
+        const access = yield* launchHost(state, {
+          stateRoot,
+          cacheRoot,
+          stackId,
+          entrypoint: gatedDrainFixture,
+          entrypointArgs: [gateDir],
+        });
+        const client = yield* ownerClient(access);
+        const database = yield* client.createService({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("abandon-gated-password"),
+            jwtSecret: Redacted.make("abandon-gated-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* client.startService({ id: database.id });
+        yield* client.readyService({ id: database.id });
+        const status = yield* client.status({ id: database.id });
+        const port = status.endpoints.find((endpoint) => endpoint.name === "sql")?.port;
+        if (port === undefined) return yield* Effect.die("Missing database sql endpoint");
+        const containerEnvRoot = `${dataRoot}/.container-env`;
+        expect(
+          yield* fs.exists(containerEnvRoot),
+          "the stack's shared container-env scratch directory exists",
+        ).toBe(true);
+
+        // Keeps the sql listener's outstanding-connection count above zero for the whole gated
+        // window, so drain can only resolve through the deadline this test controls, never
+        // through every connection reaching zero on its own.
+        const held = yield* Effect.acquireRelease(
+          Effect.callback<Net.Socket, never>((resume) => {
+            const connection = Net.createConnection({ host: "127.0.0.1", port });
+            connection.once("connect", () => resume(Effect.succeed(connection)));
+            connection.once("error", (cause) => resume(Effect.die(cause)));
+            return Effect.sync(() => connection.destroy());
+          }),
+          (connection) => Effect.sync(() => connection.destroy()),
+        );
+
+        // Subscribes to the drain-deadline wait's own entry marker before sending the signal that
+        // triggers it, so the registration deletion below never races the gate itself.
+        const waiting = yield* fs.watch(gateDir).pipe(
+          Stream.filter((event) => event.path === "waiting"),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        process.kill(access.endpoint.pid, "SIGTERM");
+        yield* Fiber.join(waiting).pipe(Effect.timeout("30 seconds"));
+
+        yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+        yield* fs.writeFileString(`${gateDir}/release`, "");
+        yield* Effect.sync(() => held.destroy());
+
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.retry({ while: hasReason("owner-exit-pending") }),
+          Effect.timeout("30 seconds"),
+        );
+
+        expect(
+          yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
+          "no registration is republished",
+        ).toBe(false);
+        expect(
+          yield* fs.exists(containerEnvRoot),
+          "the registration lost during the gated stop still reaches abandonment's cleanup",
+        ).toBe(false);
+        expect(yield* containers(stackId, dataRoot), "no containers are left behind").toEqual([]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 180_000 },
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "removes an orphaned container by label alone, independent of any instance's own cleanup",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -365,7 +573,7 @@ it.live.skipIf(process.platform === "win32")(
         });
         // No registered service at all, so the per-instance cleanup loop has nothing to do: this
         // container carries only the stack's identity label, simulating a leaked storage helper
-        // no claim or helper-registry bookkeeping ever reaches (F5/pass 3, C). Only the
+        // no claim or helper-registry bookkeeping ever reaches. Only the
         // registration-independent label sweep can remove it.
         yield* docker([
           "run",
@@ -461,7 +669,7 @@ it.live.skipIf(process.platform === "win32")(
         const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
         if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
 
-        // Deletes the actual `<stateRoot>` itself (F2), not just the entries inside
+        // Deletes the actual `<stateRoot>` itself, not just the entries inside
         // `<stateRoot>/<stackId>`: its sibling `.registry-lock.sqlite` (`Ports.ts`'s per-root
         // reservation registry) is gone too, so cleanup can only come from the owner's in-memory
         // resources, and must never open that registry at all. The lease file goes with it, so
@@ -481,7 +689,7 @@ it.live.skipIf(process.platform === "win32")(
           "abandonment removes containers from in-memory resources alone",
         ).toEqual([]);
 
-        // The port reservation is never released by abandonment (simplification over F2/F7):
+        // The port reservation is never released by abandonment:
         // a fresh stack can still claim the exact same port, through `Ports.ts`'s own lazy
         // reclamation once the former holder's registration is confirmed gone.
         const reclaimedBase = yield* fs.makeTempDirectoryScoped({
