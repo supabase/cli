@@ -1,4 +1,14 @@
-import { Clock, Crypto, Effect, FileSystem, Option, Path, PlatformError, Predicate } from "effect";
+import {
+  Clock,
+  Crypto,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  PlatformError,
+  Predicate,
+  Scope,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, PreparationError } from "./Errors.ts";
@@ -575,91 +585,117 @@ const reapStaleStaging = (
     ),
   );
 
-/** Relocates a to-be-retired generation into a fresh, lock-guarded staging slot, then deletes it. */
-const relocateToStaging = Effect.fn("ArtifactStore.relocateToStaging")(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  crypto: Crypto.Crypto,
-  stagingRoot: string,
-  generationPath: string,
-) {
-  yield* fs.makeDirectory(stagingRoot, { recursive: true, mode: 0o700 });
-  const token = yield* crypto.randomUUIDv4;
-  const stagingLockPath = stagingLockFor(path, stagingRoot, token);
-  const stagingDir = stagingDirFor(path, stagingRoot, token);
-  yield* Effect.scoped(
-    Effect.gen(function* () {
-      const connection = yield* acquireLock(stagingLockPath, "create");
-      yield* takeLock(connection);
-      yield* fs.rename(generationPath, stagingDir);
-      yield* fs.remove(stagingDir, { recursive: true, force: true });
-    }),
-  );
-  yield* fs
-    .remove(stagingLockPath, { force: true })
-    .pipe(Effect.andThen(fs.remove(`${stagingLockPath}-journal`, { force: true })), Effect.ignore);
-});
+interface CacheWalk {
+  readonly generations: ReadonlyArray<{ readonly keyRoot: string; readonly digest: string }>;
+  readonly stagingRoots: ReadonlyArray<string>;
+}
 
 /**
- * Recursively discovers every generation (a digest-named directory) anywhere under `root`,
- * without ever descending into one: a key embeds its release version (see `Artifacts.ts`'s
- * `artifactKey`), so a CLI upgrade leaves a previous release's generations behind a now-unreachable
- * key that only a root-wide walk like this ever revisits. A plain directory-name listing, never a
- * generation's own (potentially large) published contents, keeps this cheap.
+ * Recursively walks the cache root and returns every generation (a digest-named directory) and
+ * every `.staging` root, without ever descending into either: a key embeds its release version
+ * (see `Artifacts.ts`'s `artifactKey`), so a CLI upgrade leaves a previous release's generations
+ * behind a now-unreachable key that only a root-wide walk like this ever revisits. A plain
+ * directory-name listing, never a generation's own (potentially large) published contents, keeps
+ * this cheap.
  */
-const discoverGenerations = (
+const walkCache = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   root: string,
-): Effect.Effect<ReadonlyArray<{ readonly keyRoot: string; readonly digest: string }>, never> =>
+): Effect.Effect<CacheWalk, never> =>
   Effect.gen(function* () {
     const names = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
-    const found: Array<{ readonly keyRoot: string; readonly digest: string }> = [];
+    const generations: Array<CacheWalk["generations"][number]> = [];
+    const stagingRoots: Array<string> = [];
     for (const name of names) {
-      if (name === STAGING_DIR_NAME) continue;
-      if (DIGEST_NAME.test(name)) {
-        found.push({ keyRoot: root, digest: name });
+      if (name === STAGING_DIR_NAME) {
+        stagingRoots.push(path.join(root, name));
         continue;
       }
-      found.push(...(yield* discoverGenerations(fs, path, path.join(root, name))));
+      if (DIGEST_NAME.test(name)) {
+        generations.push({ keyRoot: root, digest: name });
+        continue;
+      }
+      const nested = yield* walkCache(fs, path, path.join(root, name));
+      generations.push(...nested.generations);
+      stagingRoots.push(...nested.stagingRoots);
     }
-    return found;
+    return { generations, stagingRoots };
   });
 
 /**
- * One best-effort sweep over every generation published anywhere under the cache root: a
- * generation is retired only once an uncontended EXCLUSIVE lock on its digest lock file is taken
- * AND, rechecked while holding that lock, its mtime is older than the retention window. Digest
- * lock files are never deleted (a stable inode); only the generation directory they guard is. A
- * per-digest failure (including contention from a live pin or another retirer) is skipped, never
- * propagated: this sweep must never block the `prepare`/`use` call it runs alongside. A pin held
- * by this process contends with the sweep's lock exactly as a pin held by another process does.
+ * Retires one generation. The digest lock is held only for the age re-check and the rename into
+ * a lock-guarded staging slot, so a concurrent pin is never blocked behind the recursive delete;
+ * the slot lock keeps the delete from being reaped while it runs. A crash after the rename leaves
+ * an unlocked staging directory that the next sweep reaps.
  */
-const retireStaleGenerations = Effect.fn("ArtifactStore.retire")(function* (
+const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  crypto: Crypto.Crypto,
+  keyRoot: string,
+  digest: string,
+): Effect.fn.Return<boolean, never> {
+  const generationPath = path.join(keyRoot, digest);
+  const lockPath = path.join(keyRoot, `${digest}.lock`);
+  const stagingRoot = path.join(keyRoot, STAGING_DIR_NAME);
+  const stagingLockPath = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const slotScope = yield* Scope.Scope;
+      const slot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const connection = yield* acquireLock(lockPath, "existing");
+          yield* takeExclusiveLock(connection);
+          const info = yield* fs.stat(lockPath);
+          const mtime = Option.getOrUndefined(info.mtime);
+          const now = yield* Clock.currentTimeMillis;
+          if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS)
+            return undefined;
+          yield* fs.makeDirectory(stagingRoot, { recursive: true, mode: 0o700 });
+          const token = yield* crypto.randomUUIDv4;
+          const slotLockPath = stagingLockFor(path, stagingRoot, token);
+          const slotDir = stagingDirFor(path, stagingRoot, token);
+          const slotConnection = yield* acquireLock(slotLockPath, "create").pipe(
+            Scope.provide(slotScope),
+          );
+          yield* takeLock(slotConnection);
+          yield* fs.rename(generationPath, slotDir);
+          return { slotDir, slotLockPath };
+        }),
+      );
+      if (slot === undefined) return undefined;
+      yield* fs.remove(slot.slotDir, { recursive: true, force: true });
+      return slot.slotLockPath;
+    }),
+  ).pipe(Effect.orElseSucceed(() => undefined));
+  if (stagingLockPath === undefined) return false;
+  yield* fs
+    .remove(stagingLockPath, { force: true })
+    .pipe(Effect.andThen(fs.remove(`${stagingLockPath}-journal`, { force: true })), Effect.ignore);
+  return true;
+});
+
+/**
+ * One best-effort sweep over the whole cache root. It reaps every unlocked `.staging` entry under
+ * any key root (a crashed preparer's leftovers), then retires each published generation whose
+ * digest lock is uncontended and whose lock-file mtime, rechecked under that lock, is older than
+ * the retention window. Digest lock files are never deleted (a stable inode); only the generation
+ * directory they guard is. A per-entry failure (including contention from a live pin or another
+ * retirer) is skipped, never propagated: this sweep must never block the `prepare`/`use` call it
+ * runs alongside. A pin held by this process contends with the sweep's lock exactly as a pin held
+ * by another process does.
+ */
+const sweepCache = Effect.fn("ArtifactStore.sweep")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
   cacheRoot: string,
 ): Effect.fn.Return<number, never> {
-  const generations = yield* discoverGenerations(fs, path, cacheRoot);
+  const { generations, stagingRoots } = yield* walkCache(fs, path, cacheRoot);
+  for (const stagingRoot of stagingRoots) yield* reapStaleStaging(fs, path, stagingRoot);
   let retired = 0;
   for (const { keyRoot, digest } of generations) {
-    const generationPath = path.join(keyRoot, digest);
-    const lockPath = path.join(keyRoot, `${digest}.lock`);
-    const stagingRoot = path.join(keyRoot, STAGING_DIR_NAME);
-    const didRetire = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const connection = yield* acquireLock(lockPath, "existing");
-        yield* takeExclusiveLock(connection);
-        const info = yield* fs.stat(lockPath);
-        const mtime = Option.getOrUndefined(info.mtime);
-        const now = yield* Clock.currentTimeMillis;
-        if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS) return false;
-        yield* relocateToStaging(fs, path, crypto, stagingRoot, generationPath);
-        return true;
-      }),
-    ).pipe(Effect.orElseSucceed(() => false));
-    if (didRetire) retired++;
+    if (yield* retireGeneration(fs, path, crypto, keyRoot, digest)) retired++;
   }
   yield* Effect.annotateCurrentSpan({ "artifact.retired_count": retired });
   return retired;
@@ -865,7 +901,6 @@ const prepareOrResolve = Effect.fn("ArtifactStore.prepareOrResolve")(function* (
   yield* ensureDirectory(fs, path, resolved.keyRoot, cacheRoot);
   const hit = yield* checkHit(fs, path, cacheRoot, request, resolved);
   if (Option.isSome(hit)) return hit.value;
-  yield* reapStaleStaging(fs, path, resolved.stagingRoot);
   const published = yield* publishGeneration(
     fs,
     path,
@@ -877,7 +912,7 @@ const prepareOrResolve = Effect.fn("ArtifactStore.prepareOrResolve")(function* (
     resolved,
     onProgress,
   );
-  yield* retireStaleGenerations(fs, path, crypto, cacheRoot);
+  yield* sweepCache(fs, path, crypto, cacheRoot);
   return published;
 });
 

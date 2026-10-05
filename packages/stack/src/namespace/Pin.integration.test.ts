@@ -17,6 +17,10 @@ const exclusiveLockOutcome = (lockPath: string) =>
           database.exec("BEGIN EXCLUSIVE");
           console.log("acquired");
         } catch (error) {
+          if (error.errcode !== 5) {
+            console.error(error);
+            process.exit(1);
+          }
           console.log("busy");
         }
       `;

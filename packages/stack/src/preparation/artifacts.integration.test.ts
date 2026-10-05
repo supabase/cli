@@ -685,6 +685,35 @@ describe("lock-guarded staging", () => {
   );
 
   it.live(
+    "reaps a crashed preparer's orphan staging under a published key when a miss runs under another key",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-orphan-reap-",
+          });
+          const key = "database/postgres-orphan-reap";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const published = yield* store.prepare({ ...request, key });
+          const orphan = `${root}/${key}/.staging/crashed-token`;
+          yield* fs.makeDirectory(`${orphan}/content`, { recursive: true });
+          yield* fs.writeFileString(`${orphan}/content/partial`, "partial download");
+
+          const hit = yield* store.prepare({ ...request, key });
+          expect(hit.outcome).toBe("cached");
+          expect(yield* fs.exists(orphan)).toBe(true);
+
+          yield* triggerSweep(root);
+
+          expect(yield* fs.exists(orphan)).toBe(false);
+          expect(yield* fs.exists(published.path)).toBe(true);
+        }),
+      ),
+    20_000,
+  );
+
+  it.live(
     "never touches a live preparer's staging directory while another preparer runs",
     () =>
       withPlatform(
@@ -901,7 +930,7 @@ describe("pins", () => {
           const keyRoot = path.dirname(prepared.path);
 
           // Gates the sweep right after it opens its own connection on the target's lock path
-          // (inside `acquireLock`/`takeExclusiveLock`, just before `retireStaleGenerations`'
+          // (inside `acquireLock`/`takeExclusiveLock`, just before `retireGeneration`'
           // `fs.stat` call), holding it open across a real async gap under full test control.
           const sweepIsHolding = yield* Deferred.make<void>();
           const releaseSweep = yield* Deferred.make<void>();

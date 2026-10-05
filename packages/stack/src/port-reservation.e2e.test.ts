@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Cause, Context, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import * as Net from "node:net";
 import { create, open, type Observation } from "./effect.ts";
 import { ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
@@ -391,9 +391,8 @@ it.live(
         // registry file replaced out from under a stopped stack): the saved claim still names the
         // port, but no row backs it.
         const realStateRoot = yield* fs.realPath(stateRootA);
-        const portReservations = yield* PortReservations.Service.pipe(
-          Effect.provide(PortReservations.layer),
-        );
+        const reservationContext = yield* Layer.build(PortReservations.layer);
+        const portReservations = Context.get(reservationContext, PortReservations.Service);
         yield* portReservations.release(realStateRoot, stackA.id, `${mailA.id}:http`);
 
         const reopenedA = yield* open({ id: stackA.id, stateRoot: stateRootA, cacheRoot });
