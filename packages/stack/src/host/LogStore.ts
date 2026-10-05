@@ -369,11 +369,27 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       atEnd: true,
       partial,
     });
-    /** Reports segments deleted before `generation` as a gap that resumes there. */
+    /**
+     * Reports segments deleted before `generation` as a gap that resumes there, stamped with the
+     * time of its first retained record so history sorted by time keeps it in place.
+     */
     const gap = Effect.fnUntraced(function* (generation: number) {
       const resumeAt = { generation, byteOffset: 0 };
-      const records: ReadonlyArray<LogRecord> =
-        cursor.generation === 0 ? [] : [{ kind: "lost", timestamp: yield* nowIso, resumeAt }];
+      if (cursor.generation === 0)
+        return {
+          records: [],
+          cursor: resumeAt,
+          listed,
+          atEnd: false,
+          partial: false,
+        } satisfies Step;
+      const next = yield* readAt(directory, resumeAt, live).pipe(
+        Effect.map((chunk) => Option.getOrUndefined(chunk)?.records[0]?.timestamp),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const records: ReadonlyArray<LogRecord> = [
+        { kind: "lost", timestamp: next ?? (yield* nowIso), resumeAt },
+      ];
       return { records, cursor: resumeAt, listed, atEnd: false, partial: false } satisfies Step;
     });
     const first = listed[0];
@@ -812,10 +828,11 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         progress.written += pieces.length;
       });
 
-    const dropKey = (launchId: number, stream: LaunchOutput["stream"]) => `${launchId}:${stream}`;
+    const dropKey = (launchId: number, stream: LaunchOutput["stream"] | undefined) =>
+      `${launchId}:${stream ?? "output"}`;
     const drop = (
       launchId: number,
-      stream: LaunchOutput["stream"],
+      stream: LaunchOutput["stream"] | undefined,
       time: number,
       count: number,
     ) => {
@@ -824,7 +841,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         kind: "lost",
         timestamp: Math.max(previous?.timestamp ?? time, time),
         launchId,
-        stream,
+        ...(stream === undefined ? {} : { stream }),
         count: (previous?.count ?? 0) + count,
       });
     };
@@ -860,7 +877,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           if (entry.kind === "lost" && !warnedLaunches.has(entry.launchId)) {
             warnedLaunches.add(entry.launchId);
             yield* Effect.logWarning(
-              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream} ${entry.count === 1 ? "chunk" : "chunks"} of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
+              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream ?? "output"} ${entry.count === 1 ? "chunk" : "chunks"} of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
             );
           }
         return;

@@ -245,9 +245,9 @@ inert/unrepresentable server-side when the container's own toggle is off, indepe
 actor's write path — rather than "what legacy push happened to send"**:
 
 - `api.{schemas,extra_search_path,max_rows}`: `api.enabled` isn't an independent wire field at all —
-  the registry derives it from `db_schema.length > 0`, the same fact `schemas` itself carries, and
-  the API arm already row-gates all three siblings on that same check independently. Symmetry with
-  something the API arm enforces on its own, not push imitation.
+  the registry derives it from `db_schema` via `remoteDataApiDisabled`, the same fact `schemas`
+  itself carries, and the API arm already row-gates all three siblings on that same check
+  independently. Symmetry with something the API arm enforces on its own, not push imitation.
 - `db.network_restrictions.{allowed_cidrs,allowed_cidrs_v6}`: the flag's own schema description is
   "Enable **management** of network restrictions," not "enable network restrictions" — a
   deliberate, actor-independent opt-out with no v2 API field at all (the one entry with no API-arm

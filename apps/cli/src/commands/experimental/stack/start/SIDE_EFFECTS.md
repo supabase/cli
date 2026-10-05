@@ -51,7 +51,8 @@ presigned URLs), in the request target and the Referer, are written as `redacted
 that themselves carry such a pair (a `redirect_to` URL with a token) and URL userinfo.
 When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
 members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
-under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep.
+under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
+migration that fails is logged as a warning and retried by the next owner start.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
@@ -172,7 +173,7 @@ Text output reports progress and `Stack is ready.`, then prints the connection s
 `stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
 members that expose them, the publishable and secret keys, the Storage S3 URL, access keys, and
 region when the S3 protocol is enabled, a services table, the runtime, and a
-pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
+pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` selector or the resolved full `--stack-id`, shell-quoted. Progress lines
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint

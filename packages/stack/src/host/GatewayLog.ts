@@ -1,4 +1,4 @@
-import { DateTime, Deferred, Effect, PubSub, Ref, Semaphore, Stream } from "effect";
+import { DateTime, Deferred, Effect, PubSub, Ref, Stream } from "effect";
 import type { HttpAccess, HttpAccessSink } from "../HttpProxy.ts";
 import {
   launchOutputPublisher,
@@ -50,8 +50,6 @@ export const make = Effect.gen(function* () {
   const output = yield* PubSub.sliding<LaunchOutput>(bufferedRecords);
   const launch = yield* Deferred.make<number>();
   const publisher = yield* Ref.make<PublishOutput | undefined>(undefined);
-  // Requests settle concurrently; publishing one at a time keeps sequence numbers in order.
-  const publishing = yield* Semaphore.make(1);
   return {
     logs: PubSub.subscribe(output),
     record: (access) =>
@@ -61,7 +59,6 @@ export const make = Effect.gen(function* () {
             ? Effect.void
             : publish("stdout", encoder.encode(`${formatAccess(access)}\n`)),
         ),
-        publishing.withPermits(1),
       ),
     observation: Stream.fromEffect(Deferred.await(launch)).pipe(
       Stream.map((launchId) => ({ launchId })),

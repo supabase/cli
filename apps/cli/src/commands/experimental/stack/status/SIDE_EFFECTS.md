@@ -9,7 +9,7 @@ a stack addressed with `--stack-id` when project configuration is missing or
 invalid.
 
 Target selection accepts the current project, `--stack <name>`, or
-`--stack-id <id>`. `--stack` and `--stack-id` are mutually exclusive. Explicit
+`--stack-id <id or unique prefix>`. `--stack` and `--stack-id` are mutually exclusive. Explicit
 legacy `-o/--output` values are rejected; use `--output-format` instead, or
 `--env` in place of the `env` value.
 

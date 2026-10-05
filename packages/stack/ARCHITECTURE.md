@@ -658,8 +658,8 @@ The owner is the only subscriber of each instance's output and persists it as re
   one; an instance saved without one continues after the launch ids at the end of its newest segment.
 - **Lines:** state is kept per launch, process and stream. A late partial line of an ended launch
   waits for its newline for two seconds of quiet, or until the store closes.
-- **Loss:** chunk sequence numbers span a launch's processes, so a process whose output was all
-  dropped still shows as `lost`, and the owner log warns once per launch that dropped output. Chunks the in-memory output buffer dropped, chunks still queued when
+- **Loss:** chunk sequence numbers span a launch's streams and processes, so any dropped chunk
+  shows as `lost`, without a stream since the dropped chunks' streams are unknown, and the owner log warns once per launch that dropped output. Chunks the in-memory output buffer dropped, chunks still queued when
   a bounded drain at close ran out, and records that failed to write are recorded as `lost`; a write
   that fails part-way can count records that did land, so the count is an upper bound. Closing
   aborts filesystem work still pending after 5 seconds; output not yet written by then is not recorded.

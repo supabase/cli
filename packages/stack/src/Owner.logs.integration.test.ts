@@ -5,6 +5,7 @@ import {
   Crypto,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Layer,
   Path,
@@ -70,6 +71,15 @@ const isOutput = (record: LogRecord) => record.kind === "stdout" || record.kind 
 
 const firstOutput = (records: Stream.Stream<LogRecord, StackError>) =>
   records.pipe(Stream.filter(isOutput), Stream.take(1), Stream.runCollect);
+
+/** Follows from the oldest record until `count` launch markers are persisted. */
+const awaitLaunches = (records: Stream.Stream<LogRecord, StackError>, count: number) =>
+  records.pipe(
+    Stream.filter(({ kind }) => kind === "launch"),
+    Stream.take(count),
+    Stream.runDrain,
+    Effect.forkScoped({ startImmediately: true }),
+  );
 
 describe("owner persisted logs", () => {
   it.live("persists native output, serves history and follow, and deletes it on destroy", () =>
@@ -169,8 +179,13 @@ describe("owner persisted logs", () => {
         const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
         yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
 
+        const launched = yield* awaitLaunches(
+          restarted.rpc.readLogs({ id: mail.id, follow: true }),
+          2,
+        );
         yield* restarted.rpc.startService({ id: mail.id });
         yield* restarted.rpc.readyService({ id: mail.id });
+        yield* Fiber.join(launched);
         const records = yield* restarted.rpc
           .readLogs({ id: mail.id, follow: false })
           .pipe(Stream.runCollect);
@@ -268,8 +283,13 @@ describe("owner persisted logs", () => {
         const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
         yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
 
+        const launched = yield* awaitLaunches(
+          restarted.rpc.readLogs({ id: mail.id, follow: true }),
+          2,
+        );
         yield* restarted.rpc.startService({ id: mail.id });
         yield* restarted.rpc.readyService({ id: mail.id });
+        yield* Fiber.join(launched);
         const records = yield* restarted.rpc
           .readLogs({ id: mail.id, follow: false })
           .pipe(Stream.runCollect);

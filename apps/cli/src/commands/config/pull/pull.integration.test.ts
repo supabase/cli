@@ -603,6 +603,31 @@ describe("config pull integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("a disabled Data API leaves a declared enabled = false untouched", () => {
+    const before = 'project_id = "test"\n[api]\nenabled = false\n';
+    const { layer, out } = setup({
+      toml: before,
+      yes: true,
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            api: {
+              ...(attributes["api"] as Record<string, unknown>),
+              db_schema: "pg_pgrst_no_exposed_schemas",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* configPull(noFlags);
+      expect(yield* readConfig).toBe(before);
+      expect(out.stdoutText).toContain("No config differences found.");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("declining the confirmation prompt leaves the file unchanged", () => {
     const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
     const { layer, out } = setup({

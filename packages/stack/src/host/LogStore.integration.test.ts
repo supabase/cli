@@ -40,17 +40,18 @@ const fakeInstance = (
     const launch = yield* SubscriptionRef.make<{ readonly launchId: number | undefined }>({
       launchId: undefined,
     });
-    const seq = { stdout: 0, stderr: 0 };
+    const sequences = new Map<number, number>();
     const chunk = (launchId: number, text: string, stream: "stdout" | "stderr" = "stdout") => {
+      const seq = sequences.get(launchId) ?? 0;
+      sequences.set(launchId, seq + 1);
       const next: LaunchOutput = {
         stream,
         bytes: encoder.encode(text),
         launchId,
         part: 0,
-        seq: seq[stream],
+        seq,
         time: 0,
       };
-      seq[stream] += 1;
       return next;
     };
     return {
@@ -206,7 +207,7 @@ describe("LogStore", () => {
       const lines = yield* reader.take(10 - (lost?.count ?? 0));
 
       expect(launch?.kind).toBe("launch");
-      expect(lost).toMatchObject({ kind: "lost", launchId: 1, stream: "stdout" });
+      expect(lost).toMatchObject({ kind: "lost", launchId: 1 });
       expect(lost?.count).toBeGreaterThan(0);
       expect(texts(lines).at(-1)).toBe("line 9");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -414,10 +415,10 @@ describe("LogStore", () => {
       yield* instance.setLaunch(undefined);
       const flushFailure = yield* Queue.take(failures);
       yield* TestClock.adjust(100);
-      yield* instance.publish({ ...instance.chunk(2, "doomed\n"), seq: 0 });
+      yield* instance.publish(instance.chunk(2, "doomed\n"));
       const lineFailure = yield* Queue.take(failures);
       yield* TestClock.adjust(200);
-      yield* instance.publish({ ...instance.chunk(2, "after\n"), seq: 1 });
+      yield* instance.publish(instance.chunk(2, "after\n"));
       const followed = yield* untilLast(reader, "after");
       const offline = yield* persisted({ root });
 
@@ -550,6 +551,8 @@ describe("LogStore", () => {
       expect(gap?.launchId).toBeUndefined();
       expect(gap?.position).toBeUndefined();
       expect(gap?.resumeAt?.generation).toBeGreaterThan(1);
+      // Stamped like the first retained record, so history sorted by time keeps the gap before it.
+      expect(gap?.timestamp).toBe(records[records.indexOf(gap ?? records[0]!) + 1]?.timestamp);
       expect(texts(records).length).toBeLessThan(60);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

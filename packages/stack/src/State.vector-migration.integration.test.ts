@@ -197,6 +197,48 @@ describe("saved Vector instance migration", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "keeps Vector-named files that a symlinked data directory reaches outside the stack",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-symlink-" });
+        const state = yield* stateFor(root);
+        yield* writeLegacyState(root, "legacy", root);
+        const outside = path.join(root, "outside", "runtime", "vector");
+        yield* fs.makeDirectory(outside, { recursive: true });
+        yield* fs.writeFileString(path.join(outside, "vector.yaml"), "outside");
+        const data = path.join(root, "legacy", "data");
+        yield* fs.symlink(path.join(root, "outside"), path.join(data, "linked-root"));
+        yield* fs.makeDirectory(path.join(data, "linked-config", "runtime"), { recursive: true });
+        yield* fs.symlink(outside, path.join(data, "linked-config", "runtime", "vector"));
+
+        yield* state.migrate("legacy");
+
+        expect(yield* fs.readFileString(path.join(outside, "vector.yaml"))).toBe("outside");
+        expect(yield* fs.exists(path.join(data, "vector", "runtime"))).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("keeps Vector-named files in the data directory of a saved instance", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-live-" });
+      const state = yield* stateFor(root);
+      yield* writeLegacyState(root, "legacy", root);
+      const mailConfig = path.join(root, "legacy", "data", "mail", "runtime", "vector");
+      yield* fs.makeDirectory(mailConfig, { recursive: true });
+      yield* fs.writeFileString(path.join(mailConfig, "vector.yaml"), "mail");
+
+      yield* state.migrate("legacy");
+
+      expect(yield* fs.readFileString(path.join(mailConfig, "vector.yaml"))).toBe("mail");
+      expect(yield* fs.exists(path.join(root, "legacy", "data", "vector-owned"))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.live("rejects a saved Vector id that escapes the stack without touching other stacks", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -320,5 +362,38 @@ describe("saved Vector instance migration", () => {
         destroyTestStack(stack),
       );
     }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "starts the owner of a legacy stack whose Vector migration fails",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-vector-failed-" });
+        const options = {
+          projectRoot: root,
+          stateRoot: `${root}/state`,
+          cacheRoot: `${root}/cache`,
+          runtime: "native",
+        } satisfies Parameters<typeof create>[0];
+        const created = yield* create(options);
+        const file = yield* writeLegacyState(options.stateRoot, created.id, root);
+        const legacy = yield* fs.readFileString(file);
+        const data = path.join(options.stateRoot, created.id, "data");
+        // Unlistable but writable: the migration cannot find Vector files, the owner still runs.
+        yield* fs.chmod(data, 0o300);
+
+        const stack = yield* open({ ...options, id: created.id, startOwner: true }).pipe(
+          Effect.ensuring(fs.chmod(data, 0o700).pipe(Effect.orDie)),
+        );
+        yield* Effect.ensuring(
+          Effect.gen(function* () {
+            expect((yield* stack.services.list).map(({ id }) => id)).toEqual(["analytics", "mail"]);
+            expect(yield* fs.readFileString(file)).toBe(legacy);
+          }),
+          destroyTestStack(stack),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

@@ -7,7 +7,7 @@ controls command registration.
 
 ## Selection and configuration
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive. Missing or unconfigured stacks fail with
 guidance to run `stack start`. Explicit legacy `-o/--output` is rejected in favor
 of `--output-format`.
