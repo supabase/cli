@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 
+import { splitSql } from "../../../command-internal/sql-split.ts";
 import { PgDeltaEngineError } from "./pgdelta-engine.service.ts";
 
 export type DeclarativeShadowClient = {
@@ -86,24 +87,20 @@ const declarativeBaselinePrepStatements = (
   return statements;
 };
 
-/** `maskSqlComments` plus dollar-quoted bodies, so only top-level statements are rewritten. */
-const maskSqlLiterals = (sql: string): string =>
-  sql.replaceAll(
-    /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:[^']|'')*'|(?<![\w$])\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1\$/g,
-    (matched) => matched.replaceAll(/[^\r\n]/g, " "),
-  );
+/** Leading comments, then a `CREATE EXTENSION` statement that is not yet idempotent. */
+const NON_IDEMPOTENT_CREATE_EXTENSION_RE =
+  /^((?:\s+|--[^\r\n]*|\/\*[\s\S]*?\*\/)*CREATE\s+EXTENSION\s+)(?!IF\s+NOT\s+EXISTS\b)(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/i;
 
-const keepImageExtensionCreates = (sql: string): string => {
-  let kept = "";
-  let cursor = 0;
-  for (const match of maskSqlLiterals(sql).matchAll(CREATE_EXTENSION_RE)) {
-    if (match[2] !== undefined || !IMAGE_KEPT_EXTENSIONS.has(createExtensionName(match))) continue;
-    const insertAt = match.index + (match[1] ?? "").length;
-    kept += `${sql.slice(cursor, insertAt)}IF NOT EXISTS `;
-    cursor = insertAt;
-  }
-  return cursor === 0 ? sql : kept + sql.slice(cursor);
-};
+/** Rewrites whole statements only, so literals, identifiers, and bodies stay as written. */
+const keepImageExtensionCreates = (sql: string): string =>
+  splitSql(sql, (statement) => {
+    const match = NON_IDEMPOTENT_CREATE_EXTENSION_RE.exec(statement);
+    const prefix = match?.[1];
+    if (prefix === undefined) return statement;
+    const name = (match?.[2] ?? match?.[3] ?? "").toLowerCase();
+    if (!IMAGE_KEPT_EXTENSIONS.has(name)) return statement;
+    return `${prefix}IF NOT EXISTS ${statement.slice(prefix.length)}`;
+  }).join("");
 
 /**
  * Shadow-load view of the declarations: kept image extensions load idempotently, and image pgjwt

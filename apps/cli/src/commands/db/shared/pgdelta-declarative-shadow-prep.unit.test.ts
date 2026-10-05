@@ -62,20 +62,36 @@ describe("filesForDeclarativeShadowLoad", () => {
       name: "public/01.sql",
       sql: "create extension if not exists orioledb;\nCREATE EXTENSION pgcrypto;",
     };
-    const quotedBody = {
+    const quoted = {
       name: "public/02.sql",
-      sql: "DO $$ BEGIN CREATE EXTENSION orioledb; END $$;\nCREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN CREATE EXTENSION orioledb; END $fn$;",
+      sql: [
+        "DO $$ BEGIN CREATE EXTENSION orioledb; END $$;",
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN CREATE EXTENSION orioledb; END $fn$;",
+        "CREATE TABLE t (note text DEFAULT E'it\\'s CREATE EXTENSION orioledb');",
+        'CREATE TABLE "CREATE EXTENSION orioledb" (id int);',
+      ].join("\n"),
     };
-    expect(filesForDeclarativeShadowLoad([orioledb, alreadyIdempotent, quotedBody], false)).toEqual(
-      [
-        {
-          name: orioledb.name,
-          sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
-        },
-        alreadyIdempotent,
-        quotedBody,
-      ],
-    );
+    const afterEscapedString = {
+      name: "public/03.sql",
+      sql: "SELECT E'it\\'s';\nCREATE EXTENSION orioledb;\nSELECT 'after';",
+    };
+    expect(
+      filesForDeclarativeShadowLoad(
+        [orioledb, alreadyIdempotent, quoted, afterEscapedString],
+        false,
+      ),
+    ).toEqual([
+      {
+        name: orioledb.name,
+        sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
+      },
+      alreadyIdempotent,
+      quoted,
+      {
+        name: afterEscapedString.name,
+        sql: "SELECT E'it\\'s';\nCREATE EXTENSION IF NOT EXISTS orioledb;\nSELECT 'after';",
+      },
+    ]);
   });
 });
 
