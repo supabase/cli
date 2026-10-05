@@ -678,6 +678,41 @@ it.live("drains past an idle HTTP keep-alive connection without ever reaching th
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("drains past an idle TCP connection without ever reaching the deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-drain-tcp-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack", "auto"));
+      const target = yield* backend;
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const service = yield* network.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Effect.succeed(true)), protocol: "tcp" } },
+      });
+      yield* service.bind;
+      const address = yield* service.address("sql", "host");
+      const socket = yield* Effect.callback<Net.Socket, FixtureError>((resume) => {
+        const connection = Net.createConnection({ host: address.host, port: address.port });
+        connection.once("connect", () => resume(Effect.succeed(connection)));
+        connection.on("error", (cause) =>
+          resume(Effect.fail(new FixtureError({ message: cause.message }))),
+        );
+        return Effect.sync(() => connection.destroy());
+      });
+
+      // A deadline that never fires proves TCP never counts toward drain: an idle pooled
+      // connection stays open and drain still completes.
+      yield* network.drain.pipe(
+        Effect.provideService(Network.ShutdownDrainDeadline, Effect.never),
+        Effect.timeout("5 seconds"),
+      );
+      expect(socket.destroyed).toBe(false);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live(
   "lets an in-flight HTTP request finish during drain, then closes its now-idle connection",
   () =>

@@ -20,24 +20,18 @@ import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 export type NetworkRuntime = "native" | "docker";
 
 /**
- * The shutdown-drain deadline: established connections keep flowing until this event
- * completes. An event rather than a duration so a test can gate exactly when it fires.
+ * The shutdown-drain deadline: in-flight HTTP work keeps flowing until this event completes.
+ * An event rather than a duration so a test can gate exactly when it fires.
  */
 export const ShutdownDrainDeadline = Context.Reference<Effect.Effect<void>>(
   "@supabase/stack/ShutdownDrainDeadline",
   { defaultValue: () => Effect.sleep("10 seconds") },
 );
 
-/** The accept/outstanding/cut-all surface every listener kind (`TcpListener`, `HttpProxy`) shares. */
+/** What shutdown drain needs from a listener: stop accepting, and for HTTP, the in-flight work to wait on. */
 interface ListenerHandle {
   readonly stopAccepting: Effect.Effect<void>;
-  readonly resumeAccepting: Effect.Effect<void>;
-  /**
-   * What counts as active is listener-specific: every TCP connection, or an HTTP connection only
-   * while it has a request in flight or is upgraded, excluding idle keep-alive sockets.
-   */
-  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
-  readonly cutAll: Effect.Effect<void>;
+  readonly outstandingConnections?: SubscriptionRef.SubscriptionRef<number>;
 }
 
 type RouteContribution = Pick<
@@ -100,20 +94,13 @@ export interface Interface {
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
   }) => Effect.Effect<NetworkNamespace, NetworkError>;
   /**
-   * Shutdown drain: closes accept on every stack listener, public and dependency alike, then
-   * lets established connections keep flowing until each reaches 0 or `ShutdownDrainDeadline`
-   * elapses, whichever comes first. At the deadline every remaining connection is cut. Listener
-   * scopes are untouched; the caller closes them afterward through the ordinary stop/destroy path.
+   * Shutdown drain, one-way: closes accept on every stack listener, public and dependency alike,
+   * then waits until in-flight HTTP requests and upgraded sockets settle or `ShutdownDrainDeadline`
+   * elapses, whichever comes first. TCP connections are never waited on. Established connections
+   * stay open and listener scopes are untouched; the caller stops the services and closes the
+   * scopes afterward, which destroys whatever remains.
    */
   readonly drain: Effect.Effect<void>;
-  /**
-   * Recovers from a shutdown that failed after {@link drain} began: resets the drain flag
-   * `bind` checks and resumes accepting on every currently tracked listener, so a start/restart
-   * that follows a failed shutdown binds normally instead of refusing as still draining forever.
-   * Paired with the owner's own admission recovery; never called while a shutdown might still
-   * confirm success on its own.
-   */
-  readonly recoverDrain: Effect.Effect<void>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Network") {}
@@ -139,10 +126,11 @@ const makeNetwork = (options: {
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const deferReservations = yield* Ref.make(false);
-    // Set under `gate` by `drain`, before it snapshots `listeners`; checked under the same gate by
-    // `bind`, so a bind that hasn't yet acquired the gate when drain starts either completes
-    // before drain's snapshot (and so is captured by it) or observes this and refuses outright
-    // so neither slips a new, untracked listener past both the snapshot and the accept cut.
+    // Set once under `gate` by `drain`, before it snapshots `listeners`, and never cleared; checked
+    // under the same gate by `bind`, so a bind that hasn't yet acquired the gate when drain starts
+    // either completes before drain's snapshot (and so is captured by it) or observes this and
+    // refuses outright so neither slips a new, untracked listener past both the snapshot and the
+    // accept cut.
     const draining = yield* Ref.make(false);
     // Every bound listener (the shared API proxy under "api", every dedicated endpoint under
     // "id:name"), tracked only for shutdown drain; registration and deregistration are tied to the
@@ -270,7 +258,7 @@ const makeNetwork = (options: {
                             }
                             yield* probe(key, host, port);
                             const listener = yield* bindTcp(host, port);
-                            yield* trackListener(key, listener);
+                            yield* trackListener(key, { stopAccepting: listener.stopAccepting });
                             yield* Effect.forkIn(
                               serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
                                 Effect.provideService(Scope.Scope, endpointScope),
@@ -431,11 +419,11 @@ const makeNetwork = (options: {
         .releaseStack(options.stackId)
         .pipe(Effect.mapError((cause) => errorFor("release", cause))),
     );
-    // Stopping accepting can only shrink each listener's outstanding count from here on, so waiting
-    // for every handle to independently reach 0 is equivalent to waiting for the stack-wide total.
-    const quiesced = (handle: ListenerHandle) =>
-      SubscriptionRef.changes(handle.outstandingConnections).pipe(
-        Stream.takeUntil((count) => count === 0),
+    // Stopping accepting can only shrink each HTTP listener's outstanding count from here on, so
+    // waiting for every handle to independently reach 0 is equivalent to waiting for the total.
+    const quiesced = (count: SubscriptionRef.SubscriptionRef<number>) =>
+      SubscriptionRef.changes(count).pipe(
+        Stream.takeUntil((outstanding) => outstanding === 0),
         Stream.runDrain,
       );
     const drain = Effect.fn("Network.drain")(function* () {
@@ -450,29 +438,18 @@ const makeNetwork = (options: {
         ),
       );
       yield* Effect.forEach(handles, (handle) => handle.stopAccepting, { discard: true });
-      const outcome = yield* Effect.forEach(handles, quiesced, {
+      const inFlight = handles.flatMap((handle) =>
+        handle.outstandingConnections === undefined ? [] : [handle.outstandingConnections],
+      );
+      const outcome = yield* Effect.forEach(inFlight, quiesced, {
         concurrency: "unbounded",
         discard: true,
       }).pipe(
         Effect.as("quiesced" as const),
         Effect.race(deadline.pipe(Effect.as("deadline" as const))),
       );
-      if (outcome === "deadline")
-        yield* Effect.forEach(handles, (handle) => handle.cutAll, { discard: true });
       yield* Effect.annotateCurrentSpan({ listeners: handles.length, outcome });
     });
-    const recoverDrain = Effect.fn("Network.recoverDrain")(() =>
-      gate.withPermits(1)(
-        Ref.set(draining, false).pipe(
-          Effect.andThen(Ref.get(listeners)),
-          Effect.flatMap((current) =>
-            Effect.forEach([...current.values()], (handle) => handle.resumeAccepting, {
-              discard: true,
-            }),
-          ),
-        ),
-      ),
-    );
     return {
       register,
       release: release(),
@@ -480,7 +457,6 @@ const makeNetwork = (options: {
       cancelDestroy: Ref.set(deferReservations, false),
       releaseStack: releaseStack(),
       drain: drain(),
-      recoverDrain: recoverDrain(),
     } satisfies Interface;
   });
 

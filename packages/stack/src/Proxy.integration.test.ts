@@ -1,16 +1,6 @@
 import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import {
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Predicate,
-  Ref,
-  Scope,
-  Stream,
-  SubscriptionRef,
-} from "effect";
+import { Deferred, Effect, Exit, Fiber, Predicate, Ref, Scope } from "effect";
 import {
   HttpClient,
   HttpClientRequest,
@@ -259,7 +249,7 @@ it.live(
 );
 
 it.live(
-  "refuses a new connection after stopAccepting while an established connection keeps relaying data through the scoped target until it closes",
+  "refuses a new connection after stopAccepting while an established connection keeps relaying data through the scoped target",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -273,7 +263,6 @@ it.live(
 
         const client = yield* connectAndWrite(port, "ping");
         expect(yield* readOnceTcp(client)).toBe("ping");
-        expect(yield* SubscriptionRef.get(listener.outstandingConnections)).toBe(1);
 
         yield* listener.stopAccepting;
 
@@ -300,112 +289,38 @@ it.live(
 
         client.write("pong");
         expect(yield* readOnceTcp(client)).toBe("pong");
-
-        const reachedZero = yield* Stream.runHead(
-          Stream.filter(
-            SubscriptionRef.changes(listener.outstandingConnections),
-            (count) => count === 0,
-          ),
-        ).pipe(Effect.forkScoped);
-        yield* Effect.sync(() => client.end());
-        yield* Fiber.join(reachedZero);
       }),
     ),
 );
 
-it.live(
-  "destroys every established connection immediately when cutAll runs on the production listener",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* echoBackend();
-        const listener = yield* bindTcp("127.0.0.1", 0);
-        if (!Predicate.isTagged(listener.address, "TcpAddress"))
-          return yield* Effect.die("Expected TCP listener");
-        const target = Effect.succeed({ host: backend.host, port: backend.port });
-        yield* serveTcp(listener, target, "echo").pipe(Effect.forkScoped);
-        const port = listener.address.port;
+it.live("tears down a connection that arrives before run installs its handler", () =>
+  Effect.gen(function* () {
+    const listenerScope = yield* Scope.make();
+    const listener = yield* bindTcp("127.0.0.1", 0).pipe(Scope.provide(listenerScope));
+    if (!Predicate.isTagged(listener.address, "TcpAddress"))
+      return yield* Effect.die("Expected TCP listener");
+    const port = listener.address.port;
 
-        const client = yield* connectAndWrite(port, "ping");
-        expect(yield* readOnceTcp(client)).toBe("ping");
-        expect(yield* SubscriptionRef.get(listener.outstandingConnections)).toBe(1);
+    const connect = Effect.callback<Socket, never>((resume) => {
+      const socket = new Socket();
+      socket.once("connect", () => resume(Effect.succeed(socket)));
+      socket.connect(port, "127.0.0.1");
+      return Effect.void;
+    }).pipe(Effect.timeout("5 seconds"));
+    const awaitClose = (socket: Socket) =>
+      Effect.callback<void, never>((resume) => {
+        const onClose = () => resume(Effect.void);
+        socket.once("close", onClose);
+        if (socket.destroyed) onClose();
+        return Effect.sync(() => socket.off("close", onClose));
+      }).pipe(Effect.timeout("5 seconds"));
 
-        const closed = yield* Effect.callback<void, never>((resume) => {
-          const onClose = () => resume(Effect.void);
-          client.once("close", onClose);
-          if (client.destroyed) onClose();
-          return Effect.sync(() => client.off("close", onClose));
-        }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
-        // Subscribed before `cutAll` runs: the client's own "close" event is a separate, cross-
-        // socket signal that reaches this process over the loopback connection, with no ordering
-        // guarantee relative to the listener's own bookkeeping (observed to lag it on Windows), so
-        // the listener's count must be awaited on its own observable, never inferred from the
-        // client's.
-        const reachedZero = yield* Stream.runHead(
-          Stream.filter(
-            SubscriptionRef.changes(listener.outstandingConnections),
-            (count) => count === 0,
-          ),
-        ).pipe(Effect.forkScoped);
-        yield* listener.cutAll;
-        yield* Fiber.join(closed);
-        yield* Fiber.join(reachedZero);
-        expect(yield* SubscriptionRef.get(listener.outstandingConnections)).toBe(0);
-      }),
-    ),
-);
-
-it.live(
-  "counts, cuts, and tears down a connection that arrives before run installs its handler",
-  () =>
-    Effect.gen(function* () {
-      const listenerScope = yield* Scope.make();
-      const listener = yield* bindTcp("127.0.0.1", 0).pipe(Scope.provide(listenerScope));
-      if (!Predicate.isTagged(listener.address, "TcpAddress"))
-        return yield* Effect.die("Expected TCP listener");
-      const port = listener.address.port;
-
-      const connect = () =>
-        Effect.callback<Socket, never>((resume) => {
-          const socket = new Socket();
-          socket.once("connect", () => resume(Effect.succeed(socket)));
-          socket.connect(port, "127.0.0.1");
-          return Effect.void;
-        }).pipe(Effect.timeout("5 seconds"));
-      const awaitClose = (socket: Socket) =>
-        Effect.callback<void, never>((resume) => {
-          const onClose = () => resume(Effect.void);
-          socket.once("close", onClose);
-          if (socket.destroyed) onClose();
-          return Effect.sync(() => socket.off("close", onClose));
-        }).pipe(Effect.timeout("5 seconds"));
-      // The server's own acceptance (tracked by `outstandingConnections`) is a separate event from
-      // the client's own "connect"; subscribed before connecting so neither ordering is assumed.
-      const awaitOutstanding = (expected: number) =>
-        Stream.runHead(
-          Stream.filter(
-            SubscriptionRef.changes(listener.outstandingConnections),
-            (count) => count === expected,
-          ),
-        ).pipe(Effect.timeout("5 seconds"));
-
-      // `run` is never called on this listener: every connection below is, and stays, queued.
-      const firstAccepted = yield* awaitOutstanding(1).pipe(Effect.forkScoped);
-      const first = yield* connect();
-      yield* Fiber.join(firstAccepted);
-
-      const firstCut = yield* awaitOutstanding(0).pipe(Effect.forkScoped);
-      yield* listener.cutAll;
-      yield* awaitClose(first);
-      yield* Fiber.join(firstCut);
-
-      // Closing the listener's own scope destroys a still-queued connection and completes rather
-      // than hanging on `server.close()` waiting for a socket nothing ever destroyed.
-      const secondAccepted = yield* awaitOutstanding(1).pipe(Effect.forkScoped);
-      const second = yield* connect();
-      yield* Fiber.join(secondAccepted);
-      const secondClosed = yield* awaitClose(second).pipe(Effect.forkScoped);
-      yield* Scope.close(listenerScope, Exit.void).pipe(Effect.timeout("5 seconds"));
-      yield* Fiber.join(secondClosed);
-    }).pipe(Effect.scoped),
+    // `run` is never called on this listener: the connection below stays queued. Closing the
+    // listener's own scope destroys it and completes rather than hanging on `server.close()`
+    // waiting for a socket nothing ever destroyed.
+    const queued = yield* connect;
+    const closed = yield* awaitClose(queued).pipe(Effect.forkScoped);
+    yield* Scope.close(listenerScope, Exit.void).pipe(Effect.timeout("5 seconds"));
+    yield* Fiber.join(closed);
+  }).pipe(Effect.scoped),
 );

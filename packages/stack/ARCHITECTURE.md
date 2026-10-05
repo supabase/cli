@@ -476,8 +476,7 @@ stateDiagram-v2
     Serving --> Serving: clients connect or disconnect
     Serving --> Serving: instances start, stop or sleep
     Serving --> Draining: host.stop or host.destroy
-    Draining --> Exited: operations settled and cleanup complete
-    Draining --> Serving: cleanup failed; report error and retain ownership
+    Draining --> Exited: cleanup complete, or failed and reported
     Exited --> [*]
 ```
 
@@ -506,7 +505,7 @@ nothing left to update, and any resource claim it already recorded stays availab
 reconcile. Deletion, a move and an unmount are treated identically, because a stack whose root is
 unreachable cannot operate regardless of which of the three caused it.
 
-**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
@@ -524,21 +523,27 @@ During Draining:
 
 **Connection drain.** Stop and destroy share one drain step, run before any service stops: accept
 closes on every stack listener, public and internal dependency traffic alike (they are the same
-listeners), so no new connection is admitted. Connections already established, including HTTP
-keep-alive and a workload's own pooled dependency connections (PostgREST's database pool, for
-example), keep flowing until each one closes or a 10 second deadline passes, whichever comes
-first. At the deadline every remaining connection is cut. Listener scopes close only afterward,
-through the ordinary stop/destroy teardown. Accepted, documented tradeoff: during the drain
-window, an admitted request that needs a new dependency connection can fail; the deadline bounds
-that window.
+listeners), so no new connection is admitted. Drain then waits, for at most 10 seconds, only for
+observable work: HTTP requests in flight and upgraded sockets such as WebSockets. TCP connections
+never count, so an idle pooled connection (PostgREST's database pool, for example) cannot delay
+shutdown. Services then stop, and listener scopes close afterward through the ordinary
+stop/destroy teardown, which cuts whatever remains. Accepted, documented tradeoff: during the
+drain window, an admitted request that needs a new dependency connection can fail; the deadline
+bounds that window.
 
-**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+**Draining is one-way.** The host holds the single serving/draining fact; the owner reads it for
+admission and the network keeps only its listener accept gate. Once a stop or destroy begins, the
+owner never serves again. A failed stop or destroy reports its error, the stack stays registered
+with uncertain state, and the owner exits. The next stop or destroy finds no owner and reclaims
+the stack under its lease.
+
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the host exits without resuming service; the stack is not reported stopped and remains registered for the next stop or destroy to reclaim. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 
 The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes the shutdown request, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 
 Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction or use a session stack, which closing its creating handle destroys.
 
-Returning to Serving after cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. Native launchers stop their process groups when the dead host's pipe closes. The next host startup for that stack sweeps its containers without removing volumes or saved definitions, and any host start in the same state root sweeps them in the background, also destroying the stack if it is a session stack. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
+A cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. Native launchers stop their process groups when the dead host's pipe closes. The next host startup for that stack sweeps its containers without removing volumes or saved definitions, and any host start in the same state root sweeps them in the background, also destroying the stack if it is a session stack. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
 
 ### Request lifetime is separate from execution lifetime
 

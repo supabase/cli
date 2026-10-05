@@ -86,6 +86,11 @@ export interface OwnerOptions {
   readonly hostGateway?: Container.HostGateway;
   /** The engine endpoint and identity resolved once at startup; absent for a native stack. */
   readonly engineTarget?: Container.EngineTarget;
+  /**
+   * Reads whether shutdown has begun. The host owns that one-way fact; an owner built without a
+   * host (for example a sweep) never drains and so admits all work.
+   */
+  readonly draining?: Effect.Effect<boolean>;
 }
 
 type OwnerRpcs = RpcGroup.Rpcs<typeof OwnerRpc>;
@@ -188,16 +193,9 @@ export interface Interface {
      * the engine-unreachable backstop is logged, not thrown.
      */
     readonly abandon: Effect.Effect<void>;
-    /**
-     * Recovers network admission after a shutdown that failed once drain had already begun; see
-     * {@link Network.Interface.recoverDrain}.
-     */
-    readonly recoverDraining: Effect.Effect<void>;
   };
   /** Direct probe of the pinned engine target; always `true` for a native stack. */
   readonly engineAvailable: Effect.Effect<boolean>;
-  readonly setDraining: (draining: boolean) => Effect.Effect<void>;
-  readonly getServing: Effect.Effect<boolean>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
@@ -339,8 +337,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           }),
       ),
     );
-  const draining = yield* Ref.make(false);
-  const rejectWhileDraining = Ref.get(draining).pipe(
+  const rejectWhileDraining = (options.draining ?? Effect.succeed(false)).pipe(
     Effect.flatMap((isDraining) =>
       isDraining
         ? Effect.fail(new ServiceError({ operation: "draining", message: "Owner is draining" }))
@@ -970,11 +967,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.abandonNamespace", { attributes: { stack_id: stackId } }),
       ),
-      recoverDraining: network.recoverDrain,
     },
     engineAvailable,
-    setDraining: (value) => Ref.set(draining, value),
-    getServing: Ref.get(draining).pipe(Effect.map((isDraining) => !isDraining)),
   } satisfies Interface;
 });
 

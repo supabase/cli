@@ -64,10 +64,13 @@ const ownerFor = (options: {
 }) => {
   const { state, ...layerOptions } = options;
   return Effect.gen(function* () {
+    const draining = yield* Deferred.make<void>();
     const context = yield* Layer.build(
-      Owner.layer(layerOptions).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
+      Owner.layer({ ...layerOptions, draining: Deferred.isDone(draining) }).pipe(
+        Layer.provide(Layer.succeed(StackNamespace.Service, state)),
+      ),
     );
-    return Context.get(context, Owner.Service);
+    return { ...Context.get(context, Owner.Service), draining };
   });
 };
 
@@ -227,7 +230,7 @@ const openPartialMailSend = (port: number, subject: string) =>
   });
 
 const inProcessRuntime = (
-  owner: Parameters<typeof makeRuntime>[0],
+  owner: Parameters<typeof makeRuntime>[0] & { readonly draining: Deferred.Deferred<void> },
   state: StackNamespace.Interface,
   root: string,
 ) =>
@@ -255,6 +258,7 @@ const inProcessRuntime = (
       },
       acquired.server,
       acquired.closeConnections,
+      owner.draining,
     ).pipe(
       Effect.provideService(CommandRunner.Service, Context.get(toolContext, CommandRunner.Service)),
     );
@@ -361,7 +365,7 @@ it.live("preserves composition outcomes over RPC", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("keeps serving when namespace shutdown fails", () =>
+it.live("stops serving after a failed shutdown and keeps reporting that failure", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -393,72 +397,18 @@ it.live("keeps serving when namespace shutdown fails", () =>
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* ownerClient(runtime.access);
       const failure = yield* shutdownOwner(runtime.access, false).pipe(Effect.flip);
       expect(failure.message).toContain("cleanup failed");
-      yield* client.configureComposition({ members: [], dependencies: [] });
-    }),
-  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-);
-
-it.live("recovers network admission after a shutdown that fails once drain has begun (F6)", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-host-drain-recovery-" });
-      const state = yield* stateFor(`${root}/state`);
-      const saved = {
-        id: "stack",
-        runtime: "native" as const,
-        identity: { projectRoot: root, branchContext: "main", stackName: "host-drain-recovery" },
-        instances: [],
-        lifetime: "detached" as const,
-        composition: { members: [], dependencies: [] },
-        ports: [],
-      };
-      yield* state.save(saved);
-      const owner = yield* ownerFor({
-        saved,
-        state,
-        root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
-      });
-      const failedOwner = {
-        ...owner,
-        namespace: {
-          ...owner.namespace,
-          // Lets the real drain run (so `Network`'s own internal draining flag is genuinely set),
-          // then fails afterward: reproduces "shutdown fails after drain begins" without reaching
-          // into `Network`'s internals directly.
-          stop: owner.namespace.stop.pipe(
-            Effect.andThen(
-              Effect.fail(new OrchestratorError({ operation: "stop", message: "cleanup failed" })),
-            ),
-          ),
-        },
-      };
-      const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* ownerClient(runtime.access);
-      const failure = yield* shutdownOwner(runtime.access, false).pipe(Effect.flip);
-      expect(failure.message).toContain("cleanup failed");
-
-      // F6: a drain that already began during the failed shutdown must not block ordinary
-      // service recovery forever; starting a service again must bind its listener, not refuse it
-      // as still draining.
-      const mail = yield* client.createService({
-        service: "mail",
-        config: {},
-        endpoints: { http: { port: "auto" } },
-      });
-      yield* client.startService({ id: mail.id });
-      yield* client.readyService({ id: mail.id });
-      yield* shutdownOwner(runtime.access, true);
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+      expect(yield* Deferred.isDone(owner.draining)).toBe(true);
+      const again = yield* runtime.shutdown(true).pipe(Effect.flip);
+      expect(again.message).toContain("Shutdown mode is already selected");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live(
-  "freezes admission and confirms cleanup when abandonment claims ownership after a failing stop settles (pass 3, A)",
+  "closes admission and confirms cleanup when abandonment claims ownership after a failing stop settles",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -513,11 +463,10 @@ it.live(
         yield* Deferred.succeed(stopGate, undefined);
         expect(Exit.isFailure(yield* Fiber.join(stopFiber).pipe(Effect.exit))).toBe(true);
         yield* Deferred.await(abandonEntered).pipe(Effect.timeout("2 seconds"));
-        // Admission stays frozen through abandonment's own cleanup, never left reopened by the
-        // failing stop's own recovery that preceded it (F2).
-        expect(yield* owner.getServing, "admission stays frozen while abandonment cleans up").toBe(
-          false,
-        );
+        expect(
+          yield* Deferred.isDone(owner.draining),
+          "admission stays closed while abandonment cleans up",
+        ).toBe(true);
         yield* Deferred.succeed(abandonGate, undefined);
         yield* Fiber.join(abandonFiber).pipe(Effect.timeout("2 seconds"));
         yield* Deferred.await(runtime.exit).pipe(Effect.timeout("2 seconds"));
@@ -525,7 +474,7 @@ it.live(
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("reports a destroy failure and leaves the owner running", () =>
+it.live("reports a destroy failure and the owner exits", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -582,9 +531,9 @@ it.live("reports a destroy failure and leaves the owner running", () =>
           error: expect.stringContaining("data removal refused"),
         },
       ]);
-      // A failed destroy does not fall back to stop: retry destroy or call `stack stop` instead.
-      expect(yield* Deferred.isDone(runtime.exit)).toBe(false);
-      expect(yield* owner.getServing).toBe(true);
+      // A failed destroy does not fall back to stop: the owner exits and the registered stack
+      // is reclaimed by the next stop or destroy.
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -635,7 +584,7 @@ it.live("rejects destroy while stop is in flight", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("retains ownership when namespace shutdown defects and retries cleanup", () =>
+it.live("exits after a namespace shutdown defect without rerunning cleanup", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -669,18 +618,12 @@ it.live("retains ownership when namespace shutdown defects and retries cleanup",
         },
       };
       const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-      const client = yield* ownerClient(runtime.access);
       const failure = yield* runtime.shutdown(false).pipe(Effect.exit);
       expect(Exit.isFailure(failure)).toBe(true);
       if (Exit.isFailure(failure)) expect(Cause.pretty(failure.cause)).toContain("cleanup failed");
-      const http = yield* HttpClient.HttpClient;
-      const identity = yield* http.get(`http://127.0.0.1:${runtime.endpoint.port}/identity`, {
-        headers: { authorization: ownerAuthorization(runtime.access.secret) },
-      });
-      expect(identity.status).toBe(200);
-      expect(yield* owner.getServing).toBe(true);
-      yield* client.configureComposition({ members: [], dependencies: [] });
-      yield* runtime.shutdown(false);
+      yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));
+      // The stop would succeed if it ran again; the failure is final for this owner.
+      expect(Exit.isFailure(yield* runtime.shutdown(false).pipe(Effect.exit))).toBe(true);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
@@ -1172,14 +1115,9 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
       cacheRoot: "/tmp/supabase-stack-artifacts",
     });
     const interrupted = yield* Deferred.make<void>();
-    const draining = yield* Deferred.make<void>();
     const { runtime } = yield* inProcessRuntime(
       {
         ...owner,
-        setDraining: (value: boolean) =>
-          owner
-            .setDraining(value)
-            .pipe(Effect.andThen(value ? Deferred.succeed(draining, undefined) : Effect.void)),
         handlers: {
           ...owner.handlers,
           supabaseComposition: (input: Parameters<typeof owner.handlers.supabaseComposition>[0]) =>
@@ -1212,7 +1150,7 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
     yield* Fiber.interrupt(composition);
     yield* Deferred.await(interrupted);
     const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, destroy));
-    yield* Deferred.await(draining);
+    yield* Deferred.await(owner.draining);
     yield* Deferred.succeed(allow, undefined);
     yield* Fiber.join(shutdown);
     yield* Deferred.await(runtime.exit).pipe(Effect.timeout("5 seconds"));

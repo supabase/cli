@@ -583,26 +583,28 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
       yield* client.startService({ id: database.id });
       yield* client.readyService({ id: database.id });
       const status = yield* client.status({ id: database.id });
-      const port = status.endpoints.find((endpoint) => endpoint.name === "sql")?.port;
-      if (port === undefined) return yield* Effect.die("Missing database sql endpoint");
+      if (!status.endpoints.some((endpoint) => endpoint.name === "sql"))
+        return yield* Effect.die("Missing database sql endpoint");
+      const mail = yield* client.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" } },
+      });
+      yield* client.startService({ id: mail.id });
+      yield* client.readyService({ id: mail.id });
+      const mailPort = (yield* client.status({ id: mail.id })).endpoints.find(
+        (endpoint) => endpoint.name === "http",
+      )?.port;
+      if (mailPort === undefined) return yield* Effect.die("Missing mail http endpoint");
       const containerEnvRoot = `${dataRoot}/.container-env`;
       expect(
         yield* fs.exists(containerEnvRoot),
         "the stack's shared container-env scratch directory exists",
       ).toBe(true);
 
-      // Keeps the sql listener's outstanding-connection count above zero for the whole gated
-      // window, so drain can only resolve through the deadline this test controls, never
-      // through every connection reaching zero on its own.
-      const held = yield* Effect.acquireRelease(
-        Effect.callback<Net.Socket, never>((resume) => {
-          const connection = Net.createConnection({ host: "127.0.0.1", port });
-          connection.once("connect", () => resume(Effect.succeed(connection)));
-          connection.once("error", (cause) => resume(Effect.die(cause)));
-          return Effect.sync(() => connection.destroy());
-        }),
-        (connection) => Effect.sync(() => connection.destroy()),
-      );
+      // Keeps an HTTP request in flight for the whole gated window, so drain can only resolve
+      // through the deadline this test controls, never through the work settling on its own.
+      const held = yield* openPartialMailSend(mailPort, "abandon-gated-inflight");
 
       // Subscribes to the drain-deadline wait's own entry marker before triggering the stop, so
       // the registration deletion below never races the gate itself.
@@ -612,7 +614,7 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
 
       yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
       yield* fs.writeFileString(`${gateDir}/release`, "");
-      yield* Effect.sync(() => held.destroy());
+      held.complete();
 
       yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.retry({ while: hasReason("owner-exit-pending") }),
@@ -919,7 +921,7 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "keeps a pinned postgres connection serving through a real owner shutdown, and cuts it once the deadline fires",
+  "closes a pinned postgres connection and exits a real owner without waiting for the drain deadline",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -990,43 +992,24 @@ it.live.skipIf(process.platform === "win32")(
         const sql = Context.get(services, PgClient.PgClient);
         yield* sql.unsafe("SELECT 1");
 
-        // A second, query-free connection to the same listener: its closure is a push-based
-        // signal that the deadline's cut already reached the gateway, with no query to race.
-        const probe = yield* Effect.acquireRelease(
-          Effect.callback<Net.Socket, never>((resume) => {
-            const connection = Net.createConnection({ host: "127.0.0.1", port });
-            connection.once("connect", () => resume(Effect.succeed(connection)));
-            connection.once("error", (cause) => resume(Effect.die(cause)));
-            return Effect.sync(() => connection.destroy());
-          }),
-          (connection) => Effect.sync(() => connection.destroy()),
-        );
-
-        const waiting = yield* watchEntry(gateDir, "waiting", true);
-        process.kill(access.endpoint.pid, "SIGTERM");
-        yield* waiting.pipe(Effect.timeout("30 seconds"));
-
-        yield* sql.unsafe("SELECT 1");
-
-        const closed = yield* Effect.callback<void, never>((resume) => {
-          if (probe.destroyed) {
-            resume(Effect.void);
-            return Effect.void;
-          }
-          const onClose = () => resume(Effect.void);
-          probe.once("close", onClose);
-          return Effect.sync(() => probe.off("close", onClose));
-        }).pipe(Effect.forkChild({ startImmediately: true }));
-        yield* fs.writeFileString(`${gateDir}/release`, "");
-        yield* Fiber.join(closed).pipe(Effect.timeout("30 seconds"));
-
-        const cut = yield* sql.unsafe("SELECT 1").pipe(Effect.timeout("5 seconds"), Effect.exit);
-        expect(Exit.isFailure(cut), "the connection is cut once the deadline fires").toBe(true);
+        // The gate is never released: only a drain that ignores the pinned TCP connection lets
+        // the owner finish, and the connection closes once the services stop.
+        yield* Effect.callback<void, never>((resume) => {
+          const probe = Net.createConnection({ host: "127.0.0.1", port });
+          probe.once("connect", () => {
+            probe.once("close", () => resume(Effect.void));
+            process.kill(access.endpoint.pid, "SIGTERM");
+          });
+          probe.once("error", (cause) => resume(Effect.die(cause)));
+          return Effect.sync(() => probe.destroy());
+        });
 
         yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
           Effect.retry({ while: hasReason("owner-exit-pending") }),
           Effect.timeout("30 seconds"),
         );
+        const cut = yield* sql.unsafe("SELECT 1").pipe(Effect.timeout("5 seconds"), Effect.exit);
+        expect(Exit.isFailure(cut), "the pinned connection is gone with the owner").toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },

@@ -1,5 +1,5 @@
 import { NodeSink, NodeStream } from "@effect/platform-node";
-import { Data, Effect, Exit, FiberSet, Scope, Stream, SubscriptionRef } from "effect";
+import { Data, Effect, Exit, FiberSet, Scope, Stream } from "effect";
 import type { SocketServer } from "effect/unstable/socket";
 import * as Net from "node:net";
 import { PortError } from "./Ports.ts";
@@ -24,19 +24,13 @@ export interface TcpListener {
   ) => Effect.Effect<never, never, R>;
   /** Stops accepting new connections on the listener; established connections keep flowing. */
   readonly stopAccepting: Effect.Effect<void>;
-  /** Reverses `stopAccepting`: recovers a listener left refusing after a failed drain. */
-  readonly resumeAccepting: Effect.Effect<void>;
-  /** The count of established client connections, observable until it reaches 0. */
-  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
-  /** Destroys every established connection immediately. */
-  readonly cutAll: Effect.Effect<void>;
 }
 
 /**
  * Binds a dedicated public listener and retains the socket until its scope closes. Built directly
  * on `node:net`, not `NodeSocketServer`, because `NodeSocketServer`'s `run` only exposes a combined
- * accept-and-destroy teardown: this separates closing accept (`stopAccepting`) from cutting
- * established connections (`cutAll`), with the count of outstanding ones observable in between.
+ * accept-and-destroy teardown: this separates closing accept (`stopAccepting`) from destroying
+ * established connections, which happens when the scope closes.
  */
 export const bindTcp = (
   host: string,
@@ -44,10 +38,9 @@ export const bindTcp = (
 ): Effect.Effect<TcpListener, PortError, Scope.Scope> =>
   Effect.gen(function* () {
     const services = yield* Effect.context<never>();
-    // Every accepted socket, queued or dispatched, from acceptance until close: the single source
-    // for the outstanding count, `cutAll`, and teardown, so none of them is ever only half-tracked.
+    // Every accepted socket, queued or dispatched, from acceptance until close, so teardown
+    // destroys all of them.
     const sockets = new Set<Net.Socket>();
-    const outstandingConnections = yield* SubscriptionRef.make(0);
     let accepting = true;
     // A connection that arrives before `run` installs its handler is queued, the same as
     // `NodeSocketServer`'s own listener, so none are dropped in that gap.
@@ -64,15 +57,9 @@ export const bindTcp = (
         return;
       }
       sockets.add(conn);
-      Effect.runSyncWith(services)(
-        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
-      );
       conn.once("close", () => {
         sockets.delete(conn);
         pending.delete(conn);
-        Effect.runSyncWith(services)(
-          SubscriptionRef.update(outstandingConnections, (count) => count - 1),
-        );
       });
       onConnection(conn);
     });
@@ -148,13 +135,6 @@ export const bindTcp = (
       run,
       stopAccepting: Effect.sync(() => {
         accepting = false;
-      }),
-      resumeAccepting: Effect.sync(() => {
-        accepting = true;
-      }),
-      outstandingConnections,
-      cutAll: Effect.sync(() => {
-        for (const socket of sockets) socket.destroy();
       }),
     };
   });

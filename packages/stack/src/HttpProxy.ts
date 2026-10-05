@@ -45,17 +45,13 @@ export interface HttpProxy {
   readonly host: string;
   readonly port: number;
   readonly setRoutes: (routes: ReadonlyArray<HttpRoute>) => Effect.Effect<void>;
-  /** Stops accepting new connections on the listener; established connections keep flowing. */
+  /** Stops accepting new connections and closes idle ones; in-flight requests keep flowing. */
   readonly stopAccepting: Effect.Effect<void>;
-  /** Reverses `stopAccepting`: recovers a listener left refusing after a failed drain. */
-  readonly resumeAccepting: Effect.Effect<void>;
   /**
    * The count of connections with active work, observable until it reaches 0: a request in
    * flight or an upgraded socket, never an idle keep-alive connection.
    */
   readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
-  /** Destroys every established connection immediately. */
-  readonly cutAll: Effect.Effect<void>;
 }
 
 const hopByHop = new Set([
@@ -555,12 +551,6 @@ export const makeHttpProxy = (options: {
         accepting = false;
         server.closeIdleConnections();
       }),
-      resumeAccepting: Effect.sync(() => {
-        accepting = true;
-      }),
       outstandingConnections,
-      cutAll: Effect.sync(() => {
-        for (const socket of sockets) socket.destroy();
-      }),
     };
   });

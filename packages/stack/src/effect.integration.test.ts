@@ -147,7 +147,7 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
 );
 
 it.live(
-  "reports a failed destroy and keeps the owner and saved data for retry",
+  "reports a failed destroy, exits the owner, and lets the next destroy reclaim the stack",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -180,6 +180,7 @@ it.live(
         expect(running).toHaveLength(1);
         expect(running[0]?.host).toBeDefined();
 
+        const released = yield* watchLeaseRelease(options.stateRoot, stack.id);
         const destroyExit = yield* stack.destroy.pipe(Effect.exit);
         expect(Exit.isFailure(destroyExit)).toBe(true);
         if (Exit.isFailure(destroyExit)) {
@@ -197,9 +198,11 @@ it.live(
           });
         }
         expect(yield* fs.readLink(dataRoot).pipe(Effect.isSuccess)).toBe(true);
+        yield* released;
         const retained = yield* discover(options);
         expect(retained).toHaveLength(1);
-        expect(retained[0]?.host?.pid).toBe(running[0]?.host?.pid);
+        expect(retained[0]?.host).toBeUndefined();
+        yield* assertOwnerExited(running[0]?.host?.pid ?? 0);
 
         yield* fs.remove(dataRoot, { force: true });
         yield* stack.destroy;
@@ -207,6 +210,57 @@ it.live(
       }),
     ).pipe(Effect.provide(layer)),
   { timeout: 30_000 },
+);
+
+it.live(
+  "stops a running database within the drain deadline while a client holds an idle TCP connection",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-stop-idle-tcp-" });
+        const options = {
+          projectRoot: root,
+          stateRoot: `${root}/state`,
+          cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+          runtime: "native",
+        } satisfies Parameters<typeof create>[0];
+        const stack = yield* create(options);
+        yield* Effect.addFinalizer(() => destroyTestStack(stack));
+        const database = yield* stack.services.create({
+          service: "database",
+          config: {
+            version: "17",
+            databasePassword: Redacted.make("idle-tcp-password"),
+            jwtSecret: Redacted.make("idle-tcp-jwt-secret-at-least-thirty-two-characters"),
+            jwtExpiry: 3600,
+          },
+          endpoints: { sql: { port: "auto" } },
+        });
+        yield* database.start;
+        yield* database.ready;
+        const { databaseUrl } = yield* database.credentials({ from: "runtime" });
+        if (databaseUrl === undefined) return yield* Effect.die("database credentials missing");
+        const url = new URL(databaseUrl);
+        const client = yield* Effect.callback<Net.Socket, Error>((resume) => {
+          const connection = Net.createConnection({
+            host: url.hostname,
+            port: Number(url.port),
+          });
+          connection.once("connect", () => resume(Effect.succeed(connection)));
+          connection.once("error", (cause) => resume(Effect.fail(cause)));
+          return Effect.sync(() => connection.destroy());
+        });
+
+        // The drain deadline is 10 seconds; an idle client must not make stop wait for it.
+        yield* stack.stop.pipe(Effect.timeout("5 seconds"));
+
+        client.destroy();
+        expect(yield* discover(options)).toHaveLength(1);
+        expect((yield* discover(options))[0]?.host).toBeUndefined();
+      }),
+    ).pipe(Effect.provide(layer)),
+  { timeout: 60_000 },
 );
 
 const resetDataStory = (runtime: "native" | "docker") =>
@@ -457,43 +511,83 @@ it.live("rejects an owner of another release while stop and destroy still reach 
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("treats a sweeper's hold as no owner and starts one once the sweep ends", () =>
+it.live(
+  "treats a sweeper's hold as no owner, refuses to stop, and starts one once the sweep ends",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-" });
+      const options = {
+        projectRoot: root,
+        stateRoot: `${root}/state`,
+        cacheRoot: `${root}/cache`,
+        runtime: "native",
+      } satisfies Parameters<typeof create>[0];
+      const stack = yield* create(options);
+      const state = yield* StackNamespace.Service.pipe(
+        Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
+      );
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const sweep = yield* Scope.make();
+          const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
+          yield* lease.publishHolder({
+            role: "sweeper",
+            pid: process.pid,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          });
+          const refused = yield* Effect.flip(stack.stop);
+          expect(refused.message).toContain("holds the stack lease");
+          expect(yield* stack.composition.stop).toEqual([]);
+          expect((yield* discover(options))[0]?.host).toBeUndefined();
+
+          const starting = yield* stack.composition.start.pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* lease.retractHolder;
+          yield* Scope.close(sweep, Exit.void);
+          expect(yield* Fiber.join(starting)).toEqual([]);
+          expect((yield* discover(options))[0]?.host).toBeDefined();
+        }),
+        destroyTestStack(stack),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reclaims a registered stack's leftovers when stopping without an owner", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-" });
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-ownerless-stop-" });
     const options = {
       projectRoot: root,
       stateRoot: `${root}/state`,
       cacheRoot: `${root}/cache`,
       runtime: "native",
+      lifetime: "session",
     } satisfies Parameters<typeof create>[0];
-    const stack = yield* create(options);
+    const identity = yield* resolveStackIdentity(options);
+    const id = yield* deriveStackId(identity);
     const state = yield* StackNamespace.Service.pipe(
       Effect.provide(StackNamespace.layer({ root: options.stateRoot })),
     );
-    yield* Effect.ensuring(
-      Effect.gen(function* () {
-        const sweep = yield* Scope.make();
-        const lease = yield* state.acquireLease(stack.id).pipe(Scope.provide(sweep));
-        yield* lease.publishHolder({
-          role: "sweeper",
-          pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
-        });
-        yield* stack.stop;
-        expect(yield* stack.composition.stop).toEqual([]);
-        expect((yield* discover(options))[0]?.host).toBeUndefined();
+    yield* state.save({
+      id,
+      identity,
+      lifetime: "session",
+      runtime: "native",
+      instances: [{ id: "leftover", creation: { service: "mail", config: {} } }],
+      composition: { members: [], dependencies: [] },
+      ports: [],
+    });
+    const leftover = `${options.stateRoot}/${id}/data/leftover`;
+    yield* fs.makeDirectory(leftover, { recursive: true });
+    yield* fs.writeFileString(`${leftover}/state`, "left behind");
+    const stack = yield* open({ ...options, id });
 
-        const starting = yield* stack.composition.start.pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* lease.retractHolder;
-        yield* Scope.close(sweep, Exit.void);
-        expect(yield* Fiber.join(starting)).toEqual([]);
-        expect((yield* discover(options))[0]?.host).toBeDefined();
-      }),
-      destroyTestStack(stack),
-    );
+    yield* stack.stop;
+
+    expect(yield* state.read(id)).toBeUndefined();
+    expect(yield* fs.exists(leftover)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

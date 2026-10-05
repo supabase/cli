@@ -149,10 +149,14 @@ const creatorGone = Effect.callback<void>((resume) => {
   });
 });
 
-const isOpen = (value: boolean): Effect.Effect<void, StackError> =>
-  value
-    ? Effect.void
-    : Effect.fail(new StackError({ operation: "host", message: "Stack host is draining" }));
+const rejectWhileDraining = (draining: Deferred.Deferred<void>): Effect.Effect<void, StackError> =>
+  Deferred.isDone(draining).pipe(
+    Effect.flatMap((isDraining) =>
+      isDraining
+        ? Effect.fail(new StackError({ operation: "host", message: "Stack host is draining" }))
+        : Effect.void,
+    ),
+  );
 
 const requestSignal = () =>
   Effect.callback<"SIGTERM" | "SIGINT", never>((resume) => {
@@ -195,18 +199,23 @@ export interface StackHostRuntime {
   readonly exit: Deferred.Deferred<void>;
 }
 
+/**
+ * Serves the host. `draining` is the one source of truth for whether shutdown has begun: the host
+ * completes it when a shutdown begins and never resets it, and the owner reads it for admission.
+ */
 export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
   (
     owner: Owner.Interface,
     access: HostAccess,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
+    draining: Deferred.Deferred<void>,
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* CommandRunner.Service;
       const attachments = yield* makeCommandAttachments({
-        admit: owner.getServing.pipe(Effect.flatMap(isOpen)),
+        admit: rejectWhileDraining(draining),
         run: (input) =>
           "stdin" in input
             ? runner.run({
@@ -251,17 +260,16 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
         );
 
-      // Admits `mode`'s cleanup when nothing else is in flight: forks it, tracks it as `current`
-      // until it settles (success or failure alike), then clears `current` so a later claim —
-      // for example abandon after an in-flight stop or destroy — can be admitted again. Only
-      // `stop` and `destroy` can actually fail; their own recovery (reopening admission) runs,
-      // and `current` is cleared, before `claim` below can ever admit anything else.
+      // Admits `mode`'s cleanup when nothing else is in flight: begins draining, forks the cleanup
+      // and tracks it as `current`. Draining never reverses: a failed stop or destroy leaves its
+      // failed fiber in `current` (repeat calls rejoin the same failure), and the owner exits
+      // once the response has been delivered; only abandon may replace it.
       const begin = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
       ): Effect.Effect<Fiber.Fiber<void, StackError>> =>
         Effect.gen(function* () {
-          yield* owner.setDraining(true);
+          yield* Deferred.succeed(draining, undefined);
           const responseClosedSignal =
             response === undefined ? undefined : yield* Deferred.make<void>();
           if (response !== undefined && responseClosedSignal !== undefined)
@@ -309,26 +317,11 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   yield* runner.cleanup;
                   yield* mode === "stop" ? owner.namespace.stop : owner.namespace.destroy;
                 }).pipe(
+                  Effect.onError(() => finish),
                   Effect.andThen(finish),
                   Effect.mapError((cause) => stackError("shutdown", cause)),
                 );
-          const cleanup = body.pipe(
-            Effect.catchCause((cause) =>
-              mode !== "abandon"
-                ? owner
-                    .setDraining(false)
-                    // Drain may already have run (and so left the network's own admission
-                    // closed) before this later stage failed; recovering it here keeps a
-                    // start/restart that follows from refusing as still draining.
-                    .pipe(
-                      Effect.andThen(owner.namespace.recoverDraining),
-                      Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                      Effect.andThen(Effect.failCause(cause)),
-                    )
-                : Effect.failCause(cause),
-            ),
-          );
-          const fiber = yield* Effect.forkIn(cleanup, scope);
+          const fiber = yield* Effect.forkIn(body, scope);
           yield* Ref.set(current, { mode, fiber });
           return fiber;
         });
@@ -545,6 +538,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
               yield* state.save(register);
             }),
           );
+        const draining = yield* Deferred.make<void>();
         const started = yield* Effect.gen(function* () {
           const saved = yield* state.read(id);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
@@ -582,6 +576,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
+                draining: Deferred.isDone(draining),
                 saved,
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
@@ -617,6 +612,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             access,
             control.server,
             control.closeConnections,
+            draining,
           ).pipe(
             Effect.provideService(
               CommandRunner.Service,
@@ -667,35 +663,30 @@ export const runStackHost = Effect.fn("StackHost.run")(
             register === undefined ? Effect.void : state.remove(id).pipe(Effect.ignore),
           ),
         );
-        while (true) {
-          const event = yield* Deferred.await(started.exit).pipe(
-            Effect.map(() => "done" as const),
-            Effect.raceFirst(Queue.take(events)),
+        const event = yield* Deferred.await(started.exit).pipe(
+          Effect.map(() => "done" as const),
+          Effect.raceFirst(Queue.take(events)),
+        );
+        if (event === "creator-gone") {
+          yield* started.shutdown(true).pipe(
+            Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
+            Effect.ignore,
           );
-          if (event === "creator-gone") {
-            yield* started.shutdown(true).pipe(
-              Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
-              Effect.ignore,
-            );
-            break;
-          }
-          if (event === "registration-gone") {
-            yield* started.abandon;
-            break;
-          }
-          if (event !== "done") {
-            const shutdownSucceeded = yield* started.shutdown(false).pipe(
-              Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
-              Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
-            );
-            if (!shutdownSucceeded) continue;
-          }
-          // A registration deletion that arrives while a data-preserving stop is already running
-          // only reaches `events` as a queued, now-unread `registration-gone`: a direct re-read
-          // through the same state API the poll uses catches it before the owner exits.
-          if (yield* registrationConfirmedGone(state, id)) yield* started.abandon;
-          break;
+          return;
         }
+        if (event === "registration-gone") {
+          yield* started.abandon;
+          return;
+        }
+        if (event !== "done")
+          yield* started.shutdown(false).pipe(
+            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
+            Effect.ignore,
+          );
+        // A registration deletion that arrives while a data-preserving stop is already running
+        // only reaches `events` as a queued, now-unread `registration-gone`: a direct re-read
+        // through the same state API the poll uses catches it before the owner exits.
+        if (yield* registrationConfirmedGone(state, id)) yield* started.abandon;
       }),
     ).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

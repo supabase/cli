@@ -18,6 +18,7 @@ import {
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import {
   connectHost,
@@ -328,7 +329,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   // Calls and streams release what they borrow in their own scope, not in the handle's.
   const services = Context.omit(Scope.Scope)(
     yield* Effect.context<
-      HttpClient.HttpClient | FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
+      | HttpClient.HttpClient
+      | FileSystem.FileSystem
+      | Path.Path
+      | Crypto.Crypto
+      | ChildProcessSpawner.ChildProcessSpawner
+      | Scope.Scope
     >(),
   );
   const crypto = yield* Crypto.Crypto;
@@ -475,6 +481,24 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.provideContext(services),
       ),
     ).pipe(Stream.mapError((cause) => failure(operation, cause)));
+  /** Stop with no owner: the leftovers of a failed or killed owner are reclaimed under the lease. */
+  const reclaimWithoutOwner = reclaimStack({
+    state,
+    stateRoot: locations.stateRoot,
+    cacheRoot: locations.cacheRoot,
+    id: saved.id,
+  }).pipe(
+    Effect.flatMap((reclaimed) =>
+      reclaimed
+        ? Effect.void
+        : Effect.fail(
+            new StackError({
+              operation: "shutdown",
+              message: "Another process holds the stack lease; run stop again",
+            }),
+          ),
+    ),
+  );
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
     yield* invalidate();
@@ -486,9 +510,11 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         const live = yield* connectHost(state, saved.id, { anyRelease: true }).pipe(
           Effect.map(Option.some),
           Effect.catchIf(ownerAbsent, () =>
-            destroy
-              ? launchHost(state, launchOptions).pipe(Effect.map(Option.some))
-              : Effect.succeed(Option.none<HostAccess>()),
+            Effect.gen(function* () {
+              if (destroy) return Option.some(yield* launchHost(state, launchOptions));
+              yield* reclaimWithoutOwner;
+              return Option.none<HostAccess>();
+            }),
           ),
           Effect.catchIf(stackGone, () => Effect.succeed(Option.none<HostAccess>())),
           // The owner's startup sweep reports an unreachable engine before any owner serves.

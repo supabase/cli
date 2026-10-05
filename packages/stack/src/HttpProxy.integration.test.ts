@@ -1242,32 +1242,3 @@ it.live(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
-
-it.live("destroys every established connection immediately when cutAll runs", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const backend = createServer((_request, response) => response.end("ok"));
-      const backendAddress = yield* listen(backend);
-      const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
-      yield* proxy.setRoutes([{ id: "api", prefix: "/", target: Effect.succeed(backendAddress) }]);
-
-      const client = yield* connectRaw(proxy.port, proxy.host);
-      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-      const response = yield* readFullResponse(client);
-      expect(response.status).toBe(200);
-      expect(response.body).toBe("ok");
-      // The request already finished, so the connection sits idle with no active work.
-      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(0);
-
-      const closed = yield* Effect.callback<void, never>((resume) => {
-        const onClose = () => resume(Effect.void);
-        client.once("close", onClose);
-        if (client.destroyed) onClose();
-        return Effect.sync(() => client.off("close", onClose));
-      }).pipe(Effect.timeout("5 seconds"), Effect.forkScoped);
-      yield* proxy.cutAll;
-      yield* Fiber.join(closed);
-      expect(yield* SubscriptionRef.get(proxy.outstandingConnections)).toBe(0);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
