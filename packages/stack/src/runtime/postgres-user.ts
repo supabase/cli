@@ -251,33 +251,31 @@ export const nativeSocketDirectoryPath = (
   );
 
 /**
- * Removes the socket directories of a stack's native database instances. A runtime root that is
- * missing is nothing to remove; one that is not safe to trust (a symlink, foreign owner or
- * writable by others) is warned about and left untouched.
+ * Removes the socket directory of one native database instance. A runtime root that is missing is
+ * nothing to remove; one that is not safe to trust (a symlink, foreign owner or writable by others)
+ * is warned about and left untouched.
  */
-export const removeNativeSocketDirectories = Effect.fn(
-  "NativePostgresUser.removeSocketDirectories",
-)(function* (dataRoot: string, instanceIds: ReadonlyArray<string>) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
-  const runtimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
-  if (Option.isNone(runtimeRoot)) {
-    const base = yield* NativeRuntimeRootBase;
-    const leaf = nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0);
-    if ((yield* lstatPath(leaf)) !== undefined)
-      yield* Effect.logWarning(
-        `${leaf} is not a trusted native runtime root; leaving its socket directories`,
-      );
-    return;
-  }
-  yield* Effect.annotateCurrentSpan({ "instance.count": instanceIds.length });
-  for (const instanceId of instanceIds)
+export const removeNativeSocketDirectory = Effect.fn("NativePostgresUser.removeSocketDirectory")(
+  function* (dataRoot: string, instanceId: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const runtimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
+    if (Option.isNone(runtimeRoot)) {
+      const base = yield* NativeRuntimeRootBase;
+      const leaf = nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0);
+      if ((yield* lstatPath(leaf)) !== undefined)
+        yield* Effect.logWarning(
+          `${leaf} is not a trusted native runtime root; leaving its socket directories`,
+        );
+      return;
+    }
     yield* fs.remove(
       yield* nativeSocketDirectoryPath(crypto, path, runtimeRoot.value, dataRoot, instanceId),
       { recursive: true, force: true },
     );
-});
+  },
+);
 
 /**
  * Restricts a directory to its owner but keeps an existing traverse-only grant, because a

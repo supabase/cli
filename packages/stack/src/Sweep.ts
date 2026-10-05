@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, FileSystem, Layer, Path } from "effect";
+import { Context, DateTime, Effect, Layer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { sweepTimeout } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
@@ -12,9 +12,7 @@ const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
   dataRoot: string,
   cacheRoot: string,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  yield* fs.makeDirectory(dataRoot, { recursive: true });
   const engineTarget = saved.runtime === "native" ? undefined : yield* resolveEngineTarget(spawner);
   const context = yield* Layer.build(
     Owner.layer({ saved, root: dataRoot, cacheRoot, engineTarget }).pipe(
@@ -36,8 +34,6 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
   readonly cacheRoot: string;
   readonly id: string;
 }) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const { state, id } = options;
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -53,7 +49,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
       });
       const saved = yield* state.read(id);
       if (saved === undefined) return true;
-      const dataRoot = path.join(yield* fs.realPath(options.stateRoot), id, "data");
+      const dataRoot = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, id);
       if (saved.lifetime === "session")
         yield* destroyStack(state, saved, dataRoot, options.cacheRoot);
       else {

@@ -66,7 +66,6 @@ import {
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
 import * as Paths from "./namespace/Paths.ts";
-import { removeNativeSocketDirectories } from "./runtime/postgres-user.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -99,23 +98,17 @@ type Handlers = {
 };
 
 /**
- * Removes the native socket directory of every database instance of this stack, then every
- * container carrying this stack's identity and data-root labels through the owner's pinned
- * engine target. A container that survives removal fails the sweep, so the caller (startup,
- * stop, or destroy) can report it and retry instead of proceeding as if the stack were fully
- * torn down.
+ * Removes every container carrying this stack's identity and data-root labels through the
+ * owner's pinned engine target. A container that survives removal fails the sweep, so the caller
+ * (startup, stop, or destroy) can report it and retry instead of proceeding as if the stack were
+ * fully torn down.
  */
 export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
-  saved: Pick<SavedStack, "id" | "runtime" | "instances">,
+  saved: Pick<SavedStack, "id">,
   root: string,
   target: Container.EngineTarget | undefined,
 ) {
   const path = yield* Path.Path;
-  if (saved.runtime === "native")
-    yield* removeNativeSocketDirectories(
-      root,
-      saved.instances.filter(({ creation }) => creation.service === "database").map(({ id }) => id),
-    );
   if (target === undefined) return;
   const remaining = yield* Container.removeStackContainers({
     target,
@@ -790,15 +783,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
   };
 
-  // The registration's current instances, not the owner's startup snapshot, name the socket
-  // directories to remove; destroy reads them before it unregisters each instance.
-  const readCurrent = options.state
-    .read(stackId)
-    .pipe(Effect.map((saved) => saved ?? options.saved));
-  const sweep = (saved: SavedStack) =>
-    sweepContainers(saved, options.root, options.engineTarget).pipe(
-      Effect.provideContext(services),
-    );
+  const sweep = sweepContainers(options.saved, options.root, options.engineTarget).pipe(
+    Effect.provideContext(services),
+  );
   const getStackCredentials = readSaved.pipe(
     Effect.flatMap(({ credentials }) =>
       credentials === undefined
@@ -818,28 +805,24 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
       stop: network.drain.pipe(
         Effect.andThen(orchestrator.stopNamespace),
-        Effect.andThen(readCurrent.pipe(Effect.flatMap(sweep))),
+        Effect.andThen(sweep),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
-      destroy: readCurrent.pipe(
-        Effect.flatMap((registered) =>
-          network.beginDestroy.pipe(
-            // Deferred for the whole of this destroy: every instance's own teardown below closes
-            // its listeners as usual, but leaves its reservation rows for `releaseStack` to drop
-            // together, only once destroy is confirmed to leave nothing behind. `ensuring` below
-            // resumes immediate per-service deletion again on every exit, success, failure, or
-            // interruption alike, so a service destruction or sweep failure can never leave
-            // deferral stuck on for a stack that is still otherwise live.
-            Effect.andThen(network.drain),
-            Effect.andThen(orchestrator.destroyNamespace),
-            Effect.andThen(sweep(registered)),
-            Effect.andThen(removeContainerEnvRoot),
-            Effect.andThen(network.releaseStack),
-            Effect.andThen(options.state.remove(stackId)),
-            Effect.ensuring(network.cancelDestroy),
-          ),
-        ),
+      destroy: network.beginDestroy.pipe(
+        // Deferred for the whole of this destroy: every instance's own teardown below closes
+        // its listeners as usual, but leaves its reservation rows for `releaseStack` to drop
+        // together, only once destroy is confirmed to leave nothing behind. `ensuring` below
+        // resumes immediate per-service deletion again on every exit, success, failure, or
+        // interruption alike, so a service destruction or sweep failure can never leave
+        // deferral stuck on for a stack that is still otherwise live.
+        Effect.andThen(network.drain),
+        Effect.andThen(orchestrator.destroyNamespace),
+        Effect.andThen(sweep),
+        Effect.andThen(removeContainerEnvRoot),
+        Effect.andThen(network.releaseStack),
+        Effect.andThen(options.state.remove(stackId)),
+        Effect.ensuring(network.cancelDestroy),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),

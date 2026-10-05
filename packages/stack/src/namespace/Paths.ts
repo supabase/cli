@@ -66,6 +66,23 @@ export const borrow = Effect.fn("Namespace.Paths.borrow")(
     }),
 );
 
+/**
+ * The canonical data root of a stack: its `data` directory under `stateRoot`, created if missing
+ * and resolved through symlinks. Launch and every cleanup path derive container labels and native
+ * socket directories from this one value, so each reaches the same resources however the state
+ * root is spelled.
+ */
+export const resolveStackDataRoot = Effect.fn("Namespace.Paths.resolveStackDataRoot")(function* (
+  stateRoot: string,
+  stackId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dataRoot = path.join(stateRoot, stackId, "data");
+  yield* fs.makeDirectory(dataRoot, { recursive: true });
+  return yield* fs.realPath(dataRoot);
+});
+
 /** The container mount target for an instance-scoped directory owned on the host. */
 export const containerInstancePath = "/instance";
 

@@ -32,10 +32,12 @@ reached, destruction removes nothing: the registration, port claims and host
 data stay as they are, stderr warns that Docker resources were not removed, and
 the command exits 0 reporting the stack as not destroyed. Run destroy again once
 Docker is reachable. Any other engine failure, an owner starting during
-destruction, a directory claim the owner cannot reconcile (for example one
-outside every owned root), or a labelled container that survives removal,
+destruction, an instance whose data (including a native database's socket
+directory) cannot be removed, or a labelled container that survives removal,
 fails the command and keeps the stack registered; the error lists what
-remains, including the `claims.json` path for any directory claims.
+remains. A native runtime root that is not trusted (a symlink, owned by another
+user or writable by others) is warned about and its socket directories are left
+in place.
 
 ## Files and network
 

@@ -63,6 +63,7 @@ import type { StackId } from "../identity/StackId.ts";
 import {
   acquireNativeRuntimeRoot,
   nativeSocketDirectoryPath,
+  removeNativeSocketDirectory,
   handOverNativePostgresFiles,
   openNativePostgresInstance,
   resolveNativePostgresUser,
@@ -934,6 +935,18 @@ export const makeDatabase = (
         }),
     );
 
+    // Removed before the registration that lets recovery recompute its name, so a failure here
+    // leaves the instance registered to retry.
+    const removeSocketDirectory =
+      options.runtime === "native"
+        ? removeNativeSocketDirectory(options.root, options.instanceId).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.mapError((cause) => errorFor("destroy", cause)),
+          )
+        : Effect.void;
+
     const definition: ServiceDefinition<DatabaseConfig> = {
       prepare,
       launch,
@@ -943,11 +956,15 @@ export const makeDatabase = (
           path,
           instanceRoot,
           options.root,
-          storage === undefined
-            ? Effect.void
-            : storage
-                .destroyData(postgresVersion(context.config.version))
-                .pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
+          removeSocketDirectory.pipe(
+            Effect.andThen(
+              storage === undefined
+                ? Effect.void
+                : storage
+                    .destroyData(postgresVersion(context.config.version))
+                    .pipe(Effect.mapError((cause) => errorFor("destroy", cause))),
+            ),
+          ),
           errorFor,
         ),
     };

@@ -543,9 +543,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
           const saved = yield* state.read(id);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
           const control = yield* bindControl();
-          const dataRootPath = path.join(options.stateRoot, saved.id, "data");
-          yield* fs.makeDirectory(dataRootPath, { recursive: true });
-          const dataRoot = yield* fs.realPath(dataRootPath);
+          const dataRoot = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, saved.id);
           const project = projectSegmentFor(saved.identity, path);
           // Resolved once, here, for this owner's whole lifetime: the container runtime, the
           // storage helpers, the host-gateway probes and reconcile below all share this one
