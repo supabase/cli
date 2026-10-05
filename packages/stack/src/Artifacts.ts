@@ -608,11 +608,13 @@ export const postgresLine = (version: string): string =>
 export const orioledbPostgresVersion = (orioledbVersion: string): string =>
   `${orioledbVersion}${ORIOLEDB_SUFFIX}`;
 
+/** `db.orioledb_version` value of an OrioleDB database artifact version. */
+export const orioledbConfigVersion = (version: string): string =>
+  version.slice(0, -ORIOLEDB_SUFFIX.length);
+
 /** `db.orioledb_version` values the catalog pins an OrioleDB artifact for. */
 export const orioledbVersions = (): ReadonlyArray<string> =>
-  Object.keys(definitions.database.pins)
-    .filter(isOrioledbVersion)
-    .map((version) => version.slice(0, -ORIOLEDB_SUFFIX.length));
+  Object.keys(definitions.database.pins).filter(isOrioledbVersion).map(orioledbConfigVersion);
 
 /** Resolves a PostgreSQL major alias against the pinned stock database artifacts. */
 export const postgresVersion = (version: string): string =>

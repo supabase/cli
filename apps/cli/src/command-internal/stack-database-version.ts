@@ -20,7 +20,7 @@ export const stackDatabaseVersion = (
     return Result.fail(
       `db.orioledb_version = ${orioledb} requires a published OrioleDB artifact; supported OrioleDB versions: ${
         supported.length === 0 ? "none" : supported.join(", ")
-      }. A saved stack keeps its database version; switching it means recreating the stack with supabase stack destroy, which permanently deletes its local database data`,
+      }`,
     );
   const major = postgresMajor(orioledb);
   if (major !== String(db.major_version))

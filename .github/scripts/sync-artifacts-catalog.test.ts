@@ -583,6 +583,18 @@ describe("planSlimUpdates", () => {
     ]);
   });
 
+  test("postgres: a catalog with no additional pin ignores a new OrioleDB line it could not insert", () => {
+    const singlePin = `${postgresPlannerFixture.slice(0, postgresPlannerFixture.indexOf('    {\n      "15.14.1.168"'))}  ),\n};\n`;
+    const { updates, warnings } = planSlimUpdates(singlePin, "postgres", [
+      "postgres-17.11.0.002-orioledb-r0",
+    ]);
+
+    expect(updates).toEqual([]);
+    expect(warnings).toEqual([
+      "::warning ::postgres 17.11.0.002-orioledb is not on a release line packages/stack/src/Artifacts.ts carries for it; ignoring postgres-17.11.0.002-orioledb-r0.",
+    ]);
+  });
+
   test("branch and title carry no -<line> suffix for a service with a single line", () => {
     const { updates } = planSlimUpdates(plannerFixture, "storage", ["storage-v1.74.0-r0"]);
 

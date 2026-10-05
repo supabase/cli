@@ -5,6 +5,7 @@ export {
   catalogPins,
   defaultRuntime,
   isOrioledbVersion,
+  orioledbConfigVersion,
   orioledbPostgresVersion,
   orioledbVersions,
   postgresMajor,

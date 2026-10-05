@@ -41,7 +41,7 @@ describe("stackDatabaseVersion", () => {
       stackDatabaseVersion({ major_version: 17, orioledb_version: "17.6.1.000" }, published),
     ).toEqual(
       Result.fail(
-        "db.orioledb_version = 17.6.1.000 requires a published OrioleDB artifact; supported OrioleDB versions: 17.11.0.002. A saved stack keeps its database version; switching it means recreating the stack with supabase stack destroy, which permanently deletes its local database data",
+        "db.orioledb_version = 17.6.1.000 requires a published OrioleDB artifact; supported OrioleDB versions: 17.11.0.002",
       ),
     );
   });

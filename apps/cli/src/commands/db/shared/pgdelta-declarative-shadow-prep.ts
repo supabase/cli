@@ -86,10 +86,17 @@ const declarativeBaselinePrepStatements = (
   return statements;
 };
 
+/** `maskSqlComments` plus dollar-quoted bodies, so only top-level statements are rewritten. */
+const maskSqlLiterals = (sql: string): string =>
+  sql.replaceAll(
+    /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:[^']|'')*'|(?<![\w$])\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1\$/g,
+    (matched) => matched.replaceAll(/[^\r\n]/g, " "),
+  );
+
 const keepImageExtensionCreates = (sql: string): string => {
   let kept = "";
   let cursor = 0;
-  for (const match of maskSqlComments(sql).matchAll(CREATE_EXTENSION_RE)) {
+  for (const match of maskSqlLiterals(sql).matchAll(CREATE_EXTENSION_RE)) {
     if (match[2] !== undefined || !IMAGE_KEPT_EXTENSIONS.has(createExtensionName(match))) continue;
     const insertAt = match.index + (match[1] ?? "").length;
     kept += `${sql.slice(cursor, insertAt)}IF NOT EXISTS `;

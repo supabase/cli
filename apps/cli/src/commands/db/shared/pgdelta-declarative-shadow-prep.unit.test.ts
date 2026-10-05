@@ -62,13 +62,20 @@ describe("filesForDeclarativeShadowLoad", () => {
       name: "public/01.sql",
       sql: "create extension if not exists orioledb;\nCREATE EXTENSION pgcrypto;",
     };
-    expect(filesForDeclarativeShadowLoad([orioledb, alreadyIdempotent], false)).toEqual([
-      {
-        name: orioledb.name,
-        sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
-      },
-      alreadyIdempotent,
-    ]);
+    const quotedBody = {
+      name: "public/02.sql",
+      sql: "DO $$ BEGIN CREATE EXTENSION orioledb; END $$;\nCREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN CREATE EXTENSION orioledb; END $fn$;",
+    };
+    expect(filesForDeclarativeShadowLoad([orioledb, alreadyIdempotent, quotedBody], false)).toEqual(
+      [
+        {
+          name: orioledb.name,
+          sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
+        },
+        alreadyIdempotent,
+        quotedBody,
+      ],
+    );
   });
 });
 

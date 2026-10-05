@@ -1,6 +1,7 @@
 import {
   defaultRuntime,
   isOrioledbVersion,
+  orioledbConfigVersion,
   postgresVersion,
 } from "@supabase/stack/internal/artifacts";
 import {
@@ -193,7 +194,7 @@ const majorVersionOf = (version: string): string => version.split(".")[0] ?? ver
 
 /** The `db.orioledb_version` value behind a database artifact version, or `unset` for stock. */
 const orioledbVersionOf = (version: string): string =>
-  isOrioledbVersion(version) ? version.replace(/-orioledb$/u, "") : "unset";
+  isOrioledbVersion(version) ? orioledbConfigVersion(version) : "unset";
 
 /** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
 const formatConfigPath = (path: string): string => {

@@ -862,7 +862,9 @@ export function planSlimUpdates(
     let line: string;
     if (hasLines) {
       line = releaseLine(service, upstream);
-      if (!carried(line) && !isAddableLine(service, line, carried)) {
+      // `selectEntry` inserts a new line after the last additional pin, so it needs one.
+      const addable = pins.additional.length > 0 && isAddableLine(service, line, carried);
+      if (!carried(line) && !addable) {
         warnings.push(
           workflowCommand(
             "warning",
