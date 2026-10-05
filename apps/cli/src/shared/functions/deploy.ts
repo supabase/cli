@@ -1577,116 +1577,115 @@ const bundleFunctionWithDocker = Effect.fn("functions.deploy.bundleWithDocker")(
     .makeDirectory(outputRoot, { recursive: true })
     .pipe(Effect.mapError(unknownHostError(outputRoot)));
   const outputPrefix = `.supabase-output-${config.slug}-`;
-  const outputDir = yield* fs
-    .makeTempDirectory({ directory: outputRoot, prefix: outputPrefix })
-    .pipe(Effect.mapError(unknownHostError(path.join(outputRoot, outputPrefix))));
-  try {
-    // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
-    // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
-    if (shouldChmodBundleOutputDirectory(process.platform)) {
-      yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(hostError(outputDir)));
-    }
-    const outputPath = path.join(outputDir, "output.eszip");
-    // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
-    // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
-    const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
-    const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
-      bitbucketCloneDirDefined,
-      onWarning: (message) => output.raw(message, "stderr"),
-    });
-    // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
-    // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
-    // cost is one cached `docker image inspect` per function.
-    const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
-    yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(
-      edgeRuntimeCacheVolume(projectId).name,
-      projectId,
-      projectEnvValues,
-    );
-
-    const env: Array<string> = [];
-    if (!(yield* shouldUsePackageJsonDiscovery(config.entrypoint, config.importMap))) {
-      env.push("DENO_NO_PACKAGE_JSON=1");
-    }
-    env.push(...dockerNpmEnv());
-
-    const containerArgs = [
-      "bundle",
-      "--entrypoint",
-      toDockerPath(config.entrypoint, path),
-      "--output",
-      toDockerPath(outputPath, path),
-    ];
-    if (
-      config.importMap.length > 0 &&
-      !shouldUseDenoJsonDiscovery(path, config.entrypoint, config.importMap)
-    ) {
-      containerArgs.push("--import-map", toDockerPath(config.importMap, path));
-    }
-    for (const staticFile of config.staticFiles) {
-      containerArgs.push("--static", toDockerPath(staticFile, path));
-    }
-    if (verbose || (yield* debugEnvEnabled)) {
-      containerArgs.push("--verbose");
-    }
-
-    const command = buildFunctionsDockerRunArgs({
-      image,
-      projectId,
-      networkMode,
-      binds: binds.map(formatDockerBind),
-      env,
-      // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
-      // own `projectRoot`.
-      workingDir: toDockerPath(path.resolve(functionsDir, "..", ".."), path),
-      containerArgs,
-    });
-
-    // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
-    // until exit.
-    const result = yield* runChildProcess("docker", command, {
-      stdout: "pipe",
-      stderr: "pipe",
-      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
-      onStderr: (chunk) => output.raw(chunk, "stderr"),
-    });
-    if (result.exitCode !== 0) {
-      return yield* new FunctionDeployError({
-        message: `failed to bundle function: exit ${result.exitCode}`,
-      });
-    }
-
-    const eszip = yield* fs.readFile(outputPath).pipe(
-      Effect.mapError(
-        (error) =>
-          new FunctionDeployError({
-            message: `failed to open eszip: ${hostError(outputPath)(error).message}`,
-          }),
-      ),
-    );
-    const compressed = new Uint8Array(
-      Buffer.concat([
-        Buffer.from(COMPRESSED_ESZIP_MAGIC),
-        brotliCompressSync(eszip, {
-          params: {
-            [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
-          },
-        }),
-      ]),
-    );
-    const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
-    const hash = Buffer.from(sha256).toString("hex");
-    yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
-    return {
-      slug: config.slug,
-      metadata: createBundledMetadata(path, config, hash),
-      body: compressed,
-    } satisfies BundledFunction;
-  } finally {
-    yield* fs.remove(outputDir, { recursive: true, force: true }).pipe(Effect.ignore);
+  const outputDir = yield* Effect.acquireRelease(
+    fs
+      .makeTempDirectory({ directory: outputRoot, prefix: outputPrefix })
+      .pipe(Effect.mapError(unknownHostError(path.join(outputRoot, outputPrefix)))),
+    (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+  );
+  // Go passes 0777 to MkdirAll, which Windows ignores. Calling chmod separately
+  // adds an NTFS WRITE_ATTRIBUTES requirement that the Go CLI does not have.
+  if (shouldChmodBundleOutputDirectory(process.platform)) {
+    yield* fs.chmod(outputDir, 0o777).pipe(Effect.mapError(hostError(outputDir)));
   }
-});
+  const outputPath = path.join(outputDir, "output.eszip");
+  // `edgeRuntimeImage` applies the tag verbatim — a `.temp/edge-runtime-version` pin flows
+  // through unmodified, `v` prefix or not (see the helper's doc in `functions.shared.ts`).
+  const rawImage = edgeRuntimeImage(edgeRuntimeVersion, yield* slimImagesEnabled);
+  const binds = yield* buildDockerBinds(projectId, functionsDir, outputDir, config, {
+    bitbucketCloneDirDefined,
+    onWarning: (message) => output.raw(message, "stderr"),
+  });
+  // Resolved per function rather than hoisted out of the loop (unlike `download.ts`'s
+  // `PulledEdgeRuntimeImage`): the first resolve failure aborts the loop, and the only added
+  // cost is one cached `docker image inspect` per function.
+  const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
+  yield* ensureDockerNetwork(networkMode, projectId);
+  yield* ensureDockerNamedVolume(
+    edgeRuntimeCacheVolume(projectId).name,
+    projectId,
+    projectEnvValues,
+  );
+
+  const env: Array<string> = [];
+  if (!(yield* shouldUsePackageJsonDiscovery(config.entrypoint, config.importMap))) {
+    env.push("DENO_NO_PACKAGE_JSON=1");
+  }
+  env.push(...dockerNpmEnv());
+
+  const containerArgs = [
+    "bundle",
+    "--entrypoint",
+    toDockerPath(config.entrypoint, path),
+    "--output",
+    toDockerPath(outputPath, path),
+  ];
+  if (
+    config.importMap.length > 0 &&
+    !shouldUseDenoJsonDiscovery(path, config.entrypoint, config.importMap)
+  ) {
+    containerArgs.push("--import-map", toDockerPath(config.importMap, path));
+  }
+  for (const staticFile of config.staticFiles) {
+    containerArgs.push("--static", toDockerPath(staticFile, path));
+  }
+  if (verbose || (yield* debugEnvEnabled)) {
+    containerArgs.push("--verbose");
+  }
+
+  const command = buildFunctionsDockerRunArgs({
+    image,
+    projectId,
+    networkMode,
+    binds: binds.map(formatDockerBind),
+    env,
+    // `functionsDir` is `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+    // own `projectRoot`.
+    workingDir: toDockerPath(path.resolve(functionsDir, "..", ".."), path),
+    containerArgs,
+  });
+
+  // Live-tees each chunk to `output.raw` as it arrives, rather than buffering the whole run
+  // until exit.
+  const result = yield* runChildProcess("docker", command, {
+    stdout: "pipe",
+    stderr: "pipe",
+    onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+    onStderr: (chunk) => output.raw(chunk, "stderr"),
+  });
+  if (result.exitCode !== 0) {
+    return yield* new FunctionDeployError({
+      message: `failed to bundle function: exit ${result.exitCode}`,
+    });
+  }
+
+  const eszip = yield* fs.readFile(outputPath).pipe(
+    Effect.mapError(
+      (error) =>
+        new FunctionDeployError({
+          message: `failed to open eszip: ${hostError(outputPath)(error).message}`,
+        }),
+    ),
+  );
+  const compressed = new Uint8Array(
+    Buffer.concat([
+      Buffer.from(COMPRESSED_ESZIP_MAGIC),
+      brotliCompressSync(eszip, {
+        params: {
+          [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
+        },
+      }),
+    ]),
+  );
+  const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
+  const hash = Buffer.from(sha256).toString("hex");
+  yield* Effect.annotateCurrentSpan({ "bundle.bytes": compressed.byteLength });
+  return {
+    slug: config.slug,
+    metadata: createBundledMetadata(path, config, hash),
+    body: compressed,
+  } satisfies BundledFunction;
+}, Effect.scoped);
 
 const listRemoteFunctions = Effect.fn("functions.deploy.listRemoteFunctions")(function* (
   api: ApiClient,

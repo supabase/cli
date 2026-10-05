@@ -10,8 +10,12 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
+  Sink,
   Stdio,
+  Stream,
 } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
@@ -2057,6 +2061,123 @@ describe("functions deploy", () => {
         );
 
         expect(out.stderrText).toContain("<warn>WARNING:</warn> Docker is not running\n");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+  });
+
+  describe("bundle temp directory cleanup", () => {
+    const readBundleOutputDirs = Effect.fnUntraced(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const entries = yield* fs.readDirectory(path.join(tempRoot.current, "supabase", ".temp"));
+      return entries.filter((entry) => entry.startsWith(".supabase-output-"));
+    });
+
+    /** Spawns `docker run` as a process that never exits until its fiber is interrupted. */
+    function mockDockerRunHangingSpawner(onRunStarted: () => void) {
+      let nextPid = 0;
+      return Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
+          const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
+          const isRun = cmd === "docker" && args[0] === "run";
+          nextPid += 1;
+          if (isRun) {
+            onRunStarted();
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(9000 + nextPid),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: isRun ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(true),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }),
+      );
+    }
+
+    it.live("removes the bundle temp directory when the bundler container exits non-zero", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
+      });
+      const child = mockChildProcessSpawner({
+        exitCode: (record) => (record.command === "docker" && record.args[0] === "run" ? 1 : 0),
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({
+          ...baseFlags,
+          useApi: false,
+          useDocker: true,
+        }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ message: "failed to bundle function: exit 1" });
+        expect(yield* readBundleOutputDirs()).toEqual([]);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.live("removes the bundle temp directory when the deploy is interrupted mid-bundle", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) => Effect.succeed(jsonResponse(request, 200, [])),
+      });
+      const bundlerStarted = Deferred.makeUnsafe<void>();
+      const child = mockDockerRunHangingSpawner(() => {
+        Deferred.doneUnsafe(bundlerStarted, Exit.void);
+      });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const fiber = yield* functionsDeploy({
+          ...baseFlags,
+          useApi: false,
+          useDocker: true,
+        }).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(bundlerStarted);
+        yield* Fiber.interrupt(fiber);
+
+        expect(yield* readBundleOutputDirs()).toEqual([]);
       }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
     });
   });
