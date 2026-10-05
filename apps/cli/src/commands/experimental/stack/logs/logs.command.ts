@@ -12,7 +12,7 @@ const config = {
     Flag.optional,
   ),
   stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Read logs from an existing stack by id."),
+    Flag.withDescription("Read logs from an existing stack by id or unique id prefix."),
     Flag.optional,
   ),
   service: Flag.string("service").pipe(

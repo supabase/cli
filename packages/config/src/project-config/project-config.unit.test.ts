@@ -724,14 +724,18 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api).toEqual({ schemas: ["public", "graphql_public"], enabled: true });
   });
 
-  // An explicit `db_schema: ""` is the remote's disable sentinel, so only `enabled: false` is
-  // reported; an absent `db_schema` does not gate the siblings.
-  test("an empty db_schema disables the Data API and omits the sibling fields", () => {
-    const result = fromApiProjectConfig({
-      api: { db_schema: "", db_extra_search_path: "public", max_rows: 100 },
-    });
-    expect(result.api).toEqual({ enabled: false });
-  });
+  // An explicit `db_schema: ""` and the platform's `pg_pgrst_no_exposed_schemas` marker are the
+  // remote's disable sentinels, so only `enabled: false` is reported; an absent `db_schema` does
+  // not gate the siblings.
+  test.each(["", "pg_pgrst_no_exposed_schemas"])(
+    "db_schema %j disables the Data API and omits the sibling fields",
+    (dbSchema) => {
+      const result = fromApiProjectConfig({
+        api: { db_schema: dbSchema, db_extra_search_path: "public", max_rows: 100 },
+      });
+      expect(result.api).toEqual({ enabled: false });
+    },
+  );
 
   test("max_rows is clamped to zero when negative", () => {
     const result = fromApiProjectConfig({ api: { max_rows: -5 } });

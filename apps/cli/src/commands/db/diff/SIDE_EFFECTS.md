@@ -60,7 +60,10 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 - Edge-runtime container (migra engine only). It and the `supabase/migra` fallback get
   loopback `SOURCE`/`TARGET` hosts rewritten to `host.docker.internal` when `--network-id`
   puts them on a named network, or when a stack-backend URL is used outside Linux host
-  networking.
+  networking. The edge-runtime run mounts the `supabase_edge_runtime_<project_id>` Deno-cache
+  volume, first created by `docker volume create` with the `com.supabase.cli.project`/
+  `com.docker.compose.project` labels so `stop --no-backup` removes it (skipped under Bitbucket
+  Pipelines, which drops the mount).
 - Shadow Postgres container — provisioned and torn down natively (`prepareShadowSource`
   in `commands/db/shared/shadow-source.ts`, over the lower-level primitives in
   `command-internal/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit

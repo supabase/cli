@@ -119,6 +119,27 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live("destroys only the stack addressed by the short ID that stack list shows", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const other = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "other",
+        runtime: "native",
+      });
+
+      yield* stackDestroy({ ...f.flags, stackId: Option.some(f.stack.id.slice(0, 8)) }).pipe(
+        Effect.provide(f.layer),
+      );
+
+      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
+        other.id,
+      ]);
+      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+    }).pipe(Effect.provide(live)),
+  );
+
   it.live(
     "destroys a live namespace and standalone services while preserving caller-owned uploads",
     () =>

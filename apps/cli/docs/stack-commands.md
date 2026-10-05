@@ -124,8 +124,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
 are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
 directory itself fails discovery.
-The text table shortens readable IDs for scanning; use `--output-format json` or
-`--output-format stream-json` for the complete structured inventory with full IDs.
+The text table shortens readable IDs for scanning; every `--stack-id` accepts that short ID, or any
+unique prefix of at least 4 characters. Use `--output-format json` or `--output-format stream-json`
+for the complete structured inventory with full IDs.
 
 Listing is global and has no checkout filter. Owner availability is not service lifecycle or health;
 use `supabase stack status` for live state. Registry directories without a state file are ignored

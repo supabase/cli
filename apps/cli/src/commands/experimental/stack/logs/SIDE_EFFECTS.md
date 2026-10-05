@@ -7,7 +7,7 @@ starts/stops a service.
 
 ## Selection and files
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive. By default, only composition members are
 included. `--service <kind-or-instance-id>` is repeatable and can also select
 standalone instances; a value that matches no saved instance fails with status 1.

@@ -19,6 +19,8 @@ jobs:
   sync:
     name: Sync API Types
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
+    environment: auto-approve
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

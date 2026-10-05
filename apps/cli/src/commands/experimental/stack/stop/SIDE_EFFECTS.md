@@ -6,7 +6,7 @@ The experimental top-level `supabase stop` alias delegates to this handler.
 
 ## Selection and output
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 `--stack` and `--stack-id` are mutually exclusive. `--all` cannot be combined
 with either selector. Explicit legacy `-o/--output` is rejected; use
 `--output-format` instead.

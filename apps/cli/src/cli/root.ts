@@ -145,7 +145,7 @@ export const rootCommandForFeatures = (
     readonly stackBackend?: StackBackend;
     readonly computeEnabled?: boolean;
   } = {},
-): CliRootCommand =>
+) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
@@ -255,6 +255,6 @@ export const rootCommandForFeatures = (
       ),
     ),
     Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
-  );
+  ) satisfies CliRootCommand;
 
-export const rootCommand: CliRootCommand = rootCommandForFeatures();
+export const rootCommand = rootCommandForFeatures();
