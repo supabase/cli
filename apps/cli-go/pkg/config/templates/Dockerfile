@@ -15,7 +15,7 @@ FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.31.3 AS mailpit
 FROM postgrest/postgrest:v16.4 AS postgrest
 FROM supabase/postgres-meta:v0.99.0 AS pgmeta
-FROM supabase/studio:2026.09.28-sha-5e59b60 AS studio
+FROM supabase/studio:2026.10.05-sha-94b8b06 AS studio
 FROM darthsim/imgproxy:v3.26.0 AS imgproxy
 FROM supabase/edge-runtime:v1.77.4 AS edgeruntime
 FROM timberio/vector:0.58.0-alpine AS vector

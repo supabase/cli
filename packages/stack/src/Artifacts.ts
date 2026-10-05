@@ -307,23 +307,23 @@ const definitions: Readonly<Record<ServiceKind, ArtifactDefinition>> = {
   studio: definition(
     "studio",
     {
-      upstreamVersion: "2026.09.28-sha-5e59b60",
+      upstreamVersion: "2026.10.05-sha-94b8b06",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/studio:2026.09.28-sha-5e59b60-r0@sha256:4cf4f70978bb0866d1644b43cb0d23acc4b4ef7a898592043ad0d13cad8059be",
-      upstreamImage: "supabase/studio:2026.09.28-sha-5e59b60",
+        "ghcr.io/supabase/cli/studio:2026.10.05-sha-94b8b06-r0@sha256:a5580ddf689128fac853f3fa1b122414b78a64f9a4af0194ef4caa2a387aae5f",
+      upstreamImage: "supabase/studio:2026.10.05-sha-94b8b06",
       natives: {
         "darwin-arm64": {
-          archive: "37f420f6af3d5ee7dab884e8c39fe2c3bcddcee0d90e53d1e075a05ae3cb4b73",
-          manifest: "b5d6209c4c28e594cc8b0ab961105465418f0021ba50a3fd92067ff5720ae820",
+          archive: "01613b298673ee5829b5847da72105b5dbe7206b80482fd05bc17619c21901b9",
+          manifest: "1eb8a29d6cf67a6b0de0d76dc89840aff6022d56fbf2a7dc20634c541fa50c4e",
         },
         "linux-amd64": {
-          archive: "19a9903732b71fba04ce342e4d13b83bf7579bce806981cf8f2b491ad792fc6e",
-          manifest: "5a4f1e316ad84ff058263601b9b144177ab0cd18443e826354551aec88013199",
+          archive: "3c7c87ddd859979a5b441e2a7abfe462c4864922818b8dda3fd013bced73337c",
+          manifest: "77adf4f7a45510a4fd807056cce1ba54b35285001e9b87e556774902aeaff33c",
         },
         "linux-arm64": {
-          archive: "ce69544c9ec5dbae50e5da731770bc199e12f0f1d63b22ec7a43b6a0ba00cb4c",
-          manifest: "c27374ccc51cc6419f9bbd14f095f1a16db4bda369928effcc15a6366dcb3d1f",
+          archive: "c663e88999d36ad587df2d56ede2e6cdaefbbb8011f9369b075500606effea03",
+          manifest: "c62ff9c6779a3e92964b27ee9430d60f0e12b54d201dc53b870942c1ee926ff4",
         },
       },
     },
