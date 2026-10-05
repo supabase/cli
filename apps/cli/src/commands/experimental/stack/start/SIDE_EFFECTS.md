@@ -20,9 +20,10 @@ If the stack is otherwise in a partial lifecycle state, start fails with guidanc
 and start it again before applying configuration.
 Auth policies, OAuth providers, hooks, MFA, SMTP, email subjects and notification controls are
 forwarded to Auth. REST search paths, pooler limits, Realtime settings, Studio settings, Storage
-S3 protocol/vector controls, and configured Vector ports are forwarded to their services. Storage
-receives the local S3 access keys and region, and uses the gateway's `/storage/v1` prefix to verify
-S3 signatures and to build resumable upload URLs.
+S3 protocol/vector controls are forwarded to their services. Storage receives the local S3 access
+keys and region, and uses the gateway's `/storage/v1` prefix to verify S3 signatures and to build
+resumable upload URLs. `analytics.vector_port` and `SUPABASE_ANALYTICS_VECTOR_PORT` are accepted
+and ignored: the stack runs no Vector service.
 Encrypted JWT secrets are decrypted before shared credentials are derived. `db.health_timeout`
 controls database readiness; package JWT and PostgreSQL root-key defaults apply when omitted, and
 the effective root key is supplied through a stack-owned key file.
@@ -36,6 +37,15 @@ Secrets needed by enabled services are passed to the runtime. State and service 
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
 use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
 `supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
+most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
+the stack deletes those logs; stopping the stack and resetting database data keep them.
+PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string included, is
+persisted and shipped to Analytics.
+When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
+members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
+under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
+migration that fails is logged as a warning and retried by the next owner start.
 
 For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
 Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
@@ -75,10 +85,37 @@ it again to apply those changes.
 
 `--exclude` accepts repeated or comma-separated capability names: `rest`, `auth`, `realtime`,
 `storage`, `functions`, `studio`, `mail`, `analytics`, and `pooler`. Database cannot be excluded.
-Storage includes its Imgproxy companion, Studio includes Pgmeta, and Analytics includes Vector.
+Storage includes its Imgproxy companion and Studio includes Pgmeta.
 Studio requires REST; excluding REST while keeping Studio fails before stopping the composition.
-Vector runs a stack-owned default configuration that enables its health API and forwards no service
-logs; log collection into Analytics is not implemented yet.
+
+## Service logs in Analytics
+
+The owner ships the persisted Auth, REST, Realtime, Storage, Functions, and database output lines
+(not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its direct backend,
+using the Analytics API key and the legacy Logflare source names (`gotrue.logs.prod`,
+`postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`, `deno-relay-logs`,
+`postgres.logs`) with the legacy per-service field remaps. This applies to the Docker, Podman, and
+native runtimes. Shipping runs only while the composed Analytics service is running and healthy;
+each instance keeps its position in `logs/<service>/<instance-id>/cursor.json`, so lines written
+while Analytics is stopped, starting, or unhealthy are shipped with their original timestamps once
+it is healthy again, including after an owner restart. A missing or unreadable position starts from
+the oldest retained line. Lines already deleted by log retention are skipped, and Analytics refusing
+the API key pauses shipping until Analytics stops or turns unhealthy and is healthy again, or the
+composition selects a different Analytics instance. A failed log read is retried from the saved
+position with a backoff. Each event carries an id derived from its instance and position. Before
+posting a request, the owner records it as pending in `cursor.json`; it then reads Analytics'
+Postgres tables (`_analytics.sources` and `_analytics.log_events_<token>` in the stack's
+`_supabase` database) to confirm which events are stored, posts only the missing ones, and
+advances the position once all are stored. While those tables cannot be read, shipping waits and
+logs one warning. Events an Analytics process accepted are not posted to it again while it may
+still store them; events still missing are posted again 5 seconds after the request ended once
+Analytics restarted, or 60 seconds after it once the owner restarted, and a pending request is
+confirmed the same way. Events still missing after 60 seconds of Analytics serving are posted
+again in halves; one that is still not stored on its own is skipped with a warning once Analytics
+stored a later request, and kept otherwise. NUL characters and unpaired
+surrogates in shipped lines are replaced with U+FFFD. Shipping never wakes Analytics
+and does not count as idle activity, so a lazy Analytics still stops on its idle timer while other
+services log. Service log streams and `supabase stack logs` are never blocked by shipping.
 
 After an explicit stop, start compares the project configuration with the saved composition through
 the stack package's composition plan, ignoring values the composition and stack credentials supply.
@@ -128,7 +165,7 @@ Text output reports progress and `Stack is ready.`, then prints the connection s
 `stack status` on stdout: API, REST, Functions, Studio, MCP, Mailpit, and database URLs for the
 members that expose them, the publishable and secret keys, the Storage S3 URL, access keys, and
 region when the S3 protocol is enabled, a services table, the runtime, and a
-pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` or `--stack-id` selector, shell-quoted. Progress lines
+pointer to `supabase status --env` that repeats an explicit `--workdir` and any `--stack` selector or the resolved full `--stack-id`, shell-quoted. Progress lines
 and warnings written while the spinner is shown appear on their own rows.
 
 JSON output returns the stack `id`, its saved `runtime`, `endpoints` keyed by service and endpoint

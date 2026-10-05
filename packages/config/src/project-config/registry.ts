@@ -26,13 +26,16 @@ const apiExtraSearchPathPath = ["api", "db_extra_search_path"];
 const apiMaxRowsPath = ["api", "max_rows"];
 
 /**
- * True when the remote reports the Data API disabled: an explicit `""` `db_schema`, not an
- * absent one (which means the sparse input simply didn't mention it). The rows below gate on
- * this so a disabled remote maps to exactly `{ api: { enabled: false } }`.
+ * True when the remote reports the Data API disabled: an explicit `""` `db_schema` or the
+ * platform's `pg_pgrst_no_exposed_schemas` marker, not an absent one (which means the sparse
+ * input simply didn't mention it). The marker can't name a real schema because Postgres
+ * reserves the `pg_` prefix. The rows below gate on this so a disabled remote maps to exactly
+ * `{ api: { enabled: false } }`.
  */
 function remoteDataApiDisabled(attributes: Record<string, unknown>): boolean {
   const api = attributes["api"];
-  return isObject(api) && api["db_schema"] === "";
+  const dbSchema = isObject(api) ? api["db_schema"] : undefined;
+  return dbSchema === "" || dbSchema === "pg_pgrst_no_exposed_schemas";
 }
 
 /**
@@ -79,7 +82,10 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // `apiPath` (see registry-row.ts).
     configPath: ["api", "enabled"],
     apiPath: apiDbSchemaPath,
-    transform: (value) => expectString(value, apiDbSchemaPath).length > 0,
+    transform: (value, attributes) => {
+      expectString(value, apiDbSchemaPath);
+      return !remoteDataApiDisabled(attributes);
+    },
   },
   {
     configPath: ["api", "extra_search_path"],

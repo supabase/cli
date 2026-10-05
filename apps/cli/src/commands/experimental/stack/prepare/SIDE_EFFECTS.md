@@ -22,6 +22,8 @@ modified. A preparation failure still runs cleanup for every acquired temporary 
 
 - A managed stack descriptor/state record when the target does not exist. Existing records are
   updated while temporary instances and their instance directories are created and removed.
+  Starting the owner of a target saved with a Vector instance removes that instance from the
+  record, as described for `stack start`.
 - Runtime artifacts through the selected native or container runtime's package-owned cache.
 - Telemetry state after success or failure once the handler starts.
 
@@ -39,7 +41,7 @@ which selects the same runtime as `stack start` (Docker, then Podman, then nativ
 existing stacks reuse their persisted runtime without probing, and an explicit mismatch fails. With no
 `--capability`, every enabled creation from the effective project configuration is prepared.
 Repeated `--capability` includes each capability's configured companion services (Storage/Imgproxy,
-Studio/Pgmeta, Analytics/Vector); requesting a disabled service fails before instance preparation. The legacy `-o/--output` flag is rejected; use
+Studio/Pgmeta); requesting a disabled service fails before instance preparation. The legacy `-o/--output` flag is rejected; use
 `--output-format`.
 
 Text output lists the stack ID and each prepared service and version. JSON output returns the stack

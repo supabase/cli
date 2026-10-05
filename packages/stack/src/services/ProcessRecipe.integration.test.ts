@@ -204,7 +204,7 @@ describe("ProcessRecipe launch cleanup", () => {
             readPortClaims: testReadPortClaims,
             reserveNativePort: testReserveNativePort,
           } satisfies ProcessDependencies;
-          const recipe = yield* makeProcessRecipe(creation, options, dependencies, spec);
+          const recipe = yield* makeProcessRecipe(options, dependencies, spec);
           const service = yield* makeService(recipe.definition, {
             id: `rest-process-recipe-${scenario}`,
             config: creation,
@@ -293,7 +293,7 @@ describe("ProcessRecipe launch cleanup", () => {
           readPortClaims: testReadPortClaims,
           reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
-        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
+        const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
           id: "rest-process-recipe-native",
           config: creation,
@@ -405,7 +405,7 @@ describe("ProcessRecipe launch cleanup", () => {
           readPortClaims: testReadPortClaims,
           reserveNativePort: testReserveNativePort,
         } satisfies ProcessDependencies;
-        const recipe = yield* makeProcessRecipe(creation, nativeOptions, dependencies, nativeSpec);
+        const recipe = yield* makeProcessRecipe(nativeOptions, dependencies, nativeSpec);
         const service = yield* makeService(recipe.definition, {
           id: "rest-process-recipe-port-order",
           config: creation,
@@ -462,7 +462,6 @@ const realtimeService = Effect.fn(function* (container: ContainerRuntime) {
     config: { databaseUrl: "postgresql://postgres:postgres@host.docker.internal:54322/postgres" },
   };
   const recipe = yield* makeProcessRecipe(
-    creation,
     {
       stackId: "process-recipe-test",
       instanceId: "instance",
@@ -668,7 +667,6 @@ const nativeRestRecipe = Effect.fn(function* (
   const cacheRoot = path.join(root, "cache");
   yield* nativeRestArtifact(cacheRoot, program);
   return yield* makeProcessRecipe(
-    creation,
     {
       ...options,
       root,
@@ -945,7 +943,6 @@ describe("process recipe startup", () => {
             ),
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-race",
             instanceId: "instance",
@@ -970,6 +967,7 @@ describe("process recipe startup", () => {
         const scope = yield* Scope.fork(testScope, "sequential");
         const runtime = yield* recipe.definition.launch({
           id: "pooler",
+          launchId: 1,
           config: creation,
           scope,
         });
@@ -1025,7 +1023,6 @@ describe("process recipe startup", () => {
           excluded: ReadonlySet<number>,
         ) => reserveNativePort(claims, key, sharedStart, excluded);
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-range",
             instanceId: "instance",
@@ -1050,6 +1047,7 @@ describe("process recipe startup", () => {
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
         const runtime = yield* recipe.definition.launch({
           id: "pooler",
+          launchId: 1,
           config: creation,
           scope,
         });
@@ -1094,7 +1092,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-port-exhaustion",
             instanceId: "instance",
@@ -1230,7 +1227,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-deadline",
             instanceId: "instance",
@@ -1253,7 +1249,12 @@ describe("process recipe startup", () => {
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.flip(runtime.health).pipe(Effect.forkChild);
         yield* Deferred.await(clockAdvanced);
         const failure = yield* Fiber.join(health);
@@ -1294,7 +1295,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-unrelated-failure",
             instanceId: "instance",
@@ -1317,7 +1317,12 @@ describe("process recipe startup", () => {
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.exit(runtime.health);
         expect(yield* Ref.get(mainLaunches)).toBe(1);
         expect(yield* Ref.get(startupLaunches)).toEqual(["prepare", "provision-tenant"]);
@@ -1400,7 +1405,6 @@ describe("process recipe startup", () => {
           },
         };
         const recipe = yield* makeProcessRecipe(
-          creation,
           {
             stackId: "process-recipe-exit-failure",
             instanceId: "instance",
@@ -1423,7 +1427,12 @@ describe("process recipe startup", () => {
         );
         if (recipe.definition.prepare !== undefined) yield* recipe.definition.prepare(creation);
         const scope = yield* Scope.fork(yield* Effect.scope, "sequential");
-        const runtime = yield* recipe.definition.launch({ id: "pooler", config: creation, scope });
+        const runtime = yield* recipe.definition.launch({
+          id: "pooler",
+          launchId: 1,
+          config: creation,
+          scope,
+        });
         const health = yield* Effect.exit(runtime.health);
         expect(Exit.isFailure(health)).toBe(true);
         const exit = yield* runtime.exit;

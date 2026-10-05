@@ -1028,6 +1028,21 @@ content_path = "./supabase/templates/password_changed_notification.html"
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("prints API_URL but no REST_URL with -o env when [api] enabled = false", () => {
+    const { layer, out } = setup({
+      goOutput: Option.some("env"),
+      route: defaultRoute({
+        runningNames: ALL_RUNNING_NAMES.filter((name) => !name.includes("_rest_")),
+      }),
+    });
+    return Effect.gen(function* () {
+      yield* writeConfig('project_id = "demo"\n[api]\nenabled = false\n');
+      yield* status(flags());
+      expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+      expect(out.stdoutText).not.toContain("REST_URL=");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("outputs a json object with -o json", () => {
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {

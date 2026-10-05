@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunCrypto } from "@effect/platform-bun";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
@@ -24,6 +24,7 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import {
+  type ApiHandler,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -156,18 +157,24 @@ const baseFlags: FunctionsDownloadFlags = {
   legacyBundle: false,
 };
 
-function multipartResponse(request: Parameters<typeof HttpClientResponse.fromWeb>[0]) {
+function multipartResponse(
+  request: Parameters<typeof HttpClientResponse.fromWeb>[0],
+  {
+    metadata = { deno2_entrypoint_path: "source/index.ts" },
+    contents = "console.log('legacy native')",
+  }: { readonly metadata?: Readonly<Record<string, string>>; readonly contents?: string } = {},
+) {
   const boundary = "legacy-download-test";
   const body = [
     `--${boundary}`,
     'Content-Disposition: form-data; name="metadata"',
     "Content-Type: application/json",
     "",
-    JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+    JSON.stringify(metadata),
     `--${boundary}`,
     'Content-Disposition: form-data; name="file"; filename="source/index.ts"',
     "",
-    "console.log('legacy native')",
+    contents,
     `--${boundary}--`,
     "",
   ].join("\r\n");
@@ -254,6 +261,238 @@ describe("functions download", () => {
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  function nativeDownloadLayer(
+    handler: ApiHandler,
+    args: ReadonlyArray<string> = [
+      "functions",
+      "download",
+      "hello-world",
+      "--project-ref",
+      PROJECT_ID,
+    ],
+  ) {
+    return Layer.mergeAll(
+      buildTestRuntime({
+        out: mockOutput({ format: "text" }),
+        api: mockCommandPlatformApi({ handler }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      mockProxy().layer,
+      Stdio.layerTest({ args: Effect.succeed(args) }),
+    );
+  }
+
+  it.live("downloads an empty function file as an empty file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* functionsDownload(baseFlags);
+
+      expect(
+        yield* fs.readFileString(
+          path.join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+        ),
+      ).toBe("");
+    }).pipe(
+      Effect.provide(
+        nativeDownloadLayer((request) =>
+          request.url.endsWith("/body")
+            ? Effect.succeed(multipartResponse(request, { contents: "" }))
+            : Effect.succeed(jsonResponse(request, 200, {})),
+        ),
+      ),
+    ),
+  );
+
+  it.live("removes the temporary file when a downloaded file cannot be moved into place", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const functionDir = path.join(tempRoot.current, "supabase", "functions", "hello-world");
+      yield* fs.makeDirectory(path.join(functionDir, "index.ts", "occupied"), { recursive: true });
+
+      const error = yield* functionsDownload(baseFlags).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        message: expect.stringMatching(
+          /^failed to move Function file into place: source\/index\.ts: E[A-Z]+: /,
+        ),
+      });
+      expect(yield* fs.readDirectory(functionDir)).toEqual(["index.ts"]);
+    }).pipe(
+      Effect.provide(
+        nativeDownloadLayer((request) =>
+          request.url.endsWith("/body")
+            ? Effect.succeed(multipartResponse(request))
+            : Effect.succeed(jsonResponse(request, 200, {})),
+        ),
+      ),
+    ),
+  );
+
+  it.live("reports malformed function metadata JSON", () =>
+    Effect.gen(function* () {
+      const error = yield* functionsDownload(baseFlags).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        message: "failed to get function metadata: Expected a valid JSON string",
+      });
+    }).pipe(
+      Effect.provide(
+        nativeDownloadLayer((request) =>
+          request.url.endsWith("/body")
+            ? Effect.succeed(multipartResponse(request, { metadata: {} }))
+            : Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("{", { status: 200 })),
+              ),
+        ),
+      ),
+    ),
+  );
+
+  it.live.each([
+    {
+      name: "malformed JSON",
+      body: "{",
+      message: "failed to read functions list: Expected a valid JSON string",
+    },
+    {
+      name: "a non-array body",
+      body: "{}",
+      message: "failed to read functions list: expected functions list response to be an array",
+    },
+    {
+      name: "a non-string slug",
+      body: '[{"slug":1}]',
+      message: "failed to read functions list: expected function slug to be a string, got number",
+    },
+  ])("reports a functions list response with $name", ({ body, message }) =>
+    Effect.gen(function* () {
+      const error = yield* functionsDownload({ ...baseFlags, functionName: Option.none() }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({ message });
+    }).pipe(
+      Effect.provide(
+        nativeDownloadLayer(
+          (request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(body, { status: 200 })),
+            ),
+          ["functions", "download", "--project-ref", PROJECT_ID],
+        ),
+      ),
+    ),
+  );
+
+  it.live("reports a temp directory that cannot be created for the eszip download", () => {
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+
+      const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        message: expect.stringMatching(/^failed to mkdir: E[A-Z]+: .*\.temp/),
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          nativeDownloadLayer(
+            (request) => Effect.succeed(jsonResponse(request, 200, {})),
+            ["functions", "download", "hello-world", "--use-docker", "--project-ref", PROJECT_ID],
+          ),
+          child.layer,
+        ),
+      ),
+    );
+  });
+
+  it.live("reports an eszip path that cannot be written as the raw host error", () => {
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(
+        path.join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+        { recursive: true },
+      );
+
+      const error = yield* functionsDownload({ ...baseFlags, useDocker: true }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        message: expect.stringMatching(
+          /^failed to download file: E[A-Z]+: .*output_hello-world\.eszip/,
+        ),
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          nativeDownloadLayer(
+            (request) => Effect.succeed(jsonResponse(request, 200, {})),
+            ["functions", "download", "hello-world", "--use-docker", "--project-ref", PROJECT_ID],
+          ),
+          child.layer,
+        ),
+      ),
+    );
+  });
+
+  it.live("prints the raw host error when the temporary eszip cannot be removed", () => {
+    const out = mockOutput({ format: "text" });
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      beforeSpawn: (record) =>
+        record.command === "docker" && record.args[0] === "run"
+          ? Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const eszipPath = path.join(
+                tempRoot.current,
+                "supabase",
+                ".temp",
+                "output_hello-world.eszip",
+              );
+              yield* fs.remove(eszipPath);
+              yield* fs.makeDirectory(path.join(eszipPath, "occupied"), { recursive: true });
+            }).pipe(Effect.provide(BunServices.layer), Effect.orDie)
+          : Effect.void,
+    });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api: mockCommandPlatformApi({
+          handler: (request) => Effect.succeed(jsonResponse(request, 200, {})),
+        }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      mockProxy().layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* functionsDownload({ ...baseFlags, useDocker: true });
+
+      expect(out.stderrText).toMatch(
+        /Path is a directory: rm returned EISDIR \(is a directory\) .*output_hello-world\.eszip\n/,
+      );
     }).pipe(Effect.provide(layer));
   });
 

@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 
@@ -23,7 +24,9 @@ const result = await Bun.build({
   define: {
     SUPABASE_CLI_VERSION: JSON.stringify(packageJson.version),
     ...(await stackReleaseDefine()),
-    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+    SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+      await Effect.runPromise(bundleServeMainTemplate()),
+    ),
     // Skips msgpackr's native addon probe at the build host's path, which can hang macOS startup.
     "process.env.MSGPACKR_NATIVE_ACCELERATION_DISABLED": JSON.stringify("true"),
   },

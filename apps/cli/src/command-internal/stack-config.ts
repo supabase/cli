@@ -228,12 +228,6 @@ const ANALYTICS_PORT: PortSetting = {
   key: "port",
   configPath: "analytics.port",
 };
-const ANALYTICS_VECTOR_PORT: PortSetting = {
-  envVar: "SUPABASE_ANALYTICS_VECTOR_PORT",
-  section: "analytics",
-  key: "vector_port",
-  configPath: "analytics.vector_port",
-};
 const EDGE_RUNTIME_INSPECTOR_PORT: PortSetting = {
   envVar: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
   section: "edge_runtime",
@@ -268,7 +262,6 @@ const endpointSettingsByServiceEndpoint: Readonly<Record<string, StackEndpointSe
   "database.sql": DB_PORT,
   "pooler.sql": DB_POOLER_PORT,
   "analytics.http": ANALYTICS_PORT,
-  "vector.http": ANALYTICS_VECTOR_PORT,
   "studio.http": STUDIO_PORT,
   "mail.http": LOCAL_SMTP_PORT,
   "mail.smtp": LOCAL_SMTP_SMTP_PORT,
@@ -659,17 +652,6 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
-    ...(analytics.vector_port === undefined &&
-    envOverride("SUPABASE_ANALYTICS_VECTOR_PORT", undefined, env) === undefined
-      ? {}
-      : {
-          vector_port: resolvedPort(
-            "SUPABASE_ANALYTICS_VECTOR_PORT",
-            analytics.vector_port ?? 0,
-            "analytics.vector_port",
-            env,
-          ),
-        }),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
@@ -1372,24 +1354,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                       vectorMaxIndexes: validatedConfig.storage.vector.max_indexes,
                     },
                     endpoints: { http: endpoint(apiPort) },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
-            ...(validatedConfig.analytics.enabled
-              ? [
-                  {
-                    service: "vector" as const,
-                    config: { apiKey: "api-key" },
-                    endpoints: {
-                      http: endpoint(
-                        resolvePort(
-                          ANALYTICS_VECTOR_PORT,
-                          document,
-                          validatedConfig.analytics.vector_port ?? 0,
-                          context.projectEnvValues,
-                        ),
-                      ),
-                    },
                   } satisfies ServiceCreationType,
                 ]
               : []),

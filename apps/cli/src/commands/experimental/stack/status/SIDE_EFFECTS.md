@@ -9,7 +9,7 @@ a stack addressed with `--stack-id` when project configuration is missing or
 invalid.
 
 Target selection accepts the current project, `--stack <name>`, or
-`--stack-id <id>`. `--stack` and `--stack-id` are mutually exclusive. Explicit
+`--stack-id <id or unique prefix>`. `--stack` and `--stack-id` are mutually exclusive. Explicit
 legacy `-o/--output` values are rejected; use `--output-format` instead, or
 `--env` in place of the `env` value.
 
@@ -31,7 +31,8 @@ available while the owner is unavailable. It reports `config_drift.status` as `u
 loading failure or unreadable saved state keeps the saved stack report available and is shown as
 `config_drift.status: "unavailable"` with a message in JSON. Status does not apply current configuration. The `services` list may include
 saved standalone instances; composition members identify the services used for
-primary database, environment export, and drift comparisons.
+primary database, environment export, and drift comparisons. Vector instances saved by earlier
+releases are omitted without rewriting saved state.
 
 Text output starts with one line naming the stack, its readiness, runtime, and
 project directory, noting when the owner is unavailable. It then prints the

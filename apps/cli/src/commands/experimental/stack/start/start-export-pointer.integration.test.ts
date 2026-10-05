@@ -84,7 +84,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     prepare: Effect.die("unused"),
     status: Effect.succeed(observation),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
     saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),

@@ -337,9 +337,10 @@ export function gateStatusState(
   const { edgeRuntimeEnabled, storageS3ProtocolEnabled } = localState;
   const isExcluded = (id: string) => excluded.includes(id);
 
-  const kongEnabled = apiEnabled && !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
+  // `start` runs Kong regardless of `api.enabled`, which gates only PostgREST.
+  const kongEnabled = !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
   const postgrestEnabled =
-    kongEnabled && !isExcluded(containerIds.rest) && !isExcluded(POSTGREST_IMAGE_NAME);
+    apiEnabled && !isExcluded(containerIds.rest) && !isExcluded(POSTGREST_IMAGE_NAME);
   const studioEnabled =
     studioSectionEnabled && !isExcluded(containerIds.studio) && !isExcluded(STUDIO_IMAGE_NAME);
   const authEnabled =

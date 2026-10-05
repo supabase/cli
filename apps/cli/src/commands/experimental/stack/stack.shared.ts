@@ -71,13 +71,18 @@ export const validateStackTarget = (input: {
       )
     : Effect.void;
 
+const isStackId = Schema.is(StackId);
+const STACK_ID_PREFIX = /^[0-9a-f]{4,64}$/;
+
 const validateStackId = (id: string): Effect.Effect<string, StackTargetError> =>
-  Schema.is(StackId)(id)
+  STACK_ID_PREFIX.test(id)
     ? Effect.succeed(id)
     : Effect.fail(
         new StackTargetError({
-          message: "--stack-id must be a lowercase SHA-256 stack id",
+          message:
+            "--stack-id must be a lowercase hexadecimal stack id or a prefix of at least 4 characters",
           reason: "flags",
+          suggestion: "Copy the ID column from `supabase stack list`.",
         }),
       );
 
@@ -95,6 +100,9 @@ export const rejectStackOutput = (
       )
     : Effect.void;
 
+const stateError = (cause: StackError) =>
+  new StackTargetError({ message: cause.message, reason: "invalid-config", cause });
+
 const runtimeForFlag = (runtime: "auto" | StackRuntime): StackTarget["runtime"] =>
   runtime === "auto" ? undefined : runtime;
 
@@ -103,7 +111,7 @@ const runtimeMatches = (
   requested: StackTarget["runtime"],
 ): boolean => requested === undefined || saved === requested;
 
-/** Resolves an existing stack by id or by the package identity of the project and stack name. */
+/** Resolves an existing stack by id, unique id prefix, or the identity of the project and stack name. */
 export const stackTargetResolverLayer = Layer.effect(
   StackTargetResolver,
   Effect.gen(function* () {
@@ -111,6 +119,40 @@ export const stackTargetResolverLayer = Layer.effect(
     const stackApi = yield* StackApi;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const findByIdPrefix = Effect.fn("StackTargetResolver.findByIdPrefix")(function* (
+      stateRoot: string,
+      prefix: string,
+    ) {
+      const unreadable: Array<{ readonly id: string; readonly error: Error }> = [];
+      const matches = yield* stackApi
+        .discover({
+          stateRoot,
+          idPrefix: prefix,
+          onInvalidState: (id, error) => Effect.sync(() => unreadable.push({ id, error })),
+        })
+        .pipe(Effect.mapError(stateError));
+      const matchedIds = [
+        ...matches.map(({ definition }) => definition.id),
+        ...unreadable.map(({ id }) => id),
+      ];
+      yield* Effect.annotateCurrentSpan({ "stack.id_prefix_matches": matchedIds.length });
+      if (matchedIds.length > 1)
+        return yield* new StackTargetError({
+          message: `Stack id prefix ${prefix} matches ${matchedIds.length} stacks: ${matchedIds.join(", ")}`,
+          reason: "flags",
+          suggestion: "Pass more characters of one of the listed stack ids.",
+        });
+      const [invalid] = unreadable;
+      if (invalid !== undefined)
+        return yield* new StackTargetError({
+          message: `Stack ${invalid.id} could not be read: ${invalid.error.message}`,
+          reason: "invalid-config",
+          suggestion:
+            "Inspect the stack registry under $SUPABASE_HOME/stacks or ~/.supabase/stacks.",
+          cause: invalid.error,
+        });
+      return matches[0];
+    });
     const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {
       readonly projectRoot: string;
       readonly name?: string;
@@ -120,31 +162,25 @@ export const stackTargetResolverLayer = Layer.effect(
       const id = input.id === undefined ? undefined : yield* validateStackId(input.id);
       const requestedRuntime = runtimeForFlag(input.runtime);
       const stateRoot = path.join(settings.supabaseHome, "stacks");
-      const found = yield* stackApi
-        .find(
-          id === undefined
-            ? {
-                stateRoot,
-                projectRoot: input.projectRoot,
-                ...(input.name === undefined ? {} : { name: input.name }),
-              }
-            : { stateRoot, id },
-        )
-        .pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.mapError(
-            (cause) =>
-              new StackTargetError({
-                message: cause.message,
-                reason: "invalid-config",
-                cause,
-              }),
-          ),
-        );
+      const found =
+        id === undefined || isStackId(id)
+          ? yield* stackApi
+              .find(
+                id === undefined
+                  ? {
+                      stateRoot,
+                      projectRoot: input.projectRoot,
+                      ...(input.name === undefined ? {} : { name: input.name }),
+                    }
+                  : { stateRoot, id },
+              )
+              .pipe(Effect.map(Option.getOrUndefined), Effect.mapError(stateError))
+          : yield* findByIdPrefix(stateRoot, id);
       if (id !== undefined && found === undefined)
         return yield* new StackTargetError({
           message: `Stack ${id} was not found`,
           reason: "flags",
+          suggestion: "Run `supabase stack list` to see managed stacks and their IDs.",
         });
       if (found !== undefined && !runtimeMatches(found.definition.runtime, requestedRuntime))
         return yield* new StackTargetError({
@@ -183,8 +219,6 @@ export const stackCapabilityForService = (service: ServiceCreation["service"]) =
   switch (service) {
     case "imgproxy":
       return "storage";
-    case "vector":
-      return "analytics";
     case "pgmeta":
       return "studio";
     default:

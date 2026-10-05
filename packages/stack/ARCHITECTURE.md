@@ -217,7 +217,7 @@ Namespace stop also cancels and settles attached jobs before StackHost shutdown;
 
 For example, REST binds to the primary database; a shadow database has no relationship to it unless the caller asks to copy its initialization profile. Functions may run without PostgreSQL or Auth. An API URL in configuration is not automatically a hard lifecycle dependency.
 
-For example, Studio and pg-meta are separate service instances. Each has its own ID, configuration, lifecycle and health. Composition declares the relevant edges explicitly. Storage and imgproxy, or Logflare and Vector, follow the same rule when selected; there is no parent handle that starts private children or computes combined health.
+For example, Studio and pg-meta are separate service instances. Each has its own ID, configuration, lifecycle and health. Composition declares the relevant edges explicitly. Storage and imgproxy follow the same rule when selected; there is no parent handle that starts private children or computes combined health.
 
 ```mermaid
 flowchart LR
@@ -446,15 +446,15 @@ Definition changes (service creation and destruction, composition configuration 
 
 ### Proposed RPC surface
 
-| Area                 | Methods                                                                                                                | Responsibility                                                |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| Host                 | `host.describe`, `host.stop`, `host.destroy`                                                                           | Inspect the stack; stop or destroy everything it owns         |
-| Registry             | `services.create`, `services.get`, `services.list`                                                                     | Create and locate instances                                   |
-| Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                               | Operate one instance                                          |
-| Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.logs`, `service.followLogs`, `service.credentials` | Read state, await health and inspect outputs                  |
-| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                                    | Database-specific managed storage operations                  |
-| Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart`        | Define and operate the application selection and dependencies |
-| Commands             | `runCommand`, `commandInput`                                                                                           | Execute an attached command with streamed input/output        |
+| Area                 | Methods                                                                                                         | Responsibility                                                |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Host                 | `host.describe`, `host.stop`, `host.destroy`                                                                    | Inspect the stack; stop or destroy everything it owns         |
+| Registry             | `services.create`, `services.get`, `services.list`                                                              | Create and locate instances                                   |
+| Instance lifecycle   | `service.prepare`, `service.start`, `service.stop`, `service.restart`, `service.destroy`                        | Operate one instance                                          |
+| Instance observation | `service.status`, `service.ready`, `service.followStatus`, `service.readLogs`, `service.credentials`            | Read state, await health and inspect outputs                  |
+| Database snapshots   | `database.saveSnapshot`, `database.restoreSnapshot`                                                             | Database-specific managed storage operations                  |
+| Composition          | `composition.configure`, `composition.describe`, `composition.start`, `composition.stop`, `composition.restart` | Define and operate the application selection and dependencies |
+| Commands             | `runCommand`, `commandInput`                                                                                    | Execute an attached command with streamed input/output        |
 
 These are proposed wire names. Public `shadow.start()` maps to `service.start({ id })`; `stack.stop()` maps to `host.stop`. Public `stack.composition.stop()` leaves the host and independent instances available. `composition.configure` sends validated declarative membership, edges and input wiring, not executable callbacks. Configuration changes use the same graph and lifecycle admission rules as other mutations.
 
@@ -639,7 +639,90 @@ The state root is the stack registry root. Each stack keeps one state document a
 <stateRoot>/<stack-id>/owner.lock    lease; opened only by SQLite
 <stateRoot>/<stack-id>/owner.json    endpoint of the lease holder
 <stateRoot>/<stack-id>/owner.log     owner stdout and stderr, truncated at each owner start
+<stateRoot>/<stack-id>/logs/<service>/<instance-id>/<generation>.log   persisted service output
 ```
+
+#### Persisted service logs
+
+The owner is the only subscriber of each instance's output and persists it as records:
+
+- **Format:** one record per line, ended by `\n`, `\r\n` or a lone `\r` so carriage-return progress
+  updates become separate records: `<ISO time> <stdout|stderr|launch|lost> <launch id>[ truncated] | <text>`.
+  Records carry the publish time of their first byte; lines are cut at 32 KiB.
+- **Segments:** immutable and generation-named. Each owner start opens a new generation on the
+  instance's first output, and a record that would take a segment past 5 MiB starts the next one.
+- **Retention:** the oldest closed segments except the newest are deleted while an instance holds
+  more than 10 MiB or 64 segments. A failed deletion is retried at the next rotation, with one
+  warning until a pass succeeds.
+- **Launch ids:** keep increasing across owner starts, since each saved instance records its latest
+  one; an instance saved without one continues after the launch ids at the end of its newest segment.
+- **Lines:** state is kept per launch, process and stream. A late partial line of an ended launch
+  waits for its newline for two seconds of quiet, or until the store closes.
+- **Loss:** chunk sequence numbers span a launch's streams and processes, so any dropped chunk
+  shows as `lost`, without a stream since the dropped chunks' streams are unknown, and the owner log warns once per launch that dropped output. Chunks the in-memory output buffer dropped, chunks still queued when
+  a bounded drain at close ran out, and records that failed to write are recorded as `lost`; a write
+  that fails part-way can count records that did land, so the count is an upper bound. Closing
+  aborts filesystem work still pending after 5 seconds; output not yet written by then is not recorded.
+- **Readers:** every reader, live or offline, reads segments by position, so history and following
+  share one path. A follow can resume at a record position, and a reader that finds its segment
+  deleted reports a `lost` gap marker, which carries `resumeAt` instead of a record position.
+- **Deletion:** destroying an instance deletes its segments, and an owner start removes directories
+  of instances no longer saved, so a failed deletion is retried. Destroying the stack removes
+  `logs/`; resetting database data keeps them.
+
+#### Shipping logs to Analytics
+
+While the composed Analytics instance is running and healthy, the owner ships the persisted
+stdout/stderr records of the Auth, REST, Realtime, Storage, Functions and database instances of the
+composition to its direct backend, never the proxy, so shipping neither wakes it nor counts as
+activity; standalone instances such as shadow databases are not shipped. The owner logs
+each target change, and the target is re-selected when the composition, Analytics' health or its
+launch changes.
+
+- **Bodies:** at most 256 events and 1 MiB. Bodies of an instance are sequential, and event ids
+  derive from the instance and record position.
+- **Cursor:** each instance reads from `cursor.json` in its logs directory: the position of its last
+  confirmed record plus an optional pending body (its end position, source, event ids, the Analytics
+  launch its latest post went to, and when that post ends at the latest). A missing or unreadable
+  cursor starts at the oldest retained segment, and a cursor in a deleted segment resumes at the
+  next retained one. A failed log read restarts the instance from its cursor after a capped
+  backoff, and attaching an instance removes temporary cursor writes a dead owner left behind.
+- **Why delivery is confirmed:** Logflare answers a post once it queued the events and stores them
+  later in per-source batches; a batch holding an id already stored is dropped whole.
+- **Stored-id check:** the owner reads which ids `_analytics.log_events_<token>` holds, resolving the
+  token from `_analytics.sources`, in the database Logflare keeps its sources and events in:
+  `_supabase` on the host and port of Analytics' database URL (reached at the bound database's
+  endpoint when the composition binds it), with `supabase_admin`/`postgres` for credentials the URL
+  omits. A source Analytics does not know, or a failed query, leaves the stored state unknown: the
+  check is retried and shipping waits, with one warning per outage. A known source without a table
+  holds no events. The check depends on Logflare's private table layout, which the owner's Analytics
+  integration test pins.
+- **Posting:** the pending body is written atomically before each post, and a failed write blocks
+  posting. Only ids not yet stored are posted. A post ends by its 5 second timeout, which the
+  pending body records. The owner polls the stored ids until all are stored, then advances the
+  cursor and clears the pending body.
+- **Reposting:** a post that succeeded, timed out or broke after it was sent is not repeated to the
+  Analytics launch that took it while that launch may still store it. Ids still missing are posted
+  again once the launch can no longer store them: 5 seconds after the post ended for a launch of
+  this owner, which starts a launch only after the previous one exited, and 60 seconds after it
+  for another owner's launch, whose process may still be draining. Any other HTTP status and a
+  request that was never sent are posted again 5 seconds later.
+- **Lost batches:** ids the serving launch leaves unstored for 60 seconds of serving are posted
+  again in halves until each unstored one was posted alone. A lone unstored id is skipped once a
+  later post of its source to the launch was stored, which shows Analytics stores that source;
+  otherwise it stays pending and is posted alone again, so an Analytics that stores nothing loses
+  nothing. Each round warns once.
+- **Statuses:** a 401, 403 or 404 response clears the pending body and pauses the instance with its
+  cursor until the target changes; after any other 4xx except 408 and 429 the body is posted again
+  in halves, and only events still rejected on their own are skipped.
+- **Sanitizing:** event text and metadata strings have NUL and unpaired surrogates replaced with
+  U+FFFD before posting, because Postgres `jsonb` rejects them and drops the whole batch.
+- **Recovery and retargets:** a start, restart or retarget reconciles a pending body before later
+  records; pending records already deleted by retention are skipped with a warning. A retarget
+  waits for a post in flight, and a retired target's stored-event view stays open until its
+  sessions end.
+
+#### Registry lock
 
 Registry updates use an OS-backed lock through a private `node:sqlite` connection to
 `<stateRoot>/.registry-lock.sqlite`. Each `withLock` call opens its own connection, disables
@@ -649,6 +732,8 @@ process death also releases ownership. The file stays in place and is accessed o
 SQLite. No tables, state records, or WAL are created there. Saved stack data remains in JSON;
 the lock does not make multi-file operations transactional or recover interrupted operations.
 This uses the built-in SQLite API available in the pinned Bun runtime and modern Node.js.
+
+#### Stop and destroy
 
 The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document, owner files and proven-owned, empty parents; the lease file goes last, while its lock is still held; caller-owned paths such as Storage uploads remain untouched.
 

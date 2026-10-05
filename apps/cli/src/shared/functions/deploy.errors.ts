@@ -50,3 +50,9 @@ export class FunctionImportNotDirectoryError extends Data.TaggedError(
     return actionability.invalidConfig;
   }
 }
+
+export class FunctionDeployError extends Data.Error<{ readonly message: string }> {}
+
+export class FunctionImportMapSyntaxError extends Data.Error<{ readonly message: string }> {
+  override readonly name = "SyntaxError";
+}

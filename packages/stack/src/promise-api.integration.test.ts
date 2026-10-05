@@ -1,7 +1,7 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Redacted, Schema } from "effect";
-import { discover, StackError, type Observation } from "./index.ts";
+import { discover, StackError, type LogRecord, type Observation } from "./index.ts";
 import { createTestStack } from "./testing.ts";
 import { sharedStateRoot } from "../tests/helpers/integration-state.ts";
 
@@ -25,6 +25,13 @@ it.live(
       const stopped = yield* Effect.promise(() => database.status());
       expect(Exit.isExit(stopped.exit)).toBe(true);
       expect(Redacted.isRedacted(databaseSecret(stopped))).toBe(true);
+      // oxlint-disable-next-line effecttsgo/async-function -- This test exercises the Promise client API.
+      const tailed = yield* Effect.promise(async () => {
+        const records: Array<LogRecord> = [];
+        for await (const record of database.readLogs({ tail: 1 })) records.push(record);
+        return records;
+      });
+      expect(tailed).toHaveLength(1);
 
       yield* Effect.promise(() => test.stack.composition.start());
       const members = yield* Effect.promise(() => test.stack.composition.stop());
