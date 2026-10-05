@@ -71,8 +71,8 @@ const legacyDocument = (id: string, projectRoot: string) => ({
     ],
   },
   ports: [
-    { key: "vector:http", host: "127.0.0.1", port: 24_501 },
-    { key: "mail:http", host: "127.0.0.1", port: 24_502 },
+    { key: "vector:http", host: "127.0.0.1", port: 19_501 },
+    { key: "mail:http", host: "127.0.0.1", port: 19_502 },
   ],
 });
 

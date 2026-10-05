@@ -2,7 +2,6 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
-  Crypto,
   Effect,
   Exit,
   Fiber,
@@ -15,7 +14,8 @@ import {
   Stream,
 } from "effect";
 import { tmpdir } from "node:os";
-import { ownerFor } from "../tests/owner-rpc.ts";
+import { ownerFor, registerLeased } from "../tests/owner-rpc.ts";
+import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
 import type { LogRecord } from "./host/LogRecord.ts";
 import { StackError, streamStackLogs } from "./effect.ts";
 import * as LogStore from "./host/LogStore.ts";
@@ -35,34 +35,44 @@ const stackFor = (id: string, runtime: SavedStack["runtime"]): SavedStack => ({
   ports: [],
 });
 
-/** Opens an owner that destroys its stack on scope exit unless `kept` preserves it for a later read. */
+/** Leases a fresh stack on the shared state root for the enclosing scope. */
+const registerStack = (prefix: string, runtime: SavedStack["runtime"]) =>
+  Effect.gen(function* () {
+    const stack = stackFor(uniqueStackId(prefix), runtime);
+    const stateRoot = sharedStateRoot();
+    const state = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+    yield* registerLeased(state, stack);
+    return { stack, state, stateRoot };
+  });
+
+/**
+ * Opens an owner for an already-registered stack, destroying it on scope exit unless `persist`
+ * keeps it for a later reopen. Call `registerStack` in the enclosing scope so a reopen after an
+ * inner scope closes reuses its lease instead of taking it again.
+ */
 const openOwner = (
-  prefix: string,
-  runtime: SavedStack["runtime"],
-  kept?: { readonly root: string },
+  registered: {
+    readonly stack: SavedStack;
+    readonly state: State.Interface;
+    readonly stateRoot: string;
+  },
+  dataRoot: string,
+  persist = false,
 ) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const crypto = yield* Crypto.Crypto;
-    const root = kept?.root ?? (yield* fs.makeTempDirectoryScoped({ prefix }));
-    const stack = stackFor(
-      `owner-logs-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`,
-      runtime,
-    );
-    const state = Context.get(
-      yield* Layer.build(State.layer({ root: `${root}/state` })),
-      State.Service,
-    );
-    yield* state.save(stack);
-    const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
-    if (kept === undefined)
-      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+    const owner = yield* ownerFor({
+      saved: registered.stack,
+      state: registered.state,
+      root: `${dataRoot}/data`,
+      cacheRoot,
+    });
+    if (!persist) yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
     return {
       ...owner,
-      state,
-      stack,
-      stateRoot: `${root}/state`,
-      logsRoot: state.logsRoot(stack.id),
+      state: registered.state,
+      stack: registered.stack,
+      stateRoot: registered.stateRoot,
+      logsRoot: registered.state.logsRoot(registered.stack.id),
     };
   });
 
@@ -86,7 +96,9 @@ describe("owner persisted logs", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const owner = yield* openOwner("owner-logs-native-", "native");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-native-" });
+        const registered = yield* registerStack("owner-logs-native", "native");
+        const owner = yield* openOwner(registered, root);
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
@@ -122,10 +134,9 @@ describe("owner persisted logs", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-offline-" });
+        const registered = yield* registerStack("owner-logs-offline", "native");
         const ownerScope = yield* Scope.make();
-        const owner = yield* openOwner("owner-logs-offline-", "native", { root }).pipe(
-          Scope.provide(ownerScope),
-        );
+        const owner = yield* openOwner(registered, root, true).pipe(Scope.provide(ownerScope));
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
@@ -156,10 +167,9 @@ describe("owner persisted logs", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-relaunch-" });
+        const registered = yield* registerStack("owner-logs-relaunch", "native");
         const firstRun = yield* Scope.make();
-        const owner = yield* openOwner("owner-logs-relaunch-", "native", { root }).pipe(
-          Scope.provide(firstRun),
-        );
+        const owner = yield* openOwner(registered, root, true).pipe(Scope.provide(firstRun));
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
@@ -169,13 +179,14 @@ describe("owner persisted logs", () => {
         yield* owner.rpc.readyService({ id: mail.id });
         yield* owner.rpc.stopService({ id: mail.id });
         yield* Scope.close(firstRun, Exit.void);
-        const state = Context.get(
-          yield* Layer.build(State.layer({ root: owner.stateRoot })),
-          State.Service,
-        );
-        const saved = yield* state.read(owner.stack.id);
+        const saved = yield* registered.state.read(registered.stack.id);
         if (saved === undefined) return yield* Effect.die("stack state missing");
-        const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        const restarted = yield* ownerFor({
+          saved,
+          state: registered.state,
+          root: `${root}/data`,
+          cacheRoot,
+        });
         yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
 
         const launched = yield* awaitLaunches(
@@ -201,21 +212,16 @@ describe("owner persisted logs", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-unsaved-launch-" });
+        const registered = yield* registerStack("owner-logs-unsaved-launch", "native");
         const firstRun = yield* Scope.make();
-        const owner = yield* openOwner("owner-logs-unsaved-launch-", "native", { root }).pipe(
-          Scope.provide(firstRun),
-        );
+        const owner = yield* openOwner(registered, root, true).pipe(Scope.provide(firstRun));
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
           endpoints: { http: { port: "auto" } },
         });
         yield* Scope.close(firstRun, Exit.void);
-        const state = Context.get(
-          yield* Layer.build(State.layer({ root: owner.stateRoot })),
-          State.Service,
-        );
-        const saved = yield* state.read(owner.stack.id);
+        const saved = yield* registered.state.read(registered.stack.id);
         if (saved === undefined) return yield* Effect.die("stack state missing");
         // Logs a state saved before launch ids were persisted left behind at launch 3.
         const directory = `${owner.logsRoot}/mail/${mail.id}`;
@@ -224,7 +230,12 @@ describe("owner persisted logs", () => {
           `${directory}/0000000001.log`,
           "2026-01-01T00:00:00.000Z launch 3 | \n2026-01-01T00:00:00.001Z stdout 3 | earlier\n",
         );
-        const restarted = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        const restarted = yield* ownerFor({
+          saved,
+          state: registered.state,
+          root: `${root}/data`,
+          cacheRoot,
+        });
         yield* Effect.addFinalizer(() => restarted.namespace.destroy.pipe(Effect.ignore));
 
         const launched = yield* awaitLaunches(
@@ -249,7 +260,10 @@ describe("owner persisted logs", () => {
   it.live("resumes a follow at a record position without replaying earlier records", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const owner = yield* openOwner("owner-logs-resume-", "native");
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-resume-" });
+        const registered = yield* registerStack("owner-logs-resume", "native");
+        const owner = yield* openOwner(registered, root);
         const mail = yield* owner.rpc.createService({
           service: "mail",
           config: {},
@@ -286,7 +300,9 @@ describe("owner persisted logs", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const owner = yield* openOwner("owner-logs-reset-", "native");
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-reset-" });
+          const registered = yield* registerStack("owner-logs-reset", "native");
+          const owner = yield* openOwner(registered, root);
           const database = yield* owner.rpc.createService({
             service: "database",
             config: {
@@ -322,7 +338,10 @@ describe("owner persisted logs", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const owner = yield* openOwner("owner-logs-docker-", "docker");
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-docker-" });
+          const registered = yield* registerStack("owner-logs-docker", "docker");
+          const owner = yield* openOwner(registered, root);
           const mail = yield* owner.rpc.createService({
             service: "mail",
             config: {},

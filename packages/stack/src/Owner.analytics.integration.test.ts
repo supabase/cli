@@ -23,7 +23,8 @@ import * as State from "./State.ts";
 import type { SavedStack } from "./State.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
-import { ownerFor } from "../tests/owner-rpc.ts";
+import { ownerFor, registerLeased } from "../tests/owner-rpc.ts";
+import { sharedStateRoot, uniqueStackId } from "../tests/helpers/integration-state.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -89,11 +90,10 @@ const startStack = (
   analyticsIdleMillis?: number,
 ) =>
   Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const crypto = yield* Crypto.Crypto;
     const client = yield* HttpClient.HttpClient;
-    const stackId = `${name}-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
-    const root = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId);
+    const stackId = uniqueStackId(name);
+    const stateRoot = sharedStateRoot();
+    const root = yield* makeDockerDatabaseRoot(`stack-${name}-`, stackId, { stateRoot });
     const saved: SavedStack = {
       id: stackId,
       identity: { projectRoot: "/tmp/project", branchContext: name, stackName: stackId },
@@ -103,11 +103,8 @@ const startStack = (
       composition: { members: [], dependencies: [] },
       ports: [],
     };
-    const state = Context.get(
-      yield* Layer.build(State.layer({ root: path.dirname(path.dirname(root)) })),
-      State.Service,
-    );
-    yield* state.save(saved);
+    const state = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+    yield* registerLeased(state, saved);
     const owner = yield* ownerFor({ saved, state, root, cacheRoot });
     yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
