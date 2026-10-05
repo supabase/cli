@@ -42,6 +42,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const database = yield* makeService(databaseRecipe.definition, {
             id: "database",
@@ -57,6 +58,7 @@ describe("service catalog", () => {
               config: { databaseUrl, jwtSecret: secret, jwtExpiry: 3600 },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const auth = yield* makeService(authRecipe.definition, {
             id: "auth",
@@ -98,6 +100,7 @@ describe("service catalog", () => {
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: storageRoot } },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const imgproxy = yield* makeService(imgproxyRecipe.definition, {
             id: "imgproxy",
@@ -117,6 +120,7 @@ describe("service catalog", () => {
               },
             },
             dockerOptions(root),
+            Effect.succeed([]),
           );
           const storage = yield* makeService(storageRecipe.definition, {
             id: "storage",

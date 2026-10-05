@@ -148,19 +148,31 @@ the same day compare equal and never produce an upgrade; the manual `--release` 
 build.
 
 Plan and apply run from the same checkout of the default branch in one job, so a re-run always
-recomputes from the latest develop: a stale plan can never be applied, and a superseded PR's
-branch is rewritten (force-pushed) in place rather than raced by a new one — a superseded PR is
-never auto-closed. A backlog republish of an older upstream version naturally plans nothing. The
-fallback, if the push or PR step fails, is a documented manual `bun
+recomputes from the latest develop: a stale plan can never be applied, and a superseded PR's branch
+is rewritten (force-pushed) in place rather than raced by a new one — a superseded PR is never
+auto-closed. A backlog republish of an older upstream version naturally plans nothing. A branch
+whose PR is in the merge queue rejects the force-push; the run waits up to 30 minutes (less when
+earlier work leaves the app token too little lifetime) for the queue to merge or drop that PR, then
+re-sends the same dispatch and stops, so a fresh run re-plans every remaining update from the
+updated default branch. At most three re-sends run in a row. The concurrency group keeps every
+pending run (`queue: max`), so a replay never cancels a newer dispatch and its release-visibility
+wait. A queue that holds the branch longer, or a failed queue lookup or dispatch, fails the run with
+the manual invocation below. The fallback, if the push or PR step fails, is a documented manual `bun
 .github/scripts/sync-artifacts-catalog.ts --service <svc> --release <U>-r<N>` invocation, followed
 by `apps/cli/scripts/render-service-dockerfile.ts` — the release itself is already committed by
 then, so a failure here means "open the pull request by hand", not "republish".
 
-The app token (contents and pull-requests write) never reaches third-party code or disk: `git
-push` takes it only inside an explicit URL (`PUSH_REMOTE_URL` overrides it, so a dry run can
-target a local bare repository), and each `gh` call gets it inline. The sync script, the
-Dockerfile generator and the formatter all run with it unset, so a compromised transitive
-dependency of any of them cannot read it.
+Each opened or rewritten PR is approved by `supabase-oss`, which co-owns the generated files in
+`.github/CODEOWNERS` because the app cannot approve its own PR, and has auto-merge enabled, so a
+green PR enters the merge queue without a human review. The approval token lives in the
+`auto-approve` environment, which only deploys from the default branch, so a workflow on any other
+branch cannot approve with it.
+
+The app token (contents and pull-requests write) and the approval token never reach third-party
+code or disk: `git push` takes the app token only inside an explicit URL (`PUSH_REMOTE_URL`
+overrides it, so a dry run can target a local bare repository), and each `gh` call gets its token
+inline. The sync script, the Dockerfile generator and the formatter all run with both unset, so a
+compromised transitive dependency of any of them cannot read them.
 
 ### Registry and bucket mirrors
 
