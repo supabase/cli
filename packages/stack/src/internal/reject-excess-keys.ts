@@ -8,10 +8,11 @@ import { Schema } from "effect";
 export const rejectExcessKeys = <S extends Schema.Struct<Schema.Struct.Fields>>(struct: S) =>
   Schema.Record(Schema.String, Schema.Unknown).pipe(
     Schema.check(
-      Schema.makeFilter((input) => {
-        const excess = Object.keys(input).filter((key) => !(key in struct.fields));
-        return excess.length === 0 ? undefined : `Unexpected keys: ${excess.join(", ")}`;
-      }),
+      Schema.makeFilter((input) =>
+        Object.keys(input)
+          .filter((key) => !(key in struct.fields))
+          .map((key) => ({ path: [key], issue: "Expected no excess property" })),
+      ),
     ),
     Schema.decodeTo(struct),
   );
