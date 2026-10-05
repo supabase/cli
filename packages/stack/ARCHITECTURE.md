@@ -688,6 +688,9 @@ process death also releases ownership. The file stays in place and is accessed o
 SQLite. No tables, state records, or WAL are created there. Saved stack data remains in JSON;
 the lock does not make multi-file operations transactional or recover interrupted operations.
 This uses the built-in SQLite API available in the pinned Bun runtime and modern Node.js.
+Every lock connection in a process goes through that one SQLite library, which tracks locks per
+file across connections, so a second connection in the same process is excluded exactly as another
+process would be, and closing one connection never releases a lock another still holds.
 
 The artifact cache is independent and shared across stacks. Normal stop preserves the stack directory and service data. Destroy removes the state document, owner files and proven-owned, empty parents; the lease file goes last, while its lock is still held; caller-owned paths such as Storage uploads remain untouched.
 

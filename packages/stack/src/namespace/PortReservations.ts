@@ -1,10 +1,10 @@
 import { userInfo } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import { NodeServices } from "@effect/platform-node";
-import { Context, Effect, FileSystem, Layer, Path, Predicate, Stream } from "effect";
+import { Context, Effect, FileSystem, Layer, Path, Predicate, Scope, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
-import { errcode, openSharedConnection } from "./drivers/Sqlite.ts";
+import { errcode, openDatabase } from "./drivers/Sqlite.ts";
 import { lstatPath } from "./drivers/FileSystem.ts";
 
 /** Identifies the stack that owns a port reservation. */
@@ -88,8 +88,8 @@ const isHolderRow = (value: unknown): value is HolderRow =>
   Predicate.hasProperty(value, "stack_id") &&
   typeof value.stack_id === "string";
 
-const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError> =>
-  openSharedConnection(file, (connection) => {
+const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError, Scope.Scope> =>
+  openDatabase(file, (connection) => {
     // Short and bounded: real contention between two of this user's processes is brief, and
     // a blocking wait here is simpler than an async retry loop for a database this small. Set
     // before the schema statement, so even first-time table creation waits out a racing peer
@@ -205,7 +205,7 @@ const resolvedHome: Effect.Effect<string, NamespaceError> = Effect.runSync(
 const make = Effect.fn("PortReservations.make")(function* (): Effect.fn.Return<
   Interface,
   NamespaceError,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | Scope.Scope
 > {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

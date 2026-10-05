@@ -30,23 +30,15 @@ const closeConnection = (connection: DatabaseSync) =>
   });
 
 /**
- * One connection per resolved database path for a caller's process lifetime, running `init` only
- * on first open. POSIX advisory locks (and the SQLite locks built on them) belong to a process,
- * not a descriptor: a second connection this process opened on the same path would not see the
- * first one's transaction as contention, so every caller sharing a path must share one connection
- * instead of risking that coalescing.
+ * Opens `path` for the enclosing scope and runs `init` once on the new connection; a failing
+ * `init` closes the connection before the error propagates.
  */
-const sharedConnections = new Map<string, DatabaseSync>();
-
-/** Opens (or reuses) `path`'s process-lifetime shared connection; never closed until the process exits. */
-export const openSharedConnection = (
+export const openDatabase = (
   path: string,
   init: (connection: DatabaseSync) => void,
-): Effect.Effect<DatabaseSync, NamespaceError> =>
-  Effect.suspend(() => {
-    const existing = sharedConnections.get(path);
-    if (existing !== undefined) return Effect.succeed(existing);
-    return Effect.try({
+): Effect.Effect<DatabaseSync, NamespaceError, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.try({
       try: () => {
         const connection = new DatabaseSync(path);
         try {
@@ -55,12 +47,15 @@ export const openSharedConnection = (
           connection.close();
           throw error;
         }
-        sharedConnections.set(path, connection);
         return connection;
       },
       catch: (cause) => namespaceError("open", cause),
-    });
-  });
+    }),
+    (connection) =>
+      closeConnection(connection).pipe(
+        Effect.catch((error) => Effect.logWarning(`Unable to close ${path}`, error)),
+      ),
+  );
 
 /** Matches a `NamespaceError`'s cause against one of `node:sqlite`'s numeric `errcode`s. */
 export const errcode = (cause: unknown, code: number) =>
@@ -69,41 +64,21 @@ export const errcode = (cause: unknown, code: number) =>
 export const isBusy = (error: NamespaceError) => errcode(error.cause, 5);
 /** `acquireLock("existing")` reports this errcode when the database file does not exist. */
 export const isMissing = (error: NamespaceError) => errcode(error.cause, 14);
-const busy = (operation: string) =>
-  namespaceError(operation, Object.assign(new Error("locked by this process"), { errcode: 5 }));
-
 /**
- * Canonical paths this process currently has a connection open on. POSIX advisory locks (and the
- * SQLite locks built on them) belong to a process, not a descriptor: a second connection this
- * process opened on the same path would not see the first one's lock as contention, so it would
- * wrongly appear to succeed instead of reporting busy. Checking this set first, before opening a
- * second descriptor, rules that out: a path already open in this process is always busy.
- */
-const openPaths = new Set<string>();
-
-/**
- * Opens `path`'s connection for the enclosing scope; busy if this process already has it open.
- * Reserving the path and opening the connection happen as one `acquireRelease` acquisition, so an
- * interruption can never leave the path reserved without a connection whose release clears it.
+ * Opens `path`'s connection for the enclosing scope. Every connection this process opens on a
+ * path shares one SQLite library instance, which tracks locks per inode across connections and
+ * keeps them held until the last one closes, so a second in-process connection contends with the
+ * first exactly as another process would.
  */
 export const acquireLock = (
   path: string,
   mode: "create" | "existing",
 ): Effect.Effect<DatabaseSync, NamespaceError, Scope.Scope> =>
-  Effect.gen(function* () {
-    if (openPaths.has(path)) return yield* busy("lock");
-    return yield* Effect.acquireRelease(
-      Effect.sync(() => openPaths.add(path)).pipe(
-        Effect.andThen(openConnection(path, mode)),
-        Effect.tapError(() => Effect.sync(() => openPaths.delete(path))),
-      ),
-      (connection) =>
-        closeConnection(connection).pipe(
-          Effect.catch((error) => Effect.logWarning(`Unable to close ${path}`, error)),
-          Effect.ensuring(Effect.sync(() => openPaths.delete(path))),
-        ),
-    );
-  });
+  Effect.acquireRelease(openConnection(path, mode), (connection) =>
+    closeConnection(connection).pipe(
+      Effect.catch((error) => Effect.logWarning(`Unable to close ${path}`, error)),
+    ),
+  );
 
 /**
  * Takes the connection's RESERVED write lock once; fails busy under any contention instead of

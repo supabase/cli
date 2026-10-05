@@ -69,8 +69,7 @@ const sourceWriting = (bytes: Uint8Array = archive): ArtifactSource => ({
     }).pipe(mapMaterializeError),
 });
 
-/** A second, sibling digest under the same key: used to force a retirement sweep as a side effect
- * of an unrelated `prepare`, without redownloading or recreating the generation under test. */
+/** A second digest, published by `triggerSweep` under a fresh key per call. */
 const archiveAlt = new TextEncoder().encode("archive-alt");
 const archiveAltSha256 = createHash("sha256").update(archiveAlt).digest("hex");
 const sourceWritingAlt = (): ArtifactSource => ({
@@ -90,6 +89,15 @@ const sourceWritingAlt = (): ArtifactSource => ({
       );
     }).pipe(mapMaterializeError),
 });
+
+/** A cache miss under a fresh key: the only event that triggers a retirement sweep. */
+const triggerSweep = (root: string) =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const key = `database/postgres-sweep-${yield* crypto.randomUUIDv4}`;
+    const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWritingAlt() });
+    return yield* store.prepare({ ...request, key });
+  });
 
 /** Sets `path`'s mtime 31 days in the past: a legitimate test-only lever on retirement's age fence. */
 const ageLockFile = (fs: FileSystem.FileSystem, path: string) =>
@@ -731,22 +739,18 @@ describe("pins", () => {
           expect(firstUse.path).toBe(secondUse.path);
 
           yield* ageLockFile(fs, firstUse.lockPath);
-          const altStore = yield* makeArtifactStore({
-            cacheRoot: root,
-            source: sourceWritingAlt(),
-          });
 
           // Sweeping while both consumers hold the pin: busy against this process's own open
           // connection, so the stale generation survives untouched.
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(firstUse.path)).toBe(true);
 
           yield* Scope.close(firstScope, Exit.void);
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(firstUse.path)).toBe(true);
 
           yield* Scope.close(secondScope, Exit.void);
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(firstUse.path)).toBe(false);
           expect(yield* fs.exists(firstUse.lockPath)).toBe(true);
         }),
@@ -773,16 +777,12 @@ describe("pins", () => {
             throw new Error(`Unparseable fixture output: ${line}`);
 
           yield* ageLockFile(fs, lockPath);
-          const altStore = yield* makeArtifactStore({
-            cacheRoot: root,
-            source: sourceWritingAlt(),
-          });
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(generationPath)).toBe(true);
 
           yield* killAndAwaitExit(handle);
           yield* ageLockFile(fs, lockPath);
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(generationPath)).toBe(false);
           expect(yield* fs.exists(lockPath)).toBe(true);
         }),
@@ -807,9 +807,8 @@ describe("pins", () => {
         // and genuinely eligible for retirement, unlike the pinned scenarios covered above.
         yield* ageLockFile(fs, prepared.lockPath);
 
-        // A sibling digest under the same key forces a sweep as a side effect.
-        const altStore = yield* makeArtifactStore({ cacheRoot: root, source: sourceWritingAlt() });
-        yield* altStore.prepare({ ...request, key });
+        // A cache miss under another key forces a sweep as a side effect.
+        yield* triggerSweep(root);
         expect(yield* fs.exists(prepared.path)).toBe(false);
         expect(yield* fs.exists(prepared.lockPath)).toBe(true);
 
@@ -819,6 +818,64 @@ describe("pins", () => {
         expect(used.outcome).toBe("downloaded");
         expect(used.path).toBe(prepared.path);
         expect(yield* fs.exists(`${used.path}/bin/postgres`)).toBe(true);
+      }),
+    ),
+  );
+
+  it.live(
+    "a sweep retires an aged unpinned generation and spares an aged one this process pins",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-sweep-pinned-",
+          });
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const pinned = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const pinnedUse = yield* store.use({
+                ...request,
+                key: "database/postgres-aged-pinned",
+              });
+              const unpinned = yield* store.prepare({
+                ...request,
+                key: "database/postgres-aged-unpinned",
+              });
+              yield* ageLockFile(fs, pinnedUse.lockPath);
+              yield* ageLockFile(fs, unpinned.lockPath);
+
+              yield* triggerSweep(root);
+
+              expect(yield* fs.exists(unpinned.path)).toBe(false);
+              expect(yield* fs.exists(pinnedUse.path)).toBe(true);
+              return pinnedUse;
+            }),
+          );
+          expect(yield* fs.exists(pinned.path)).toBe(true);
+        }),
+      ),
+  );
+
+  it.live("a cache hit leaves aged unpinned generations alone until the next miss", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-hit-no-sweep-",
+        });
+        const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const warm = yield* store.prepare({ ...request, key: "database/postgres-warm" });
+        const stale = yield* store.prepare({ ...request, key: "database/postgres-stale" });
+        yield* ageLockFile(fs, stale.lockPath);
+
+        const hit = yield* store.prepare({ ...request, key: "database/postgres-warm" });
+        expect(hit.outcome).toBe("cached");
+        expect(hit.path).toBe(warm.path);
+        expect(yield* fs.exists(stale.path)).toBe(true);
+
+        yield* triggerSweep(root);
+        expect(yield* fs.exists(stale.path)).toBe(false);
       }),
     ),
   );
@@ -948,16 +1005,12 @@ describe("pins", () => {
           ).pipe(Scope.provide(processScope));
 
           yield* ageLockFile(fs, prepared.lockPath);
-          const altStore = yield* makeArtifactStore({
-            cacheRoot: root,
-            source: sourceWritingAlt(),
-          });
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(prepared.path)).toBe(true);
 
           yield* Scope.close(processScope, Exit.void);
           yield* ageLockFile(fs, prepared.lockPath);
-          yield* altStore.prepare({ ...request, key });
+          yield* triggerSweep(root);
           expect(yield* fs.exists(prepared.path)).toBe(false);
         }),
       ),
