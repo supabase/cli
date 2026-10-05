@@ -1,12 +1,10 @@
 import { Data } from "effect";
 
-/** Default per-waiter wake budget; a service's spec may override it for known-slow launches. */
-const defaultWaiterBudgetMillis = 120_000;
+/** The wake budget every waiter gets. */
+export const waiterBudgetMillis = 120_000;
 const waiterCap = 256;
 const breakerThreshold = 3;
-const breakerBaseCooldownMillis = 30_000;
-const breakerMaxCooldownMillis = 300_000;
-const breakerStabilityMillis = 30_000;
+const breakerCooldownMillis = 30_000;
 /** The pause between a failed re-check of a blocking session and the next one. */
 const reprobeSpacingMillis = 1_000;
 
@@ -17,7 +15,6 @@ export interface ServiceSpec {
   readonly prerequisites: ReadonlyArray<string>;
   /** Undefined means the service never sleeps on idle. */
   readonly idleMillis?: number;
-  readonly waiterBudgetMillis?: number;
 }
 
 /**
@@ -78,7 +75,7 @@ export const makeGraph = (specs: ReadonlyArray<ServiceSpec>): LifecycleGraph => 
 type Intent = "eager" | "lazy" | "stopped";
 
 /** A launch's progress, named so a waiter's budget error can report where it's still blocked. */
-type Stage = "preparing" | "artifacts" | "launching";
+type Stage = "preparing" | "launching";
 
 /**
  * A service's point in its launch/stop cycle. `Running.ready` tracks the live health signal
@@ -97,21 +94,13 @@ const Phase = Data.taggedEnum<Phase>();
 interface BreakerState {
   readonly consecutiveFailures: number;
   readonly openUntil: number | undefined;
-  /** The cooldown this breaker will use next time it opens; doubles on each repeat open. */
-  readonly cooldownMillis: number;
   readonly lastCause: unknown;
-  /** The generation and timestamp its stability reset is counting from; cleared by a readiness loss or an exit. */
-  readonly stableGeneration: number | undefined;
-  readonly stableSince: number | undefined;
 }
 
 const initialBreaker: BreakerState = {
   consecutiveFailures: 0,
   openUntil: undefined,
-  cooldownMillis: breakerBaseCooldownMillis,
   lastCause: undefined,
-  stableGeneration: undefined,
-  stableSince: undefined,
 };
 
 interface Waiter {
@@ -120,9 +109,10 @@ interface Waiter {
   readonly deadline: number | undefined;
   /** False for an acquisition (such as the Functions inspector) that bypasses target readiness. */
   readonly requireReady: boolean;
-  /** Whether admission opens a work lease; an explicit operation's wait only observes readiness. */
-  readonly lease: boolean;
 }
+
+/** Whether admission opens a work lease; an explicit operation's wait only observes readiness. */
+const isLeaseWaiter = (waiter: Waiter): boolean => waiter.deadline !== undefined;
 
 export interface ServiceState {
   readonly intent: Intent;
@@ -341,7 +331,6 @@ const isActiveForGraphUpdate = (service: ServiceState): boolean =>
 const specsEqual = (a: ServiceSpec, b: ServiceSpec): boolean =>
   a.activation === b.activation &&
   a.idleMillis === b.idleMillis &&
-  a.waiterBudgetMillis === b.waiterBudgetMillis &&
   a.prerequisites.length === b.prerequisites.length &&
   a.prerequisites.every((prerequisite) => b.prerequisites.includes(prerequisite));
 
@@ -389,24 +378,6 @@ const sessionReady = (state: LifecycleState, id: string): boolean => {
     service !== undefined && isSessionAvailable(service.phase) && prerequisitesSatisfied(state, id)
   );
 };
-
-const isStabilized = (breaker: BreakerState, phase: Phase, now: number): boolean =>
-  breaker.stableGeneration !== undefined &&
-  breaker.stableGeneration === generationOf(phase) &&
-  breaker.stableSince !== undefined &&
-  now - breaker.stableSince >= breakerStabilityMillis;
-
-/** Bakes in a stability reset that has already been earned before its evidence is discarded. */
-const materializeStability = (breaker: BreakerState, phase: Phase, now: number): BreakerState =>
-  isStabilized(breaker, phase, now)
-    ? {
-        ...breaker,
-        consecutiveFailures: 0,
-        cooldownMillis: breakerBaseCooldownMillis,
-        stableGeneration: undefined,
-        stableSince: undefined,
-      }
-    : breaker;
 
 /**
  * Whether the breaker is currently blocking admission. This is a plain flag, not a `now`
@@ -469,7 +440,7 @@ const failExplicitDependentWaiters = (
   for (const dependent of state.graph.transitiveDependents.get(id) ?? []) {
     const service = next.services.get(dependent);
     if (service === undefined) continue;
-    const explicit = [...service.waiters.values()].filter((waiter) => !waiter.lease);
+    const explicit = [...service.waiters.values()].filter((waiter) => !isLeaseWaiter(waiter));
     if (explicit.length === 0) continue;
     const waiters = new Map(service.waiters);
     for (const waiter of explicit) {
@@ -523,10 +494,6 @@ const blocksWaiters = (state: LifecycleState, id: string): boolean => {
   return false;
 };
 
-/** A service's wake budget; a traffic waiter's deadline counts from when the client arrived. */
-export const waiterBudgetMillis = (graph: LifecycleGraph, id: string): number =>
-  graph.services.get(id)?.waiterBudgetMillis ?? defaultWaiterBudgetMillis;
-
 /** Queues or immediately resolves one traffic acquisition or explicit readiness wait. */
 const openWaiter = (
   state: LifecycleState,
@@ -554,20 +521,15 @@ const openWaiter = (
   if (isBreakerOpen(service.breaker))
     return fail(`${id} circuit breaker is open`, service.breaker.lastCause);
   // The cap bounds sockets held by traffic; explicit operations are few and already bounded.
-  const trafficWaiters = [...service.waiters.values()].filter((waiter) => waiter.lease).length;
+  const trafficWaiters = [...service.waiters.values()].filter(isLeaseWaiter).length;
   if (traffic && trafficWaiters >= waiterCap) return fail(`${id} has too many waiters`, undefined);
-  const deadline = traffic ? openedAt + waiterBudgetMillis(state.graph, id) : undefined;
+  const deadline = traffic ? openedAt + waiterBudgetMillis : undefined;
   const commands: Array<LifecycleCommand> =
     deadline === undefined ? [] : [LifecycleCommand.ArmWaiterTimeout({ id, waiterId, deadline })];
   const queued = setService(state, id, (s) => ({
     ...s,
     lastActivity: traffic ? now : s.lastActivity,
-    waiters: new Map(s.waiters).set(waiterId, {
-      id: waiterId,
-      deadline,
-      requireReady,
-      lease: traffic,
-    }),
+    waiters: new Map(s.waiters).set(waiterId, { id: waiterId, deadline, requireReady }),
   }));
   return [retryBlockedCleanup(queued, id, commands), commands];
 };
@@ -646,7 +608,6 @@ const rearmPrerequisites = (state: LifecycleState, id: string): LifecycleState =
   return next;
 };
 
-/** Shared breaker/phase bookkeeping for a launch failure or an unrequested exit. */
 /** Counts one generation's launch failure or crash, opening the breaker at the threshold. */
 const countFailure = (
   service: ServiceState,
@@ -655,29 +616,14 @@ const countFailure = (
   now: number,
   commands: Array<LifecycleCommand>,
 ): BreakerState => {
-  const materialized = materializeStability(service.breaker, service.phase, now);
-  const consecutiveFailures = materialized.consecutiveFailures + 1;
+  const consecutiveFailures = service.breaker.consecutiveFailures + 1;
   if (consecutiveFailures < breakerThreshold)
-    return {
-      consecutiveFailures,
-      openUntil: undefined,
-      cooldownMillis: materialized.cooldownMillis,
-      lastCause: cause,
-      stableGeneration: undefined,
-      stableSince: undefined,
-    };
-  const openUntil = now + materialized.cooldownMillis;
+    return { consecutiveFailures, openUntil: undefined, lastCause: cause };
+  const openUntil = now + breakerCooldownMillis;
   commands.push(
-    LifecycleCommand.ArmCooldownTimer({ id, openUntil, delayMillis: materialized.cooldownMillis }),
+    LifecycleCommand.ArmCooldownTimer({ id, openUntil, delayMillis: breakerCooldownMillis }),
   );
-  return {
-    consecutiveFailures,
-    openUntil,
-    cooldownMillis: Math.min(breakerMaxCooldownMillis, materialized.cooldownMillis * 2),
-    lastCause: cause,
-    stableGeneration: undefined,
-    stableSince: undefined,
-  };
+  return { consecutiveFailures, openUntil, lastCause: cause };
 };
 
 const recordFailure = (
@@ -766,7 +712,6 @@ const applyEvent = (
         setService(state, id, (s) => ({
           ...s,
           phase: Phase.Running({ generation, ready: true }),
-          breaker: { ...s.breaker, stableGeneration: generation, stableSince: now },
           readinessFailure: undefined,
           reprobing: false,
         })),
@@ -855,9 +800,6 @@ const applyEvent = (
           ...s,
           phase: Phase.Stopping({ generation }),
           idleArmedEpoch: undefined,
-          // Bake in any 30s stability the just-ending generation already earned, since the next
-          // failure to check it will compare against a different, unrelated generation.
-          breaker: materializeStability(s.breaker, s.phase, now),
         })),
         commands,
       ];
@@ -894,11 +836,6 @@ const applyEvent = (
           return {
             ...s,
             phase: Phase.Running({ generation, ready: false }),
-            breaker: {
-              ...materializeStability(s.breaker, s.phase, now),
-              stableGeneration: undefined,
-              stableSince: undefined,
-            },
             waiters,
             readinessFailure: { cause, reprobed: s.reprobing },
             reprobing: false,
@@ -920,7 +857,6 @@ const applyEvent = (
         setService(state, id, (s) => ({
           ...s,
           phase: Phase.Running({ generation, ready: true }),
-          breaker: { ...s.breaker, stableGeneration: generation, stableSince: now },
           readinessFailure: undefined,
           reprobing: false,
         })),
@@ -1234,7 +1170,10 @@ const settle = (
           else admitted.push(waiter.id);
         }
         if (admitted.length > 0 || expired.length > 0) {
-          const leased = admitted.filter((waiterId) => service.waiters.get(waiterId)?.lease).length;
+          const leased = admitted.filter((waiterId) => {
+            const waiter = service.waiters.get(waiterId);
+            return waiter !== undefined && isLeaseWaiter(waiter);
+          }).length;
           for (const waiterId of admitted)
             emitted.push(LifecycleCommand.AdmitConnection({ id, waiterId }));
           for (const waiterId of expired)

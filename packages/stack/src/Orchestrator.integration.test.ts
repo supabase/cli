@@ -1464,7 +1464,7 @@ describe("failed and crashed services", () => {
   );
 
   it.live(
-    "opens the breaker after three crashes, fails fast naming the cause, doubles the cooldown on reopening, and resets on an explicit start",
+    "opens the breaker after three crashes, fails fast naming the cause, reopens for the same fixed cooldown after a further crash, and resets on an explicit start",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1504,8 +1504,7 @@ describe("failed and crashed services", () => {
           yield* serveThenCrash;
           expect(yield* Ref.get(api.starts)).toHaveLength(4);
 
-          // Reopening doubles the cooldown: 30 seconds no longer suffice.
-          yield* TestClock.adjust("30 seconds");
+          // A further failure reopens the breaker for the same fixed cooldown.
           expect(
             (yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip)).message,
           ).toBe("api circuit breaker is open: segfault");
@@ -1567,39 +1566,6 @@ describe("failed and crashed services", () => {
         expect(yield* Ref.get(api.starts)).toHaveLength(3);
       }),
     ),
-  );
-
-  it.live("forgets earlier crashes once a generation stays healthy for 30 seconds", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const orchestrator = yield* makeTestOrchestrator();
-        const crashes = yield* Queue.unbounded<Exit.Exit<void, ServiceError>>();
-        const api = yield* makeInstance(orchestrator, "api", { crash: Queue.take(crashes) });
-        yield* orchestrator.configure({
-          members: [{ id: "api", activation: "lazy" }],
-          dependencies: [],
-        });
-        yield* orchestrator.startComposition;
-        const crash = Effect.gen(function* () {
-          const down = yield* stopped(api).pipe(Effect.forkChild({ startImmediately: true }));
-          yield* Queue.offer(crashes, Exit.fail(failure("segfault")));
-          yield* Fiber.join(down);
-        });
-
-        yield* Effect.scoped(orchestrator.acquire("api"));
-        yield* crash;
-        yield* Effect.scoped(orchestrator.acquire("api"));
-        yield* crash;
-        yield* Effect.scoped(orchestrator.acquire("api"));
-        yield* TestClock.adjust("30 seconds");
-        yield* crash;
-
-        // Without the reset this would be the third consecutive failure, opening the breaker.
-        yield* Effect.scoped(orchestrator.acquire("api"));
-        expect(yield* Ref.get(api.starts)).toHaveLength(4);
-        yield* orchestrator.stopNamespace;
-      }),
-    ).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.live("relaunches a crashed prerequisite without replacing its healthy dependent", () =>

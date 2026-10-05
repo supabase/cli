@@ -274,7 +274,7 @@ Admission requires the target and its whole prerequisite closure to be ready. An
 
 ### Crash-loop breaker
 
-Each launch failure or unrequested exit counts once per generation. Three consecutive failures open the breaker for 30 seconds, doubling on each reopening up to 5 minutes. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt. A generation that stays ready for 30 seconds clears the count. An explicit start, restart or composition start resets the breaker.
+Each launch failure or unrequested exit counts once per generation. Three consecutive failures open the breaker for a fixed 30 seconds. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt, and a further failure reopens it for the same 30 seconds. An explicit start, restart or composition start resets the breaker.
 
 ### Chart 3: dependency awareness lives in the reducer
 

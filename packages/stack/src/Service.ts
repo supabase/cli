@@ -24,7 +24,6 @@ export interface ServiceObservation<Config> {
   readonly id: string;
   readonly config: Config;
   readonly error: ServiceError | undefined;
-  readonly cleanupError: ServiceError | undefined;
   readonly exit: Exit.Exit<void, ServiceError> | undefined;
   readonly currentOperation: ServiceOperation | undefined;
   readonly registered: boolean;
@@ -172,7 +171,6 @@ export const makeService = <Config>(
       id,
       config: options.config,
       error: undefined,
-      cleanupError: undefined,
       exit: undefined,
       currentOperation: undefined,
       registered: true,
@@ -184,7 +182,6 @@ export const makeService = <Config>(
       SubscriptionRef.update(observations, (value) => ({
         ...value,
         error: value.error ?? error,
-        cleanupError: error,
       }));
 
     /** Halts and removes one session, retrying only the steps a previous attempt didn't finish. */
@@ -208,7 +205,6 @@ export const makeService = <Config>(
       }
       yield* Scope.close(record.scope, Exit.void);
       yield* Ref.update(current, (value) => (value === record ? undefined : value));
-      yield* update({ cleanupError: undefined });
     });
 
     /** Runs one readiness program in the session's health scope; interruption yields `undefined`. */

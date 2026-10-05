@@ -137,6 +137,7 @@ export const CompositionConfig = Schema.Struct({
 export interface Status<Config = unknown> extends ServiceObservation<Config> {
   readonly lifecycle: "stopped" | "starting" | "running" | "stopping";
   readonly health: "starting" | "healthy" | "unhealthy" | undefined;
+  readonly cleanupError: ServiceError | undefined;
   /** The live generation, if any. */
   readonly launchId: number | undefined;
   /** Whether demand (traffic, a dependent or eager intent) relaunches the service. */
@@ -343,6 +344,10 @@ const statusOf = <Config>(
     ...execution,
     lifecycle: lifecycleOf(state, id),
     health,
+    cleanupError:
+      service?.cleanupFailure === undefined
+        ? undefined
+        : cleanupError(id, service.cleanupFailure.cause),
     launchId:
       phase === undefined || phase._tag === "Stopped" || phase._tag === "Failed"
         ? undefined
@@ -630,7 +635,6 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   const awaitAll = Effect.fnUntraced(function* (admission: Admission) {
     const { waits, traffic } = admission;
     const openedAt = yield* Clock.currentTimeMillis;
-    const graph = (yield* SubscriptionRef.get(lifecycle)).graph;
     const bounded = traffic ? waits[0] : undefined;
     // Registration and its unconditional cleanup are installed together, before any wait.
     return yield* Effect.uninterruptibleMask((restore) =>
@@ -651,7 +655,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           for (const { waiterId } of entries) next.delete(waiterId);
           return next;
         });
-        return yield* dispatchAndAwait(admission, entries, openedAt, graph, bounded, restore).pipe(
+        return yield* dispatchAndAwait(admission, entries, openedAt, bounded, restore).pipe(
           Effect.ensuring(forget),
         );
       }),
@@ -669,7 +673,6 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       Wait & { readonly waiterId: number; readonly deferred: Deferred.Deferred<void, ServiceError> }
     >,
     openedAt: number,
-    graph: LifecycleGraph,
     bounded: Wait | undefined,
     restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
   ) {
@@ -707,7 +710,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
         ? guarded
         : guarded.pipe(
             Effect.timeoutOrElse({
-              duration: `${waiterBudgetMillis(graph, bounded.id)} millis`,
+              duration: `${waiterBudgetMillis} millis`,
               orElse: () =>
                 Effect.fail(
                   new ServiceError({

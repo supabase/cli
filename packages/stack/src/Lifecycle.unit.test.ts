@@ -395,7 +395,7 @@ describe("Lifecycle reducer", () => {
   });
 
   describe("circuit breaker", () => {
-    it("opens after 3 consecutive failures, fails fast naming the cause, recovers once after the cooldown for several waiters at once, and resets after stable readiness", () => {
+    it("opens after 3 consecutive failures, fails fast naming the cause, and recovers once after the cooldown for several waiters at once", () => {
       const graph = makeGraph([lazy("flaky")]);
       let state = initialState(graph, 0);
       let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
@@ -455,24 +455,9 @@ describe("Lifecycle reducer", () => {
         },
       ]));
       expect(tagsOf(commandsByStep[0]).toSorted()).toEqual(["AdmitConnection", "AdmitConnection"]);
-
-      // 30s of stable readiness on the same generation resets the breaker lazily, at the next event.
-      ({ state, commandsByStep } = run(state, [
-        {
-          event: LifecycleEvent.Exited({
-            id: "flaky",
-            generation: recovery.generation,
-            cause: "crash",
-            requested: false,
-          }),
-          now: 201 + 30_000 + 10 + 30_000 + 1,
-        },
-      ]));
-      expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(1);
-      expect(state.services.get("flaky")?.breaker.openUntil).toBeUndefined();
     });
 
-    it("doubles the cooldown on a second breaker open and an explicit start resets it", () => {
+    it("reopens for the same fixed cooldown on a further failure, and an explicit start resets it", () => {
       const graph = makeGraph([lazy("flaky")]);
       let state = initialState(graph, 0);
 
@@ -500,7 +485,7 @@ describe("Lifecycle reducer", () => {
       ]));
       fail(4, 3 + 30_000);
       expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(4);
-      expect(state.services.get("flaky")?.breaker.openUntil).toBe(3 + 30_000 + 1 + 60_000);
+      expect(state.services.get("flaky")?.breaker.openUntil).toBe(3 + 30_000 + 1 + 30_000);
 
       ({ state } = run(
         state,
@@ -581,112 +566,6 @@ describe("Lifecycle reducer", () => {
       expect(stale.commandsByStep[0]).toEqual([]);
       expect(stale.state).toEqual(state);
     });
-
-    it("materializes an already-earned stability reset before a readiness loss discards the evidence", () => {
-      const graph = makeGraph([lazy("flaky")]);
-      let state = initialState(graph, 0);
-
-      const fail = (waiterId: number, now: number) => {
-        ({ state } = run(state, [{ event: open("flaky", waiterId), now }]));
-        const generation = startingGeneration(state, "flaky");
-        ({ state } = run(state, [
-          {
-            event: LifecycleEvent.LaunchFailed({ id: "flaky", generation, cause: "boom" }),
-            now: now + 1,
-          },
-        ]));
-      };
-      fail(1, 0);
-      fail(2, 100);
-
-      ({ state } = run(state, [{ event: open("flaky", 3), now: 200 }]));
-      const generation = startingGeneration(state, "flaky");
-      ({ state } = run(state, [
-        { event: LifecycleEvent.LaunchSucceeded({ id: "flaky", generation }), now: 201 },
-      ]));
-
-      ({ state } = run(state, [
-        {
-          event: LifecycleEvent.ReadinessLost({ id: "flaky", generation, cause: "blip" }),
-          now: 201 + 30_000 + 1,
-        },
-      ]));
-      expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(0);
-
-      const result = run(state, [
-        {
-          event: LifecycleEvent.Exited({
-            id: "flaky",
-            generation,
-            cause: "crash",
-            requested: false,
-          }),
-          now: 201 + 30_000 + 2,
-        },
-      ]);
-      expect(result.state.services.get("flaky")?.breaker.consecutiveFailures).toBe(1);
-      expect(result.state.services.get("flaky")?.breaker.openUntil).toBeUndefined();
-    });
-
-    it("materializes an already-earned stability reset before an idle stop starts a new generation", () => {
-      const graph = makeGraph([lazy("flaky")]);
-      let state = initialState(graph, 0);
-
-      const fail = (waiterId: number, now: number) => {
-        ({ state } = run(state, [{ event: open("flaky", waiterId), now }]));
-        const generation = startingGeneration(state, "flaky");
-        ({ state } = run(state, [
-          {
-            event: LifecycleEvent.LaunchFailed({ id: "flaky", generation, cause: "boom" }),
-            now: now + 1,
-          },
-        ]));
-      };
-      fail(1, 0);
-      fail(2, 100);
-
-      ({ state } = run(state, [{ event: open("flaky", 3), now: 200 }]));
-      const generation = startingGeneration(state, "flaky");
-      ({ state } = run(state, [
-        { event: LifecycleEvent.LaunchSucceeded({ id: "flaky", generation }), now: 201 },
-        { event: LifecycleEvent.ConnectionClosed({ id: "flaky" }), now: 202 },
-      ]));
-
-      ({ state } = run(state, [
-        {
-          event: LifecycleEvent.IdleElapsed({ id: "flaky", generation, epoch: 1 }),
-          now: 202 + 30_000 + 1_000,
-        },
-      ]));
-      expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(0);
-
-      ({ state } = run(state, [
-        {
-          event: LifecycleEvent.Exited({
-            id: "flaky",
-            generation,
-            cause: undefined,
-            requested: true,
-          }),
-          now: 202 + 30_000 + 1_000 + 10,
-        },
-      ]));
-      expect(state.services.get("flaky")?.phase).toEqual({ _tag: "Stopped" });
-
-      const nextAttempt = run(state, [{ event: open("flaky", 4), now: 1_000_000 }]);
-      const nextGeneration = startingGeneration(nextAttempt.state, "flaky");
-      const result = run(nextAttempt.state, [
-        {
-          event: LifecycleEvent.LaunchFailed({
-            id: "flaky",
-            generation: nextGeneration,
-            cause: "boom",
-          }),
-          now: 1_000_001,
-        },
-      ]);
-      expect(result.state.services.get("flaky")?.breaker.consecutiveFailures).toBe(1);
-    });
   });
 
   it("caps waiters at 256, lets an expiry fail only that waiter while the shared launch continues, and frees its slot for cancellation", () => {
@@ -728,13 +607,13 @@ describe("Lifecycle reducer", () => {
   });
 
   it("expires a waiter instead of admitting it when its deadline already passed by the time the launch succeeds", () => {
-    const graph = makeGraph([lazy("api", { waiterBudgetMillis: 100, idleMillis: undefined })]);
+    const graph = makeGraph([lazy("api", { idleMillis: undefined })]);
     let state = initialState(graph, 0);
     ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
     const generation = startingGeneration(state, "api");
 
     const result = run(state, [
-      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation }), now: 500 },
+      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation }), now: 120_000 },
     ]);
     expect(tagsOf(result.commandsByStep[0])).toEqual(["FailConnection"]);
     expect(result.state.services.get("api")?.leases).toBe(0);
@@ -1131,27 +1010,27 @@ describe("Lifecycle reducer", () => {
 
   describe("stage reporting", () => {
     it("updates the starting stage so a waiter's budget error names it", () => {
-      let state = initialState(makeGraph([lazy("api", { waiterBudgetMillis: 50 })]), 0);
+      let state = initialState(makeGraph([lazy("api")]), 0);
       ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
       const generation = startingGeneration(state, "api");
 
       ({ state } = run(state, [
         {
-          event: LifecycleEvent.StageChanged({ id: "api", generation, stage: "artifacts" }),
+          event: LifecycleEvent.StageChanged({ id: "api", generation, stage: "launching" }),
           now: 1,
         },
       ]));
       expect(state.services.get("api")?.phase).toEqual({
         _tag: "Starting",
         generation,
-        stage: "artifacts",
+        stage: "launching",
       });
 
       const expired = run(state, [
         { event: LifecycleEvent.WaiterExpired({ id: "api", waiterId: 1 }), now: 100 },
       ]);
       const failure = commandTagged(at(expired.commandsByStep, 0), "FailConnection");
-      expect(failure.message).toContain("api to finish artifacts");
+      expect(failure.message).toContain("api to finish launching");
     });
 
     it("ignores a stage change tagged with a stale generation", () => {
@@ -1159,7 +1038,7 @@ describe("Lifecycle reducer", () => {
       ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
       const result = run(state, [
         {
-          event: LifecycleEvent.StageChanged({ id: "api", generation: 99, stage: "artifacts" }),
+          event: LifecycleEvent.StageChanged({ id: "api", generation: 99, stage: "launching" }),
           now: 1,
         },
       ]);
@@ -1676,7 +1555,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("caps only traffic waiters and dates a waiter's budget from the client's arrival", () => {
-    let state = initialState(makeGraph([lazy("api", { waiterBudgetMillis: 100 })]), 0);
+    let state = initialState(makeGraph([lazy("api")]), 0);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
     ({ state } = run(
       state,
@@ -1717,6 +1596,6 @@ describe("Lifecycle reducer", () => {
         now: 50,
       },
     ]));
-    expect(commandTagged(at(commandsByStep, 1), "ArmWaiterTimeout").deadline).toBe(120);
+    expect(commandTagged(at(commandsByStep, 1), "ArmWaiterTimeout").deadline).toBe(120_020);
   });
 });
