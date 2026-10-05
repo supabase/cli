@@ -8,17 +8,7 @@ import {
   DEFAULT_SIGNING_KEY,
 } from "@supabase/stack/defaults";
 import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stack/effect";
-import {
-  Crypto,
-  Effect,
-  Data,
-  FileSystem,
-  Path,
-  Redacted,
-  Result,
-  Schema,
-  SchemaIssue,
-} from "effect";
+import { Crypto, Effect, Data, FileSystem, Path, Redacted, Schema, SchemaIssue } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { loadLocalProjectContext, type LocalProjectContext } from "./local-project-context.ts";
@@ -800,7 +790,7 @@ const resolveEffectiveCliConfig = (
       port: resolvedPort("SUPABASE_DB_PORT", db.port, "db.port", env),
       major_version: envOverrideMajorVersion(db.major_version, env),
       health_timeout: envOverride("SUPABASE_DB_HEALTH_TIMEOUT", db.health_timeout, env),
-      orioledb_version: envOverride(stackOrioledbVersionSetting.envVar, db.orioledb_version, env),
+      orioledb_version: envOverride("SUPABASE_DB_ORIOLEDB_VERSION", db.orioledb_version, env),
       settings: resolveDbSettingsEnvOverrides(db.settings, env),
       pooler: resolvedPooler,
     },
@@ -994,10 +984,9 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       const validationError = configValidationError(validatedConfig);
       if (validationError !== undefined)
         return yield* new StackConfigError({ message: validationError });
-      const databaseVersionResult = stackDatabaseVersion(validatedConfig.db);
-      if (Result.isFailure(databaseVersionResult))
-        return yield* new StackConfigError({ message: databaseVersionResult.failure });
-      const databaseVersion = databaseVersionResult.success;
+      const databaseVersion = yield* Effect.fromResult(
+        stackDatabaseVersion(validatedConfig.db),
+      ).pipe(Effect.mapError((message) => new StackConfigError({ message })));
 
       const externalProviders = yield* Effect.try({
         try: () =>

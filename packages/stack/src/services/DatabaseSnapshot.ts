@@ -15,7 +15,7 @@ import {
 } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { postgresMajor, postgresVersion } from "../Artifacts.ts";
+import { postgresVersion } from "../Artifacts.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { copyDirectory, type DirectoryCopyError } from "../storage/DirectoryCopy.ts";
 import type { DatabaseRuntime } from "./Database.ts";
@@ -161,9 +161,7 @@ export const makeSnapshotStore = Effect.fn("DatabaseSnapshot.makeStore")(functio
   const { backends, runtime, version } = options;
   const { Adopt, Clear, Copy, Ensure, Expect, ExpectEmpty, ExpectText } = SnapshotStep;
   const { Prune, Recover, Remove, Rename, Touch, Write } = SnapshotStep;
-  // PG_VERSION holds only the major; the descriptor and ready marker carry the full version, so
-  // snapshots never cross release lines.
-  const major = postgresMajor(version);
+  const major = version.split(".")[0] ?? version;
   const markerPath = path.join(options.instanceRoot, ".supabase-database-ready.json");
   const mapError = <A, E>(operation: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.mapError((cause) => errorFor(operation, cause)));

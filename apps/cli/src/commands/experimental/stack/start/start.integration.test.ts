@@ -19,7 +19,7 @@ import {
   DEFAULT_LOCAL_JWT_SECRET,
   DEFAULT_POSTGRES_ROOT_KEY,
 } from "@supabase/stack/defaults";
-import { postgresVersion } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions, postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   StackError,
   type ServiceCreation,
@@ -1492,38 +1492,22 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  const [orioledb = ""] = orioledbVersions();
   for (const target of [
-    {
-      name: "[db] orioledb_version when a saved stock stack switches to OrioleDB",
-      before: "",
-      after: '[db]\norioledb_version = "17.11.0.002"\n',
-      env: undefined,
-      changes: "[db] orioledb_version: saved unset, requested 17.11.0.002",
-      revert: "Revert [db] orioledb_version to its saved value",
-    },
-    {
-      name: "[db] orioledb_version when a saved OrioleDB stack switches back to stock",
-      before: '[experimental]\norioledb_version = "17.11.0.002"\n',
-      after: "",
-      env: undefined,
-      changes: "[db] orioledb_version: saved 17.11.0.002, requested unset",
-      revert: "Revert [db] orioledb_version to its saved value",
-    },
     {
       name: "both [db] major_version and [db] orioledb_version when stock 15 becomes OrioleDB 17",
       before: "[db]\nmajor_version = 15\n",
-      after: '[db]\norioledb_version = "17.11.0.002"\n',
+      after: `[db]\norioledb_version = "${orioledb}"\n`,
       env: undefined,
-      changes:
-        "[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested 17.11.0.002",
+      changes: `[db] major_version: saved 15, requested 17; [db] orioledb_version: saved unset, requested ${orioledb}`,
       revert: "Revert the settings listed to their saved values",
     },
     {
       name: "SUPABASE_DB_ORIOLEDB_VERSION when it switches a saved stock stack to OrioleDB",
       before: "",
       after: "",
-      env: "17.11.0.002",
-      changes: "SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested 17.11.0.002",
+      env: orioledb,
+      changes: `SUPABASE_DB_ORIOLEDB_VERSION: saved unset, requested ${orioledb}`,
       revert: "Revert SUPABASE_DB_ORIOLEDB_VERSION to its saved value",
     },
   ])

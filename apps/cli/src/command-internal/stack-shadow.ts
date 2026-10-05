@@ -80,17 +80,6 @@ const acquireNamespace = Effect.fn("StackShadow.acquireNamespace")(function* (op
   return { stack, runtime };
 });
 
-/** The project's resolved database version, so the shadow runs the same line as the local database. */
-const shadowDatabaseVersion = (input: ShadowSetupInput<unknown>) =>
-  Effect.fromResult(
-    stackDatabaseVersion({
-      major_version: input.setup.majorVersion,
-      orioledb_version: input.db.orioledb_version,
-    }),
-  ).pipe(
-    Effect.mapError((message) => new ShadowDbError({ message, reason: "container_configuration" })),
-  );
-
 const initialize = Effect.fn("StackShadow.initialize")(function* (
   stack: Stack,
   runtime: Runtime,
@@ -247,7 +236,15 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   opts: ShadowOptions = {},
 ) {
   const output = yield* Output;
-  const version = yield* shadowDatabaseVersion(input);
+  // The shadow runs the project's database line, so it matches the local database.
+  const version = yield* Effect.fromResult(
+    stackDatabaseVersion({
+      major_version: input.setup.majorVersion,
+      orioledb_version: input.db.orioledb_version,
+    }),
+  ).pipe(
+    Effect.mapError((message) => new ShadowDbError({ message, reason: "container_configuration" })),
+  );
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
       Effect.flatMap((result) =>

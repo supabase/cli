@@ -13,7 +13,7 @@ import {
 } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
-import { postgresLine, postgresMajor, postgresVersion, resolveArtifact } from "../Artifacts.ts";
+import { postgresLine, postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { recreateStackAdvice, unusableDatabaseData } from "../internal/database-reuse.ts";
 import { failureMessage } from "../internal/failure-message.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
@@ -914,6 +914,8 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           }
         }).pipe(Effect.mapError((cause) => errorFor("prepare", cause))),
       );
+      const majorVersion = (version: string) => version.split(".")[0] ?? version;
+
       const mount = (_version: string) =>
         selected.pipe(
           Effect.flatMap(() => getMarker),
@@ -945,7 +947,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             if (marker.backend === "docker") {
               const versionFile = `/store/${marker.namespace}/data/PG_VERSION`;
               yield* runHelper(
-                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(postgresMajor(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
+                `set -eu; if [ ! -f ${shellQuote(versionFile)} ]; then echo 'Database readiness requires PG_VERSION' >&2; exit 1; fi; actual=$(cat ${shellQuote(versionFile)}); if [ "$actual" != ${shellQuote(majorVersion(version))} ]; then echo 'Database PostgreSQL major does not match requested version' >&2; exit 1; fi`,
                 snapshotPaths(marker).mounts,
                 version,
               );

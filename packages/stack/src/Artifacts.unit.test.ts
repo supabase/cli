@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { catalogPins, postgresLine, slimImageMirrors } from "./Artifacts.ts";
+import { catalogPins, slimImageMirrors } from "./Artifacts.ts";
 
 it("carries a normalized upstreamImage for every catalog pin", () => {
   for (const { pin } of catalogPins()) {
@@ -22,11 +22,4 @@ it("rewrites a GHCR catalog image onto ECR Public and keeps the tag and digest",
 
 it("returns no mirror for an image outside the slim catalog registry", () => {
   expect(slimImageMirrors("public.ecr.aws/supabase/postgres:17.6.1.173")).toEqual([]);
-});
-
-it("keeps stock and OrioleDB data on separate lines while minor bumps share one", () => {
-  expect(postgresLine("17.6.1.000")).toBe(postgresLine("17.11.0.002"));
-  expect(postgresLine("17.11.0.002-orioledb")).toBe(postgresLine("17.12.0.001-orioledb"));
-  expect(postgresLine("17.11.0.002-orioledb")).not.toBe(postgresLine("17.11.0.002"));
-  expect(postgresLine("15.19.0.002")).not.toBe(postgresLine("17.11.0.002"));
 });

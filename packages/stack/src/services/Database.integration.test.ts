@@ -157,7 +157,7 @@ describe("database component", { timeout: 180_000 }, () => {
         ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
-  it.live("refuses initialized data from another engine line before preparing an artifact", () =>
+  it.live("refuses unmarked or stock data for OrioleDB before preparing an artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -177,37 +177,17 @@ describe("database component", { timeout: 180_000 }, () => {
         const recreate =
           "run `supabase stack destroy --stack-id database-line-test` to recreate the stack — this permanently deletes its local database data";
         yield* fs.makeDirectory(path.join(instanceRoot, "data"), { recursive: true });
-        yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "15\n");
-
-        expect((yield* Effect.flip(prepare(config))).message).toContain(
-          `PostgreSQL data from an unfinished first start is major 15, but major 17 was requested; ${recreate}`,
-        );
-
         yield* fs.writeFileString(path.join(instanceRoot, "data", "PG_VERSION"), "17\n");
         expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
           `Unmarked PostgreSQL data cannot be verified as OrioleDB data; ${recreate}`,
         );
 
         yield* fs.writeFileString(
-          path.join(instanceRoot, ".supabase-database-line.json"),
-          '{"line":"17-orioledb"}',
+          path.join(instanceRoot, ".supabase-database-ready.json"),
+          '{"version":"17.11.0.002","runtime":"native","profile":"supabase"}',
         );
-        expect((yield* Effect.flip(prepare(config))).message).toContain(
-          `PostgreSQL data from an unfinished first start belongs to release line 17-orioledb, but 17 was requested; ${recreate}`,
-        );
-
-        const marker = (version: string) =>
-          fs.writeFileString(
-            path.join(instanceRoot, ".supabase-database-ready.json"),
-            JSON.stringify({ version, runtime: "native", profile: "supabase" }),
-          );
-        yield* marker("17.11.0.002");
         expect((yield* Effect.flip(prepare(orioledb))).message).toContain(
           `Initialized database data is 17.11.0.002 on the native runtime, but 17.11.0.002-orioledb on the native runtime was requested; ${recreate}`,
-        );
-        yield* marker("17.11.0.002-orioledb");
-        expect((yield* Effect.flip(prepare(config))).message).toContain(
-          "Initialized database data is 17.11.0.002-orioledb on the native runtime",
         );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

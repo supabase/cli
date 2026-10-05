@@ -1,4 +1,5 @@
 import { CliConfigSchema } from "@supabase/config";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
@@ -124,23 +125,21 @@ describe("stack shadow cache entry", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.effect("keys on the database version the shadow runs, not the configured major", () =>
+  it.effect("keys stock and OrioleDB shadows of the same major apart", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-shadow-cache-version-" });
       const base = input(fs, path, root);
+      const entry = (version: string) =>
+        stackShadowCacheEntry(base, version, "native", "darwin", "arm64", "config");
+      const [orioledb = ""] = orioledbVersions();
 
-      const stock = yield* stackShadowCacheEntry(base, "17", "native", "darwin", "arm64", "config");
-      const other = yield* stackShadowCacheEntry(base, "15", "native", "darwin", "arm64", "config");
+      const stock = yield* entry("17");
+      const oriole = yield* entry(`${orioledb}-orioledb`);
       expect(stock?.key).toBeDefined();
-      expect(other?.key).toBeDefined();
-      expect(other?.key).not.toBe(stock?.key);
-
-      const unpinned = yield* Effect.flip(
-        stackShadowCacheEntry(base, "17.0.0.000-orioledb", "native", "darwin", "arm64", "config"),
-      );
-      expect(unpinned.message).toContain("17.0.0.000-orioledb");
+      expect(oriole?.key).toBeDefined();
+      expect(oriole?.key).not.toBe(stock?.key);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 });

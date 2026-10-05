@@ -14,12 +14,6 @@ describe("stackDatabaseVersion", () => {
     );
   });
 
-  it("routes a published db.orioledb_version to its OrioleDB artifact", () => {
-    expect(
-      stackDatabaseVersion({ major_version: 17, orioledb_version: "17.11.0.002" }, published),
-    ).toEqual(Result.succeed("17.11.0.002-orioledb"));
-  });
-
   it("routes every OrioleDB version the artifact catalog pins", () => {
     const pinned = orioledbVersions();
     expect(pinned.length).toBeGreaterThan(0);
@@ -48,13 +42,6 @@ describe("stackDatabaseVersion", () => {
     ).toEqual(
       Result.fail(
         "db.orioledb_version = 17.6.1.000 requires a published OrioleDB artifact; supported OrioleDB versions: 17.11.0.002. A saved stack keeps its database version; switching it means recreating the stack with supabase stack destroy, which permanently deletes its local database data",
-      ),
-    );
-    expect(
-      stackDatabaseVersion({ major_version: 17, orioledb_version: "17.11.0.002" }, []),
-    ).toEqual(
-      Result.fail(
-        "db.orioledb_version = 17.11.0.002 requires a published OrioleDB artifact; supported OrioleDB versions: none. A saved stack keeps its database version; switching it means recreating the stack with supabase stack destroy, which permanently deletes its local database data",
       ),
     );
   });

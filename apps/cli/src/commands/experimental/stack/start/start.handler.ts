@@ -226,13 +226,13 @@ interface StructuredSettingChange {
   readonly editable: boolean;
 }
 
-const describeSettingChanges = (
+const describeSettingChange = (
   service: PlannedInstance["service"],
   path: string,
   savedCreation: ServiceCreation | undefined,
   requestedCreation: ServiceCreationInput | undefined,
   projectEnvValues: Readonly<Record<string, string>>,
-): ReadonlyArray<StructuredSettingChange> => {
+): StructuredSettingChange | ReadonlyArray<StructuredSettingChange> => {
   if (service === "database" && path === "config.version") {
     // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
     // composition plan actually compared, so the saved/requested pair reflects what changed.
@@ -242,6 +242,17 @@ const describeSettingChanges = (
     const requestedMajor = majorVersionOf(requestedVersion);
     const savedOrioledb = orioledbVersionOf(savedVersion);
     const requestedOrioledb = orioledbVersionOf(requestedVersion);
+    // Same major and engine but different pinned build: no setting controls this, so name the
+    // actual (unpinnable) versions instead.
+    if (savedMajor === requestedMajor && savedOrioledb === requestedOrioledb)
+      return {
+        service,
+        path,
+        key: "Postgres build",
+        saved: savedVersion,
+        requested: requestedVersion,
+        editable: false,
+      };
     const changes: Array<StructuredSettingChange> = [];
     if (savedMajor !== requestedMajor)
       changes.push({
@@ -261,47 +272,30 @@ const describeSettingChanges = (
         requested: requestedOrioledb,
         editable: true,
       });
-    // Same major and engine but a different pinned build: no setting controls this, so name the
-    // actual (unpinnable) versions instead.
-    return changes.length > 0
-      ? changes
-      : [
-          {
-            service,
-            path,
-            key: "Postgres build",
-            saved: savedVersion,
-            requested: requestedVersion,
-            editable: false,
-          },
-        ];
+    return changes;
   }
   const endpointName = path.startsWith("endpoints.") ? path.split(".")[1] : undefined;
   const setting =
     endpointName === undefined ? undefined : stackEndpointSetting(service, endpointName);
   if (endpointName !== undefined && setting !== undefined)
-    return [
-      {
-        service,
-        path,
-        key: settingKeyLabel(setting, projectEnvValues),
-        saved: endpointPortLabel(savedCreation?.endpoints, endpointName),
-        requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
-        editable: true,
-      },
-    ];
-  // No config.toml key or env var covers this path (e.g. the catalog-pinned artifact `version`):
-  // name it plainly instead of implying a setting the user could edit.
-  return [
-    {
+    return {
       service,
       path,
-      key: path === "version" ? `${service} artifact version` : `${service} ${path}`,
-      saved: path === "version" ? (savedCreation?.version ?? "unknown") : "changed",
-      requested: path === "version" ? (requestedCreation?.version ?? "unknown") : "changed",
-      editable: false,
-    },
-  ];
+      key: settingKeyLabel(setting, projectEnvValues),
+      saved: endpointPortLabel(savedCreation?.endpoints, endpointName),
+      requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
+      editable: true,
+    };
+  // No config.toml key or env var covers this path (e.g. the catalog-pinned artifact `version`):
+  // name it plainly instead of implying a setting the user could edit.
+  return {
+    service,
+    path,
+    key: path === "version" ? `${service} artifact version` : `${service} ${path}`,
+    saved: path === "version" ? (savedCreation?.version ?? "unknown") : "changed",
+    requested: path === "version" ? (requestedCreation?.version ?? "unknown") : "changed",
+    editable: false,
+  };
 };
 
 /** Every incompatible path across every rejected saved member, as one structured list. */
@@ -317,7 +311,7 @@ const incompatibleSettingChanges = (
       // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
       entry.change === "incompatible"
         ? entry.paths.flatMap((path) =>
-            describeSettingChanges(
+            describeSettingChange(
               entry.service,
               path,
               savedConfigById.get(entry.id),

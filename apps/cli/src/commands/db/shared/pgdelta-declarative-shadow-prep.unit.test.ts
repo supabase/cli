@@ -73,21 +73,6 @@ describe("filesForDeclarativeShadowLoad", () => {
 });
 
 describe("prepareDeclarativeShadow", () => {
-  it.live("keeps an image-installed orioledb instead of dropping it", () => {
-    const queries: string[] = [];
-    const client = fakeShadowClient((sql) => {
-      queries.push(sql);
-      return Promise.resolve({ rows: [] });
-    });
-    return Effect.gen(function* () {
-      const prep = yield* prepareDeclarativeShadow(client, [
-        { name: "_cluster/extensions/orioledb.sql", sql: 'CREATE EXTENSION "orioledb";' },
-      ]);
-      expect(prep.restorePgjwt).toBe(false);
-      expect(queries).toEqual([]);
-    });
-  });
-
   it.live("skips the shadow when declarations omit image-default extensions", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {

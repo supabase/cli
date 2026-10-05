@@ -30,18 +30,20 @@ export const stackServiceVersions = Effect.fn("services.stackServiceVersions")(f
   let databaseVersion: string | undefined;
   if (Result.isFailure(context)) configError = context.failure;
   else {
-    const { config, projectEnvValues } = context.success;
     const resolved = yield* Effect.try({
       try: () => {
-        const value = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+        const value = envOverrideMajorVersion(
+          context.success.config.db.major_version,
+          context.success.projectEnvValues,
+        );
         if (value !== 15 && value !== 17)
           throw new Error(`unsupported PostgreSQL major version: ${value}`);
         return stackDatabaseVersion({
           major_version: value,
           orioledb_version: envOverride(
             "SUPABASE_DB_ORIOLEDB_VERSION",
-            config.db.orioledb_version,
-            projectEnvValues,
+            context.success.config.db.orioledb_version,
+            context.success.projectEnvValues,
           ),
         });
       },

@@ -97,14 +97,10 @@ describe("buildPgProveArgs", () => {
 });
 
 describe("pgProveMajor", () => {
-  test("maps stock major aliases and OrioleDB builds to their PostgreSQL major", () => {
+  test("maps stock aliases and OrioleDB builds to a catalog pg_prove major, rejecting others", () => {
     expect(pgProveMajor("15")).toBe(15);
     expect(pgProveMajor("17")).toBe(17);
     expect(pgProveMajor("17.11.0.002-orioledb")).toBe(17);
-  });
-
-  test("rejects majors without a catalog pg_prove", () => {
     expect(pgProveMajor("14")).toBeUndefined();
-    expect(pgProveMajor("16.4.1.000-orioledb")).toBeUndefined();
   });
 });

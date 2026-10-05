@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
@@ -113,10 +114,16 @@ describe("resolveDbImage", () => {
       });
     });
 
-    it.effect("keeps an OrioleDB tag the catalog does not pin on docker.io", () => {
+    it.effect("slims a pinned OrioleDB tag and keeps an unpinned one on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = withTemp();
+      const [orioledb = ""] = orioledbVersions();
+      const orioledbImage = `supabase/postgres:${orioledb}-orioledb`;
       return Effect.gen(function* () {
+        expect(yield* resolve(dir, 17, orioledb)).toEqual({
+          image: expectedPinnedImage("pg", orioledbImage),
+          configImage: orioledbImage,
+        });
         expect(yield* resolve(dir, 17, "17.0.0.000")).toEqual({
           image: "supabase/postgres:17.0.0.000-orioledb",
           configImage: "supabase/postgres:17.0.0.000-orioledb",

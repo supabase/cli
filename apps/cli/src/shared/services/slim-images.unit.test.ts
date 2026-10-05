@@ -125,13 +125,6 @@ describe("slimCatalogPin", () => {
     });
   });
 
-  it("keeps an OrioleDB tag whole, so it matches only an OrioleDB catalog pin", () => {
-    expect(slimCatalogPin("pg", "supabase/postgres:17.11.0.002-orioledb")).toEqual({
-      service: "postgres",
-      version: "17.11.0.002-orioledb",
-    });
-  });
-
   it("strips vector's docker.io -alpine variant suffix", () => {
     expect(slimCatalogPin("vector", "timberio/vector:0.53.0-alpine")).toEqual({
       service: "vector",
