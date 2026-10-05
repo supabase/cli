@@ -105,7 +105,7 @@ function buildCommandPermissions(): ReadonlyMap<string, CommandPermissions> {
     for (const [path, commandPermissions] of permissions.declared) {
       if (path.split(" ")[0] !== group) {
         throw new Error(
-          `command-permissions/index.ts: "${path}" is declared in the "${group}" group file, but its first word doesn't match — move it to the right group's <group>.permissions.ts.`,
+          `command-permissions/registry.ts: "${path}" is declared in the "${group}" group file, but its first word doesn't match — move it to the right group's <group>.permissions.ts.`,
         );
       }
       merged.set(path, commandPermissions);
@@ -118,10 +118,23 @@ function buildCommandPermissions(): ReadonlyMap<string, CommandPermissions> {
 export const COMMAND_PERMISSIONS: ReadonlyMap<string, CommandPermissions> =
   buildCommandPermissions();
 
+function buildPendingCommands(): ReadonlyArray<string> {
+  const pending: Array<string> = [];
+  for (const [group, permissions] of PERMISSION_GROUPS) {
+    for (const path of permissions.pending) {
+      if (path.split(" ")[0] !== group) {
+        throw new Error(
+          `command-permissions/registry.ts: "${path}" is pending in the "${group}" group file, but its first word doesn't match — move it to the right group's <group>.permissions.ts.`,
+        );
+      }
+      pending.push(path);
+    }
+  }
+  return pending;
+}
+
 /** Every leaf command path still awaiting a permission mapping, merged across every group. */
-export const PENDING_COMMANDS: ReadonlyArray<string> = [...PERMISSION_GROUPS.values()].flatMap(
-  (group) => group.pending,
-);
+export const PENDING_COMMANDS: ReadonlyArray<string> = buildPendingCommands();
 
 function conditionHolds(condition: FlagCondition, activeFlags: ReadonlyArray<string>): boolean {
   return activeFlags.includes(condition.flag) === (condition.present ?? true);

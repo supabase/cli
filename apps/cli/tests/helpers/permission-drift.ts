@@ -1,7 +1,7 @@
 import {
   applicableOperations,
   COMMAND_PERMISSIONS,
-} from "../../src/command-internal/command-permissions/index.ts";
+} from "../../src/command-internal/command-permissions/registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../src/command-internal/command-permissions/global-flags.ts";
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import { matchOperation } from "./operation-table.ts";

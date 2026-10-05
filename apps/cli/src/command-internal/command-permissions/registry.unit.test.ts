@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applicableOperations, permissionsFor } from "./index.ts";
+import { applicableOperations, permissionsFor } from "./registry.ts";
 import type { CommandPermissions } from "./model.ts";
 
 describe("applicableOperations", () => {

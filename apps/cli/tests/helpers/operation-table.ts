@@ -53,8 +53,18 @@ export const OPERATIONS: ReadonlyMap<string, Operation> = buildOperations();
  */
 const IN_SCOPE_PATH_PREFIXES = ["/v1/", "/v2/"];
 
+/**
+ * Splits a path into segments, trimming only the leading/trailing slash every path has. An
+ * interior empty segment (a doubled slash, e.g. `/v1/projects//x`) is preserved rather than
+ * dropped, so it can't be silently treated as "no segment here" and match a template it
+ * shouldn't — see {@link templateMatchesPath}.
+ */
 function pathSegments(path: string): ReadonlyArray<string> {
-  return path.split("/").filter((segment) => segment.length > 0);
+  const withoutLeadingSlash = path.startsWith("/") ? path.slice(1) : path;
+  const trimmed = withoutLeadingSlash.endsWith("/")
+    ? withoutLeadingSlash.slice(0, -1)
+    : withoutLeadingSlash;
+  return trimmed.length === 0 ? [] : trimmed.split("/");
 }
 
 function isPlaceholderSegment(segment: string): boolean {
@@ -65,9 +75,10 @@ function templateMatchesPath(template: string, path: string): boolean {
   const templateSegments = pathSegments(template);
   const targetSegments = pathSegments(path);
   if (templateSegments.length !== targetSegments.length) return false;
-  return templateSegments.every(
-    (segment, i) => isPlaceholderSegment(segment) || segment === targetSegments[i],
-  );
+  return templateSegments.every((segment, i) => {
+    const target = targetSegments[i]!;
+    return isPlaceholderSegment(segment) ? target.length > 0 : segment === target;
+  });
 }
 
 /** Count of non-placeholder segments, used to prefer the most specific template on a tie. */
@@ -75,8 +86,11 @@ function literalSegmentCount(template: string): number {
   return pathSegments(template).filter((segment) => !isPlaceholderSegment(segment)).length;
 }
 
+/** An absolute URL starts with a scheme; checking only the start avoids mistaking a path-only URL whose query embeds one (e.g. `/v1/projects?redirect=https://example.com`) for an absolute URL. */
+const ABSOLUTE_URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
 function requestPathname(url: string): string {
-  return url.includes("://") ? new URL(url).pathname : url.split("?")[0]!;
+  return ABSOLUTE_URL_SCHEME.test(url) ? new URL(url).pathname : url.split("?")[0]!;
 }
 
 function isInScopePath(pathname: string): boolean {
