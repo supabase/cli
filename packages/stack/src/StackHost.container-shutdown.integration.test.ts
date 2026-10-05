@@ -26,6 +26,7 @@ import {
   ownerClient,
   ownerExitProbe,
   waitForOwnerExit,
+  type HostAccess,
 } from "./HostProcess.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
@@ -519,106 +520,126 @@ it.live.skipIf(process.platform === "win32")(
   { timeout: 180_000 },
 );
 
+type StopTrigger = "signal" | "http";
+
+/**
+ * Starts a data-preserving stop through `trigger` without waiting for it to finish: a
+ * signal-driven stop runs in the owner process on its own, while an HTTP-driven stop is forked
+ * so the gated drain it blocks on never blocks the caller.
+ */
+const triggerStop = (trigger: StopTrigger, access: HostAccess) =>
+  trigger === "signal"
+    ? Effect.sync(() => process.kill(access.endpoint.pid, "SIGTERM"))
+    : Effect.forkScoped(shutdownOwner(access, false).pipe(Effect.ignore));
+
+const abandonsWhileStopDrains = (trigger: StopTrigger) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-gated-" });
+      const stackId = `abandon-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+      const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-gated-data-", stackId).pipe(
+        Effect.flatMap(fs.realPath),
+      );
+      const stateRoot = path.dirname(path.dirname(dataRoot));
+      const cacheRoot = `${base}/cache`;
+      const gateDir = `${base}/gate`;
+      yield* fs.makeDirectory(gateDir, { recursive: true });
+      const state = yield* stateFor(stateRoot);
+      yield* state.save({
+        id: stackId,
+        runtime: "docker",
+        identity: {
+          projectRoot: `${base}/project`,
+          branchContext: "abandon-gated-test",
+          stackName: stackId,
+        },
+        instances: [],
+        lifetime: "detached",
+        composition: { members: [], dependencies: [] },
+        ports: [],
+      });
+      yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
+      const access = yield* launchHost(state, {
+        stateRoot,
+        cacheRoot,
+        stackId,
+        entrypoint: gatedDrainFixture,
+        entrypointArgs: [gateDir],
+      });
+      const client = yield* ownerClient(access);
+      const database = yield* client.createService({
+        service: "database",
+        config: {
+          version: "17",
+          databasePassword: Redacted.make("abandon-gated-password"),
+          jwtSecret: Redacted.make("abandon-gated-jwt-secret-at-least-thirty-two-characters"),
+          jwtExpiry: 3600,
+        },
+        endpoints: { sql: { port: "auto" } },
+      });
+      yield* client.startService({ id: database.id });
+      yield* client.readyService({ id: database.id });
+      const status = yield* client.status({ id: database.id });
+      const port = status.endpoints.find((endpoint) => endpoint.name === "sql")?.port;
+      if (port === undefined) return yield* Effect.die("Missing database sql endpoint");
+      const containerEnvRoot = `${dataRoot}/.container-env`;
+      expect(
+        yield* fs.exists(containerEnvRoot),
+        "the stack's shared container-env scratch directory exists",
+      ).toBe(true);
+
+      // Keeps the sql listener's outstanding-connection count above zero for the whole gated
+      // window, so drain can only resolve through the deadline this test controls, never
+      // through every connection reaching zero on its own.
+      const held = yield* Effect.acquireRelease(
+        Effect.callback<Net.Socket, never>((resume) => {
+          const connection = Net.createConnection({ host: "127.0.0.1", port });
+          connection.once("connect", () => resume(Effect.succeed(connection)));
+          connection.once("error", (cause) => resume(Effect.die(cause)));
+          return Effect.sync(() => connection.destroy());
+        }),
+        (connection) => Effect.sync(() => connection.destroy()),
+      );
+
+      // Subscribes to the drain-deadline wait's own entry marker before triggering the stop, so
+      // the registration deletion below never races the gate itself.
+      const waiting = yield* watchEntry(gateDir, "waiting", true);
+      yield* triggerStop(trigger, access);
+      yield* waiting.pipe(Effect.timeout("30 seconds"));
+
+      yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+      yield* fs.writeFileString(`${gateDir}/release`, "");
+      yield* Effect.sync(() => held.destroy());
+
+      yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+        Effect.retry({ while: hasReason("owner-exit-pending") }),
+        Effect.timeout("30 seconds"),
+      );
+
+      expect(
+        yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
+        "no registration is republished",
+      ).toBe(false);
+      expect(
+        yield* fs.exists(containerEnvRoot),
+        "the registration lost during the gated stop still reaches abandonment's cleanup",
+      ).toBe(false);
+      expect(yield* containers(stackId, dataRoot), "no containers are left behind").toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)));
+
 it.live.skipIf(process.platform === "win32")(
   "abandons a stack whose registration disappears while a signal-driven stop is still draining",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-gated-" });
-        const stackId = `abandon-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-gated-data-", stackId).pipe(
-          Effect.flatMap(fs.realPath),
-        );
-        const stateRoot = path.dirname(path.dirname(dataRoot));
-        const cacheRoot = `${base}/cache`;
-        const gateDir = `${base}/gate`;
-        yield* fs.makeDirectory(gateDir, { recursive: true });
-        const state = yield* stateFor(stateRoot);
-        yield* state.save({
-          id: stackId,
-          runtime: "docker",
-          identity: {
-            projectRoot: `${base}/project`,
-            branchContext: "abandon-gated-test",
-            stackName: stackId,
-          },
-          instances: [],
-          lifetime: "detached",
-          composition: { members: [], dependencies: [] },
-          ports: [],
-        });
-        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        const access = yield* launchHost(state, {
-          stateRoot,
-          cacheRoot,
-          stackId,
-          entrypoint: gatedDrainFixture,
-          entrypointArgs: [gateDir],
-        });
-        const client = yield* ownerClient(access);
-        const database = yield* client.createService({
-          service: "database",
-          config: {
-            version: "17",
-            databasePassword: Redacted.make("abandon-gated-password"),
-            jwtSecret: Redacted.make("abandon-gated-jwt-secret-at-least-thirty-two-characters"),
-            jwtExpiry: 3600,
-          },
-          endpoints: { sql: { port: "auto" } },
-        });
-        yield* client.startService({ id: database.id });
-        yield* client.readyService({ id: database.id });
-        const status = yield* client.status({ id: database.id });
-        const port = status.endpoints.find((endpoint) => endpoint.name === "sql")?.port;
-        if (port === undefined) return yield* Effect.die("Missing database sql endpoint");
-        const containerEnvRoot = `${dataRoot}/.container-env`;
-        expect(
-          yield* fs.exists(containerEnvRoot),
-          "the stack's shared container-env scratch directory exists",
-        ).toBe(true);
+  () => abandonsWhileStopDrains("signal"),
+  { timeout: 180_000 },
+);
 
-        // Keeps the sql listener's outstanding-connection count above zero for the whole gated
-        // window, so drain can only resolve through the deadline this test controls, never
-        // through every connection reaching zero on its own.
-        const held = yield* Effect.acquireRelease(
-          Effect.callback<Net.Socket, never>((resume) => {
-            const connection = Net.createConnection({ host: "127.0.0.1", port });
-            connection.once("connect", () => resume(Effect.succeed(connection)));
-            connection.once("error", (cause) => resume(Effect.die(cause)));
-            return Effect.sync(() => connection.destroy());
-          }),
-          (connection) => Effect.sync(() => connection.destroy()),
-        );
-
-        // Subscribes to the drain-deadline wait's own entry marker before sending the signal that
-        // triggers it, so the registration deletion below never races the gate itself.
-        const waiting = yield* watchEntry(gateDir, "waiting", true);
-        process.kill(access.endpoint.pid, "SIGTERM");
-        yield* waiting.pipe(Effect.timeout("30 seconds"));
-
-        yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
-        yield* fs.writeFileString(`${gateDir}/release`, "");
-        yield* Effect.sync(() => held.destroy());
-
-        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
-          Effect.retry({ while: hasReason("owner-exit-pending") }),
-          Effect.timeout("30 seconds"),
-        );
-
-        expect(
-          yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
-          "no registration is republished",
-        ).toBe(false);
-        expect(
-          yield* fs.exists(containerEnvRoot),
-          "the registration lost during the gated stop still reaches abandonment's cleanup",
-        ).toBe(false);
-        expect(yield* containers(stackId, dataRoot), "no containers are left behind").toEqual([]);
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+it.live.skipIf(process.platform === "win32")(
+  "abandons a stack whose registration disappears while an HTTP-driven stop is still draining",
+  () => abandonsWhileStopDrains("http"),
   { timeout: 180_000 },
 );
 

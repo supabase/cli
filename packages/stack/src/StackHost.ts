@@ -672,7 +672,6 @@ export const runStackHost = Effect.fn("StackHost.run")(
             Effect.map(() => "done" as const),
             Effect.raceFirst(Queue.take(events)),
           );
-          if (event === "done") break;
           if (event === "creator-gone") {
             yield* started.shutdown(true).pipe(
               Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
@@ -684,14 +683,16 @@ export const runStackHost = Effect.fn("StackHost.run")(
             yield* started.abandon;
             break;
           }
-          const shutdownSucceeded = yield* started.shutdown(false).pipe(
-            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
-            Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
-          );
-          if (!shutdownSucceeded) continue;
-          // A registration deletion that arrives while this data-preserving stop is already
-          // running only reaches `events` as a queued, now-unread `registration-gone`: a direct
-          // re-read through the same state API the poll uses catches it before the owner exits.
+          if (event !== "done") {
+            const shutdownSucceeded = yield* started.shutdown(false).pipe(
+              Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
+              Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
+            );
+            if (!shutdownSucceeded) continue;
+          }
+          // A registration deletion that arrives while a data-preserving stop is already running
+          // only reaches `events` as a queued, now-unread `registration-gone`: a direct re-read
+          // through the same state API the poll uses catches it before the owner exits.
           if (yield* registrationConfirmedGone(state, id)) yield* started.abandon;
           break;
         }
