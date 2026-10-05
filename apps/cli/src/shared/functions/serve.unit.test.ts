@@ -1,4 +1,3 @@
-import { nativeFailure } from "./functions-docker.ts";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { describe, expect } from "vitest";
@@ -20,10 +19,7 @@ describe("buildServeEntrypointCommand", () => {
 
   it.effect("keeps the spawned command short even with the real bundled template", () => {
     return Effect.gen(function* () {
-      const bundled = yield* Effect.tryPromise({
-        try: () => bundleServeMainTemplate(),
-        catch: nativeFailure,
-      });
+      const bundled = yield* bundleServeMainTemplate();
       const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
       expect(bundled.length).toBeGreaterThan(20_000);
       expect(script.length).toBeLessThan(128);

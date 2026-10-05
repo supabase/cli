@@ -1633,7 +1633,7 @@ describe("db start stack backend", () => {
       registered: true,
     })),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () =>
       Effect.sync(() => {
         state.credentialsCalled = true;

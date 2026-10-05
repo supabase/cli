@@ -6,7 +6,7 @@ files remain. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive; a missing target fails. Explicit legacy
 `-o/--output` is rejected in favor of `--output-format`.
 

@@ -34,6 +34,7 @@ import {
   Duration,
   Effect,
   Exit,
+  Fiber,
   Option,
   Predicate,
   Redacted,
@@ -360,24 +361,31 @@ declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
  * so the shipped binary never bundles at runtime. Running from source
  * bundles on demand.
  */
-function getFunctionsServeMainTemplate(): Promise<string> {
+const getFunctionsServeMainTemplate = Effect.fnUntraced(function* () {
   if (cachedFunctionsServeMainTemplate !== undefined) {
-    return Promise.resolve(cachedFunctionsServeMainTemplate);
+    return cachedFunctionsServeMainTemplate;
   }
   if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
     cachedFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
-    return Promise.resolve(cachedFunctionsServeMainTemplate);
+    return cachedFunctionsServeMainTemplate;
   }
   // Bundler (and its esbuild dependency) is imported lazily and only here,
   // so it's never loaded by shipped binaries, which always take the define
   // branch above.
-  return import("./serve-main-bundler.ts")
-    .then(({ bundleServeMainTemplate }) => bundleServeMainTemplate())
-    .then((bundled) => {
+  // Detached so an interrupted bring-up still finishes and fills the cache; only this join observes it.
+  const bundling = yield* Effect.forkDetach(
+    Effect.gen(function* () {
+      const { bundleServeMainTemplate } = yield* Effect.promise(
+        () => import("./serve-main-bundler.ts"),
+      );
+      const bundled = yield* bundleServeMainTemplate();
       cachedFunctionsServeMainTemplate = bundled;
       return bundled;
-    });
-}
+    }),
+    { startImmediately: true },
+  );
+  return yield* Fiber.join(bundling);
+});
 
 function reveal(value: string | Redacted.Redacted<string> | undefined): string | undefined {
   if (value === undefined) {
@@ -1692,10 +1700,10 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
         bitbucketCloneDirDefined,
         additionalModuleRoots: [flagCwd],
         skipMissingImportMapTargets: true,
-        onWarning: (message) => {
-          bindWarnings.push(message);
-          return Promise.resolve();
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            bindWarnings.push(message);
+          }),
       })) {
         binds.add(formatDockerBind(bind));
       }
@@ -1785,10 +1793,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         bitbucketCloneDirDefined,
         additionalModuleRoots: [input.flagCwd],
         skipMissingImportMapTargets: true,
-        onWarning: (message) => {
-          bindWarnings.push(message);
-          return Promise.resolve();
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            bindWarnings.push(message);
+          }),
       })) {
         const key = formatDockerBind(bind);
         functionBinds.set(key, bind);
@@ -1896,7 +1904,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const serveMainTemplate = yield* Effect.promise(() => getFunctionsServeMainTemplate()).pipe(
+      const serveMainTemplate = yield* getFunctionsServeMainTemplate().pipe(
         Effect.withSpan("functions.serve.bundleMainTemplate"),
       );
       // Streamed in via `docker cp` between create and start: embedding the template in the

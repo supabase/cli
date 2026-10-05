@@ -139,6 +139,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // experimental stack flags
   "capability",
   "service",
+  "since",
   "stack",
   "stack-id",
   "preparation",

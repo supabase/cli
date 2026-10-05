@@ -46,6 +46,8 @@ import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
 import { StackError, type Definition, type EndpointPortChange, type Observation } from "./Rpc.ts";
+import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
+import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import { reclaimStack } from "./Sweep.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
@@ -79,6 +81,7 @@ export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./State.ts";
 export type { StackCredentials, StackKeysInput };
 export type { EndpointPortChange, Observation } from "./Rpc.ts";
+export type { LogPosition, LogRecord, StackLogRecord };
 export type {
   Command,
   InitializationCommand,
@@ -160,13 +163,22 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly prepare: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;
-  readonly logs: Stream.Stream<
-    { readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array },
-    StackError
-  >;
+  /** Streams the instance's persisted records through its live owner, which it never launches. */
+  readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
   readonly credentials: (options?: {
     readonly from?: "host" | "runtime";
   }) => Effect.Effect<Readonly<Record<string, string>>, StackError>;
+}
+/** Selects the records {@link ServiceInstance.readLogs} streams. */
+export interface ReadLogsOptions {
+  /** Starts at this record instead of the oldest retained one; the read fails with `tail`. */
+  readonly from?: LogPosition;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+  /** Starts with only this many of the latest records; the read fails with `from`. */
+  readonly tail?: number;
+  /** Keeps streaming new records until interrupted; `false` by default. */
+  readonly follow?: boolean;
 }
 /** Snapshot placement; `cache` is the default. */
 export interface DatabaseSnapshotOptions {
@@ -666,7 +678,16 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
-    logs: stream("logs", (rpc) => rpc.logs({ id })),
+    readLogs: (options) =>
+      stream("readLogs", (rpc) =>
+        rpc.readLogs({
+          id,
+          follow: options?.follow ?? false,
+          ...(options?.from === undefined ? {} : { from: options.from }),
+          ...(options?.since === undefined ? {} : { since: options.since }),
+          ...(options?.tail === undefined ? {} : { tail: options.tail }),
+        }),
+      ),
     credentials: (options) =>
       call("credentials", (rpc) => rpc.credentials({ id, from: options?.from ?? "host" })),
   });
@@ -708,8 +729,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return common(id, "mail");
       case "analytics":
         return common(id, "analytics");
-      case "vector":
-        return common(id, "vector");
       case "pooler":
         return common(id, "pooler");
     }
@@ -1001,19 +1020,32 @@ export const open = Effect.fn("Stack.open")(
   Effect.mapError((cause) => failure("open", cause)),
 );
 
-/** Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+/**
+ * Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries.
+ * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it.
+ */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
+      readonly idPrefix?: string;
       readonly onInvalidState?: (id: string, error: State.StateError) => Effect.Effect<void>;
     },
   ) {
+    const selected = (id: string) =>
+      options.idPrefix === undefined || id.startsWith(options.idPrefix);
+    const onInvalidState = options.onInvalidState;
     const state = yield* State.Service.pipe(
       Effect.provide(
-        State.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
+        State.layer({
+          root: options.stateRoot,
+          onInvalidState:
+            onInvalidState === undefined
+              ? undefined
+              : (id, error) => (selected(id) ? onInvalidState(id, error) : Effect.void),
+        }),
       ),
     );
-    const saved = yield* state.list;
+    const saved = (yield* state.list).filter(({ id }) => selected(id));
     return yield* Effect.forEach(
       saved,
       (definition) =>
@@ -1046,3 +1078,28 @@ export const find = Effect.fn("Stack.find")(
   },
   Effect.mapError((cause) => failure("find", cause)),
 );
+
+/** Selects the persisted logs of a stack; its owner does not need to run. */
+export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  readonly stackId: string;
+  /** Instance ids to read; every instance with persisted logs by default. */
+  readonly instances?: ReadonlyArray<string>;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+}
+
+/** Streams a stack's persisted records one instance after another, each in file order. */
+export const streamStackLogs = (
+  options: StreamStackLogsOptions,
+): Stream.Stream<StackLogRecord, StackError, FileSystem.FileSystem | Path.Path> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const root = yield* State.stackLogsRoot(path, options.stateRoot, options.stackId);
+      return streamPersistedLogs({
+        root,
+        ...(options.instances === undefined ? {} : { instances: options.instances }),
+        ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
+      });
+    }),
+  ).pipe(Stream.mapError((cause) => failure("streamStackLogs", cause)));

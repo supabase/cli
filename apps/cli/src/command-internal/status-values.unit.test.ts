@@ -40,7 +40,14 @@ describe("statusValues", () => {
       storage: { enabled: false },
       edge_runtime: { enabled: false },
     });
-    const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
+    const { values } = statusValues(
+      config,
+      CONTAINER_IDS,
+      HOSTNAME,
+      [CONTAINER_IDS.kong],
+      NO_OVERRIDES,
+      WORKDIR,
+    );
     expect(Object.keys(values)).toEqual(["DB_URL"]);
     expect(values.DB_URL).toContain("postgresql://postgres:postgres@127.0.0.1");
   });
@@ -58,10 +65,14 @@ describe("statusValues", () => {
       expect(values.API_URL).toBeDefined();
     });
 
-    it("omits API_URL when api.enabled is false", () => {
+    it("keeps the Kong URLs but omits REST/GraphQL when api.enabled is false", () => {
       const config = baseConfig({ api: { enabled: false } });
       const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
-      expect(values.API_URL).toBeUndefined();
+      expect(values.API_URL).toBeDefined();
+      expect(values.FUNCTIONS_URL).toBeDefined();
+      expect(values.MCP_URL).toBeDefined();
+      expect(values.REST_URL).toBeUndefined();
+      expect(values.GRAPHQL_URL).toBeUndefined();
     });
 
     it("omits API_URL when the kong container id is excluded", () => {
@@ -89,8 +100,14 @@ describe("statusValues", () => {
     });
 
     it("omits REST/GraphQL when kong is disabled even though postgrest is enabled", () => {
-      const config = baseConfig({ api: { enabled: false } });
-      const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
+      const { values } = statusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        [CONTAINER_IDS.kong],
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.REST_URL).toBeUndefined();
       expect(values.GRAPHQL_URL).toBeUndefined();
     });
@@ -157,8 +174,14 @@ describe("statusValues", () => {
     });
 
     it("omits FUNCTIONS_URL when kong is disabled even though edge_runtime is enabled", () => {
-      const config = baseConfig({ api: { enabled: false } });
-      const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
+      const { values } = statusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        [CONTAINER_IDS.kong],
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
 
@@ -245,8 +268,14 @@ describe("statusValues", () => {
     });
 
     it("omits MCP_URL when kong is disabled", () => {
-      const config = baseConfig({ api: { enabled: false } });
-      const { values } = statusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES, WORKDIR);
+      const { values } = statusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        [CONTAINER_IDS.kong],
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.MCP_URL).toBeUndefined();
     });
 
@@ -432,7 +461,7 @@ describe("statusValues", () => {
       expect(values.REST_URL).toBeDefined();
     });
 
-    it("omits API_URL when SUPABASE_API_ENABLED=false overrides an enabled api.enabled", () => {
+    it("omits REST_URL when SUPABASE_API_ENABLED=false overrides an enabled api.enabled", () => {
       const { values } = statusValues(
         baseConfig(),
         CONTAINER_IDS,
@@ -442,7 +471,8 @@ describe("statusValues", () => {
         WORKDIR,
         { SUPABASE_API_ENABLED: "false" },
       );
-      expect(values.API_URL).toBeUndefined();
+      expect(values.REST_URL).toBeUndefined();
+      expect(values.API_URL).toBeDefined();
     });
 
     it("includes STUDIO_URL when SUPABASE_STUDIO_ENABLED overrides a disabled studio.enabled", () => {

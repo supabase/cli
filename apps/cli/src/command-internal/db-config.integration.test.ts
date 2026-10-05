@@ -465,7 +465,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         registered: true,
       }),
       followStatus: Stream.empty,
-      logs: Stream.empty,
+      readLogs: () => Stream.empty,
       credentials: () => unused,
       saveSnapshot: () => unused,
       restoreSnapshot: () => unused,

@@ -16,7 +16,7 @@ and password-reconciliation connection uses that administrative role, so a nativ
 | `supabase stack prepare` | Download artifacts without starting services.                                     |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
 | `supabase stack status`  | Show identity, readiness, and drift, or export connection variables with `--env`. |
-| `supabase stack logs`    | Stream live stack logs.                                                           |
+| `supabase stack logs`    | Print retained stack logs; `-f` streams new lines.                                |
 | `supabase stack restart` | Restart an existing stack using its saved effective configuration.                |
 | `supabase stack stop`    | Stop a stack while retaining its data.                                            |
 
@@ -131,8 +131,9 @@ The stack backend rejects every explicit legacy `-o/--output` value: `env`, `pre
 project, branch, runtime, and owner availability. Registry entries that cannot be read or decoded
 are skipped with a warning on stderr identifying each stack; only a failure to read the stacks
 directory itself fails discovery.
-The text table shortens readable IDs for scanning; use `--output-format json` or
-`--output-format stream-json` for the complete structured inventory with full IDs.
+The text table shortens readable IDs for scanning; every `--stack-id` accepts that short ID, or any
+unique prefix of at least 4 characters. Use `--output-format json` or `--output-format stream-json`
+for the complete structured inventory with full IDs.
 
 Listing is global and has no checkout filter. Owner availability is not service lifecycle or health;
 use `supabase stack status` for live state. Registry directories without a state file are ignored
@@ -167,7 +168,7 @@ Other values are rejected. The override is applied before reading the project co
 
 `supabase services` follows the same backend selection. In stack mode it lists image versions and
 canonical `ghcr.io/supabase/cli/...` names from the installed CLI's artifact catalog, including
-Mailpit and Vector. PostgreSQL uses the selected major version (15 or 17); invalid configuration
+Mailpit. PostgreSQL uses the selected major version (15 or 17); invalid configuration
 or an unsupported PostgreSQL major warns with the cause and uses catalog defaults. This inventory describes the
 CLI catalog, not running containers, downloaded images, or service health. The Docker and native
 stack runtimes use the same catalog versions, though a running stack launched by another CLI
@@ -244,18 +245,25 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` streams live stdout/stderr from composition members without
-starting an owner or service. Select `--stack <name>` or `--stack-id <id>`;
-`--service <kind-or-instance-id>` can include standalone services too. The command
-requires a reachable owner and streams until interrupted. Ctrl-C leaves services
-running. There is no retained history, `--tail`, or `--follow` flag.
+`supabase stack logs` prints the retained stdout/stderr of composition members and
+exits; `-f/--follow` then streams new lines until interrupted. Select `--stack <name>`
+or `--stack-id <id>`; the repeatable `--service <kind-or-instance-id>` can include
+standalone services too. History is read from the persisted log files, so it works
+while the stack is stopped; `--follow` requires a running owner and fails before
+printing anything without one. Neither mode starts an owner or service, and Ctrl-C
+leaves services running.
 
-Text uses `<timestamp> <service>/<instance-id>/<stream>: <line>` and strips terminal
-control sequences. For automation use `--output-format stream-json`: each
-`log-entry` contains `timestamp`, `service`, `instance_id`, `stream`, `line`, and
-`source: "live"`. Finite JSON output is not supported. Delivery is best effort;
-stdout/stderr and different services may interleave. Missing stacks, unavailable
-owners, and unmatched services fail with status 1; interruption exits 130.
+`--tail N` (default 200) keeps the newest lines across the selected services and
+`--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
+service's latest launch. Text uses `<service> | <HH:MM:SS.mmm> <line>` with aligned
+labels, shows launches and lost output as dim separators, strips terminal control
+sequences, and notes on stderr when the tail hides older lines. For automation use
+`--output-format stream-json`: each `log-entry` contains `timestamp`, `service`,
+`instance_id`, `stream`, `line`, and `source` (`history` or `live`), and markers are
+`log-marker` events with `kind` and, for lost output, `count`. `--output-format json`
+prints the history as one array and does not accept `--follow`. Missing stacks,
+unmatched services, and `--follow` without an owner fail with status 1; interruption
+exits 130.
 
 ## Data and configuration
 

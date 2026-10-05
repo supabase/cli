@@ -111,7 +111,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       registered: true,
     }),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
     saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),

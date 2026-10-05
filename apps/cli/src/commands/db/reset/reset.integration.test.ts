@@ -565,7 +565,7 @@ const stackService = (
     prepare: Effect.void,
     status: observation,
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
