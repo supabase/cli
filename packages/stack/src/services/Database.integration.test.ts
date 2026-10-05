@@ -3,6 +3,7 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
+  Crypto,
   Deferred,
   Effect,
   FileSystem,
@@ -456,6 +457,42 @@ describe("database component", { timeout: 180_000 }, () => {
             ),
           ).toEqual([{ value: "docker" }]);
           yield* reopenedService.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    );
+
+  for (const version of ["15", "17"])
+    it.live(`PostgreSQL ${version} lets postgres alter its own pg_cron jobs in a container`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const crypto = yield* Crypto.Crypto;
+          const stackId = `stack-pg-cron-${(yield* crypto.randomUUIDv4).slice(0, 8)}`;
+          const root = yield* makeDockerDatabaseRoot("stack-database-pg-cron-", stackId);
+          const database = yield* makeDatabase({
+            stackId,
+            instanceId: "database",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "docker",
+          });
+          const service = yield* makeService(database.definition, {
+            id: "database:pg-cron",
+            config: { ...config, version },
+          });
+          yield* service.start;
+          yield* service.ready;
+          const endpoint = yield* database.endpoint;
+          const asPostgres = (statement: string) =>
+            query(endpoint, config.databasePassword, statement, "postgres", "postgres");
+          yield* asPostgres("CREATE EXTENSION pg_cron WITH SCHEMA pg_catalog");
+          yield* asPostgres("SELECT cron.schedule('probe', '* * * * *', 'SELECT 1')");
+          yield* asPostgres(
+            "SELECT cron.alter_job((SELECT jobid FROM cron.job WHERE jobname = 'probe'), schedule := '*/5 * * * *')",
+          );
+          expect(
+            yield* asPostgres("SELECT schedule FROM cron.job WHERE jobname = 'probe'"),
+          ).toEqual([{ schedule: "*/5 * * * *" }]);
+          yield* service.destroy;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );

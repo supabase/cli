@@ -739,7 +739,15 @@ export const makeDatabase = (
             POSTGRES_DB: "postgres",
             POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
           },
-          args: ["-p", "5432", "-c", "listen_addresses=*", ...settings],
+          args: [
+            "-p",
+            "5432",
+            "-c",
+            "listen_addresses=*",
+            "-c",
+            "supautils.extension_custom_scripts_path=/opt/postgres/share/supabase-cli/extension-custom-scripts",
+            ...settings,
+          ],
           mounts: [
             dataMount,
             {
