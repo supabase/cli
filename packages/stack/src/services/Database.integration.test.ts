@@ -96,7 +96,12 @@ describe("database component", { timeout: 180_000 }, () => {
             yield* query(
               endpoint,
               defaults.databasePassword,
-              "CREATE EXTENSION IF NOT EXISTS pgsodium; CREATE EXTENSION IF NOT EXISTS supabase_vault",
+              "CREATE EXTENSION IF NOT EXISTS pgsodium",
+            );
+            yield* query(
+              endpoint,
+              defaults.databasePassword,
+              "CREATE EXTENSION IF NOT EXISTS supabase_vault",
             );
             const derivation = "SELECT encode(pgsodium.derive_key(1), 'hex') AS key";
             const originalKey = yield* query(endpoint, defaults.databasePassword, derivation);
@@ -187,10 +192,11 @@ describe("database component", { timeout: 180_000 }, () => {
           "postgres",
         ).pipe(Effect.flip);
         expect(Predicate.isTagged(rejected.reason, "AuthenticationError")).toBe(true);
+        yield* query(endpoint, config.databasePassword, "CREATE EXTENSION dblink");
         yield* query(
           endpoint,
           config.databasePassword,
-          "CREATE EXTENSION dblink; CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
+          "CREATE ROLE dblink_probe LOGIN PASSWORD 'probe-password'",
         );
         const connected = yield* query(
           endpoint,
@@ -262,7 +268,12 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(
             firstEndpoint,
             config.databasePassword,
-            "ALTER ROLE supabase_admin SET log_statement = 'all'; ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
+            "ALTER ROLE supabase_admin SET log_statement = 'all'",
+          );
+          yield* query(
+            firstEndpoint,
+            config.databasePassword,
+            "ALTER ROLE supabase_admin SET log_min_duration_statement = 0",
           );
           yield* service.restart(loggedConfig);
           yield* service.ready;
