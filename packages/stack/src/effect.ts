@@ -528,31 +528,11 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         Effect.provideContext(services),
       );
     if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;
-    if (Exit.isFailure(refusal)) {
-      const shutdownFailure = Option.match(Cause.findErrorOption(refusal.cause), {
+    if (Exit.isFailure(refusal))
+      return yield* Option.match(Cause.findErrorOption(refusal.cause), {
         onNone: () => failure(operation, Cause.pretty(refusal.cause)),
         onSome: (cause) => failure(operation, cause),
       });
-      if (!destroy) return yield* shutdownFailure;
-      const exitResult = yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
-        Effect.mapError((cause) => failure("shutdown-exit", cause)),
-        Effect.exit,
-      );
-      if (Exit.isFailure(exitResult)) {
-        const exitFailure = Option.match(Cause.findErrorOption(exitResult.cause), {
-          onNone: () => failure("shutdown-exit", Cause.pretty(exitResult.cause)),
-          onSome: (cause) => failure("shutdown-exit", cause),
-        });
-        const exitStatus = exitFailure.message.includes("still running")
-          ? "Owner is still running after failed destroy"
-          : "Owner exit was not confirmed after failed destroy";
-        return yield* new StackError({
-          ...shutdownFailure,
-          message: `${shutdownFailure.message}; ${exitStatus}; exit probe: ${exitFailure.message}`,
-        });
-      }
-      return yield* shutdownFailure;
-    }
     yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );

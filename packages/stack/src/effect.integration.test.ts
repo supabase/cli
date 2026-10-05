@@ -147,7 +147,7 @@ it.live("starts the owner on opt-in reopen without starting saved services", () 
 );
 
 it.live(
-  "stops the owner after destroy fails and retains saved data for retry",
+  "reports a failed destroy and keeps the owner and saved data for retry",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -199,7 +199,7 @@ it.live(
         expect(yield* fs.readLink(dataRoot).pipe(Effect.isSuccess)).toBe(true);
         const retained = yield* discover(options);
         expect(retained).toHaveLength(1);
-        expect(retained[0]?.host).toBeUndefined();
+        expect(retained[0]?.host?.pid).toBe(running[0]?.host?.pid);
 
         yield* fs.remove(dataRoot, { force: true });
         yield* stack.destroy;
