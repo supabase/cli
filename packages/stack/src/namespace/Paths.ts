@@ -66,26 +66,6 @@ export const borrow = Effect.fn("Namespace.Paths.borrow")(
     }),
 );
 
-/** Reports whether `candidate`'s real path is inside, or equal to, the real path of any of `roots`. */
-export const isWithinOwnedRoots = Effect.fn("Namespace.Paths.isWithinOwnedRoots")(
-  <E>(
-    fs: FileSystem.FileSystem,
-    path: Path.Path,
-    candidate: string,
-    roots: ReadonlyArray<string>,
-    onError: (operation: string, cause: unknown) => E,
-  ): Effect.Effect<boolean, E> =>
-    Effect.gen(function* () {
-      const realCandidate = yield* resolveReal(fs, path, candidate, onError);
-      for (const root of roots) {
-        const realRoot = yield* resolveReal(fs, path, root, onError);
-        if (realCandidate === realRoot || realCandidate.startsWith(`${realRoot}${path.sep}`))
-          return true;
-      }
-      return false;
-    }),
-);
-
 /** The container mount target for an instance-scoped directory owned on the host. */
 export const containerInstancePath = "/instance";
 

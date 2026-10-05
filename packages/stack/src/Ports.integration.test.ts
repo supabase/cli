@@ -22,7 +22,9 @@ import {
   probeVacant,
   reserveNativePort,
 } from "./Ports.ts";
+import { systemError } from "effect/PlatformError";
 import { bindTcp } from "./Proxy.ts";
+import { CONTAINER_ENV_DIRNAME } from "./namespace/Paths.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
@@ -239,7 +241,7 @@ it.live(
 );
 
 it.live(
-  "a stack-wide destroy defers a dedicated row's release; a sweep failure keeps it uncertain, and the next destroy, once resolved, releases it",
+  "a stack-wide destroy defers a dedicated row's release; a cleanup failure keeps it uncertain, and the next destroy, once resolved, releases it",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -259,14 +261,10 @@ it.live(
         };
         yield* state.save(saved);
 
-        // A leftover claim the sweep must reconcile before destroy can confirm nothing remains.
-        const claimed = path.join(root, "data", "claimed");
-        yield* fs.makeDirectory(claimed, { recursive: true });
-        yield* state.claim(id, { kind: "directory", id: claimed });
-
-        // Fails removing that one claimed directory on the first attempt only, standing in for any
-        // concrete sweep failure (an unreachable engine, a locked file, and so on); resolved for the
-        // retry once the uncertainty would realistically have cleared.
+        // Fails removing the stack's scratch directory on the first attempt only, standing in for
+        // any concrete cleanup failure (an unreachable engine, a locked file, and so on); resolved
+        // for the retry once the uncertainty would realistically have cleared.
+        const scratch = path.join(root, "data", CONTAINER_ENV_DIRNAME);
         let resolved = false;
         const unreliableFileSystem = Layer.effect(
           FileSystem.FileSystem,
@@ -274,9 +272,18 @@ it.live(
             FileSystem.FileSystem.of({
               ...real,
               remove: (target, options) =>
-                target === claimed && !resolved
-                  ? Effect.die("Injected sweep failure")
-                  : real.remove(target, options),
+                Effect.suspend(() =>
+                  target === scratch && !resolved
+                    ? Effect.fail(
+                        systemError({
+                          _tag: "PermissionDenied",
+                          module: "test",
+                          method: "remove",
+                          description: "Injected cleanup failure",
+                        }),
+                      )
+                    : real.remove(target, options),
+                ),
             }),
           ),
         ).pipe(Layer.provide(NodeFileSystem.layer));

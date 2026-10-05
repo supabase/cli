@@ -62,13 +62,13 @@ import {
 import type { StackId } from "../identity/StackId.ts";
 import {
   acquireNativeRuntimeRoot,
+  nativeSocketDirectoryPath,
   handOverNativePostgresFiles,
   openNativePostgresInstance,
   resolveNativePostgresUser,
   type PasswdEntry,
 } from "../runtime/postgres-user.ts";
 import { EndpointIntent, serviceCreation } from "./Recipe.ts";
-import type * as Claims from "../namespace/Claims.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { containerInstancePath, destroyOwnedRoot } from "../namespace/Paths.ts";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
@@ -145,8 +145,6 @@ export interface DatabaseOptions {
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
   readonly engineTarget?: EngineTarget;
-  /** Journals the native socket directory this database creates under `/tmp`, outside its data root. */
-  readonly directoryClaims: Claims.DirectoryClaims;
 }
 
 export interface DatabaseComponent {
@@ -798,31 +796,24 @@ export const makeDatabase = (
             // PostgreSQL limits Unix socket paths to 103 bytes, so this directory nests under the
             // short per-uid native runtime root (acquired and validated below) rather than under
             // instanceRoot. Ownership by location there keeps a foreign uid from ever creating or
-            // replacing it, and keeps recovery from ever having to delete outside it.
-            // The pathname is picked and journaled before the directory exists, so a SIGKILL
-            // between the claim and the create always leaves reconcile a recoverable claim.
-            // An existing path is never ours, so a failed exclusive create drops the claim.
+            // replacing it, and its derived name lets recovery find a leftover without a journal.
             const runtimeRoot = yield* asRoot(acquireNativeRuntimeRoot());
-            const socketSuffix = yield* crypto.randomUUIDv4.pipe(
-              Effect.map((uuid) => uuid.replaceAll("-", "")),
-              Effect.mapError((cause) => errorFor("launch", cause)),
-            );
-            const socketPath = path.join(runtimeRoot, `pg-${socketSuffix}`);
+            const socketPath = yield* nativeSocketDirectoryPath(
+              crypto,
+              path,
+              runtimeRoot,
+              options.root,
+              options.instanceId,
+            ).pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+            // A directory already at the derived name is a previous run's leftover.
             yield* Effect.acquireRelease(
-              options.directoryClaims
-                .claim(socketPath)
-                .pipe(
-                  Effect.andThen(
-                    fs
-                      .makeDirectory(socketPath, { mode: 0o700 })
-                      .pipe(Effect.tapError(() => options.directoryClaims.unclaim(socketPath))),
-                  ),
-                ),
+              fs
+                .remove(socketPath, { recursive: true, force: true })
+                .pipe(Effect.andThen(fs.makeDirectory(socketPath, { mode: 0o700 }))),
               () =>
-                fs.remove(socketPath, { recursive: true, force: true }).pipe(
-                  Effect.andThen(options.directoryClaims.unclaim(socketPath)),
-                  Effect.catch((cause) => Effect.logError(cause)),
-                ),
+                fs
+                  .remove(socketPath, { recursive: true, force: true })
+                  .pipe(Effect.catch((cause) => Effect.logError(cause))),
             ).pipe(
               Scope.provide(context.scope),
               Effect.mapError((cause) => errorFor("launch", cause)),

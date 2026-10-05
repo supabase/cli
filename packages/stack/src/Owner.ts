@@ -18,7 +18,6 @@ import {
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type { PlatformError } from "effect/PlatformError";
 import type { Rpc, RpcGroup } from "effect/unstable/rpc";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as Network from "./Network.ts";
@@ -66,11 +65,8 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
-import * as Claims from "./namespace/Claims.ts";
-import { namespaceError } from "./namespace/Capabilities.ts";
-import { lstatPath } from "./namespace/drivers/FileSystem.ts";
 import * as Paths from "./namespace/Paths.ts";
-import { resolveNativeRuntimeRootForRecovery } from "./runtime/postgres-user.ts";
+import { removeNativeSocketDirectories } from "./runtime/postgres-user.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -102,56 +98,24 @@ type Handlers = {
   ) => Rpc.ResultFrom<Current, never>;
 };
 
-/** True when `target` exists in any form (a real entry or a symlink); lstat-style, never follows. */
-const directoryClaimExists = Effect.fn("Owner.directoryClaimExists")(function* (target: string) {
-  return (yield* lstatPath(target)) !== undefined;
-});
-
 /**
- * Reconciles this stack's directory claims by exact identity, then removes every container
- * carrying this stack's identity and data-root labels through the owner's pinned engine target.
- * A directory claim outside every owned root is kept and reported, so recovery (possibly as root)
- * never deletes what it does not own; one naming a path that no longer exists in any form is
- * simply dropped, nothing left to remove. A container that survives removal fails the sweep, so
- * the caller (startup, stop, or destroy) can report it and retry instead of proceeding as if the
- * stack were fully torn down.
+ * Removes the native socket directory of every database instance of this stack, then every
+ * container carrying this stack's identity and data-root labels through the owner's pinned
+ * engine target. A container that survives removal fails the sweep, so the caller (startup,
+ * stop, or destroy) can report it and retry instead of proceeding as if the stack were fully
+ * torn down.
  */
 export const sweepContainers = Effect.fn("Owner.sweepContainers")(function* (
-  state: StackNamespace.Interface,
-  saved: Pick<SavedStack, "id" | "runtime">,
+  saved: Pick<SavedStack, "id" | "runtime" | "instances">,
   root: string,
   target: Container.EngineTarget | undefined,
 ) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // Missing, foreign, or symlinked is "no such owned root", not a sweep failure: anything claimed
-  // under it is reported, not deleted through whatever replaced it.
-  const nativeRuntimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
-  const ownedRoots = [root, ...Option.toArray(nativeRuntimeRoot)];
-  yield* Claims.reconcile(
-    state,
-    saved.id,
-    (claim): Effect.Effect<"removed" | "kept", PlatformError | StackNamespace.NamespaceError> =>
-      directoryClaimExists(claim.id).pipe(
-        Effect.flatMap((present) =>
-          !present
-            ? Effect.succeed("removed" as const)
-            : Paths.isWithinOwnedRoots(fs, path, claim.id, ownedRoots, (_operation, cause) =>
-                namespaceError("cleanup", cause),
-              ).pipe(
-                Effect.flatMap((within) =>
-                  within
-                    ? fs
-                        .remove(claim.id, { recursive: true, force: true })
-                        .pipe(Effect.as("removed" as const))
-                    : Effect.logWarning(
-                        `Claimed directory ${claim.id} resolves outside every owned root; keeping it`,
-                      ).pipe(Effect.as("kept" as const)),
-                ),
-              ),
-        ),
-      ),
-  );
+  if (saved.runtime === "native")
+    yield* removeNativeSocketDirectories(
+      root,
+      saved.instances.filter(({ creation }) => creation.service === "database").map(({ id }) => id),
+    );
   if (target === undefined) return;
   const remaining = yield* Container.removeStackContainers({
     target,
@@ -183,7 +147,7 @@ export interface Interface {
     readonly stop: Effect.Effect<void, NamespaceError>;
     /**
      * Destroys every instance once in-flight definition changes settle, then releases owned
-     * containers, claims and saved state.
+     * containers, native socket directories and saved state.
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
     /**
@@ -470,7 +434,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     return yield* withCredentials(creation, credentials);
   });
 
-  const claims = Claims.forStack(options.state, stackId);
   const recipeFor = (creation: ServiceCreation, id: string) =>
     makeServiceRecipe(creation, {
       stackId,
@@ -480,7 +443,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       cacheRoot: options.cacheRoot,
       runtime,
       helpers,
-      directoryClaims: claims.directories,
       isPubliclyReserved,
       ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
@@ -828,12 +790,15 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
   };
 
-  const sweep = sweepContainers(
-    options.state,
-    options.saved,
-    options.root,
-    options.engineTarget,
-  ).pipe(Effect.provideContext(services));
+  // The registration's current instances, not the owner's startup snapshot, name the socket
+  // directories to remove; destroy reads them before it unregisters each instance.
+  const readCurrent = options.state
+    .read(stackId)
+    .pipe(Effect.map((saved) => saved ?? options.saved));
+  const sweep = (saved: SavedStack) =>
+    sweepContainers(saved, options.root, options.engineTarget).pipe(
+      Effect.provideContext(services),
+    );
   const getStackCredentials = readSaved.pipe(
     Effect.flatMap(({ credentials }) =>
       credentials === undefined
@@ -853,45 +818,28 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
       stop: network.drain.pipe(
         Effect.andThen(orchestrator.stopNamespace),
-        Effect.andThen(sweep),
+        Effect.andThen(readCurrent.pipe(Effect.flatMap(sweep))),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
-      destroy: network.beginDestroy.pipe(
-        // Deferred for the whole of this destroy: every instance's own teardown below closes its
-        // listeners as usual, but leaves its reservation rows for `releaseStack` to drop together,
-        // only once destroy is confirmed to leave nothing behind. `ensuring` below resumes
-        // immediate per-service deletion again on every exit, success, failure, or interruption
-        // alike, so a service destruction, sweep, or claim-read failure can never leave deferral
-        // stuck on for a stack that is still otherwise live.
-        Effect.andThen(network.drain),
-        Effect.andThen(orchestrator.destroyNamespace),
-        Effect.andThen(sweep),
-        // A directory claim deliberately kept (for example one resolving outside every owned
-        // root) must not be lost to a full deregistration; the stack stays registered so a later
-        // acquisition's reconcile can still finish it.
-        Effect.andThen(options.state.readClaims(stackId)),
-        Effect.flatMap((remaining) =>
-          remaining.length === 0
-            ? removeContainerEnvRoot.pipe(
-                Effect.andThen(network.releaseStack),
-                Effect.andThen(options.state.remove(stackId)),
-              )
-            : Effect.gen(function* () {
-                const claimsPath = path.join(options.state.root, stackId, Claims.CLAIMS_FILE);
-                const listed = remaining.map((claim) => `  - ${claim.kind} ${claim.id}`).join("\n");
-                return yield* new StackNamespace.NamespaceError({
-                  operation: "destroy",
-                  message: [
-                    `${remaining.length} resource claim(s) could not be reconciled; stack stays registered for retry.`,
-                    listed,
-                    `To recover: confirm the listed directories are safe to remove, then run \`supabase stack destroy\` again. ` +
-                      `If they are not, remove the listed claim entries from ${claimsPath} and retry.`,
-                  ].join("\n"),
-                });
-              }),
+      destroy: readCurrent.pipe(
+        Effect.flatMap((registered) =>
+          network.beginDestroy.pipe(
+            // Deferred for the whole of this destroy: every instance's own teardown below closes
+            // its listeners as usual, but leaves its reservation rows for `releaseStack` to drop
+            // together, only once destroy is confirmed to leave nothing behind. `ensuring` below
+            // resumes immediate per-service deletion again on every exit, success, failure, or
+            // interruption alike, so a service destruction or sweep failure can never leave
+            // deferral stuck on for a stack that is still otherwise live.
+            Effect.andThen(network.drain),
+            Effect.andThen(orchestrator.destroyNamespace),
+            Effect.andThen(sweep(registered)),
+            Effect.andThen(removeContainerEnvRoot),
+            Effect.andThen(network.releaseStack),
+            Effect.andThen(options.state.remove(stackId)),
+            Effect.ensuring(network.cancelDestroy),
+          ),
         ),
-        Effect.ensuring(network.cancelDestroy),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),

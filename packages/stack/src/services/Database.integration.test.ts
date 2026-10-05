@@ -13,12 +13,12 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
-import { noDirectoryClaims } from "../../tests/claims.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const config: DatabaseConfig = {
@@ -72,7 +72,6 @@ describe("database component", { timeout: 180_000 }, () => {
                 ? yield* makeDockerDatabaseRoot("stack-default-key-", "default-key-test")
                 : yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
             const recipe = yield* makeDatabase({
-              directoryClaims: noDirectoryClaims,
               stackId: "default-key-test",
               instanceId: "database",
               root,
@@ -132,7 +131,6 @@ describe("database component", { timeout: 180_000 }, () => {
             ).toEqual([{ decrypted_secret: "preserved-value" }]);
             if (target.runtime === "native") {
               const second = yield* makeDatabase({
-                directoryClaims: noDirectoryClaims,
                 stackId: "default-key-test",
                 instanceId: "database-second",
                 root,
@@ -167,7 +165,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-hba-" });
         const database = yield* makeDatabase({
-          directoryClaims: noDirectoryClaims,
           stackId: "stack-integration",
           instanceId: "hba",
           root,
@@ -221,6 +218,50 @@ describe("database component", { timeout: 180_000 }, () => {
   );
 
   it.live(
+    "replaces a socket directory a killed owner left behind and removes its own on stop",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-leftover-" });
+          // The derived name is computed here independently of production code.
+          const socketDirectory = `${yield* fs.realPath("/tmp")}/supabase-${process.getuid?.() ?? 0}/pg-${createHash(
+            "sha256",
+          )
+            .update(`${root}\0leftover`)
+            .digest("hex")
+            .slice(0, 16)}`;
+          yield* fs.makeDirectory(socketDirectory, { recursive: true, mode: 0o700 });
+          yield* fs.writeFileString(`${socketDirectory}/stale.marker`, "left by a killed owner\n");
+          const database = yield* makeDatabase({
+            stackId: "stack-integration",
+            instanceId: "leftover",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const service = yield* makeStandaloneService(database.definition, {
+            id: "database:leftover",
+            config,
+          });
+
+          yield* service.start;
+          yield* service.ready;
+
+          const endpoint = yield* database.endpoint;
+          expect(endpoint).toMatchObject({ kind: "unix", path: socketDirectory });
+          expect(yield* fs.exists(`${socketDirectory}/stale.marker`)).toBe(false);
+          expect(yield* query(endpoint, config.databasePassword, "SELECT 1 AS ok")).toEqual([
+            { ok: 1 },
+          ]);
+          yield* service.stop;
+          expect(yield* fs.exists(socketDirectory)).toBe(false);
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live(
     "persists SQL data across exact-session stop and reopen, isolates instances, and validates restart before stopping",
     () =>
       Effect.scoped(
@@ -230,7 +271,6 @@ describe("database component", { timeout: 180_000 }, () => {
           const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-" });
           const cacheRoot = artifactCacheRoot;
           const first = yield* makeDatabase({
-            directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "first",
             root,
@@ -307,7 +347,6 @@ describe("database component", { timeout: 180_000 }, () => {
           expect(incomplete.message).toContain("major does not match");
 
           const reopened = yield* makeDatabase({
-            directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "first",
             root,
@@ -334,7 +373,6 @@ describe("database component", { timeout: 180_000 }, () => {
 
           const secondRoot = path.join(root, "second-root");
           const second = yield* makeDatabase({
-            directoryClaims: noDirectoryClaims,
             stackId: "stack-integration",
             instanceId: "second",
             root: secondRoot,
@@ -389,7 +427,6 @@ describe("database component", { timeout: 180_000 }, () => {
           );
           const cacheRoot = artifactCacheRoot;
           const database = yield* makeDatabase({
-            directoryClaims: noDirectoryClaims,
             stackId: "stack-integration-container",
             instanceId: "database",
             root,
@@ -446,7 +483,6 @@ describe("database component", { timeout: 180_000 }, () => {
           expect((yield* service.get).lifecycle).toBe("running");
           yield* service.stop;
           const reopened = yield* makeDatabase({
-            directoryClaims: noDirectoryClaims,
             stackId: "stack-integration-container",
             instanceId: "database",
             root,
@@ -483,7 +519,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const stackId = "stack-compose-group";
         const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
         const database = yield* makeDatabase({
-          directoryClaims: noDirectoryClaims,
           stackId,
           instanceId: "database",
           project: "my.app",
@@ -528,7 +563,6 @@ describe("database component", { timeout: 180_000 }, () => {
         const stackId = "stack-fast-shutdown";
         const root = yield* makeDockerDatabaseRoot("stack-database-shutdown-", stackId);
         const database = yield* makeDatabase({
-          directoryClaims: noDirectoryClaims,
           stackId,
           instanceId: "database",
           root,

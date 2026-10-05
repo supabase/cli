@@ -6,7 +6,6 @@ import { Context, Effect, FileSystem, Layer, Redacted, Schema, Stream } from "ef
 import { makeStandaloneService } from "./standalone-service.ts";
 import { makeDatabase, type BackendEndpoint } from "../src/services/Database.ts";
 import { makeDockerDatabaseRoot } from "./docker-fixture.ts";
-import { noDirectoryClaims } from "./claims.ts";
 import { dockerEngineTarget } from "./engine-target.ts";
 
 const marker = Schema.Struct({ backend: Schema.Literal("docker"), volume: Schema.String });
@@ -76,7 +75,6 @@ describe("Docker database fixture isolation", { timeout: 180_000 }, () => {
             cacheRoot: `${root}/cache`,
             runtime: "docker",
             engineTarget: dockerEngineTarget,
-            directoryClaims: noDirectoryClaims,
           });
         const [first, second] = yield* Effect.all([make(firstRoot), make(secondRoot)]);
         const [firstService, secondService] = yield* Effect.all([

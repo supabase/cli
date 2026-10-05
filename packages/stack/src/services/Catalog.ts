@@ -339,7 +339,6 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
           ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
-          directoryClaims: options.directoryClaims,
         }).pipe(
           Effect.mapError(
             (cause) =>

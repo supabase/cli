@@ -60,7 +60,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const engineTarget =
           saved.runtime === "native" ? undefined : yield* resolveEngineTarget(spawner);
-        yield* Owner.sweepContainers(state, saved, dataRoot, engineTarget);
+        yield* Owner.sweepContainers(saved, dataRoot, engineTarget);
       }
       return true;
     }),

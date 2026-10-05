@@ -1,5 +1,4 @@
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
-import * as Claims from "./namespace/Claims.ts";
 import { namespaceError, type NamespaceError } from "./namespace/Capabilities.ts";
 import * as Lease from "./namespace/Lease.ts";
 import * as Registry from "./namespace/Registry.ts";
@@ -15,8 +14,8 @@ export {
   StackLifetime,
 } from "./namespace/Registry.ts";
 
-export interface Interface extends Registry.Interface, Lease.Interface, Claims.Interface {
-  /** The namespace's own root directory, so a caller can name a stack's exact claims file. */
+export interface Interface extends Registry.Interface, Lease.Interface {
+  /** The namespace's own root directory. */
   readonly root: string;
 }
 
@@ -55,8 +54,7 @@ const make = Effect.fn("Namespace.acquire")(function* (
     onLeaseContended: options.onLeaseContended,
     isRegistered: (id) => registry.read(id).pipe(Effect.map((saved) => saved !== undefined)),
   });
-  const claims = yield* Claims.make({ root, platform: options.platform });
-  return { ...registry, ...lease, ...claims, root };
+  return { ...registry, ...lease, root };
 });
 
 export const layer = (options: Options) =>

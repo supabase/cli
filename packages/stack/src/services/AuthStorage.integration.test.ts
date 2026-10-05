@@ -8,7 +8,7 @@ import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
-import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
+import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
@@ -17,7 +17,6 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
-  directoryClaims: noDirectoryClaims,
   isPubliclyReserved: noPublicPortReservations,
 });
 

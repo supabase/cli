@@ -1,6 +1,7 @@
-import { Config, Context, Effect, FileSystem, Option, Path } from "effect";
+import { Config, Context, Crypto, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { PlatformError } from "effect/PlatformError";
+import { contentDigestHex } from "../internal/content-digest.ts";
 import { lstatPath } from "../namespace/drivers/FileSystem.ts";
 import { ServiceError } from "../Service.ts";
 
@@ -229,9 +230,54 @@ export const acquireNativeRuntimeRoot = Effect.fn("NativePostgresUser.acquireRun
 );
 
 /** Resolves the native runtime root for recovery's containment check, without creating it. */
-export const resolveNativeRuntimeRootForRecovery = Effect.fn(
+const resolveNativeRuntimeRootForRecovery = Effect.fn(
   "NativePostgresUser.resolveRuntimeRootForRecovery",
 )(() => resolveNativeRuntimeRoot(false));
+
+/**
+ * The socket directory of one native database instance: a function of its data root and id alone,
+ * so launch and recovery agree on it with nothing persisted. PostgreSQL limits a Unix socket path
+ * (this directory plus `/.s.PGSQL.5432`) to 103 bytes, which bounds the runtime root base.
+ */
+export const nativeSocketDirectoryPath = (
+  crypto: Crypto.Crypto,
+  path: Path.Path,
+  runtimeRoot: string,
+  dataRoot: string,
+  instanceId: string,
+) =>
+  contentDigestHex(crypto, `${dataRoot}\0${instanceId}`).pipe(
+    Effect.map((digest) => path.join(runtimeRoot, `pg-${digest}`)),
+  );
+
+/**
+ * Removes the socket directories of a stack's native database instances. A runtime root that is
+ * missing is nothing to remove; one that is not safe to trust (a symlink, foreign owner or
+ * writable by others) is warned about and left untouched.
+ */
+export const removeNativeSocketDirectories = Effect.fn(
+  "NativePostgresUser.removeSocketDirectories",
+)(function* (dataRoot: string, instanceIds: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const runtimeRoot = yield* resolveNativeRuntimeRootForRecovery().pipe(Effect.option);
+  if (Option.isNone(runtimeRoot)) {
+    const base = yield* NativeRuntimeRootBase;
+    const leaf = nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0);
+    if ((yield* lstatPath(leaf)) !== undefined)
+      yield* Effect.logWarning(
+        `${leaf} is not a trusted native runtime root; leaving its socket directories`,
+      );
+    return;
+  }
+  yield* Effect.annotateCurrentSpan({ "instance.count": instanceIds.length });
+  for (const instanceId of instanceIds)
+    yield* fs.remove(
+      yield* nativeSocketDirectoryPath(crypto, path, runtimeRoot.value, dataRoot, instanceId),
+      { recursive: true, force: true },
+    );
+});
 
 /**
  * Restricts a directory to its owner but keeps an existing traverse-only grant, because a

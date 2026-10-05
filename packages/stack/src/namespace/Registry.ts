@@ -2,7 +2,6 @@ import { Effect, Exit, FileSystem, Path, Schedule, Schema, Scope } from "effect"
 import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
 import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
-import { CLAIMS_FILE } from "./Claims.ts";
 import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import * as Publication from "./Publication.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
@@ -188,7 +187,6 @@ export const make = (
         statePath(id),
         path.join(stackRoot(id), OWNER_FILE),
         path.join(stackRoot(id), OWNER_LOG_FILE),
-        path.join(stackRoot(id), CLAIMS_FILE),
       ])
         yield* fs
           .remove(file, { force: true })

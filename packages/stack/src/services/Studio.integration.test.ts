@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
+import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-studio",
@@ -11,7 +11,6 @@ const options = (root: string) => ({
   root,
   cacheRoot: `${root}/cache`,
   runtime: "native" as const,
-  directoryClaims: noDirectoryClaims,
   isPubliclyReserved: noPublicPortReservations,
 });
 

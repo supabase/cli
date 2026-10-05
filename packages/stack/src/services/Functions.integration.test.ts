@@ -22,7 +22,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
-import { noDirectoryClaims, noPublicPortReservations } from "../../tests/claims.ts";
+import { noPublicPortReservations } from "../../tests/port-reservations.ts";
 import { dockerEngineTarget } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
@@ -103,7 +103,6 @@ describe("service catalog", () => {
               },
             },
             {
-              directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...dockerOptions(root),
               stackId,
@@ -167,7 +166,6 @@ describe("service catalog", () => {
             config: { functionsRoot, databaseUrl: "postgres://functions-db" },
           },
           {
-            directoryClaims: noDirectoryClaims,
             isPubliclyReserved: noPublicPortReservations,
             ...options(root),
             stackId,
@@ -262,7 +260,6 @@ describe("service catalog", () => {
                 },
               },
               {
-                directoryClaims: noDirectoryClaims,
                 isPubliclyReserved: noPublicPortReservations,
                 ...options(stackRoot),
                 stackId: "d".repeat(64),
@@ -337,7 +334,6 @@ describe("service catalog", () => {
               },
             },
             {
-              directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "e".repeat(64),
@@ -413,7 +409,6 @@ describe("service catalog", () => {
               },
             },
             {
-              directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "f".repeat(64),
@@ -528,7 +523,6 @@ for (const runtime of ["native", "docker"] as const) {
               },
             },
             {
-              directoryClaims: noDirectoryClaims,
               isPubliclyReserved: noPublicPortReservations,
               ...options(stackRoot),
               stackId: "c".repeat(64),
@@ -651,7 +645,6 @@ it.effect("passes POSIX project paths to a docker Functions container from a Win
       const recipe = yield* makeProcessRecipe(
         creation,
         {
-          directoryClaims: noDirectoryClaims,
           isPubliclyReserved: noPublicPortReservations,
           stackId: "e".repeat(64),
           instanceId: "windows",

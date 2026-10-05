@@ -563,7 +563,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                     ),
                   ),
                 );
-          yield* Owner.sweepContainers(state, saved, dataRoot, engineTarget).pipe(
+          yield* Owner.sweepContainers(saved, dataRoot, engineTarget).pipe(
             Effect.mapError((cause) =>
               hostError(
                 "startup-cleanup",

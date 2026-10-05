@@ -1662,7 +1662,7 @@ describe("container process adapter", () => {
           ports: [],
         };
         yield* state.save(saved);
-        yield* Owner.sweepContainers(state, saved, root, target).pipe(
+        yield* Owner.sweepContainers(saved, root, target).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
 
