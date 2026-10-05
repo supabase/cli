@@ -828,10 +828,11 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         progress.written += pieces.length;
       });
 
-    const dropKey = (launchId: number, stream: LaunchOutput["stream"]) => `${launchId}:${stream}`;
+    const dropKey = (launchId: number, stream: LaunchOutput["stream"] | undefined) =>
+      `${launchId}:${stream ?? "output"}`;
     const drop = (
       launchId: number,
-      stream: LaunchOutput["stream"],
+      stream: LaunchOutput["stream"] | undefined,
       time: number,
       count: number,
     ) => {
@@ -840,7 +841,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
         kind: "lost",
         timestamp: Math.max(previous?.timestamp ?? time, time),
         launchId,
-        stream,
+        ...(stream === undefined ? {} : { stream }),
         count: (previous?.count ?? 0) + count,
       });
     };
@@ -876,7 +877,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
           if (entry.kind === "lost" && !warnedLaunches.has(entry.launchId)) {
             warnedLaunches.add(entry.launchId);
             yield* Effect.logWarning(
-              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream} ${entry.count === 1 ? "chunk" : "chunks"} of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
+              `${instance.service} instance ${instance.instanceId} dropped ${entry.count} ${entry.stream ?? "output"} ${entry.count === 1 ? "chunk" : "chunks"} of launch ${entry.launchId} before they were persisted; later drops of this launch are recorded only in its logs`,
             );
           }
         return;

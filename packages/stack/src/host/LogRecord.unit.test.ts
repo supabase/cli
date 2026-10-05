@@ -35,6 +35,7 @@ describe("record format", () => {
       { kind: "stderr", timestamp: 1_000, launchId: 2, text: "cut", truncated: true },
       { kind: "launch", timestamp: 2_000, launchId: 3 },
       { kind: "lost", timestamp: 3_000, launchId: 3, stream: "stderr", count: 7 },
+      { kind: "lost", timestamp: 4_000, launchId: 3, count: 1 },
     ];
 
     const encoded = entries.map(encodeEntry);
@@ -42,6 +43,7 @@ describe("record format", () => {
 
     expect(encoded[0]).toBe("1970-01-01T00:00:00.000Z stdout 2 | ready | with a pipe\n");
     expect(encoded[1]).toBe("1970-01-01T00:00:01.000Z stderr 2 truncated | cut\n");
+    expect(encoded[4]).toBe("1970-01-01T00:00:04.000Z lost 3 | 1 output\n");
     expect(parsed).toEqual([
       {
         kind: "stdout",
@@ -67,6 +69,7 @@ describe("record format", () => {
         count: 7,
         position,
       },
+      { kind: "lost", timestamp: "1970-01-01T00:00:04.000Z", launchId: 3, count: 1, position },
     ]);
   });
 
@@ -161,16 +164,16 @@ describe("splitter", () => {
       { ...chunk(1, 0, ""), bytes: new Uint8Array([...bytes("price "), euro[0] ?? 0]) },
       10,
     );
-    push(splitter, chunk(1, 0, "busy\r", "stderr"), 10);
+    push(splitter, chunk(1, 1, "busy\r", "stderr"), 10);
 
     splitter.endLaunch(1);
     const queued = [
       ...push(
         splitter,
-        { ...chunk(1, 1, ""), bytes: new Uint8Array([...euro.subarray(1), ...bytes("\ntail")]) },
+        { ...chunk(1, 2, ""), bytes: new Uint8Array([...euro.subarray(1), ...bytes("\ntail")]) },
         15,
       ),
-      ...push(splitter, chunk(1, 1, "\nnext\n", "stderr"), 15),
+      ...push(splitter, chunk(1, 3, "\nnext\n", "stderr"), 15),
       ...splitter.flushEnded(15, false),
     ];
     const flushed = splitter.flushEnded(20, true);
@@ -221,7 +224,7 @@ describe("splitter", () => {
     const main = push(splitter, chunk(1, 3, "main\n", "stdout", 2), 20);
 
     expect(main).toEqual([
-      { kind: "lost", timestamp: 20, launchId: 1, stream: "stdout", count: 2 },
+      { kind: "lost", timestamp: 20, launchId: 1, count: 2 },
       { kind: "stdout", timestamp: 20, launchId: 1, text: "main", truncated: false },
     ]);
   });
@@ -278,8 +281,21 @@ describe("splitter", () => {
     const resumed = push(splitter, chunk(1, 4, "resumed\n", "stdout"), 20);
 
     expect(resumed).toEqual([
-      { kind: "lost", timestamp: 20, launchId: 1, stream: "stdout", count: 3 },
+      { kind: "lost", timestamp: 20, launchId: 1, count: 3 },
       { kind: "stdout", timestamp: 20, launchId: 1, text: "resumed", truncated: false },
+    ]);
+  });
+
+  it("reports a dropped final stderr chunk as lost output when only stdout follows", () => {
+    const splitter = makeSplitter();
+    push(splitter, chunk(1, 0, "before\n"), 10);
+    push(splitter, chunk(1, 1, "warning\n", "stderr"), 20);
+
+    const after = push(splitter, chunk(1, 3, "after\n"), 30);
+
+    expect(after).toEqual([
+      { kind: "lost", timestamp: 30, launchId: 1, count: 1 },
+      { kind: "stdout", timestamp: 30, launchId: 1, text: "after", truncated: false },
     ]);
   });
 
@@ -300,7 +316,7 @@ describe("splitter", () => {
 
     expect(push(splitter, chunk(5, 2, "x\n", "stderr"), 0).slice(0, 2)).toEqual([
       { kind: "launch", timestamp: 0, launchId: 5 },
-      { kind: "lost", timestamp: 0, launchId: 5, stream: "stderr", count: 2 },
+      { kind: "lost", timestamp: 0, launchId: 5, count: 2 },
     ]);
   });
 
@@ -321,7 +337,7 @@ describe("splitter", () => {
   it("keeps stdout and stderr lines apart", () => {
     const splitter = makeSplitter();
     push(splitter, chunk(1, 0, "out "), 0);
-    push(splitter, chunk(1, 0, "err\n", "stderr"), 0);
+    push(splitter, chunk(1, 1, "err\n", "stderr"), 0);
 
     expect(splitter.flush(1)).toEqual([
       { kind: "stdout", timestamp: 0, launchId: 1, text: "out ", truncated: false },

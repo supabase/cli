@@ -92,7 +92,7 @@ Writes lifecycle text to stderr / stdout while the command is running:
 - `Skipped serving Function: <slug>` for disabled functions
 - `File change detected: <path> (<op>)` when a watched file triggers a restart
 - live `docker logs -f --timestamps` output from the edge-runtime container
-- in stack mode, `--- <count> <stream> chunk(s) lost ---` on stderr when the stack could not persist Functions output
+- in stack mode, `--- <count> <stream or output> chunk(s) lost ---` on stderr when the stack could not persist Functions output
 - `Stopped serving supabase/functions` on a user-initiated shutdown (`SIGINT`/`SIGTERM`)
 - `Edge Runtime exited (code 0). Stopped serving supabase/functions` when the container stops on its own with exit code `0`
 - `Edge Runtime container stopped (exit <code>). Stopped serving supabase/functions` when an external supervisor tears the container down (exit `129`/`130`/`131`/`143`)

@@ -58,7 +58,7 @@ const line = (millis: number, kind: "stdout" | "stderr", text: string, launchId 
   `${iso(millis)} ${kind} ${launchId} | ${text}`;
 const launch = (millis: number, launchId = 1) => `${iso(millis)} launch ${launchId} | `;
 const lost = (millis: number, count: number, launchId = 1) =>
-  `${iso(millis)} lost ${launchId} | ${count} stdout`;
+  `${iso(millis)} lost ${launchId} | ${count} output`;
 
 const baseFlags = (stackId: string): StackLogsFlags => ({
   stack: Option.none(),
@@ -331,7 +331,6 @@ describe("stack logs", () => {
           timestamp: iso(t0 + 3),
           ...subject,
           kind: "lost",
-          stream: "stdout",
           count: 3,
         },
       ];
@@ -350,7 +349,7 @@ describe("stack logs", () => {
         "mail | --- launch 1 ---",
         "mail | hello",
         "mail | oops",
-        "mail | --- 3 stdout chunks lost ---",
+        "mail | --- 3 output chunks lost ---",
       ]);
     }).pipe(Effect.scoped, Effect.provide(live)),
   );

@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, Fiber, PubSub, Ref, Scope, Stream } from "effect";
+import { Cause, Clock, Effect, Exit, Fiber, PubSub, Ref, Scope, Semaphore, Stream } from "effect";
 import { failureMessage } from "../internal/failure-message.ts";
 import { ServiceError, type RuntimeSession } from "../Service.ts";
 import type { ContainerProcess } from "./Container.ts";
@@ -63,8 +63,8 @@ export const processExit = <E extends { readonly message: string }>(
 
 /**
  * One output chunk of a launch, stamped with its publish time in epoch milliseconds. Each process
- * of the launch is a `part`; `seq` counts the launch's chunks per stream from zero across its
- * parts, so chunks dropped anywhere in the launch leave a gap.
+ * of the launch is a `part`; `seq` counts the launch's chunks from zero across its streams and
+ * parts in publish order, so chunks dropped anywhere in the launch leave a gap.
  */
 export interface LaunchOutput {
   readonly stream: "stdout" | "stderr";
@@ -85,28 +85,19 @@ export const launchOutputPublisher = (
 ): Effect.Effect<{ readonly part: Effect.Effect<PublishOutput> }> =>
   Effect.gen(function* () {
     const parts = yield* Ref.make(0);
-    const counters = yield* Ref.make<Readonly<Record<LaunchOutput["stream"], number>>>({
-      stdout: 0,
-      stderr: 0,
-    });
+    const sequence = yield* Ref.make(0);
+    // A sequence number is taken and published in one step, so subscribers see them in order.
+    const ordered = yield* Semaphore.make(1);
     return {
       part: Ref.getAndUpdate(parts, (next) => next + 1).pipe(
         Effect.map(
           (part): PublishOutput =>
             (stream, bytes) =>
-              Ref.modify(counters, (current) => [
-                current[stream],
-                { ...current, [stream]: current[stream] + 1 },
-              ]).pipe(
-                Effect.flatMap((seq) =>
-                  Clock.currentTimeMillis.pipe(
-                    Effect.flatMap((time) =>
-                      PubSub.publish(logs, { stream, bytes, launchId, part, seq, time }),
-                    ),
-                  ),
-                ),
-                Effect.asVoid,
-              ),
+              Effect.gen(function* () {
+                const seq = yield* Ref.getAndUpdate(sequence, (next) => next + 1);
+                const time = yield* Clock.currentTimeMillis;
+                yield* PubSub.publish(logs, { stream, bytes, launchId, part, seq, time });
+              }).pipe(ordered.withPermits(1)),
         ),
       ),
     };

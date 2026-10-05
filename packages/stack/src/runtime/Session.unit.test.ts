@@ -19,7 +19,7 @@ describe("mapToServiceError", () => {
 
 describe("launchOutputPublisher", () => {
   it.effect(
-    "tags chunks with the launch, a part per process and a launch-wide sequence per stream",
+    "tags chunks with the launch, a part per process and one sequence across streams and parts",
     () =>
       Effect.gen(function* () {
         const logs = yield* PubSub.unbounded<LaunchOutput>();
@@ -39,9 +39,9 @@ describe("launchOutputPublisher", () => {
           published.map(({ stream, launchId, part, seq }) => ({ stream, launchId, part, seq })),
         ).toEqual([
           { stream: "stdout", launchId: 7, part: 0, seq: 0 },
-          { stream: "stderr", launchId: 7, part: 0, seq: 0 },
-          { stream: "stdout", launchId: 7, part: 0, seq: 1 },
-          { stream: "stdout", launchId: 7, part: 1, seq: 2 },
+          { stream: "stderr", launchId: 7, part: 0, seq: 1 },
+          { stream: "stdout", launchId: 7, part: 0, seq: 2 },
+          { stream: "stdout", launchId: 7, part: 1, seq: 3 },
         ]);
       }).pipe(Effect.scoped),
   );

@@ -50,7 +50,7 @@ reads emit one `result` event. Stack logs emit a `log-entry` event per line with
 for retained lines, `live` for lines streamed by `--follow`. `timestamp` is when
 the stack owner received the line. Stack launches and lost output are
 `log-marker` events with `timestamp`, `service`, `instance_id`, `kind` (`launch`
-or `lost`), `source`, and, for lost output, `stream` and `count`. Stack log
+or `lost`), `source`, and, for lost output, `count` and, when known, `stream`. Stack log
 streams are `stdout` or `stderr`; other emitters may include internal messages
 and may omit `instance_id`.
 

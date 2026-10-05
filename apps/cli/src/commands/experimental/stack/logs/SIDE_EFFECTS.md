@@ -53,7 +53,7 @@ Text writes `<service> | <HH:MM:SS.mmm> <line>` with the service labels padded
 to one width; a service kind selected more than once is labelled
 `<service>:<first 8 characters of the instance id>`. Times are local. `launch`
 and `lost` records are dim separator lines (`--- launch 2 ---`,
-`--- 3 stdout chunks lost ---`, `--- older records were removed by retention ---`).
+`--- 3 output chunks lost ---`, `--- older records were removed by retention ---`).
 Labels are coloured and markers dimmed only when stdout is a colour-capable
 terminal. Terminal control sequences are stripped from text. When a non-zero
 tail hides older lines, stderr gets
@@ -64,7 +64,7 @@ Stream JSON emits a `log-entry` event per output line with `timestamp`,
 `service`, `instance_id`, `stream` (`stdout` or `stderr`), `line`, and `source`
 (`history` or `live`), and a `log-marker` event per marker with `timestamp`,
 `service`, `instance_id`, `kind` (`launch` or `lost`), `source`, and, for chunks
-lost before they were written, `stream` and `count`. A `lost` marker without
+lost before they were written, `count` and, when known, `stream`. A `lost` marker without
 `count` reports segments removed by retention. `--output-format json` prints
 one array of the same objects; it cannot be combined with `--follow`. Lines
 preserve their content in machine output. Legacy `-o/--output` is rejected.

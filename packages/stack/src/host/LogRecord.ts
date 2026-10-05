@@ -48,7 +48,8 @@ export type LogEntry =
       readonly kind: "lost";
       readonly timestamp: number;
       readonly launchId: number;
-      readonly stream: OutputStream;
+      /** Absent when the dropped chunks' streams are unknown. */
+      readonly stream?: OutputStream;
       readonly count: number;
     };
 
@@ -64,14 +65,14 @@ export const encodeEntry = (entry: LogEntry): string => {
     case "launch":
       return `${time} launch ${entry.launchId} | \n`;
     case "lost":
-      return `${time} lost ${entry.launchId} | ${entry.count} ${entry.stream}\n`;
+      return `${time} lost ${entry.launchId} | ${entry.count} ${entry.stream ?? "output"}\n`;
     default:
       return `${time} ${entry.kind} ${entry.launchId}${entry.truncated ? " truncated" : ""} | ${entry.text}\n`;
   }
 };
 
 const recordLine = /^(\S+) (stdout|stderr|launch|lost) (\d+)( truncated)? \| (.*)$/su;
-const lostText = /^(\d+) (stdout|stderr)$/u;
+const lostText = /^(\d+) (stdout|stderr|output)$/u;
 
 /** Parses one record line without its trailing newline; unrecognized lines yield `undefined`. */
 export const parseRecord = (line: string, position: LogPosition): LogRecord | undefined => {
@@ -95,9 +96,8 @@ export const parseRecord = (line: string, position: LogPosition): LogRecord | un
     kind: "lost",
     timestamp,
     launchId,
-    ...(lost === null || (stream !== "stdout" && stream !== "stderr")
-      ? {}
-      : { count: Number(lost[1]), stream }),
+    ...(lost === null ? {} : { count: Number(lost[1]) }),
+    ...(stream === "stdout" || stream === "stderr" ? { stream } : {}),
     position,
   };
 };
@@ -185,8 +185,8 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
   /** Ended launches whose partial lines wait only for the output published before the end. */
   const ending = new Set<number>();
   const latestParts = new Map<number, number>();
-  /** Next expected `seq` per launch and stream, which spans the launch's parts. */
-  const expected = new Map<string, number>();
+  /** Next expected `seq` per launch, which spans the launch's streams and parts. */
+  const expected = new Map<number, number>();
   const seen = new Set<number>();
   let latest = 0;
 
@@ -230,12 +230,15 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
       });
     resetLine(state);
   };
-  const flushLine = (state: LineState, now: number, out: Array<LogEntry>) => {
-    append(state, state.decoder.decode(), state.heldSince ?? now, out);
+  const resetDecoder = (state: LineState) => {
     state.decoder = new TextDecoder();
     state.held = noBytes;
     state.heldSince = undefined;
     state.midCarriageReturn = false;
+  };
+  const flushLine = (state: LineState, now: number, out: Array<LogEntry>) => {
+    append(state, state.decoder.decode(), state.heldSince ?? now, out);
+    resetDecoder(state);
     if (state.since !== undefined && !state.discarding) terminate(state, now, out);
     else resetLine(state);
   };
@@ -253,8 +256,7 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
       for (const launchId of ended) if (stale(launchId)) ended.delete(launchId);
       for (const launchId of ending) if (stale(launchId)) ending.delete(launchId);
       for (const launchId of latestParts.keys()) if (stale(launchId)) latestParts.delete(launchId);
-      for (const key of expected.keys())
-        if (stale(Number(key.slice(0, key.indexOf(":"))))) expected.delete(key);
+      for (const launchId of expected.keys()) if (stale(launchId)) expected.delete(launchId);
       for (const launchId of seen) if (launchId <= latest - seenLaunches) seen.delete(launchId);
     }
     if (!seen.has(chunk.launchId)) {
@@ -288,23 +290,17 @@ export const makeSplitter = (limit = maxLineBytes): Splitter => {
       states.set(key, state);
     }
     state.lastChunk = now;
-    const sequence = `${chunk.launchId}:${chunk.stream}`;
-    const next = expected.get(sequence) ?? 0;
+    const next = expected.get(chunk.launchId) ?? 0;
     if (chunk.seq > next) {
-      out.push({
-        kind: "lost",
-        timestamp: now,
-        launchId: chunk.launchId,
-        stream: chunk.stream,
-        count: chunk.seq - next,
-      });
-      resetLine(state);
-      state.decoder = new TextDecoder();
-      state.held = noBytes;
-      state.heldSince = undefined;
-      state.midCarriageReturn = false;
+      out.push({ kind: "lost", timestamp: now, launchId: chunk.launchId, count: chunk.seq - next });
+      // The dropped chunks may have torn a line of any stream of the launch.
+      for (const torn of states.values())
+        if (torn.launchId === chunk.launchId) {
+          resetLine(torn);
+          resetDecoder(torn);
+        }
     }
-    expected.set(sequence, Math.max(next, chunk.seq + 1));
+    expected.set(chunk.launchId, Math.max(next, chunk.seq + 1));
     const carried = state.heldSince;
     const text = state.decoder.decode(chunk.bytes, { stream: true });
     const tail = lastBytes(state.held, chunk.bytes);
