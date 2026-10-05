@@ -18,6 +18,7 @@
     "!apps/cli/src/shared/functions/deploy.errors.ts",
     "!apps/cli/src/shared/functions/deploy.errors.unit.test.ts",
     "!apps/cli/src/shared/functions/deploy.ts",
+    "!apps/cli/src/shared/functions/deploy.unit.test.ts",
     "!apps/cli/src/shared/functions/download.errors.ts",
     "!apps/cli/src/shared/functions/download.errors.unit.test.ts",
     "!apps/cli/src/shared/functions/download.ts",
