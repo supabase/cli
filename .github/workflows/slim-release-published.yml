@@ -235,7 +235,7 @@ jobs:
             elif ! pr="$(GH_TOKEN="$APP_TOKEN" gh pr create \
               --title "$title" \
               --body "$body" \
-              --assignee jgoux \
+              --assignee supabase-oss \
               --head "$branch" \
               --base "$DEFAULT_BRANCH")"; then
               echo "::error ::Pushed ${branch} but failed to open a pull request. Run manually: ${manual_prefix} ${release}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
