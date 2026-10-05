@@ -8,6 +8,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { StackError } from "@supabase/stack/effect";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 
@@ -176,5 +177,133 @@ describe("stack destroy", () => {
               ),
         );
       }).pipe(Effect.provide(live)),
+  );
+
+  it.live("destroys multiple stacks when repeated --stack-id flags are provided", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const second = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "second",
+        runtime: "native",
+      });
+      const third = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "third",
+        runtime: "native",
+      });
+
+      yield* stackDestroy({
+        ...f.flags,
+        stackId: [f.stack.id, second.id],
+      }).pipe(Effect.provide(f.layer));
+
+      const remaining = yield* f.api.discover(f.locations);
+      expect(remaining.map(({ definition }) => definition.id)).toEqual([third.id]);
+      expect(f.output.stderrText).toContain(
+        `Permanently destroying stacks ${f.stack.id}, ${second.id} and their owned data. Storage upload files will be preserved.\n`,
+      );
+      expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+      expect(f.output.stdoutText).toContain(`Stack ${second.id} destroyed.`);
+      expect(f.telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live(
+    "prompts once for multiple stacks on an interactive terminal and cancels all when declined",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(false, { answer: false });
+        const second = yield* f.api.create({
+          ...f.locations,
+          projectRoot: f.root,
+          name: "second",
+          runtime: "native",
+        });
+
+        const error = yield* stackDestroy({
+          ...f.flags,
+          stackId: [f.stack.id, second.id],
+        }).pipe(Effect.provide(f.layer), Effect.flip);
+
+        expect(error.reason).toBe("cancelled");
+        expect(f.output.promptConfirmCalls.map(({ message }) => message)).toEqual([
+          `Permanently destroy stacks ${f.stack.id}, ${second.id} and their owned data? Storage upload files will be preserved.`,
+        ]);
+        const saved = yield* f.api.discover(f.locations);
+        expect(saved.map(({ definition }) => definition.id).sort()).toEqual(
+          [f.stack.id, second.id].sort(),
+        );
+      }).pipe(Effect.provide(live)),
+  );
+
+  it.live("rejects combining --stack and multiple --stack-id", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const second = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "second",
+        runtime: "native",
+      });
+
+      const error = yield* stackDestroy({
+        stack: Option.some("custom-stack"),
+        stackId: [f.stack.id, second.id],
+      }).pipe(Effect.provide(f.layer), Effect.flip);
+
+      expect(error.reason).toBe("flags");
+      expect(error.message).toBe("--stack and --stack-id cannot be used together");
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("continues destroying remaining stacks when one fails and exits with error", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const second = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "second",
+        runtime: "native",
+      });
+
+      const failingApi = StackApi.of({
+        ...f.api,
+        open: (opts) =>
+          f.api.open(opts).pipe(
+            Effect.map((s) =>
+              s.id === f.stack.id
+                ? {
+                    ...s,
+                    destroy: Effect.fail(
+                      new StackError({
+                        operation: "destroy",
+                        message: "simulated destruction failure",
+                      }),
+                    ),
+                  }
+                : s,
+            ),
+          ),
+      });
+
+      const error = yield* stackDestroy({
+        ...f.flags,
+        stackId: [f.stack.id, second.id],
+      }).pipe(
+        Effect.provide(Layer.merge(f.layer, Layer.succeed(StackApi, failingApi))),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("unknown");
+      expect(error.message).toContain("Failed to destroy 1 managed stack(s).");
+      expect(error.detail).toContain(`${f.stack.id}: simulated destruction failure`);
+
+      const remaining = yield* f.api.discover(f.locations);
+      expect(remaining.map(({ definition }) => definition.id)).toEqual([f.stack.id]);
+      expect(f.output.stdoutText).toContain(`Stack ${second.id} destroyed.`);
+    }).pipe(Effect.provide(live)),
   );
 });

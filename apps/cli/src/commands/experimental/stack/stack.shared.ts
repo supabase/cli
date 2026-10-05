@@ -60,9 +60,12 @@ export class StackTargetResolver extends Context.Service<
 
 export const validateStackTarget = (input: {
   readonly stack?: string;
-  readonly stackId?: string;
-}): Effect.Effect<void, StackTargetError> =>
-  input.stack !== undefined && input.stackId !== undefined
+  readonly stackId?: string | readonly string[];
+}): Effect.Effect<void, StackTargetError> => {
+  const hasStackId =
+    input.stackId !== undefined &&
+    (typeof input.stackId === "string" ? true : input.stackId.length > 0);
+  return input.stack !== undefined && hasStackId
     ? Effect.fail(
         new StackTargetError({
           message: "--stack and --stack-id cannot be used together",
@@ -70,6 +73,7 @@ export const validateStackTarget = (input: {
         }),
       )
     : Effect.void;
+};
 
 const isStackId = Schema.is(StackId);
 const STACK_ID_PREFIX = /^[0-9a-f]{4,64}$/;

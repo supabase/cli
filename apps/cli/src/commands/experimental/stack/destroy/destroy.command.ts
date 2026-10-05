@@ -13,8 +13,10 @@ const config = {
     Flag.optional,
   ),
   stackId: Flag.string("stack-id").pipe(
-    Flag.withDescription("Destroy an existing stack by id or unique id prefix."),
-    Flag.optional,
+    Flag.withDescription(
+      "Destroy an existing stack by id or unique id prefix; repeat to select several.",
+    ),
+    Flag.atLeast(0),
   ),
 } as const;
 
@@ -29,6 +31,10 @@ export const stackDestroyCommand = Command.make("destroy", config).pipe(
     {
       command: "supabase stack destroy --stack feature-a --yes",
       description: "Permanently destroy the feature-a stack",
+    },
+    {
+      command: "supabase stack destroy --stack-id 019532ab --stack-id 019532cd --yes",
+      description: "Permanently destroy multiple stacks by id or unique id prefix",
     },
   ]),
   Command.withHandler((flags) =>
