@@ -1692,10 +1692,10 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
         bitbucketCloneDirDefined,
         additionalModuleRoots: [flagCwd],
         skipMissingImportMapTargets: true,
-        onWarning: (message) => {
-          bindWarnings.push(message);
-          return Promise.resolve();
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            bindWarnings.push(message);
+          }),
       })) {
         binds.add(formatDockerBind(bind));
       }
@@ -1785,10 +1785,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         bitbucketCloneDirDefined,
         additionalModuleRoots: [input.flagCwd],
         skipMissingImportMapTargets: true,
-        onWarning: (message) => {
-          bindWarnings.push(message);
-          return Promise.resolve();
-        },
+        onWarning: (message) =>
+          Effect.sync(() => {
+            bindWarnings.push(message);
+          }),
       })) {
         const key = formatDockerBind(bind);
         functionBinds.set(key, bind);
