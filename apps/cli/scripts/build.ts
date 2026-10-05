@@ -4,6 +4,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { compileOptions, stackReleaseDefine } from "./compile-options.ts";
 import { darwinBinaries, MACOS_IDENTIFIERS } from "./macos-signing.ts";
@@ -89,7 +90,9 @@ const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const buildDefines = {
   ...(await stackReleaseDefine()),
-  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(await bundleServeMainTemplate()),
+  SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: JSON.stringify(
+    await Effect.runPromise(bundleServeMainTemplate()),
+  ),
   SUPABASE_CLI_POSTHOG_KEY: JSON.stringify(process.env.POSTHOG_API_KEY ?? ""),
   SUPABASE_CLI_POSTHOG_HOST: JSON.stringify(process.env.POSTHOG_ENDPOINT ?? ""),
   // Skips msgpackr's startup probe for its native addon at the build host's store path, which

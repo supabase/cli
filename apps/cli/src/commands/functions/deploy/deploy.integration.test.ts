@@ -1,10 +1,23 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Stdio } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Stdio,
+} from "effect";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { YesFlag } from "../../../command-internal/global-flags.ts";
 import { stripControlSequences } from "../../../shared/output/strip-control-sequences.ts";
 import {
+  type ApiHandler,
   buildTestRuntime,
   jsonResponse,
   mockCommandSettings,
@@ -12,9 +25,11 @@ import {
   mockCommandPlatformApi,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { Output } from "../../../shared/output/output.service.ts";
 import { mockChildProcessSpawner } from "../../../../tests/helpers/child-process-spawner.ts";
 import {
   deployFunctions,
@@ -24,9 +39,11 @@ import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
 import { functionsGoConfigCompat } from "../../../command-internal/functions-go-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
+  FunctionImportMapSyntaxError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../shared/functions/deploy.errors.ts";
+import { FunctionsApiStatusError } from "../../../shared/functions/functions-api.errors.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
@@ -498,6 +515,336 @@ describe("functions deploy", () => {
         );
       }
       expect(multiparts).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  function apiDeployHarness(handler: ApiHandler) {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({ handler });
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+    return { out, api, layer };
+  }
+
+  const deployedHelloWorld: ApiHandler = (request) =>
+    Effect.succeed(
+      request.method === "GET"
+        ? jsonResponse(request, 200, [])
+        : jsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+          }),
+    );
+
+  it.live("warns about an invalid static_files glob instead of failing the deploy", () => {
+    const { out, api, layer } = apiDeployHarness(deployedHelloWorld);
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(
+        tempRoot.current,
+        'project_id = "test-project"\n[functions.hello-world]\nstatic_files = ["./assets/[z-a].txt"]\n',
+      );
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      yield* functionsDeploy(baseFlags);
+
+      expect(out.stderrText).toContain("WARN: Invalid regular expression");
+      expect(
+        api.requests.some(
+          (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live("reports a malformed deno.json with the schema decoder's message", () => {
+    const { api, layer } = apiDeployHarness(deployedHelloWorld);
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", "functions", "hello-world", "deno.json"),
+        "{",
+      );
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(FunctionImportMapSyntaxError);
+      expect(error).toMatchObject({ name: "SyntaxError", message: "Expected a valid JSON string" });
+      expect(api.requests.some((request) => request.method === "POST")).toBe(false);
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live(
+    "reports a failed progress write while collecting upload files as a typed failure",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const brokenPipe = new Error("EPIPE: broken pipe, write");
+      const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out: {
+            ...out,
+            layer: Layer.effect(
+              Output,
+              Effect.gen(function* () {
+                const output = yield* Output;
+                return {
+                  ...output,
+                  raw: (text: string, stream?: "stdout" | "stderr") =>
+                    text.startsWith("Uploading asset")
+                      ? Effect.die(brokenPipe)
+                      : output.raw(text, stream),
+                };
+              }),
+            ).pipe(Layer.provide(out.layer)),
+          },
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+        expect(error).toBe(brokenPipe);
+        expect(api.requests.some((request) => request.method === "POST")).toBe(false);
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.live("keeps collecting upload files after the deploy is interrupted", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi({ handler: deployedHelloWorld });
+    const started = Deferred.makeUnsafe<void>();
+    const gate = Deferred.makeUnsafe<void>();
+    const continued = Deferred.makeUnsafe<void>();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out: {
+          ...out,
+          layer: Layer.effect(
+            Output,
+            Effect.gen(function* () {
+              const output = yield* Output;
+              return {
+                ...output,
+                raw: (text: string, stream?: "stdout" | "stderr") =>
+                  text.startsWith("Uploading asset")
+                    ? Deferred.succeed(started, undefined).pipe(
+                        Effect.flatMap((first) =>
+                          first
+                            ? Deferred.await(gate).pipe(Effect.andThen(output.raw(text, stream)))
+                            : output
+                                .raw(text, stream)
+                                .pipe(Effect.tap(Deferred.succeed(continued, undefined))),
+                        ),
+                      )
+                    : output.raw(text, stream),
+              };
+            }),
+          ).pipe(Layer.provide(out.layer)),
+        },
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const deploy = yield* Effect.forkChild(functionsDeploy(baseFlags));
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(deploy);
+      yield* Deferred.succeed(gate, undefined);
+      yield* Deferred.await(continued);
+
+      expect(out.stderrText).toContain(
+        "Uploading asset (hello-world): supabase/functions/hello-world/deno.json\n",
+      );
+      expect(out.stderrText).toContain(
+        "Uploading asset (hello-world): supabase/functions/hello-world/index.ts\n",
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live("reports a malformed deploy response with the schema decoder's message", () => {
+    const { layer } = apiDeployHarness((request) =>
+      Effect.succeed(
+        request.method === "GET"
+          ? jsonResponse(request, 200, [])
+          : HttpClientResponse.fromWeb(request, new Response("{", { status: 201 })),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(FunctionsApiStatusError);
+      expect(error).toMatchObject({
+        status: 201,
+        decode: true,
+        message: "failed to read deploy response: Expected a valid JSON string",
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live("reports a malformed functions list with the schema decoder's message", () => {
+    const { layer } = apiDeployHarness((request) =>
+      Effect.succeed(
+        request.method === "GET" && request.url.endsWith("/functions")
+          ? HttpClientResponse.fromWeb(request, new Response("{", { status: 200 }))
+          : jsonResponse(request, 200, []),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(FunctionsApiStatusError);
+      expect(error).toMatchObject({
+        status: 200,
+        decode: true,
+        message: "failed to read functions list: Expected a valid JSON string",
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live(
+    "reports a malformed Docker-bundled function response with the schema decoder's message",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockCommandPlatformApi({
+        handler: (request) =>
+          Effect.succeed(
+            request.method === "GET"
+              ? jsonResponse(request, 200, [])
+              : HttpClientResponse.fromWeb(request, new Response("{", { status: 201 })),
+          ),
+      });
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(FunctionsApiStatusError);
+        expect(error).toMatchObject({
+          status: 201,
+          decode: true,
+          message: "failed to read function response: Expected a valid JSON string",
+        });
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    },
+  );
+
+  it.live("reports a NUL byte in an imported path as the raw host TypeError", () => {
+    const { layer } = apiDeployHarness(deployedHelloWorld);
+
+    return Effect.gen(function* () {
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(
+        tempRoot.current,
+        "hello-world",
+        'import "./a\u0000b.ts";\nDeno.serve(() => new Response())\n',
+      );
+
+      const error = yield* functionsDeploy(baseFlags).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error).toMatchObject({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringContaining("without null bytes"),
+      });
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+  });
+
+  it.live("reports a bundle output directory that cannot be created as an unknown error", () => {
+    const out = mockOutput({ format: "text" });
+    const child = mockDockerBundleSpawner();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api: mockCommandPlatformApi({ handler: deployedHelloWorld }),
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(YesFlag, false),
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeCliConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      yield* fs.writeFileString(path.join(tempRoot.current, "supabase", ".temp"), "");
+
+      const error = yield* functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Cause.UnknownError);
+      expect(error).toMatchObject({
+        message: "An error occurred in Effect.tryPromise",
+        cause: expect.objectContaining({ code: "EEXIST" }),
+      });
     }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
   });
 
@@ -1334,6 +1681,71 @@ describe("functions deploy", () => {
         );
       },
     );
+
+    it.live("passes --verbose to the bundler container when DEBUG=true", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* withConfigEnv(
+          { DEBUG: "true" },
+          functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }),
+        );
+
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain("--verbose");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
+
+    it.live("keeps --verbose off the bundler container when DEBUG=false", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildTestRuntime({
+          out,
+          api,
+          cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(YesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeCliConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* withConfigEnv(
+          { DEBUG: "false" },
+          functionsDeploy({ ...baseFlags, useApi: false, useDocker: true }),
+        );
+
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain("run");
+        expect(runCommand?.args).not.toContain("--verbose");
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTempRoot));
+    });
 
     it.live(
       "uses SUPABASE_NETWORK_ID as the bundler's docker network when no --network-id flag is passed",
