@@ -851,6 +851,63 @@ describe("pins", () => {
     ),
   );
 
+  it.live("a consumer pins a generation while its retirement is still deleting the old copy", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-artifact-retire-delete-",
+        });
+        const key = "database/postgres-retire-delete";
+        const setupStore = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+        const prepared = yield* setupStore.prepare({ ...request, key });
+        yield* ageLockFile(fs, prepared.lockPath);
+        const keyRoot = path.dirname(prepared.path);
+
+        const deleteStarted = yield* Deferred.make<void>();
+        const releaseDelete = yield* Deferred.make<void>();
+        const sweepingStore = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: sourceWritingAlt(),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            remove: (...args: Parameters<typeof fs.remove>) =>
+              args[0].startsWith(`${keyRoot}/.staging/`) && !isStagingLockFile(args[0])
+                ? Deferred.succeed(deleteStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseDelete)),
+                    Effect.andThen(fs.remove(...args)),
+                  )
+                : fs.remove(...args),
+          }),
+        );
+        yield* Effect.addFinalizer(() => Deferred.succeed(releaseDelete, undefined));
+
+        const sweepFiber = yield* sweepingStore
+          .prepare({ ...request, key: "database/postgres-retire-delete-trigger" })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(deleteStarted);
+        expect(yield* digestDirectories(fs, keyRoot)).toEqual([]);
+
+        const consumerStore = yield* makeArtifactStore({
+          cacheRoot: root,
+          source: sourceWriting(),
+        });
+        const used = yield* Effect.scoped(consumerStore.use({ ...request, key }));
+        expect(used.path).toBe(prepared.path);
+        expect(yield* fs.exists(`${used.path}/bin/postgres`)).toBe(true);
+
+        yield* Deferred.succeed(releaseDelete, undefined);
+        yield* Fiber.join(sweepFiber);
+        const leftovers = yield* fs
+          .readDirectory(`${keyRoot}/.staging`)
+          .pipe(Effect.map((names) => names.filter((name) => !isStagingLockFile(name))));
+        expect(leftovers).toEqual([]);
+      }),
+    ),
+  );
+
   it.live(
     "a sweep retires an aged unpinned generation and spares an aged one this process pins",
     () =>
