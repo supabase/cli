@@ -5,7 +5,7 @@ const tags = ["compute"];
 
 // Compute names end up in hostnames, so they must be valid DNS labels, matching the
 // Management API's own validation.
-const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/));
+const computeName = Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/u));
 
 const computeEntry = Schema.Struct({
   runtime: Schema.optionalKey(
