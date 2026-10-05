@@ -11,7 +11,7 @@ export const layerFromEnvironment = Layer.effect(
   Configuration.Service,
   Effect.gen(function* () {
     const apiKey = yield* Config.redacted("API_KEY");
-    const optionalModel = yield* Config.option(Config.string("MODEL"));
+    const optionalModel = yield* Config.option(Config.String("MODEL"));
     const enabled = yield* Config.boolean("FEATURE_ENABLED").pipe(Config.withDefault(false));
 
     return Configuration.Service.of({ apiKey, optionalModel, enabled });
