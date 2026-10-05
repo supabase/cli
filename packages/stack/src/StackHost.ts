@@ -86,9 +86,8 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
 
 /**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
- * that rejects the caller (for example on permissions): the one startup-diagnostic distinction
- * `StackHostError`'s own `reason` has carried since before phase 2d, so `destroy`/`shutdown`
- * (`effect.ts`) know to leave a stack registered for retry instead of surfacing a hard failure.
+ * that rejects the caller (for example on permissions), so `destroy`/`shutdown` (`effect.ts`)
+ * know to leave a stack registered for retry instead of surfacing a hard failure.
  * Unrelated to abandonment's own cleanup-retry decision, which probes the engine directly instead
  * of matching a message at all.
  */
@@ -282,11 +281,6 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               yield* Deferred.succeed(exit, undefined);
             }
           });
-          const stopOwned = Effect.gen(function* () {
-            yield* attachments.stopAll;
-            yield* runner.cleanup;
-            yield* owner.namespace.stop;
-          });
           const body: Effect.Effect<void, StackError> =
             mode === "abandon"
               ? Effect.gen(function* () {
@@ -310,19 +304,14 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                   });
                   yield* finish;
                 })
-              : mode === "stop"
-                ? stopOwned.pipe(
-                    Effect.andThen(finish),
-                    Effect.mapError((cause) => stackError("shutdown", cause)),
-                  )
-                : Effect.gen(function* () {
-                    yield* attachments.stopAll;
-                    yield* runner.cleanup;
-                    yield* owner.namespace.destroy;
-                  }).pipe(
-                    Effect.andThen(finish),
-                    Effect.mapError((cause) => stackError("shutdown", cause)),
-                  );
+              : Effect.gen(function* () {
+                  yield* attachments.stopAll;
+                  yield* runner.cleanup;
+                  yield* mode === "stop" ? owner.namespace.stop : owner.namespace.destroy;
+                }).pipe(
+                  Effect.andThen(finish),
+                  Effect.mapError((cause) => stackError("shutdown", cause)),
+                );
           const cleanup = body.pipe(
             Effect.catchCause((cause) =>
               mode !== "abandon"
