@@ -121,6 +121,11 @@ const makeNetwork = (options: {
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const deferReservations = yield* Ref.make(false);
+    // Set under `gate` by `drain`, before it snapshots `listeners`; checked under the same gate by
+    // `bind`, so a bind that hasn't yet acquired the gate when drain starts either completes
+    // before drain's snapshot (and so is captured by it) or observes this and refuses outright
+    // (F2) — never slips a new, untracked listener past both the snapshot and the accept cut.
+    const draining = yield* Ref.make(false);
     // Every bound listener (the shared API proxy under "api", every dedicated endpoint under
     // "id:name"), tracked only for shutdown drain; registration and deregistration are tied to the
     // same scope that owns the listener, so this never drifts from what is actually bound.
@@ -208,6 +213,7 @@ const makeNetwork = (options: {
           Effect.gen(function* () {
             if (yield* Ref.get(closed))
               return yield* errorFor("bind", "Network namespace is closed");
+            if (yield* Ref.get(draining)) return yield* errorFor("bind", "Network is draining");
             for (const [name, endpoint] of Object.entries(endpoints)) {
               if ((yield* Ref.get(bound)).has(name)) continue;
               yield* Effect.uninterruptibleMask((restore) =>
@@ -415,7 +421,15 @@ const makeNetwork = (options: {
         Stream.runDrain,
       );
     const drain = Effect.fn("Network.drain")(function* (deadline: Duration.Input) {
-      const handles = [...(yield* Ref.get(listeners)).values()];
+      // Setting `draining` and snapshotting `listeners` atomically under the same gate `bind`
+      // holds for its whole call (F2) means no bind can complete after this snapshot without
+      // either being captured by it or observing `draining` and refusing before creating anything.
+      const handles = yield* gate.withPermits(1)(
+        Ref.set(draining, true).pipe(
+          Effect.andThen(Ref.get(listeners)),
+          Effect.map((current) => [...current.values()]),
+        ),
+      );
       yield* Effect.forEach(handles, (handle) => handle.stopAccepting, { discard: true });
       const outcome = yield* Effect.forEach(handles, quiesced, {
         concurrency: "unbounded",

@@ -343,41 +343,53 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       // F6: a registration-loss poll drives this, never an RPC caller, so there is no response to
       // watch and no registration left to touch. An in-flight shutdown already owns `current`;
       // abandonment only joins it instead of racing its own cleanup against it.
+      // Each stage settles and logs independently: one stage's failure (for example a retained
+      // native command's termination that cannot be confirmed) must never skip the others (F4).
+      const settled = <E>(label: string, stage: Effect.Effect<void, E>) =>
+        stage.pipe(
+          Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
+        );
+      const abandonResources = settled("abandon namespace cleanup", owner.namespace.abandon);
       const abandon = Effect.fn("StackHost.abandon")(() =>
         gate
           .withPermits(1)(
             Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
                 const existing = yield* Ref.get(current);
-                if (existing !== undefined) return existing.fiber;
+                if (existing !== undefined) return existing;
                 yield* owner.setDraining(true);
                 const cleanup = restore(
                   Effect.gen(function* () {
-                    yield* attachments.stopAll;
-                    yield* runner.cleanup;
-                    yield* owner.namespace.abandon;
+                    yield* settled("stopping attachments", attachments.stopAll);
+                    yield* settled("command runner cleanup", runner.cleanup);
+                    yield* abandonResources;
                   }),
                 ).pipe(
-                  // Abandonment must still let the owner exit even if an unexpected defect strikes:
-                  // there is no caller left to report it to and no registration left to retry.
-                  Effect.catchCause((cause) =>
-                    Effect.logError("Abandoned stack cleanup failed", cause),
-                  ),
                   Effect.andThen(closeConnections),
                   Effect.andThen(Deferred.succeed(exit, undefined)),
                   Effect.asVoid,
                 );
                 const fiber = yield* Effect.forkIn(cleanup, scope);
-                yield* Ref.set(current, { destroy: false, fiber });
-                return fiber;
+                const record = { destroy: false, fiber };
+                yield* Ref.set(current, record);
+                return record;
               }),
             ),
           )
           .pipe(
-            Effect.flatMap(Fiber.join),
-            // `existing.fiber` may be an in-flight normal shutdown, typed to report `StackError`;
-            // abandonment never fails the caller (the registration poll), so it is logged, not raised.
-            Effect.catch((cause) => Effect.logError("Stack shutdown failed", cause)),
+            Effect.flatMap((record) =>
+              Fiber.join(record.fiber).pipe(
+                // `record.fiber` may be an in-flight normal shutdown, typed to report `StackError`;
+                // abandonment never fails the caller (the registration poll), so it is logged.
+                Effect.catch((cause) => Effect.logError("Stack shutdown failed", cause)),
+                Effect.andThen(
+                  // A joined plain stop deliberately preserves storage and port reservations; F6
+                  // cleanup still has to run. A joined destroy already confirmed both, so running
+                  // it again would be redundant (and safe: the shared cleanup path is idempotent).
+                  record.destroy ? Effect.void : abandonResources,
+                ),
+              ),
+            ),
           ),
       );
       const handlers = StackRpc.of({

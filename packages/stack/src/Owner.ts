@@ -221,32 +221,41 @@ const serviceError =
 const rpcError = (operation: string) =>
   Effect.mapError((cause: unknown) => stackError(operation, cause));
 
-/** A container engine confirmed unreachable (F6): no further retry can make this attempt succeed. */
+/**
+ * A container engine confirmed unreachable (F5): the shared cleanup path reports this as a plain
+ * `ServiceError` wrapping whatever the failing operation raised (a `ContainerError` from workload
+ * removal, or a `DockerDatabaseStorageError` from database volume cleanup, among others), so the
+ * daemon's own unreachable-daemon phrasing in the message is the one signal common to all of them.
+ */
 const engineUnreachableCleanup = (error: ServiceError) =>
-  error.cause instanceof Container.ContainerError && error.cause.reason === "engine-unavailable";
+  Container.engineUnreachableMessage(error.message);
 
-/** Bounded backoff for abandonment cleanup: retries transient failures, gives up on a confirmed-unreachable engine. */
+/**
+ * Backoff for abandonment cleanup retries: bounded delay, and a generous but finite overall budget.
+ * Per F6's final decision, cleanup should retry until it is confirmed or the engine is confirmed
+ * permanently unreachable, not give up merely because a short fixed time budget ran out while the
+ * engine might still recover — so the engine-unreachable check (below) is the primary, fast give-up
+ * path. This budget is a backstop, not the intended exit: deleting a stack's whole state root out
+ * from under a live workload can fail its stop/cleanup for reasons this predicate cannot name (for
+ * example a mount source that disappeared with it), and an owner that retries such a failure forever
+ * would violate the one invariant F6 exists to guarantee — that an abandoned owner always exits.
+ */
 const abandonCleanupSchedule = Schedule.exponential("200 millis", 2).pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(5))),
   ),
-  Schedule.upTo({ duration: "30 seconds" }),
+  Schedule.upTo({ duration: "2 minutes" }),
 );
 
 /**
- * Cleans up one abandoned instance through its registration-independent `cleanupResources`, the
- * same confirmed path destroy uses. Retries transient failures; an engine confirmed unreachable, or
- * retries exhausted, is logged and left behind rather than blocking the owner's exit (F6).
+ * Cleans up one abandoned instance through the same confirmed, serialized execution path destroy
+ * uses (`core.removeData`, under the service's execution lock, retrying only steps a previous
+ * attempt didn't finish), but without a `confirm` step: abandonment never touches the registration.
+ * Retries transient failures; a confirmed-unreachable engine, or the backstop budget above, is
+ * logged and left behind, so the owner's exit is never blocked indefinitely (F1, F5).
  */
 const cleanupAbandonedInstance = (entry: Entry) =>
-  Ref.get(entry.creation).pipe(
-    Effect.flatMap((config) =>
-      Effect.acquireUseRelease(
-        Scope.make("parallel"),
-        (scope) => entry.cleanupResources({ id: entry.id, config, scope }),
-        (scope, exit) => Scope.close(scope, exit),
-      ),
-    ),
+  entry.core.removeData().pipe(
     Effect.retry({
       schedule: abandonCleanupSchedule,
       while: (error) => !engineUnreachableCleanup(error),
@@ -299,8 +308,15 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const ownerScope = Context.get(services, Scope.Scope);
   const crypto = Context.get(services, Crypto.Crypto);
   const path = Context.get(services, Path.Path);
+  const fs = Context.get(services, FileSystem.FileSystem);
   const network = yield* Network.Service;
   const portReservations = yield* PortReservations.Service;
+  // Shared per-launch environment-file scratch directory (Container.ts), owned by this stack as a
+  // whole rather than any one instance; registration-independent so destroy and abandonment (F7)
+  // both reach it without depending on `Registry.remove`, which never runs during abandonment.
+  const removeContainerEnvRoot = fs
+    .remove(path.join(options.root, Paths.CONTAINER_ENV_DIRNAME), { recursive: true, force: true })
+    .pipe(Effect.mapError(serviceError("cleanup")));
   const isPubliclyReserved = (port: number) =>
     portReservations.isReserved(port).pipe(
       Effect.mapError(
@@ -502,12 +518,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             Effect.mapError(serviceError("state")),
             Effect.andThen(recipe.definition.launch(context)),
           ),
-        removeData: (context) =>
-          cleanupResources(context).pipe(
-            Effect.andThen(
-              removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
-            ),
-          ),
+        // Registration-free: `core.removeData` runs this inside its execution lock and, only when
+        // a `confirm` step is given, publishes the registration removal afterward (destroy passes
+        // it; abandonment never does). This is the one path both destroy and abandonment share.
+        removeData: cleanupResources,
       },
       { id, config: initial, report: orchestrator.report },
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
@@ -559,6 +573,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       creation,
       namespace,
       cleanupResources,
+      confirmRemoved: removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
       launch: (generation, inputs, candidate) =>
         configFor(inputs, candidate).pipe(
           Effect.flatMap((config) => core.launch(generation, config)),
@@ -873,7 +888,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         Effect.andThen(options.state.readClaims(stackId)),
         Effect.flatMap((remaining) =>
           remaining.length === 0
-            ? network.releaseStack.pipe(Effect.andThen(options.state.remove(stackId)))
+            ? removeContainerEnvRoot.pipe(
+                Effect.andThen(network.releaseStack),
+                Effect.andThen(options.state.remove(stackId)),
+              )
             : Effect.gen(function* () {
                 const currentDaemonId = options.engineTarget?.daemonId;
                 const claimsPath = path.join(options.state.root, stackId, Claims.CLAIMS_FILE);
@@ -899,8 +917,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),
-      // F6: never reads or writes the registration (already confirmed gone), so every step below
-      // is best-effort and logs rather than fails; the caller must still be able to exit.
+      // F6: settles admitted definition work under the same gate as stop/destroy first. Never
+      // reads or writes the registration (already confirmed gone), so every step below is
+      // best-effort and logs rather than fails; the caller must still be able to exit.
       abandon: network.drain(Network.SHUTDOWN_DRAIN_DEADLINE).pipe(
         Effect.andThen(
           orchestrator.stopNamespace.pipe(
@@ -920,12 +939,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           ),
         ),
         Effect.andThen(
+          removeContainerEnvRoot.pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Abandoned stack could not remove its container-env root", cause),
+            ),
+          ),
+        ),
+        Effect.andThen(
           network.releaseStack.pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Abandoned stack could not release its port reservations", cause),
             ),
           ),
         ),
+        definitionGate.withPermits(1),
         Effect.withSpan("Owner.abandonNamespace", { attributes: { stack_id: stackId } }),
       ),
     },

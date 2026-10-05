@@ -13,6 +13,7 @@ import {
   Layer,
   Redacted,
   Ref,
+  Schedule,
   Schema,
   Stream,
 } from "effect";
@@ -21,6 +22,8 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- integration drives a real HTTP keep-alive connection through the public listener.
+import * as Http from "node:http";
 import {
   launchHost,
   ownerAuthorization,
@@ -1060,8 +1063,8 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-/** A running native database, reachable through its public stack listener like any other client. */
-const withRunningDatabase = Effect.fn("Test.withRunningDatabase")(function* (prefix: string) {
+/** A running native mail service, reachable through its public HTTP listener like any client. */
+const withRunningMail = Effect.fn("Test.withRunningMail")(function* (prefix: string) {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix });
   const state = yield* stateFor(`${root}/state`);
@@ -1083,26 +1086,53 @@ const withRunningDatabase = Effect.fn("Test.withRunningDatabase")(function* (pre
   });
   const { runtime } = yield* inProcessRuntime(owner, state, root);
   const client = yield* ownerClient(runtime.access);
-  const database = yield* client.createService({
-    service: "database",
-    config: {
-      version: "17",
-      databasePassword: Redacted.make("drain-test-password"),
-      jwtSecret: Redacted.make("drain-test-jwt-secret-at-least-thirty-two-characters"),
-      jwtExpiry: 3600,
-    },
-    endpoints: { sql: { port: "auto" } },
+  const mail = yield* client.createService({
+    service: "mail",
+    config: {},
+    endpoints: { http: { port: "auto" } },
   });
-  yield* client.startService({ id: database.id });
-  yield* client.readyService({ id: database.id });
-  const databaseUrl = (yield* client.credentials({ id: database.id, from: "host" })).databaseUrl;
-  if (databaseUrl === undefined) return yield* Effect.die("Database credentials missing");
-  return { runtime, port: Number(new URL(databaseUrl).port) };
+  yield* client.startService({ id: mail.id });
+  yield* client.readyService({ id: mail.id });
+  const status = yield* client.status({ id: mail.id });
+  const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
+  if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
+  return { runtime, port };
 });
 
 /**
- * Connects a raw socket to `port`; the listener proxies whatever bytes flow without needing the
- * real wire protocol, so this alone counts as one established connection for drain purposes.
+ * One real HTTP round trip to the public listener over `agent`, proving application data actually
+ * flows (not just a raw established socket). Resolves once the response ends, with the exact
+ * socket that carried it, so a caller can later confirm that same connection's fate.
+ */
+const httpRoundTrip = (port: number, agent: Http.Agent) =>
+  Effect.callback<{ readonly status: number; readonly socket: Net.Socket }, HostTestError>(
+    (resume) => {
+      const request = Http.request(
+        { host: "127.0.0.1", port, path: "/", method: "GET", agent },
+        (response) => {
+          // Captured immediately: the agent may detach `response.socket` once the response ends.
+          const socket = response.socket;
+          response.resume();
+          response.once("end", () => {
+            if (socket === null) {
+              resume(Effect.fail(new HostTestError({ message: "Response has no socket" })));
+              return;
+            }
+            resume(Effect.succeed({ status: response.statusCode ?? 0, socket }));
+          });
+        },
+      );
+      request.once("error", (cause) => resume(Effect.fail(hostTestError(cause))));
+      request.end();
+      return Effect.sync(() => request.destroy());
+    },
+  );
+
+/**
+ * Connects a raw socket to `port` without speaking HTTP, so Node's own keep-alive idle timeout
+ * (5 s by default, shorter than the 10 s drain deadline) never applies to it. The listener proxies
+ * whatever bytes flow without needing a real protocol, so this still counts as one established
+ * connection for drain purposes.
  */
 const openRawSocket = (port: number) =>
   Effect.acquireRelease(
@@ -1116,15 +1146,30 @@ const openRawSocket = (port: number) =>
     (socket) => Effect.sync(() => socket.destroy()),
   );
 
-/** Resolves `true` once a connection to `port` closes on its own shortly after connecting. */
-const isRefusedQuickly = (port: number) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const socket = yield* openRawSocket(port);
-      return yield* awaitClosed(socket).pipe(
-        Effect.as(true),
-        Effect.race(Effect.sleep("1 second").pipe(Effect.as(false))),
-      );
+/** `true` once a fresh one-shot request to `port` is refused (reset) rather than answered. */
+const isHttpRefused = (port: number) =>
+  Effect.acquireRelease(
+    Effect.sync(() => new Http.Agent({ keepAlive: false })),
+    (agent) => Effect.sync(() => agent.destroy()),
+  ).pipe(
+    Effect.flatMap((agent) => httpRoundTrip(port, agent)),
+    Effect.as(false),
+    Effect.orElseSucceed(() => true),
+  );
+
+/**
+ * Waits for drain's accept-close to take effect by actively re-checking refusal, instead of
+ * guessing a fixed delay: the condition, once true, holds for the whole multi-second drain window,
+ * so a short bounded retry observes it reliably without racing a single arbitrary sleep.
+ */
+const waitUntilRefused = (port: number) =>
+  Effect.scoped(isHttpRefused(port)).pipe(
+    Effect.filterOrFail(
+      (refused) => refused,
+      () => new HostTestError({ message: "New connections are not refused yet" }),
+    ),
+    Effect.retry({
+      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "5 seconds" })),
     }),
   );
 
@@ -1133,27 +1178,32 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { runtime, port } = yield* withRunningDatabase("stack-host-drain-inflight-");
-        const socket = yield* openRawSocket(port);
-        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
-        // Accept closes synchronously at the start of drain; this bounds the wait for that flip to
-        // reach the listener, well inside the multi-second window the condition then holds steady.
-        yield* Effect.sleep("300 millis");
-        expect(yield* isRefusedQuickly(port), "a new connection during drain is refused").toBe(
-          true,
+        const { runtime, port } = yield* withRunningMail("stack-host-drain-inflight-");
+        const agent = yield* Effect.acquireRelease(
+          Effect.sync(() => new Http.Agent({ keepAlive: true, maxSockets: 1 })),
+          (agent) => Effect.sync(() => agent.destroy()),
         );
-        expect(socket.destroyed, "the established connection survives the refusal check").toBe(
+        const first = yield* httpRoundTrip(port, agent);
+        expect(
+          Number.isFinite(first.status),
+          "the first request gets a real response before drain",
+        ).toBe(true);
+        const shutdown = yield* Effect.forkScoped(shutdownOwner(runtime.access, false));
+        yield* waitUntilRefused(port);
+        expect(first.socket.destroyed, "the established connection survives the refusal").toBe(
           false,
         );
+        const second = yield* httpRoundTrip(port, agent);
+        expect(
+          second.socket,
+          "the second request reuses the same already-established connection",
+        ).toBe(first.socket);
+        expect(
+          Number.isFinite(second.status),
+          "a request on the established connection still completes during drain",
+        ).toBe(true);
         // The client finishes on its own, well before the drain deadline.
-        socket.end();
-        yield* awaitClosed(socket).pipe(
-          Effect.timeoutOrElse({
-            duration: "3 seconds",
-            orElse: () =>
-              Effect.fail(new HostTestError({ message: "Established connection did not close" })),
-          }),
-        );
+        agent.destroy();
         yield* Fiber.join(shutdown).pipe(
           Effect.timeoutOrElse({
             duration: "5 seconds",
@@ -1168,12 +1218,25 @@ it.live(
   { timeout: 60_000 },
 );
 
+// A real 10 s wait, not `TestClock`: the deadline and this in-process owner's other timers (lease,
+// idle, cooldown, readiness polling) share one `Clock` threaded through a single layer composition,
+// so virtualizing it risks silently changing those unrelated subsystems for an already-fast (~13 s),
+// repeatedly-verified test.
 it.live(
   "cuts a hanging connection at the drain deadline, then stop completes",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { runtime, port } = yield* withRunningDatabase("stack-host-drain-deadline-");
+        const { runtime, port } = yield* withRunningMail("stack-host-drain-deadline-");
+        // Proves the listener is genuinely functional before testing the hang. A one-shot agent, not
+        // the hanging connection itself: Node's own ~5 s keep-alive idle timeout would otherwise cut
+        // an idle HTTP connection before the 10 s drain deadline ever has a chance to.
+        const proof = yield* Effect.acquireUseRelease(
+          Effect.sync(() => new Http.Agent({ keepAlive: false })),
+          (agent) => httpRoundTrip(port, agent),
+          (agent) => Effect.sync(() => agent.destroy()),
+        );
+        expect(Number.isFinite(proof.status), "the listener answers before the hang").toBe(true);
         const socket = yield* openRawSocket(port);
         const startedAt = yield* Clock.currentTimeMillis;
         yield* shutdownOwner(runtime.access, false);
@@ -1181,7 +1244,9 @@ it.live(
         // The 10 s drain deadline bounds the wait; generous slack absorbs real scheduling variance.
         expect(elapsedMillis).toBeGreaterThanOrEqual(9_000);
         expect(elapsedMillis).toBeLessThan(60_000);
-        expect(socket.destroyed, "the hanging connection is cut at the deadline").toBe(true);
+        expect(socket.destroyed, "the idle established connection is cut at the deadline").toBe(
+          true,
+        );
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 60_000 },

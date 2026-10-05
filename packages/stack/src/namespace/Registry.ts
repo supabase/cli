@@ -8,7 +8,6 @@ import {
   type NamespaceError,
 } from "./Capabilities.ts";
 import { CLAIMS_FILE } from "./Claims.ts";
-import { CONTAINER_ENV_DIRNAME } from "./Paths.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
@@ -200,14 +199,9 @@ export const make = (
         yield* fs
           .remove(file, { force: true })
           .pipe(Effect.mapError((cause) => namespaceError("remove", cause)));
-      // Namespace-owned scratch space, never user data, so a forced recursive removal here (and
-      // only here) doesn't mask a service that failed to clean up its own owned root.
-      yield* fs
-        .remove(path.join(stackRoot(id), "data", CONTAINER_ENV_DIRNAME), {
-          recursive: true,
-          force: true,
-        })
-        .pipe(Effect.mapError((cause) => namespaceError("remove", cause)));
+      // The container-env scratch directory is removed registration-independently by the owner
+      // (Owner.ts's `removeContainerEnvRoot`, shared by destroy and abandonment); by the time this
+      // runs for a confirmed destroy, `data` is already empty of it.
       yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
       yield* removeEmptyDirectory(stackRoot(id));
     });

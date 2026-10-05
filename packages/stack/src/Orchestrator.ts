@@ -74,6 +74,12 @@ export interface RegisteredInstance {
   ) => Effect.Effect<void, ServiceError>;
   readonly bind: Effect.Effect<void, ServiceError>;
   readonly close: Effect.Effect<void, ServiceError>;
+  /**
+   * Publishes this instance's registration removal; run only once `core.removeData`'s resources
+   * are confirmed removed, as the `confirm` step of that same execution lock. Destroy passes this;
+   * abandonment never does, because there is no registration left to update.
+   */
+  readonly confirmRemoved: Effect.Effect<void, ServiceError>;
   readonly hasEndpoint: boolean;
   readonly inputs: ReadonlyArray<string>;
   readonly outputs: Readonly<Record<string, Effect.Effect<string, ServiceError>>>;
@@ -961,7 +967,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
             }),
           );
           yield* entry.close;
-          yield* entry.core.removeData;
+          yield* entry.core.removeData(entry.confirmRemoved);
           yield* entry.close;
         }),
       ).pipe(

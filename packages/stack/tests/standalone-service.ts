@@ -34,6 +34,7 @@ export const makeStandaloneService = Effect.fn("Test.makeStandaloneService")(fun
     prepare: (_inputs, restarted) => configFor(restarted).pipe(Effect.flatMap(core.prepare)),
     bind: Effect.void,
     close: Effect.void,
+    confirmRemoved: Effect.void,
     hasEndpoint: true,
     inputs: [],
     outputs: {},

@@ -271,11 +271,15 @@ it.live.skipIf(process.platform === "win32")(
       const owned = yield* descendantsOf(ownerPid);
       expect(owned.length, "the owner runs the native mail service").toBeGreaterThan(0);
 
+      // Subscribes to the owner's own exit signal (its lease release, the owner's last act) before
+      // triggering the deletion, rather than polling for it afterward (F9).
+      const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
       yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
-      // Detection is bounded by the poll interval (200 ms here); the generous timeout absorbs
-      // drain, workload stop and cleanup, none of which the default 30 s interval would leave room
-      // to observe inside a reasonable test budget.
-      yield* waitForOwnerExit(ownerPid, ownerExitProbe(fs)).pipe(Effect.timeout("15 seconds"));
+      yield* leaseReleased;
+      // The lease is already confirmed released, so the process is already exiting or exited;
+      // `waitForOwnerExit`'s own internal cap no longer bounds detection, drain and cleanup — only
+      // this final, now-fast confirmation.
+      yield* waitForOwnerExit(ownerPid, ownerExitProbe(fs)).pipe(Effect.timeout("10 seconds"));
 
       expect(owned.filter(alive), "native processes die with their abandoned owner").toEqual([]);
       expect(

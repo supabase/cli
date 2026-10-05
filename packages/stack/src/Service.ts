@@ -101,8 +101,16 @@ export interface ServiceInstance<Config> {
   readonly storage: <A>(
     operation: Effect.Effect<A, ServiceError>,
   ) => Effect.Effect<A, ServiceError>;
-  /** Removes the instance's data and marks it unregistered; the service must already be stopped. */
-  readonly removeData: Effect.Effect<void, ServiceError>;
+  /**
+   * Removes the instance's data and marks it unregistered; the service must already be stopped.
+   * `confirm`, when given, runs inside the same execution lock once resources are confirmed
+   * removed and before the instance is marked unregistered — destroy's registration publication.
+   * Omitting it (abandonment) reuses the identical confirmed, serialized cleanup without touching
+   * any registration.
+   */
+  readonly removeData: (
+    confirm?: Effect.Effect<void, ServiceError>,
+  ) => Effect.Effect<void, ServiceError>;
 }
 
 interface SessionRecord {
@@ -472,7 +480,9 @@ export const makeService = <Config>(
         )
         .pipe(Effect.withSpan("Service.storage", { attributes: { member_id: id } }));
 
-    const removeData = Effect.fn("Service.removeData")(function* () {
+    const removeData = Effect.fn("Service.removeData")(function* (
+      confirm: Effect.Effect<void, ServiceError> = Effect.void,
+    ) {
       yield* Effect.annotateCurrentSpan({ member_id: id });
       yield* execution.withPermit(
         Effect.gen(function* () {
@@ -488,6 +498,7 @@ export const makeService = <Config>(
                 Effect.tapError((error) => update({ error })),
                 Effect.ensuring(Scope.close(dataScope, Exit.void)),
               );
+            yield* confirm;
             yield* update({ registered: false });
           }).pipe(Effect.ensuring(update({ currentOperation: undefined })));
         }),
@@ -503,6 +514,6 @@ export const makeService = <Config>(
       stop,
       reprobe,
       storage,
-      removeData: removeData(),
+      removeData,
     };
   });

@@ -1,6 +1,16 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Crypto, Effect, FileSystem, Layer, Path, Redacted, Stream } from "effect";
+import {
+  Context,
+  Crypto,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Redacted,
+  Schedule,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -13,7 +23,7 @@ import {
 } from "./HostProcess.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
-import { shutdownOwner } from "../tests/owner.ts";
+import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { noContainerClaims } from "../tests/claims.ts";
 
 const shortRegistrationPollFixture = fileURLToPath(
@@ -287,8 +297,17 @@ it.live.skipIf(process.platform === "win32")(
           (yield* containers(stackId, dataRoot)).length,
           "the owner runs the database container",
         ).toBeGreaterThan(0);
+        const containerEnvRoot = `${dataRoot}/.container-env`;
+        expect(
+          yield* fs.exists(containerEnvRoot),
+          "the stack's shared container-env scratch directory exists",
+        ).toBe(true);
 
+        // Subscribes to the owner's own exit signal (its lease release) before triggering the
+        // deletion, rather than polling for it afterward (F9).
+        const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
         yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
+        yield* leaseReleased;
         yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
           Effect.timeout("30 seconds"),
         );
@@ -298,7 +317,106 @@ it.live.skipIf(process.platform === "win32")(
           yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
           "no registration is republished",
         ).toBe(false);
+        expect(
+          yield* fs.exists(containerEnvRoot),
+          "abandonment removes the shared container-env scratch directory (F7)",
+        ).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "removes its containers and exits when its whole state root is confirmed gone",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* Crypto.Crypto;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-root-" });
+        const stackId = `abandon-root-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot(
+          "stack-abandon-docker-root-data-",
+          stackId,
+        ).pipe(Effect.flatMap(fs.realPath));
+        const stateRoot = path.dirname(path.dirname(dataRoot));
+        const cacheRoot = `${base}/cache`;
+        const state = yield* stateFor(stateRoot);
+        yield* state.save({
+          id: stackId,
+          runtime: "docker",
+          identity: {
+            projectRoot: `${base}/project`,
+            branchContext: "abandon-docker-root-test",
+            stackName: stackId,
+          },
+          instances: [],
+          lifetime: "detached",
+          composition: { members: [], dependencies: [] },
+          ports: [],
+        });
+        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
+        const access = yield* launchHost(state, {
+          stateRoot,
+          cacheRoot,
+          stackId,
+          entrypoint: shortRegistrationPollFixture,
+        });
+        const client = yield* ownerClient(access);
+        // `mail` rather than `database`: its container holds no host-mounted data volume, so
+        // deleting the state root out from under it doesn't also disrupt its own stop path — this
+        // test is about registration-independent cleanup, not about surviving every workload's
+        // reaction to losing its mounted storage.
+        const mail = yield* client.createService({
+          service: "mail",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* client.startService({ id: mail.id });
+        yield* client.readyService({ id: mail.id });
+        expect(
+          (yield* containers(stackId, dataRoot)).length,
+          "the owner runs the mail container",
+        ).toBeGreaterThan(0);
+
+        // Deletes every discovery-relevant entry in the stack directory, not just `state.json`: the
+        // claims journal and storage marker are gone too, so cleanup can only come from the owner's
+        // in-memory resources, never from on-disk discovery. `owner.log` is spared only because it
+        // is diagnostic output this test reads on failure, never a file the owner itself discovers
+        // or recovers from. The lease file is removed, so this relies on budgeted polling rather
+        // than a lease-release subscription.
+        for (const entry of yield* fs.readDirectory(`${stateRoot}/${stackId}`))
+          if (entry !== "owner.log")
+            yield* fs.remove(`${stateRoot}/${stackId}/${entry}`, {
+              recursive: true,
+              force: true,
+            });
+        // Losing the whole root also breaks this workload's own graceful-stop bookkeeping (its
+        // container-env file is gone too), so its stop retries for real before the owner's 2-minute
+        // cleanup backstop (F5) gives up on it and still proceeds to remove what it can confirm.
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.retry({
+            schedule: Schedule.spaced("1 second"),
+            while: (failure) =>
+              failure.reason === "owner-exit-pending" || failure.reason === "owner-exit-zombie",
+          }),
+          Effect.timeout("150 seconds"),
+        );
+
+        expect(
+          yield* containers(stackId, dataRoot),
+          "abandonment removes containers from in-memory resources alone",
+        ).toEqual([]);
+        expect(
+          yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
+          "no registration is republished",
+        ).toBe(false);
+        expect(
+          yield* fs.exists(`${stateRoot}/${stackId}/claims.json`),
+          "no claims journal is republished",
+        ).toBe(false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 200_000 },
 );

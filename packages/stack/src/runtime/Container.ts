@@ -121,15 +121,21 @@ const transientPullFailure = (error: ContainerError) =>
 /**
  * Matches an engine CLI that is missing or reports a daemon that is not listening, not one that
  * rejects the caller. Windows' `error during connect` also wraps authentication and TLS failures,
- * so only its refused or missing-endpoint causes match.
+ * so only its refused or missing-endpoint causes match. Matches regardless of which wrapping error
+ * type carried the message (a bare `ContainerError`, or another operation's error whose message
+ * preserves the underlying CLI failure text, such as a database storage cleanup failure).
  */
+export const engineUnreachableMessage = (message: string): boolean =>
+  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
+    message,
+  );
+
+/** Also matches a missing engine CLI binary, which never produces a message to test. */
 export const engineUnreachable = (error: ContainerError) =>
   (error.cause instanceof PlatformError.PlatformError &&
     error.cause.reason._tag === "NotFound" &&
     error.cause.reason.method === "spawn") ||
-  /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)/iu.test(
-    error.message,
-  );
+  engineUnreachableMessage(error.message);
 
 /** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
 const runRaw = (
