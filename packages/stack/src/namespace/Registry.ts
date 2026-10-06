@@ -204,27 +204,6 @@ export const make = (
       const modified = Option.getOrUndefined((yield* fs.stat(directory)).mtime)?.getTime();
       return modified !== undefined && now - modified >= DESTROYED_RETENTION_MILLIS;
     });
-    const pruneDestroyed = Effect.fn("Namespace.Registry.pruneDestroyed")(function* (keep: string) {
-      const now = yield* Clock.currentTimeMillis;
-      let removed = 0;
-      for (const id of yield* stackIds) {
-        if (id === keep) continue;
-        const pruned = yield* Effect.gen(function* () {
-          if (!(yield* isDestroyedShell(id, now))) return false;
-          yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
-          yield* removeEmptyDirectory(stackRoot(id));
-          return true;
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning(`Could not prune destroyed stack directory ${id}`, error).pipe(
-              Effect.as(false),
-            ),
-          ),
-        );
-        if (pruned) removed += 1;
-      }
-      yield* Effect.annotateCurrentSpan({ removed });
-    });
     /**
      * One attempt: forks `attemptScope` under `guardScope` before opening anything, so there is
      * always a scope to close if the open or the `BEGIN IMMEDIATE` below fails or defects. Runs
@@ -274,6 +253,35 @@ export const make = (
           (guardScope, exit) => Scope.close(guardScope, exit),
         ),
     );
+
+    const pruneDestroyed = Effect.fn("Namespace.Registry.pruneDestroyed")(function* (keep: string) {
+      const now = yield* Clock.currentTimeMillis;
+      let removed = 0;
+      for (const id of yield* stackIds) {
+        if (id === keep) continue;
+        // Rechecked under the registry lock: a same-id recreate either saved its state before the
+        // check or waits until the directories are gone.
+        const pruned = yield* Effect.gen(function* () {
+          if (!(yield* isDestroyedShell(id, now))) return false;
+          return yield* withLock(
+            Effect.gen(function* () {
+              if (!(yield* isDestroyedShell(id, now))) return false;
+              yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
+              yield* removeEmptyDirectory(stackRoot(id));
+              return true;
+            }),
+          );
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`Could not prune destroyed stack directory ${id}`, error).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+        if (pruned) removed += 1;
+      }
+      yield* Effect.annotateCurrentSpan({ removed });
+    });
 
     return { read, list: list(), save, remove, pruneDestroyed, withLock };
   });
