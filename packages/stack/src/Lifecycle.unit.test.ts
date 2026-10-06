@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-  canRunStorage,
+  blockingStage,
   initialState,
   LifecycleEvent,
   makeGraph,
@@ -39,6 +39,12 @@ const run = (
 const tagsOf = (commands: ReadonlyArray<Command> | undefined) =>
   (commands ?? []).map((command) => command._tag);
 
+/** Whether a storage reservation requested now would be accepted rather than rejected. */
+const storageAdmitted = (state: LifecycleState, id: string): boolean =>
+  !tagsOf(
+    run(state, [{ event: LifecycleEvent.StorageReserved({ id }), now: 0 }]).commandsByStep[0],
+  ).includes("RequestRejected");
+
 /** Narrows a service's current phase to `Starting` and returns its generation, or throws. */
 const startingGeneration = (state: LifecycleState, id: string): number => {
   const phase = state.services.get(id)?.phase;
@@ -76,13 +82,13 @@ const commandTagged = <Tag extends Command["_tag"]>(
 describe("Lifecycle reducer", () => {
   it("wakes a lazy service on first traffic, admits the waiter once ready, and sleeps after idle", () => {
     const graph = makeGraph([lazy("api")]);
-    const { commandsByStep, state } = run(initialState(graph, 0), [
+    const { commandsByStep, state } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
       { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 20 },
     ]);
 
-    expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Launch"]);
+    expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
     expect(tagsOf(commandsByStep[1])).toEqual(["AdmitConnection"]);
     expect(tagsOf(commandsByStep[2])).toEqual(["ArmIdleTimer"]);
     const armed = at(at(commandsByStep, 2), 0) as Extract<Command, { _tag: "ArmIdleTimer" }>;
@@ -96,7 +102,7 @@ describe("Lifecycle reducer", () => {
 
   it("ignores a launch outcome, an idle elapse and an exit tagged with a stale generation", () => {
     const graph = makeGraph([lazy("api")]);
-    const { state, commandsByStep } = run(initialState(graph, 0), [
+    const { state, commandsByStep } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 99 }), now: 10 },
       { event: LifecycleEvent.IdleElapsed({ id: "api", generation: 1, epoch: 99 }), now: 20 },
@@ -123,7 +129,7 @@ describe("Lifecycle reducer", () => {
 
   it("ignores an idle elapse tagged with a stale epoch even while a newer timer is armed with zero demand", () => {
     const graph = makeGraph([lazy("api")]);
-    const { state } = run(initialState(graph, 0), [
+    const { state } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
       { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 20 }, // arms epoch 1
@@ -146,7 +152,7 @@ describe("Lifecycle reducer", () => {
 
   it("keeps a service running when traffic is admitted before the idle commit", () => {
     const graph = makeGraph([lazy("api")]);
-    const { state, commandsByStep } = run(initialState(graph, 0), [
+    const { state, commandsByStep } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
       { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 20 },
@@ -163,7 +169,7 @@ describe("Lifecycle reducer", () => {
 
   it("holds traffic arriving after a committed sleep for the confirmed stop and the next generation, without failing it", () => {
     const graph = makeGraph([lazy("api")]);
-    const { state, commandsByStep } = run(initialState(graph, 0), [
+    const { state, commandsByStep } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
       { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 20 },
@@ -183,7 +189,7 @@ describe("Lifecycle reducer", () => {
     ]);
 
     expect(tagsOf(commandsByStep[3])).toEqual(["Stop"]);
-    expect(tagsOf(commandsByStep[4])).toEqual(["ArmWaiterTimeout"]);
+    expect(tagsOf(commandsByStep[4])).toEqual([]);
     expect(tagsOf(commandsByStep[5])).toEqual(["Launch"]);
     expect((at(at(commandsByStep, 5), 0) as Extract<Command, { _tag: "Launch" }>).generation).toBe(
       2,
@@ -203,7 +209,7 @@ describe("Lifecycle reducer", () => {
       lazy("functions", { prerequisites: ["database"] }),
       lazy("studio", { prerequisites: ["pg-meta", "functions"] }),
     ]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
     ({ state } = run(state, [{ event: open("studio", 1), now: 0 }]));
@@ -326,7 +332,7 @@ describe("Lifecycle reducer", () => {
       lazy("b", { prerequisites: ["a"] }),
       lazy("c", { prerequisites: ["b"] }),
     ]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
     ({ state } = run(state, [{ event: open("c", 1), now: 0 }]));
@@ -352,21 +358,16 @@ describe("Lifecycle reducer", () => {
     expect(state.services.get("c")?.phase).toEqual({ _tag: "Running", generation: 1, ready: true });
 
     const blocked = run(state, [{ event: open("c", 2), now: 50 }]);
-    expect(tagsOf(blocked.commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
+    expect(tagsOf(blocked.commandsByStep[0])).toEqual(["Reprobe"]);
     expect(commandTagged(at(blocked.commandsByStep, 0), "Reprobe").id).toBe("a");
     expect(blocked.state.services.get("c")?.waiters.size).toBe(1);
-
-    const expired = run(blocked.state, [
-      { event: LifecycleEvent.WaiterExpired({ id: "c", waiterId: 2 }), now: 50 + 120_000 + 1 },
-    ]);
-    const failure = commandTagged(at(expired.commandsByStep, 0), "FailConnection");
-    expect(failure.message).toContain("prerequisite a");
+    expect(blockingStage(blocked.state, "c")).toBe("prerequisite a");
   });
 
   describe("explicit start and restart demand", () => {
     it("launches an idle lazy service on its own explicit start, with no connection involved", () => {
       const graph = makeGraph([lazy("api")]);
-      const { commandsByStep } = run(initialState(graph, 0), [
+      const { commandsByStep } = run(initialState(graph), [
         { event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 },
       ]);
       expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
@@ -374,7 +375,7 @@ describe("Lifecycle reducer", () => {
 
     it("restarts after an explicit stop, even though restart alone would otherwise leave intent stopped", () => {
       const graph = makeGraph([lazy("api")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [{ event: LifecycleEvent.StopRequested({ id: "api" }), now: 0 }]));
 
       const restarted = run(state, [
@@ -386,7 +387,7 @@ describe("Lifecycle reducer", () => {
 
     it("propagates an explicit restart's demand to a fully stopped prerequisite", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      const { commandsByStep } = run(initialState(graph, 0), [
+      const { commandsByStep } = run(initialState(graph), [
         { event: LifecycleEvent.RestartRequested({ id: "b" }), now: 0 },
       ]);
       expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
@@ -397,7 +398,7 @@ describe("Lifecycle reducer", () => {
   describe("circuit breaker", () => {
     it("opens after 3 consecutive failures, fails fast naming the cause, and recovers once after the cooldown for several waiters at once", () => {
       const graph = makeGraph([lazy("flaky")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
       const failAttempt = (waiterId: number, now: number) => {
@@ -440,13 +441,13 @@ describe("Lifecycle reducer", () => {
 
       // After the cooldown elapses, several waiters share exactly one recovery attempt.
       ({ state, commandsByStep } = run(state, [{ event: open("flaky", 5), now: 201 + 30_000 }]));
-      expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Launch"]);
+      expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
       const recovery = commandTagged(at(commandsByStep, 0), "Launch");
 
       ({ state, commandsByStep } = run(state, [
         { event: open("flaky", 6), now: 201 + 30_000 + 1 },
       ]));
-      expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout"]);
+      expect(tagsOf(commandsByStep[0])).toEqual([]);
 
       ({ state, commandsByStep } = run(state, [
         {
@@ -459,7 +460,7 @@ describe("Lifecycle reducer", () => {
 
     it("reopens for the same fixed cooldown on a further failure, and an explicit start resets it", () => {
       const graph = makeGraph([lazy("flaky")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
 
       const fail = (waiterId: number, now: number) => {
         ({ state } = run(state, [{ event: open("flaky", waiterId), now }]));
@@ -500,12 +501,12 @@ describe("Lifecycle reducer", () => {
 
     it("schedules a cooldown timer when the breaker opens and only the dedicated event retries, even with demand retained the whole time", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
       // b's own waiter on a never resolves, so it keeps retaining demand on a across every retry.
       ({ state, commandsByStep } = run(state, [{ event: open("b", 1), now: 0 }]));
-      expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Launch"]);
+      expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
 
       const failRetained = (now: number) => {
         const generation = startingGeneration(state, "a");
@@ -540,7 +541,7 @@ describe("Lifecycle reducer", () => {
 
     it("leaves a stale launch outcome a complete no-op even with demand retained and the cooldown elapsed on the wall clock", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
 
       // b's own waiter on a is never resolved, so demand on a is retained through every failure:
       // under the old time-based breaker check, this is exactly the state a stale event could
@@ -568,9 +569,9 @@ describe("Lifecycle reducer", () => {
     });
   });
 
-  it("caps waiters at 256, lets an expiry fail only that waiter while the shared launch continues, and frees its slot for cancellation", () => {
+  it("caps waiters at 256 and frees a slot when a waiter is cancelled", () => {
     const graph = makeGraph([lazy("api")]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
     const opens = Array.from({ length: 256 }, (_, index) => ({
@@ -586,42 +587,21 @@ describe("Lifecycle reducer", () => {
     expect(state.services.get("api")?.waiters.size).toBe(256);
 
     ({ state, commandsByStep } = run(state, [
-      { event: LifecycleEvent.WaiterExpired({ id: "api", waiterId: 5 }), now: 120_001 },
-    ]));
-    expect(tagsOf(commandsByStep[0])).toEqual(["FailConnection"]);
-    const expired = commandTagged(at(commandsByStep, 0), "FailConnection");
-    expect(expired.message).toContain("api to finish preparing");
-    expect(state.services.get("api")?.waiters.size).toBe(255);
-    // The shared launch itself is untouched by a waiter's own expiry.
-    expect(state.services.get("api")?.phase._tag).toBe("Starting");
-
-    ({ state, commandsByStep } = run(state, [
       { event: LifecycleEvent.WaiterCancelled({ id: "api", waiterId: 6 }), now: 2 },
     ]));
     expect(commandsByStep[0]).toEqual([]);
-    expect(state.services.get("api")?.waiters.size).toBe(254);
+    expect(state.services.get("api")?.waiters.size).toBe(255);
+    // The shared launch itself is untouched by a waiter's cancellation.
+    expect(state.services.get("api")?.phase._tag).toBe("Starting");
 
     ({ state, commandsByStep } = run(state, [{ event: open("api", 300), now: 3 }]));
-    expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout"]);
-    expect(state.services.get("api")?.waiters.size).toBe(255);
-  });
-
-  it("expires a waiter instead of admitting it when its deadline already passed by the time the launch succeeds", () => {
-    const graph = makeGraph([lazy("api", { idleMillis: undefined })]);
-    let state = initialState(graph, 0);
-    ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
-    const generation = startingGeneration(state, "api");
-
-    const result = run(state, [
-      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation }), now: 120_000 },
-    ]);
-    expect(tagsOf(result.commandsByStep[0])).toEqual(["FailConnection"]);
-    expect(result.state.services.get("api")?.leases).toBe(0);
+    expect(tagsOf(commandsByStep[0])).toEqual([]);
+    expect(state.services.get("api")?.waiters.size).toBe(256);
   });
 
   it("admits a non-ready-requiring acquisition once a live session exists, bypassing target readiness", () => {
     const graph = makeGraph([lazy("functions")]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [{ event: open("functions", 1), now: 0 }]));
     const generation = startingGeneration(state, "functions");
 
@@ -643,7 +623,7 @@ describe("Lifecycle reducer", () => {
     });
 
     const readyRequiring = run(state, [{ event: open("functions", 2), now: 20 }]);
-    expect(tagsOf(readyRequiring.commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
+    expect(tagsOf(readyRequiring.commandsByStep[0])).toEqual(["Reprobe"]);
 
     const inspector = run(state, [
       {
@@ -660,7 +640,7 @@ describe("Lifecycle reducer", () => {
 
   it("treats a readiness loss as non-terminal, re-probing once for the next waiter, unlike an exit which counts toward the breaker", () => {
     const graph = makeGraph([lazy("api")]);
-    const { state: ready } = run(initialState(graph, 0), [
+    const { state: ready } = run(initialState(graph), [
       { event: open("api", 1), now: 0 },
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
     ]);
@@ -683,8 +663,8 @@ describe("Lifecycle reducer", () => {
       { event: open("api", 2), now: 21 },
       { event: open("api", 3), now: 22 },
     ]);
-    expect(tagsOf(probeCommands[0])).toEqual(["ArmWaiterTimeout", "Reprobe"]);
-    expect(tagsOf(probeCommands[1])).toEqual(["ArmWaiterTimeout"]);
+    expect(tagsOf(probeCommands[0])).toEqual(["Reprobe"]);
+    expect(tagsOf(probeCommands[1])).toEqual([]);
 
     const { state: recovered, commandsByStep: recoveredCommands } = run(probing, [
       { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 30 },
@@ -720,7 +700,7 @@ describe("Lifecycle reducer", () => {
 
   it("rejects stopping or restarting a prerequisite while a dependent is active", () => {
     const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [{ event: open("b", 1), now: 0 }]));
     ({ state } = run(state, [
       { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 10 },
@@ -748,24 +728,24 @@ describe("Lifecycle reducer", () => {
   describe("storage reservation", () => {
     it("admits storage operations only once a service is stopped with intent stopped", () => {
       const graph = makeGraph([lazy("database")]);
-      let state = initialState(graph, 0);
-      expect(canRunStorage(state, "database")).toBe(false);
+      let state = initialState(graph);
+      expect(storageAdmitted(state, "database")).toBe(false);
 
       ({ state } = run(state, [
         { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
       ]));
-      expect(canRunStorage(state, "database")).toBe(true);
+      expect(storageAdmitted(state, "database")).toBe(true);
 
       ({ state } = run(state, [
         { event: LifecycleEvent.StartRequested({ id: "database" }), now: 1 },
       ]));
       ({ state } = run(state, [{ event: open("database", 1), now: 2 }]));
-      expect(canRunStorage(state, "database")).toBe(false);
+      expect(storageAdmitted(state, "database")).toBe(false);
     });
 
     it("rejects a storage reservation unless the service is already stopped", () => {
       const graph = makeGraph([lazy("database")]);
-      const { commandsByStep } = run(initialState(graph, 0), [
+      const { commandsByStep } = run(initialState(graph), [
         { event: LifecycleEvent.StorageReserved({ id: "database" }), now: 0 },
       ]);
       expect(tagsOf(commandsByStep[0])).toEqual(["RequestRejected"]);
@@ -773,7 +753,7 @@ describe("Lifecycle reducer", () => {
 
     it("blocks a launch while storage is reserved and relaunches once it's released", () => {
       const graph = makeGraph([lazy("database")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [
         { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
       ]));
@@ -800,7 +780,7 @@ describe("Lifecycle reducer", () => {
 
     it("hands a running storage operation's reservation to a destroy requested meanwhile", () => {
       const graph = makeGraph([lazy("database")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [
         { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
         { event: LifecycleEvent.StorageReserved({ id: "database" }), now: 1 },
@@ -816,7 +796,7 @@ describe("Lifecycle reducer", () => {
         ["RequestRejected"],
         ["RequestRejected"],
       ]);
-      expect(canRunStorage(refused.state, "database")).toBe(false);
+      expect(storageAdmitted(refused.state, "database")).toBe(false);
 
       ({ state } = run(refused.state, [
         { event: LifecycleEvent.StorageReleased({ id: "database" }), now: 4 },
@@ -829,7 +809,7 @@ describe("Lifecycle reducer", () => {
 
     it("reserves storage for a destroy once its running service has stopped", () => {
       const graph = makeGraph([lazy("database")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [
         { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
       ]));
@@ -861,7 +841,7 @@ describe("Lifecycle reducer", () => {
 
     it("makes a service usable again once a destroy releases it", () => {
       const graph = makeGraph([lazy("database")]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [
         { event: LifecycleEvent.StopRequested({ id: "database" }), now: 0 },
         { event: LifecycleEvent.DestroyRequested({ id: "database" }), now: 1 },
@@ -871,7 +851,7 @@ describe("Lifecycle reducer", () => {
       ({ state } = run(state, [
         { event: LifecycleEvent.StorageReleased({ id: "database" }), now: 2 },
       ]));
-      expect(canRunStorage(state, "database")).toBe(false);
+      expect(storageAdmitted(state, "database")).toBe(false);
 
       ({ state } = run(state, [
         { event: LifecycleEvent.DestroyReleased({ id: "database" }), now: 3 },
@@ -880,13 +860,13 @@ describe("Lifecycle reducer", () => {
         destroy: undefined,
         storageReserved: false,
       });
-      expect(canRunStorage(state, "database")).toBe(true);
+      expect(storageAdmitted(state, "database")).toBe(true);
     });
   });
 
   it("rejects new admission for an explicitly stopped service without creating a waiter", () => {
     const graph = makeGraph([lazy("api")]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [{ event: LifecycleEvent.StopRequested({ id: "api" }), now: 0 }]));
 
     const result = run(state, [{ event: open("api", 1), now: 1 }]);
@@ -899,7 +879,7 @@ describe("Lifecycle reducer", () => {
       lazy("database", { idleMillis: undefined }),
       { id: "kong", activation: "eager", prerequisites: ["database"] },
     ]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
 
     // Kong is eager from composition, so the owner's first settle pass (triggered by any event,
@@ -917,7 +897,7 @@ describe("Lifecycle reducer", () => {
 
   describe("graph updates", () => {
     it("preserves a continuing service's state and never reuses a generation after a remove and re-add", () => {
-      let state = initialState(makeGraph([lazy("api")]), 0);
+      let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
       ({ state } = run(state, [
         { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
@@ -956,7 +936,7 @@ describe("Lifecycle reducer", () => {
     });
 
     it("rejects removing a service that's starting with a pending waiter, atomically", () => {
-      let state = initialState(makeGraph([lazy("a")]), 0);
+      let state = initialState(makeGraph([lazy("a")]));
       ({ state } = run(state, [{ event: open("a", 1), now: 0 }]));
       expect(state.services.get("a")?.phase._tag).toBe("Starting");
 
@@ -968,7 +948,7 @@ describe("Lifecycle reducer", () => {
     });
 
     it("rejects removing a service with a storage reservation, so a graph update can't launch mid-restore", () => {
-      let state = initialState(makeGraph([lazy("db")]), 0);
+      let state = initialState(makeGraph([lazy("db")]));
       ({ state } = run(state, [{ event: LifecycleEvent.StopRequested({ id: "db" }), now: 0 }]));
       ({ state } = run(state, [{ event: LifecycleEvent.StorageReserved({ id: "db" }), now: 1 }]));
       expect(state.services.get("db")?.storageReserved).toBe(true);
@@ -982,7 +962,7 @@ describe("Lifecycle reducer", () => {
 
     it("rejects changing an active continuing service's prerequisites, leaving its live generation untouched", () => {
       const graphV1 = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      let state = initialState(graphV1, 0);
+      let state = initialState(graphV1);
       ({ state } = run(state, [{ event: open("b", 1), now: 0 }]));
       ({ state } = run(state, [
         { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 10 },
@@ -1010,7 +990,7 @@ describe("Lifecycle reducer", () => {
 
   describe("stage reporting", () => {
     it("updates the starting stage so a waiter's budget error names it", () => {
-      let state = initialState(makeGraph([lazy("api")]), 0);
+      let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
       const generation = startingGeneration(state, "api");
 
@@ -1026,15 +1006,11 @@ describe("Lifecycle reducer", () => {
         stage: "launching",
       });
 
-      const expired = run(state, [
-        { event: LifecycleEvent.WaiterExpired({ id: "api", waiterId: 1 }), now: 100 },
-      ]);
-      const failure = commandTagged(at(expired.commandsByStep, 0), "FailConnection");
-      expect(failure.message).toContain("api to finish launching");
+      expect(blockingStage(state, "api")).toBe("api to finish launching");
     });
 
     it("ignores a stage change tagged with a stale generation", () => {
-      let state = initialState(makeGraph([lazy("api")]), 0);
+      let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
       const result = run(state, [
         {
@@ -1053,7 +1029,7 @@ describe("Lifecycle reducer", () => {
         lazy("b", { prerequisites: ["a"] }),
         lazy("c", { prerequisites: ["b"] }),
       ]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [{ event: open("c", 1), now: 0 }]));
       expect(state.services.get("a")?.phase._tag).toBe("Starting");
       expect(state.services.get("b")?.phase._tag).toBe("Stopped");
@@ -1068,7 +1044,7 @@ describe("Lifecycle reducer", () => {
 
     it("still protects a dependent's demand once the prerequisite's own breaker has opened", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [{ event: open("b", 1), now: 0 }]));
       ({ state } = run(state, [
         { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 10 },
@@ -1109,7 +1085,7 @@ describe("Lifecycle reducer", () => {
 
     it("blocks an explicit stop or restart of a prerequisite while a sleeping dependent is still wake-armed", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [{ event: open("b", 1), now: 0 }]));
       ({ state } = run(state, [
         { event: LifecycleEvent.LaunchSucceeded({ id: "a", generation: 1 }), now: 10 },
@@ -1160,7 +1136,7 @@ describe("Lifecycle reducer", () => {
 
   it("re-arms a stopped prerequisite when its dependent is explicitly restarted", () => {
     const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [{ event: LifecycleEvent.StopRequested({ id: "b" }), now: 0 }]));
     ({ state } = run(state, [{ event: LifecycleEvent.StopRequested({ id: "a" }), now: 1 }]));
     expect(state.services.get("a")?.intent).toBe("stopped");
@@ -1172,7 +1148,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("keeps an explicit start's demand through a committed stop so the next generation launches once the exit is confirmed", () => {
-    let state = initialState(makeGraph([lazy("api")]), 0);
+    let state = initialState(makeGraph([lazy("api")]));
     ({ state } = run(state, [{ event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 }]));
     expect(state.services.get("api")?.phase._tag).toBe("Starting");
     ({ state } = run(state, [
@@ -1202,7 +1178,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("admits a cold inspector acquisition before the first readiness check while ordinary traffic still waits", () => {
-    let state = initialState(makeGraph([lazy("functions")]), 0);
+    let state = initialState(makeGraph([lazy("functions")]));
     ({ state } = run(state, [{ event: open("functions", 1), now: 0 }]));
     const generation = startingGeneration(state, "functions");
     expect(state.services.get("functions")?.waiters.size).toBe(1);
@@ -1217,7 +1193,7 @@ describe("Lifecycle reducer", () => {
         now: 1,
       },
     ]);
-    expect(tagsOf(inspectorQueued.commandsByStep[0])).toEqual(["ArmWaiterTimeout"]);
+    expect(tagsOf(inspectorQueued.commandsByStep[0])).toEqual([]);
     state = inspectorQueued.state;
 
     const result = run(state, [
@@ -1235,7 +1211,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("re-arms the idle timer once demand returns and readiness later recovers, instead of staying armed forever", () => {
-    let state = initialState(makeGraph([lazy("api")]), 0);
+    let state = initialState(makeGraph([lazy("api")]));
     ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
     ({ state } = run(state, [
       { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
@@ -1257,17 +1233,17 @@ describe("Lifecycle reducer", () => {
     expect(staleElapse.commandsByStep[0]).toEqual([]);
 
     ({ state } = run(state, [
-      { event: LifecycleEvent.WaiterExpired({ id: "api", waiterId: 2 }), now: 120_040 },
+      { event: LifecycleEvent.WaiterCancelled({ id: "api", waiterId: 2 }), now: 60 },
     ]));
     ({ state } = run(state, [
-      { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 120_041 },
+      { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 61 },
     ]));
     expect(state.services.get("api")?.idleArmedEpoch).toBe(2);
   });
 
   it("fails only the waiters awaiting a failed readiness check, keeping the session and inspector waiters", () => {
     const graph = makeGraph([lazy("database"), lazy("api", { prerequisites: ["database"] })]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
     ({ state } = run(state, [
       { event: LifecycleEvent.LaunchSucceeded({ id: "database", generation: 1 }), now: 1 },
@@ -1290,7 +1266,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("gives an explicit readiness wait no budget and no lease, while it still wakes the service", () => {
-    let state = initialState(makeGraph([lazy("api")]), 0);
+    let state = initialState(makeGraph([lazy("api")]));
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
     ({ state, commandsByStep } = run(state, [
       {
@@ -1308,7 +1284,7 @@ describe("Lifecycle reducer", () => {
   });
 
   it("adds services unarmed through a graph update until an arm or start request", () => {
-    let state = initialState(makeGraph([]), 0);
+    let state = initialState(makeGraph([]));
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
     const graph = makeGraph([
       { id: "database", activation: "eager", prerequisites: [] },
@@ -1336,7 +1312,7 @@ describe("Lifecycle reducer", () => {
 
   it("lets an eager service's standing demand lapse once it fails, until traffic re-wakes it", () => {
     const graph = makeGraph([{ id: "database", activation: "eager", prerequisites: [] }]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
     ({ state, commandsByStep } = run(state, [
       { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
@@ -1354,7 +1330,7 @@ describe("Lifecycle reducer", () => {
 
   it("ends an explicit wait on a dependent with its prerequisite's failure, while traffic keeps waiting", () => {
     const graph = makeGraph([lazy("database"), lazy("api", { prerequisites: ["database"] })]);
-    let state = initialState(graph, 0);
+    let state = initialState(graph);
     ({ state } = run(state, [
       { event: open("api", 1), now: 0 },
       {
@@ -1384,7 +1360,7 @@ describe("Lifecycle reducer", () => {
         lazy("analytics"),
         lazy("studio", { prerequisites: ["analytics"] }),
       ]);
-      let state = initialState(graph, 0);
+      let state = initialState(graph);
       ({ state } = run(state, [
         { event: open("studio", 1), now: 0 },
         { event: LifecycleEvent.SessionAvailable({ id: "analytics", generation: 1 }), now: 1 },
@@ -1412,7 +1388,7 @@ describe("Lifecycle reducer", () => {
         generation: 1,
         delayMillis: 0,
       });
-      expect(tagsOf(commandsByStep[1])).toEqual(["ArmWaiterTimeout"]);
+      expect(tagsOf(commandsByStep[1])).toEqual([]);
       expect(commandTagged(at(commandsByStep, 2), "Reprobe").delayMillis).toBe(1_000);
       expect(commandTagged(at(commandsByStep, 3), "Reprobe").delayMillis).toBe(1_000);
       expect(commandTagged(at(commandsByStep, 4), "Launch").id).toBe("studio");
@@ -1424,7 +1400,7 @@ describe("Lifecycle reducer", () => {
       let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
       ({ state } = run(state, [lost(2)]));
       ({ state, commandsByStep } = run(state, [
-        { event: LifecycleEvent.WaiterExpired({ id: "studio", waiterId: 1 }), now: 3 },
+        { event: LifecycleEvent.WaiterCancelled({ id: "studio", waiterId: 1 }), now: 3 },
         lost(4),
       ]));
       expect(tagsOf(commandsByStep[1])).toEqual([]);
@@ -1448,7 +1424,7 @@ describe("Lifecycle reducer", () => {
 
   describe("failed cleanup", () => {
     const runningApi = () => {
-      let state = initialState(makeGraph([lazy("api")]), 0);
+      let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [
         { event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 },
         { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
@@ -1469,7 +1445,7 @@ describe("Lifecycle reducer", () => {
       expect(tagsOf(commandsByStep[0])).toEqual(["Stop"]);
       expect(commandsByStep[1]).toEqual([]);
       expect(state.services.get("api")?.phase).toEqual({ _tag: "Stopping", generation: 1 });
-      expect(canRunStorage(state, "api")).toBe(false);
+      expect(storageAdmitted(state, "api")).toBe(false);
 
       ({ state, commandsByStep } = run(state, [
         { event: LifecycleEvent.StorageReserved({ id: "api" }), now: 4 },
@@ -1491,7 +1467,7 @@ describe("Lifecycle reducer", () => {
           now: 7,
         },
       ]));
-      expect(canRunStorage(state, "api")).toBe(true);
+      expect(storageAdmitted(state, "api")).toBe(true);
     });
 
     it("counts a crash whose cleanup failed once, not again when the retried cleanup confirms it", () => {
@@ -1550,12 +1526,12 @@ describe("Lifecycle reducer", () => {
       expect(state.services.get("api")?.relaunchForced).toBe(false);
 
       ({ commandsByStep } = run(state, [{ event: open("api", 2), now: 4 }]));
-      expect(tagsOf(commandsByStep[0])).toEqual(["ArmWaiterTimeout", "Stop"]);
+      expect(tagsOf(commandsByStep[0])).toEqual(["Stop"]);
     });
   });
 
-  it("caps only traffic waiters and dates a waiter's budget from the client's arrival", () => {
-    let state = initialState(makeGraph([lazy("api")]), 0);
+  it("caps only traffic waiters, keeps explicit waits out of the count and frees a slot on cancellation", () => {
+    let state = initialState(makeGraph([lazy("api")]));
     let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
     ({ state } = run(
       state,
@@ -1567,35 +1543,18 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.ReadinessAwaited({ id: "api", waiterId: 1_001, requireReady: true }),
         now: 0,
       },
-      {
-        event: LifecycleEvent.ConnectionOpened({
-          id: "api",
-          waiterId: 1_002,
-          requireReady: true,
-          openedAt: 0,
-        }),
-        now: 40,
-      },
     ]));
     expect(commandTagged(at(commandsByStep, 0), "FailConnection").message).toBe(
       "api has too many waiters",
     );
     expect(commandsByStep[1]).toEqual([]);
-    expect(state.services.get("api")?.waiters.has(1_001)).toBe(true);
-    expect(tagsOf(commandsByStep[2])).toEqual(["FailConnection"]);
+    expect(state.services.get("api")?.waiters.get(1_001)?.kind).toBe("explicit");
 
     ({ state, commandsByStep } = run(state, [
       { event: LifecycleEvent.WaiterCancelled({ id: "api", waiterId: 0 }), now: 50 },
-      {
-        event: LifecycleEvent.ConnectionOpened({
-          id: "api",
-          waiterId: 1_003,
-          requireReady: true,
-          openedAt: 20,
-        }),
-        now: 50,
-      },
+      { event: open("api", 1_003), now: 50 },
     ]));
-    expect(commandTagged(at(commandsByStep, 1), "ArmWaiterTimeout").deadline).toBe(120_020);
+    expect(commandsByStep[1]).toEqual([]);
+    expect(state.services.get("api")?.waiters.get(1_003)?.kind).toBe("traffic");
   });
 });

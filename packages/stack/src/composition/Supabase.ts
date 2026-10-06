@@ -1,6 +1,6 @@
 import { Data, Effect, Exit, Redacted, Schema } from "effect";
 import { postgresVersion } from "../Artifacts.ts";
-import { causeMessage, type CompositionConfig } from "../Orchestrator.ts";
+import { causeMessage, type CompositionConfig, isStoppedAndWakeDisabled } from "../Orchestrator.ts";
 import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
@@ -430,7 +430,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
                 operations.status(id).pipe(
                   Effect.mapError(compositionErrorFrom),
                   Effect.flatMap((status) =>
-                    status.lifecycle === "stopped" && !status.wakeEnabled
+                    isStoppedAndWakeDisabled(status)
                       ? Effect.void
                       : Effect.fail(
                           compositionError(

@@ -1057,6 +1057,62 @@ describe("wake and idle sleep", () => {
       ).pipe(Effect.provide(TestClock.layer())),
   );
 
+  describe("a traffic waiter that leaves before its launch finishes", () => {
+    // A leaked lease or waiter would keep demand on the service and stop it from ever idling.
+    const idlesAfterWaiterLeaves = (
+      leave: (
+        waiter: Fiber.Fiber<Exit.Exit<void, Orchestrator.OrchestratorError | ServiceError>>,
+      ) => Effect.Effect<void>,
+    ) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* makeTestOrchestrator();
+          const launching = yield* Deferred.make<void>();
+          const proceed = yield* Deferred.make<void>();
+          const api = yield* makeInstance(orchestrator, "api", {
+            launch: Deferred.succeed(launching, undefined).pipe(
+              Effect.andThen(Deferred.await(proceed)),
+            ),
+          });
+          yield* orchestrator.configure({
+            members: [{ id: "api", activation: "lazy", idleMillis: 1000 }],
+            dependencies: [],
+          });
+          yield* orchestrator.startComposition;
+          const waiter = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
+            Effect.exit,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(launching);
+          yield* leave(waiter);
+
+          yield* Deferred.succeed(proceed, undefined);
+          yield* api.ready;
+          yield* TestClock.adjust("1 second");
+          yield* stopped(api);
+          expect(yield* Ref.get(api.starts)).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(TestClock.layer()));
+
+    it.live(
+      "releases its claim when its wake budget expires, so the service idles afterwards",
+      () =>
+        idlesAfterWaiterLeaves((waiter) =>
+          TestClock.adjust("120 seconds").pipe(
+            Effect.andThen(Fiber.join(waiter)),
+            Effect.tap((exit) =>
+              Effect.sync(() => expect(errorOf(exit)?.message).toContain("wake budget exceeded")),
+            ),
+            Effect.asVoid,
+          ),
+        ),
+    );
+
+    it.live("releases its claim when the client cancels, so the service idles afterwards", () =>
+      idlesAfterWaiterLeaves((waiter) => Fiber.interrupt(waiter)),
+    );
+  });
+
   it.live("releases only a cancelled waiter and keeps the shared launch for the others", () =>
     Effect.scoped(
       Effect.gen(function* () {

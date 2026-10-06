@@ -1,7 +1,5 @@
 import { Data } from "effect";
 
-/** The wake budget every waiter gets. */
-export const waiterBudgetMillis = 120_000;
 const waiterCap = 256;
 const breakerThreshold = 3;
 const breakerCooldownMillis = 30_000;
@@ -105,20 +103,22 @@ const initialBreaker: BreakerState = {
 
 interface Waiter {
   readonly id: number;
-  /** Undefined for an explicit operation's wait, which has no wake budget. */
-  readonly deadline: number | undefined;
+  /**
+   * A traffic wait holds a lease and counts toward the cap; an explicit operation's wait only
+   * observes readiness and fails with its prerequisite's outcome.
+   */
+  readonly kind: "traffic" | "explicit";
   /** False for an acquisition (such as the Functions inspector) that bypasses target readiness. */
   readonly requireReady: boolean;
 }
 
 /** Whether admission opens a work lease; an explicit operation's wait only observes readiness. */
-const isLeaseWaiter = (waiter: Waiter): boolean => waiter.deadline !== undefined;
+const isLeaseWaiter = (waiter: Waiter): boolean => waiter.kind === "traffic";
 
 export interface ServiceState {
   readonly intent: Intent;
   readonly phase: Phase;
   readonly leases: number;
-  readonly lastActivity: number;
   readonly idleEpoch: number;
   /** The epoch an outstanding idle timer was armed with, or undefined while none is armed. */
   readonly idleArmedEpoch: number | undefined;
@@ -147,11 +147,10 @@ export interface ServiceState {
   readonly cleanupFailure: { readonly cause: unknown } | undefined;
 }
 
-const initialService = (spec: ServiceSpec, now: number): ServiceState => ({
+const initialService = (spec: ServiceSpec): ServiceState => ({
   intent: spec.activation,
   phase: Phase.Stopped(),
   leases: 0,
-  lastActivity: now,
   idleEpoch: 0,
   idleArmedEpoch: undefined,
   breaker: initialBreaker,
@@ -174,30 +173,26 @@ export interface LifecycleState {
   readonly generationCounters: ReadonlyMap<string, number>;
 }
 
-export const initialState = (graph: LifecycleGraph, now: number): LifecycleState => ({
+export const initialState = (graph: LifecycleGraph): LifecycleState => ({
   graph,
   services: new Map(
     [...graph.services.values()].map((spec): [string, ServiceState] => [
       spec.id,
-      initialService(spec, now),
+      initialService(spec),
     ]),
   ),
   generationCounters: new Map([...graph.services.keys()].map((id) => [id, 1])),
 });
 
 export type LifecycleEvent = Data.TaggedEnum<{
-  /**
-   * `requireReady: false` lets an acquisition (the Functions inspector) bypass target readiness.
-   * `openedAt` starts the wake budget when the client arrived, not when the gate admitted it.
-   */
+  /** `requireReady: false` lets an acquisition (the Functions inspector) bypass target readiness. */
   ConnectionOpened: {
     readonly id: string;
     readonly waiterId: number;
     readonly requireReady: boolean;
-    readonly openedAt?: number;
   };
   ConnectionClosed: { readonly id: string };
-  /** An explicit operation waiting for a session (or readiness) with no budget and no lease. */
+  /** An explicit operation waiting for a session (or readiness) with no lease. */
   ReadinessAwaited: {
     readonly id: string;
     readonly waiterId: number;
@@ -241,7 +236,6 @@ export type LifecycleEvent = Data.TaggedEnum<{
   DestroyRequested: { readonly id: string };
   /** A destroy gives up its request or reservation, whether or not it removed the data. */
   DestroyReleased: { readonly id: string };
-  WaiterExpired: { readonly id: string; readonly waiterId: number };
   WaiterCancelled: { readonly id: string; readonly waiterId: number };
   /**
    * Atomically swaps the graph while preserving every continuing service's generation and epoch.
@@ -260,7 +254,6 @@ export type LifecycleCommand = Data.TaggedEnum<{
     readonly epoch: number;
     readonly delayMillis: number;
   };
-  ArmWaiterTimeout: { readonly id: string; readonly waiterId: number; readonly deadline: number };
   /** Schedules the `CooldownElapsed` event once the breaker's cooldown elapses. */
   ArmCooldownTimer: {
     readonly id: string;
@@ -387,7 +380,7 @@ const sessionReady = (state: LifecycleState, id: string): boolean => {
 const isBreakerOpen = (breaker: BreakerState): boolean => breaker.openUntil !== undefined;
 
 /** Names what a pending waiter is still blocked on, for a budget-expiry error. */
-const blockingStage = (state: LifecycleState, id: string): string => {
+export const blockingStage = (state: LifecycleState, id: string): string => {
   const service = state.services.get(id);
   if (service === undefined) return `${id} is unknown`;
   for (const prerequisite of state.graph.prerequisiteClosure.get(id) ?? []) {
@@ -427,7 +420,7 @@ const failAllWaiters = (
 /**
  * Fails every explicit operation's wait on a transitive dependent of a prerequisite that just
  * failed or lost readiness: such a wait has no budget, so it must end with the prerequisite's
- * outcome. Traffic waiters keep their demand and stay bounded by their own budget.
+ * outcome. Traffic waiters keep their demand and stay bounded by the orchestrator's budget.
  */
 const failExplicitDependentWaiters = (
   state: LifecycleState,
@@ -501,8 +494,6 @@ const openWaiter = (
   waiterId: number,
   requireReady: boolean,
   traffic: boolean,
-  now: number,
-  openedAt = now,
 ): readonly [LifecycleState, ReadonlyArray<LifecycleCommand>] => {
   const service = state.services.get(id);
   const spec = state.graph.services.get(id);
@@ -513,9 +504,7 @@ const openWaiter = (
   const eligibleNow = requireReady ? admissionReady(state, id) : sessionReady(state, id);
   if (eligibleNow)
     return [
-      traffic
-        ? setService(state, id, (s) => ({ ...s, leases: s.leases + 1, lastActivity: now }))
-        : state,
+      traffic ? setService(state, id, (s) => ({ ...s, leases: s.leases + 1 })) : state,
       [LifecycleCommand.AdmitConnection({ id, waiterId })],
     ];
   if (isBreakerOpen(service.breaker))
@@ -523,13 +512,14 @@ const openWaiter = (
   // The cap bounds sockets held by traffic; explicit operations are few and already bounded.
   const trafficWaiters = [...service.waiters.values()].filter(isLeaseWaiter).length;
   if (traffic && trafficWaiters >= waiterCap) return fail(`${id} has too many waiters`, undefined);
-  const deadline = traffic ? openedAt + waiterBudgetMillis : undefined;
-  const commands: Array<LifecycleCommand> =
-    deadline === undefined ? [] : [LifecycleCommand.ArmWaiterTimeout({ id, waiterId, deadline })];
+  const commands: Array<LifecycleCommand> = [];
   const queued = setService(state, id, (s) => ({
     ...s,
-    lastActivity: traffic ? now : s.lastActivity,
-    waiters: new Map(s.waiters).set(waiterId, { id: waiterId, deadline, requireReady }),
+    waiters: new Map(s.waiters).set(waiterId, {
+      id: waiterId,
+      kind: traffic ? "traffic" : "explicit",
+      requireReady,
+    }),
   }));
   return [retryBlockedCleanup(queued, id, commands), commands];
 };
@@ -660,24 +650,12 @@ const applyEvent = (
 
   switch (event._tag) {
     case "ConnectionOpened":
-      return openWaiter(
-        state,
-        event.id,
-        event.waiterId,
-        event.requireReady,
-        true,
-        now,
-        event.openedAt,
-      );
+      return openWaiter(state, event.id, event.waiterId, event.requireReady, true);
     case "ReadinessAwaited":
-      return openWaiter(state, event.id, event.waiterId, event.requireReady, false, now);
+      return openWaiter(state, event.id, event.waiterId, event.requireReady, false);
     case "ConnectionClosed": {
       return [
-        setService(state, event.id, (s) => ({
-          ...s,
-          leases: Math.max(0, s.leases - 1),
-          lastActivity: now,
-        })),
+        setService(state, event.id, (s) => ({ ...s, leases: Math.max(0, s.leases - 1) })),
         commands,
       ];
     }
@@ -1013,28 +991,6 @@ const applyEvent = (
         commands,
       ];
     }
-    case "WaiterExpired": {
-      const { id, waiterId } = event;
-      const service = state.services.get(id);
-      const waiter = service?.waiters.get(waiterId);
-      if (service === undefined || waiter === undefined) break;
-      commands.push(
-        LifecycleCommand.FailConnection({
-          id,
-          waiterId,
-          message: `${id} wake budget exceeded while waiting for ${blockingStage(state, id)}`,
-          cause: undefined,
-        }),
-      );
-      return [
-        setService(state, id, (s) => {
-          const waiters = new Map(s.waiters);
-          waiters.delete(waiterId);
-          return { ...s, waiters };
-        }),
-        commands,
-      ];
-    }
     case "WaiterCancelled": {
       const { id, waiterId } = event;
       return [
@@ -1078,7 +1034,7 @@ const applyEvent = (
       const generationCounters = new Map(state.generationCounters);
       for (const spec of graph.services.values()) {
         const existing = state.services.get(spec.id);
-        services.set(spec.id, existing ?? { ...initialService(spec, now), intent: "stopped" });
+        services.set(spec.id, existing ?? { ...initialService(spec), intent: "stopped" });
         if (!generationCounters.has(spec.id)) generationCounters.set(spec.id, 1);
       }
       return [{ graph, services, generationCounters }, commands];
@@ -1092,15 +1048,12 @@ const applyEvent = (
  * Cascades launches, idle arming and waiter resolution across the graph after one event. A
  * single topological pass suffices: a launch started here only reaches `Running` on a later
  * event, so a dependent several hops away naturally waits for its own future turn. Every
- * condition here is a function of state alone, never of `now` against a stored deadline, so
- * replaying this pass for a stale or unrelated event can never surface a new launch or admission
- * on its own; only the dedicated time-driven events (`CooldownElapsed`, `IdleElapsed`,
- * `WaiterExpired`) do that, and the one exception — expiring an already-due waiter instead of
- * admitting it — only fires from within this same pass's own admission step.
+ * condition here is a function of state alone, so replaying this pass for a stale or unrelated
+ * event can never surface a new launch or admission on its own; only the dedicated time-driven
+ * events (`CooldownElapsed`, `IdleElapsed`) do that.
  */
 const settle = (
   state: LifecycleState,
-  now: number,
   commands: ReadonlyArray<LifecycleCommand>,
 ): readonly [LifecycleState, ReadonlyArray<LifecycleCommand>] => {
   let next = state;
@@ -1163,38 +1116,19 @@ const settle = (
       if (prerequisitesSatisfied(next, id) && service.waiters.size > 0) {
         const ready = service.phase.ready;
         const admitted: Array<number> = [];
-        const expired: Array<number> = [];
-        for (const waiter of service.waiters.values()) {
-          if (waiter.requireReady && !ready) continue;
-          if (waiter.deadline !== undefined && now >= waiter.deadline) expired.push(waiter.id);
-          else admitted.push(waiter.id);
-        }
-        if (admitted.length > 0 || expired.length > 0) {
+        for (const waiter of service.waiters.values())
+          if (!waiter.requireReady || ready) admitted.push(waiter.id);
+        if (admitted.length > 0) {
           const leased = admitted.filter((waiterId) => {
             const waiter = service.waiters.get(waiterId);
             return waiter !== undefined && isLeaseWaiter(waiter);
           }).length;
           for (const waiterId of admitted)
             emitted.push(LifecycleCommand.AdmitConnection({ id, waiterId }));
-          for (const waiterId of expired)
-            emitted.push(
-              LifecycleCommand.FailConnection({
-                id,
-                waiterId,
-                message: `${id} wake budget exceeded while waiting for ${blockingStage(next, id)}`,
-                cause: undefined,
-              }),
-            );
           next = setService(next, id, (s) => {
             const waiters = new Map(s.waiters);
             for (const waiterId of admitted) waiters.delete(waiterId);
-            for (const waiterId of expired) waiters.delete(waiterId);
-            return {
-              ...s,
-              leases: s.leases + leased,
-              waiters,
-              lastActivity: leased > 0 ? now : s.lastActivity,
-            };
+            return { ...s, leases: s.leases + leased, waiters };
           });
         }
       }
@@ -1237,17 +1171,5 @@ export const reduce = (
   now: number,
 ): readonly [LifecycleState, ReadonlyArray<LifecycleCommand>] => {
   const [applied, directCommands] = applyEvent(state, event, now);
-  return settle(applied, now, directCommands);
-};
-
-/** A storage operation is admitted only while a service is stopped, unarmed and not being destroyed. */
-export const canRunStorage = (state: LifecycleState, id: string): boolean => {
-  const service = state.services.get(id);
-  return (
-    service !== undefined &&
-    service.intent === "stopped" &&
-    service.phase._tag === "Stopped" &&
-    !service.storageReserved &&
-    service.destroy === undefined
-  );
+  return settle(applied, directCommands);
 };

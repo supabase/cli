@@ -240,7 +240,6 @@ Each owner holds one pure reducer, `Lifecycle.ts`: `reduce(state, event, now)` r
 | ----------------------------------- | -------------------------------------------------------------------- |
 | `Launch`, `Stop`, `Reprobe`         | A fiber in the owner scope driving that service's execution          |
 | `ArmIdleTimer`, `ArmCooldownTimer`  | A timer that reports `IdleElapsed` or `CooldownElapsed`              |
-| `ArmWaiterTimeout`                  | The waiting caller's own deadline, which reports `WaiterExpired`     |
 | `AdmitConnection`, `FailConnection` | Completing that waiter, after the state it was decided on is visible |
 | `RequestRejected`                   | The requesting caller's failure                                      |
 
@@ -262,7 +261,7 @@ A generation whose cleanup failed stays `stopping` with its cleanup failure reco
 | Waiting for readiness or following logs | End the observation without changing lifecycle                         |
 | Running an attached command invocation  | Terminate and clean up that invocation                                 |
 
-Traffic waits carry a lease and a wake budget of 120 seconds by default, counted from the client's arrival, including any wait for the gate. At most 256 traffic waiters queue per service; beyond that, admission fails at once. A budget that expires fails only that waiter with the stage it was blocked on; the shared launch continues. Explicit operations (start, ready, restart, composition start) wait without a budget or cap. They fail when their target or a prerequisite fails, loses readiness or fails its cleanup.
+Each waiter has a kind. A `traffic` waiter carries a lease and holds through a breaker cooldown. An `explicit` waiter (start, ready, restart, composition start) opens no lease and fails fast with its target's or a prerequisite's outcome when that fails, loses readiness or fails its cleanup; it waits without a budget or cap. The reducer holds no clocks for waiters. The orchestrator enforces the wake budget, 120 seconds by default, with one timeout around the whole traffic wait, from the client's arrival through the gate wait and the wait for readiness. On expiry it withdraws the waiter, which releases any lease already granted, and fails only that caller with the stage it was blocked on; the shared launch continues. At most 256 traffic waiters queue per service; beyond that, admission fails at once.
 
 A service is stopped by an explicit stop, never by a disconnected caller.
 

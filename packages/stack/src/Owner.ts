@@ -373,8 +373,8 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ]),
       (id) =>
         orchestrator.status(id).pipe(
-          Effect.flatMap(({ lifecycle, wakeEnabled }) =>
-            lifecycle === "stopped" && !wakeEnabled
+          Effect.flatMap((status) =>
+            Orchestrator.isStoppedAndWakeDisabled(status)
               ? Effect.void
               : Effect.fail(
                   new CredentialError({
@@ -455,9 +455,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
     // Listeners stay open while the service runs or demand can still wake it.
     const enabled = orchestrator.status(id).pipe(
-      Effect.map(
-        (status) => status.registered && (status.wakeEnabled || status.lifecycle !== "stopped"),
-      ),
+      Effect.map((status) => status.registered && !Orchestrator.isStoppedAndWakeDisabled(status)),
       Effect.orElseSucceed(() => false),
     );
     const configFor = (inputs: Record<string, string>, candidate: unknown) =>

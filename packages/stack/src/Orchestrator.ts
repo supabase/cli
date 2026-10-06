@@ -15,11 +15,11 @@ import {
   SubscriptionRef,
 } from "effect";
 import {
+  blockingStage,
   initialState,
   LifecycleEvent,
   makeGraph,
   reduce,
-  waiterBudgetMillis,
   type LifecycleCommand,
   type LifecycleGraph,
   type LifecycleState,
@@ -133,6 +133,9 @@ export const CompositionConfig = Schema.Struct({
     }),
   ),
 });
+
+/** The wake budget a traffic waiter gets, counted from its arrival. */
+const waiterBudgetMillis = 120_000;
 
 /** One service's lifecycle phase and health from the reducer, joined with its execution facts. */
 export interface Status<Config = unknown> extends ServiceObservation<Config> {
@@ -324,6 +327,16 @@ const lifecycleOf = (state: LifecycleState, id: string): Status["lifecycle"] => 
   }
 };
 
+const wakeEnabledOf = (state: LifecycleState, id: string): boolean => {
+  const intent = state.services.get(id)?.intent;
+  return intent !== undefined && intent !== "stopped";
+};
+
+/** Whether a service is stopped and nothing can wake it, which graph, data and credential changes require. */
+export const isStoppedAndWakeDisabled = (
+  status: Pick<Status, "lifecycle" | "wakeEnabled">,
+): boolean => status.lifecycle === "stopped" && !status.wakeEnabled;
+
 const statusOf = <Config>(
   state: LifecycleState,
   id: string,
@@ -353,7 +366,7 @@ const statusOf = <Config>(
       phase === undefined || phase._tag === "Stopped" || phase._tag === "Failed"
         ? undefined
         : phase.generation,
-    wakeEnabled: service !== undefined && service.intent !== "stopped",
+    wakeEnabled: wakeEnabledOf(state, id),
     destroyPending: service?.destroy !== undefined,
   };
 };
@@ -391,9 +404,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   const admit = options.admit ?? (() => Effect.void);
   // The one lifecycle gate: every reducer step for this owner's graph is applied under it.
   const gate = yield* Semaphore.make(1);
-  const lifecycle = yield* SubscriptionRef.make(
-    initialState(makeGraph([]), yield* Clock.currentTimeMillis),
-  );
+  const lifecycle = yield* SubscriptionRef.make(initialState(makeGraph([])));
   const registry = yield* Ref.make<ReadonlyMap<string, Entry>>(new Map());
   const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
   const waiters = yield* Ref.make<ReadonlyMap<number, Waiter>>(new Map());
@@ -603,7 +614,6 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           owner,
           { startImmediately: true, uninterruptible: false },
         ).pipe(Effect.asVoid);
-      case "ArmWaiterTimeout":
       case "RequestRejected":
         // The waiting or requesting caller reads these from the commands it dispatched.
         return Effect.void;
@@ -615,11 +625,21 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     readonly requireReady: boolean;
   }
 
+  /** The wake budget's failure, naming what the waiter was still blocked on. */
+  const budgetExceeded = Effect.fnUntraced(function* (id: string, reached: Ref.Ref<boolean>) {
+    const state = yield* SubscriptionRef.get(lifecycle);
+    const queued = yield* Ref.get(reached);
+    return yield* new ServiceError({
+      operation: queued && state.services.get(id)?.phase._tag === "Running" ? "readiness" : "wake",
+      message: `${id} wake budget exceeded while waiting for ${queued ? blockingStage(state, id) : "admission"}`,
+    });
+  });
+
   interface Admission {
     /** Explicit requests dispatched atomically before the waiters; a rejection fails the call. */
     readonly requests?: ReadonlyArray<Extract<LifecycleEvent, { readonly id: string }>>;
     readonly waits: ReadonlyArray<Wait>;
-    /** Traffic waits carry a lease and a wake budget; explicit waits carry neither. */
+    /** Traffic waits carry a lease and the wake budget; explicit waits carry neither. */
     readonly traffic: boolean;
     /** Checks the owner's admission guard under the same gate step as the requests. */
     readonly operation?: AdmittedOperation;
@@ -631,12 +651,11 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
 
   /**
    * Dispatches requests together with one waiter per wait, atomically, then awaits them all. Any
-   * failure, rejection or cancellation withdraws the remaining waiters and releases admitted leases.
+   * failure, rejection, timeout or cancellation withdraws the remaining waiters and releases
+   * admitted leases.
    */
   const awaitAll = Effect.fnUntraced(function* (admission: Admission) {
-    const { waits, traffic } = admission;
-    const openedAt = yield* Clock.currentTimeMillis;
-    const bounded = traffic ? waits[0] : undefined;
+    const { waits } = admission;
     // Registration and its unconditional cleanup are installed together, before any wait.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
@@ -656,25 +675,21 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           for (const { waiterId } of entries) next.delete(waiterId);
           return next;
         });
-        return yield* dispatchAndAwait(admission, entries, openedAt, bounded, restore).pipe(
-          Effect.ensuring(forget),
-        );
+        return yield* dispatchAndAwait(admission, entries, restore).pipe(Effect.ensuring(forget));
       }),
     );
   });
 
   /**
-   * Dispatches the requests and waiters, then awaits them. Every failure, rejection or
-   * cancellation after the dispatch withdraws the waiters and releases granted leases. A traffic
-   * wait's budget covers the gate wait and the dispatch too.
+   * Dispatches the requests and waiters, then awaits them. A traffic wait's one budget covers the
+   * gate wait, the dispatch and the wait for readiness. Every failure, rejection, timeout or
+   * cancellation after the dispatch withdraws the waiters and releases granted leases.
    */
   const dispatchAndAwait = Effect.fnUntraced(function* (
     admission: Admission,
     entries: ReadonlyArray<
       Wait & { readonly waiterId: number; readonly deferred: Deferred.Deferred<void, ServiceError> }
     >,
-    openedAt: number,
-    bounded: Wait | undefined,
     restore: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>,
   ) {
     const { requests = [], traffic } = admission;
@@ -699,63 +714,24 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
             ...requests,
             ...entries.map(({ id, waiterId, requireReady }) =>
               traffic
-                ? LifecycleEvent.ConnectionOpened({ id, waiterId, requireReady, openedAt })
+                ? LifecycleEvent.ConnectionOpened({ id, waiterId, requireReady })
                 : LifecycleEvent.ReadinessAwaited({ id, waiterId, requireReady }),
             ),
           ]),
         ),
       ),
     );
-    const dispatched = yield* restore(
-      bounded === undefined
-        ? guarded
-        : guarded.pipe(
-            Effect.timeoutOrElse({
-              duration: `${waiterBudgetMillis} millis`,
-              orElse: () =>
-                Effect.fail(
-                  new ServiceError({
-                    operation: "wake",
-                    message: `${bounded.id} wake budget exceeded while waiting for admission`,
-                  }),
-                ),
-            }),
-          ),
-    ).pipe(Effect.exit);
-    if (Exit.isFailure(dispatched)) {
-      if (yield* Ref.get(reached)) yield* withdraw;
-      return yield* Effect.failCause(dispatched.cause);
-    }
-    const applied = dispatched.value;
-    for (const request of requests) {
-      const rejected = rejectionFor(applied.commands, request.id);
-      if (rejected === undefined) continue;
-      yield* withdraw;
-      return yield* rejected;
-    }
-    const awaitOne = ({ id, waiterId, deferred }: (typeof entries)[number]) => {
-      const timeout = applied.commands.find(
-        (command) => command._tag === "ArmWaiterTimeout" && command.waiterId === waiterId,
-      );
-      if (timeout?._tag !== "ArmWaiterTimeout") return Deferred.await(deferred);
-      return Clock.currentTimeMillis.pipe(
-        Effect.flatMap((now) =>
-          Deferred.await(deferred).pipe(
-            Effect.timeoutOption(`${Math.max(0, timeout.deadline - now)} millis`),
-          ),
-        ),
-        Effect.flatMap((admitted) =>
-          Option.isSome(admitted)
-            ? Effect.void
-            : dispatch([LifecycleEvent.WaiterExpired({ id, waiterId })]).pipe(
-                Effect.andThen(Deferred.await(deferred)),
-              ),
-        ),
-      );
-    };
-    yield* admission.onApplied?.(applied) ?? Effect.void;
-    const outcome = yield* restore(
-      Effect.forEach(entries, awaitOne, { concurrency: "unbounded", discard: true }).pipe(
+    const admitted = Effect.gen(function* () {
+      const applied = yield* guarded;
+      for (const request of requests) {
+        const rejected = rejectionFor(applied.commands, request.id);
+        if (rejected !== undefined) return yield* rejected;
+      }
+      yield* admission.onApplied?.(applied) ?? Effect.void;
+      yield* Effect.forEach(entries, ({ deferred }) => Deferred.await(deferred), {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(
         Effect.withSpan("Lifecycle.awaitAdmission", {
           attributes: {
             instance_ids: entries.map(({ id }) => id).join(","),
@@ -763,11 +739,24 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
             waiters: entries.length,
           },
         }),
-      ),
-    ).pipe(Effect.exit);
-    if (Exit.isFailure(outcome)) yield* withdraw;
-    else yield* admission.onAdmitted ?? Effect.void;
-    return yield* Effect.as(outcome, applied);
+      );
+      return applied;
+    });
+    const subject = traffic ? entries[0] : undefined;
+    const budgeted =
+      subject === undefined
+        ? admitted
+        : admitted.pipe(
+            Effect.timeoutOrElse({
+              duration: `${waiterBudgetMillis} millis`,
+              orElse: () => budgetExceeded(subject.id, reached),
+            }),
+          );
+    const outcome = yield* restore(budgeted).pipe(Effect.exit);
+    if (Exit.isFailure(outcome)) {
+      if (yield* Ref.get(reached)) yield* withdraw;
+    } else yield* admission.onAdmitted ?? Effect.void;
+    return yield* outcome;
   });
 
   const prerequisitesOf = (state: LifecycleState, id: string): ReadonlyArray<string> =>
@@ -1241,10 +1230,12 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           ]);
           const state = yield* SubscriptionRef.get(lifecycle);
           for (const affectedId of affected) {
-            const service = state.services.get(affectedId);
             if (
-              service !== undefined &&
-              (service.intent !== "stopped" || lifecycleOf(state, affectedId) !== "stopped")
+              state.services.has(affectedId) &&
+              !isStoppedAndWakeDisabled({
+                lifecycle: lifecycleOf(state, affectedId),
+                wakeEnabled: wakeEnabledOf(state, affectedId),
+              })
             )
               return yield* graphError(
                 "configure",
