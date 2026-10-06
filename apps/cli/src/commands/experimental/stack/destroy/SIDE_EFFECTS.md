@@ -29,10 +29,12 @@ when the other engine failed to list its containers, fails naming that engine
 after removing them; a deleted directory took the stack's lease with it, so this
 includes the containers of an owner that still runs. When another process holds
 the stack's lease, destroy fails and asks to run it again; when the stack is
-registered again meanwhile, destroy fails and leaves the remaining containers to
-that registration. Its data in the state root's shared database volume stays, and
-containers of other state roots are never touched; for a deleted `SUPABASE_HOME`,
-run destroy with that `SUPABASE_HOME`.
+registered again before an engine's cleanup starts, destroy fails and leaves
+that engine's containers to the new registration; a registration that lands
+later is not noticed, which is harmless because it cannot own containers while a
+cleanup holds the lease. The deleted stack's data in the state root's shared
+database volume stays, and containers of other state roots are never touched;
+for a deleted `SUPABASE_HOME`, run destroy with that `SUPABASE_HOME`.
 
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.

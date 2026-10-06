@@ -141,7 +141,7 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
-  it.live("removes the containers a deleted stack left behind, selected by its full ID", () =>
+  it.live("dispatches a full ID with no registration to its deleted-stack cleanup", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
       const id = "d".repeat(64);
