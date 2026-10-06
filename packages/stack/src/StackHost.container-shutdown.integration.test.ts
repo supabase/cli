@@ -28,6 +28,7 @@ import {
 } from "./HostProcess.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { holdReleaseFifo } from "../tests/release-fifo.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 
@@ -427,7 +428,7 @@ it.live.skipIf(process.platform === "win32")(
 /**
  * Installs a `docker` shim the owner finds first on its PATH: the first `docker stop` announces
  * itself by creating `waiting` in `gateDir` and blocks until the test writes the `release` FIFO,
- * then every command runs the real docker.
+ * then every command runs the real docker. Returns the idempotent, scope-owned `release`.
  */
 const holdDockerStops = (gateDir: string) =>
   Effect.gen(function* () {
@@ -459,6 +460,7 @@ const holdDockerStops = (gateDir: string) =>
       ].join("\n"),
       { mode: 0o755 },
     );
+    return yield* holdReleaseFifo(`${gateDir}/release`);
   });
 
 type StopTrigger = "signal" | "http";
@@ -487,7 +489,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
       const stateRoot = path.dirname(path.dirname(dataRoot));
       const cacheRoot = `${base}/cache`;
       const gateDir = `${base}/gate`;
-      yield* holdDockerStops(gateDir);
+      const hold = yield* holdDockerStops(gateDir);
       const state = yield* stateFor(stateRoot);
       yield* state.save({
         id: stackId,
@@ -509,6 +511,18 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
         entrypoint: gatedDockerStopFixture,
         entrypointArgs: [gateDir],
       });
+      // Runs before the container and gate-directory cleanup: frees the held stop, signals the
+      // owner (a signal during a running stop stays queued), and requires its exit.
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          yield* hold.release;
+          yield* Effect.try(() => process.kill(access.endpoint.pid, "SIGTERM")).pipe(Effect.ignore);
+          yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+            Effect.retry({ while: hasReason("owner-exit-pending") }),
+            Effect.timeout("30 seconds"),
+          );
+        }).pipe(Effect.orDie),
+      );
       const client = yield* ownerClient(access);
       const database = yield* client.createService({
         service: "database",
@@ -538,7 +552,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
       yield* waiting.pipe(Effect.timeout("30 seconds"));
 
       yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
-      yield* fs.writeFileString(`${gateDir}/release`, "");
+      yield* hold.release;
 
       yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.retry({ while: hasReason("owner-exit-pending") }),

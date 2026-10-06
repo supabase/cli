@@ -375,6 +375,7 @@
         "packages/stack/tests/failing-owner-fixture.ts",
         "packages/stack/tests/short-registration-poll-fixture.ts",
         "packages/stack/tests/gated-docker-stop-fixture.ts",
+        "packages/stack/tests/release-fifo.ts",
         "packages/stack/tests/watch-entry.ts"
       ],
       "rules": {
