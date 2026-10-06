@@ -281,17 +281,18 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
       const deletedId = "d".repeat(64);
       const foreignId = "f".repeat(64);
       const deletedData = path.join(stateRoot, deletedId, "data");
-      const listing = yield* Effect.forEach(
-        [
-          ["owner", path.join(stateRoot, "owner", "data")],
-          [deletedId, deletedData],
-          [deletedId, deletedData],
-          [foreignId, path.join(path.dirname(stateRoot), "other", foreignId, "data")],
-          ["../escape", path.join(stateRoot, "..", "escape", "data")],
-        ],
-        (labels) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(labels),
-      ).pipe(Effect.map((lines) => [...lines, "malformed"].join("\n")));
-      const engine = engineStub(listing);
+      const engine = engineStub([
+        { id: "owner", stackId: "owner", root: path.join(stateRoot, "owner", "data") },
+        { id: "deleted", stackId: deletedId, root: deletedData },
+        { id: "deleted-sibling", stackId: deletedId, root: deletedData },
+        {
+          id: "foreign",
+          stackId: foreignId,
+          root: path.join(path.dirname(stateRoot), "other", foreignId, "data"),
+        },
+        { id: "escape", stackId: "../escape", root: path.join(stateRoot, "..", "escape", "data") },
+        "malformed",
+      ]);
       const sweep = sweepOrphans({
         state,
         stateRoot,
@@ -320,6 +321,11 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
         `label=com.supabase.stack=${deletedId}`,
         "--filter",
         `label=com.supabase.stack-root=${deletedData}`,
+      ]);
+      expect(engine.remaining("docker").map(({ id }) => id)).toEqual([
+        "owner",
+        "foreign",
+        "escape",
       ]);
       expect(
         yield* fs.exists(path.join(stateRoot, deletedId)),

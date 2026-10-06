@@ -836,6 +836,11 @@ const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
   engine: "docker" | "podman",
   args: ReadonlyArray<string>,
 ) {
+  yield* Effect.annotateCurrentSpan({
+    "process.executable.name": engine,
+    "process.arg_count": args.length,
+    "container.command": args[0] ?? "",
+  });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -854,6 +859,7 @@ const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
         ],
         { concurrency: "unbounded" },
       );
+      yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
       if (Number(code) !== 0)
         return yield* errorFor(args[0] ?? "cleanup", stderr.trim() || `Engine exited with ${code}`);
       return stdout.trim();
@@ -894,7 +900,9 @@ export const listStackContainers = Effect.fn("Container.listStackContainers")(fu
     output.split("\n").filter((line) => line.length > 0),
     (line) => decodeStackLabels(line).pipe(Effect.option),
   );
-  return labels.flatMap(Option.toArray).map(([stackId, root]) => ({ stackId, root }));
+  const containers = labels.flatMap(Option.toArray).map(([stackId, root]) => ({ stackId, root }));
+  yield* Effect.annotateCurrentSpan("container.count", containers.length);
+  return containers;
 });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(

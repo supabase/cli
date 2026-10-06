@@ -549,31 +549,41 @@ it.live("creates a deleted stack again once a hold on its lease ends", () =>
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-it.live("finds and removes the containers a deleted stack left in its own state root", () =>
+const deletedId = "d".repeat(64);
+const strandedId = "e".repeat(64);
+const foreignId = "f".repeat(64);
+
+/** A state root with one registered stack, and the containers each stub engine starts with. */
+const deletedStackRoot = Effect.fn("StackTest.deletedStackRoot")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs
+    .makeTempDirectoryScoped({ prefix: "stack-find-deleted-" })
+    .pipe(Effect.flatMap(fs.realPath));
+  const locations = { stateRoot: `${root}/state`, cacheRoot: `${root}/cache` };
+  const registered = yield* create({ ...locations, projectRoot: root, runtime: "native" });
+  const containers = [
+    {
+      id: "registered",
+      stackId: registered.id,
+      root: `${locations.stateRoot}/${registered.id}/data`,
+    },
+    { id: "deleted", stackId: deletedId, root: `${locations.stateRoot}/${deletedId}/data` },
+    { id: "elsewhere", stackId: deletedId, root: `${root}/other/${deletedId}/data` },
+    { id: "stranded", stackId: strandedId, root: `${locations.stateRoot}/${strandedId}/data` },
+    { id: "foreign", stackId: foreignId, root: `${root}/other/${foreignId}/data` },
+  ];
+  return { fs, root, locations, registered, containers };
+});
+
+it.live("finds a deleted stack only by the containers left in its own state root", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const root = yield* fs
-      .makeTempDirectoryScoped({ prefix: "stack-find-deleted-" })
-      .pipe(Effect.flatMap(fs.realPath));
-    const locations = { stateRoot: `${root}/state`, cacheRoot: `${root}/cache` };
-    const registered = yield* create({ ...locations, projectRoot: root, runtime: "native" });
-    const deletedId = "d".repeat(64);
-    const strandedId = "e".repeat(64);
-    const foreignId = "f".repeat(64);
-    const deletedData = `${locations.stateRoot}/${deletedId}/data`;
+    const { fs, root, locations, registered, containers } = yield* deletedStackRoot();
     yield* fs.makeDirectory(`${locations.stateRoot}/${strandedId}/data`, { recursive: true });
-    const listing = yield* Effect.forEach(
-      [
-        [registered.id, `${locations.stateRoot}/${registered.id}/data`],
-        [deletedId, deletedData],
-        [strandedId, `${locations.stateRoot}/${strandedId}/data`],
-        [foreignId, `${root}/other/${foreignId}/data`],
-      ],
-      (labels) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(labels),
-    ).pipe(Effect.map((lines) => lines.join("\n")));
-    const engine = engineStub(listing, { podman: "Cannot connect to Podman: connection refused" });
-    const found = (id: string) =>
-      findDeleted({ ...locations, id }).pipe(Effect.provide(engine.layer));
+    const engine = engineStub(containers, {
+      podman: "Cannot connect to Podman: connection refused",
+    });
+    const found = (id: string, stateRoot = locations.stateRoot) =>
+      findDeleted({ ...locations, stateRoot, id }).pipe(Effect.provide(engine.layer));
 
     expect(Option.isNone(yield* found(registered.id)), "a registered stack").toBe(true);
     expect(Option.isNone(yield* found(foreignId)), "another root's stack").toBe(true);
@@ -582,61 +592,77 @@ it.live("finds and removes the containers a deleted stack left in its own state 
     );
     const file = `${root}/file`;
     yield* fs.writeFileString(file, "");
-    const unusable = yield* findDeleted({ ...locations, stateRoot: file, id: deletedId }).pipe(
-      Effect.provide(engine.layer),
-    );
-    expect(Option.isNone(unusable), "an unusable registry is left to find").toBe(true);
+    expect(
+      Option.isNone(yield* found(deletedId, file)),
+      "an unusable registry is left to find",
+    ).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reports an engine that cannot list or remove a deleted stack's containers", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const destroyOn = (engine: ReturnType<typeof engineStub>) =>
+      findDeleted({ ...locations, id: deletedId }).pipe(
+        Effect.provide(engine.layer),
+        Effect.flatMap((deleted) => Option.getOrThrow(deleted).destroy),
+        Effect.flip,
+      );
     const denied = { docker: "permission denied while trying to connect" };
-    const removal = [
-      "ps",
-      "--all",
-      "--quiet",
-      "--no-trunc",
-      "--filter",
-      `label=com.supabase.stack=${deletedId}`,
-      "--filter",
-      `label=com.supabase.stack-root=${deletedData}`,
-    ];
-    const deniedEngine = engineStub(listing, denied);
-    const onPodman = yield* findDeleted({ ...locations, id: deletedId }).pipe(
-      Effect.provide(deniedEngine.layer),
-    );
-    const partial = yield* Effect.flip(Option.getOrThrow(onPodman).destroy);
-    expect(partial.message, "a failing engine is reported after the other is cleaned").toMatch(
-      /^Removed the Podman containers .* Unable to list Docker containers/,
-    );
-    expect(deniedEngine.commands).toContainEqual(["podman", ...removal]);
+
+    const unlisted = engineStub(containers, denied);
+    expect(
+      (yield* destroyOn(unlisted)).message,
+      "a failing engine is reported after the other is cleaned",
+    ).toMatch(/^Removed the Podman containers .* Unable to list Docker containers/);
+    expect(unlisted.remaining("podman").map(({ id }) => id)).not.toContain("deleted");
     const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
-      Effect.provide(engineStub("", denied).layer),
+      Effect.provide(engineStub([], denied).layer),
       Effect.flip,
     );
     expect(failure.message, "with no match, a refusing engine is reported").toContain(
       "Unable to list Docker containers",
     );
-    const both = engineStub(listing);
-    const deleted = Option.getOrThrow(
-      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(both.layer)),
+    const stuck = engineStub(containers, { "podman rm": "container is in use" });
+    expect((yield* destroyOn(stuck)).message, "a container that cannot be removed").toContain(
+      "container is in use",
     );
-    expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
-    expect(both.commands).toContainEqual(["docker", ...removal]);
-    expect(both.commands).toContainEqual(["podman", ...removal]);
+    expect(stuck.remaining("podman").map(({ id }) => id)).toContain("deleted");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
 
+it.live("removes a deleted stack's containers from both engines, not another root's", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const engine = engineStub(containers);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
+    );
+
+    expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
+    const kept = containers.filter(({ id }) => id !== "deleted");
+    expect(engine.remaining("docker")).toEqual(kept);
+    expect(engine.remaining("podman")).toEqual(kept);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("leaves a deleted stack's containers to a registration that returns during destroy", () =>
+  Effect.gen(function* () {
+    const { fs, locations, registered, containers } = yield* deletedStackRoot();
     const statePath = `${locations.stateRoot}/${registered.id}/state.json`;
     yield* fs.rename(statePath, `${statePath}.aside`);
     const reregister = yield* Effect.cached(
       fs.rename(`${statePath}.aside`, statePath).pipe(Effect.orDie),
     );
-    const racing = engineStub(listing, {}, (command) =>
+    const racing = engineStub(containers, {}, (command) =>
       command[0] === "docker" && command.includes("--quiet") ? reregister : Effect.void,
     );
     const unregistered = Option.getOrThrow(
       yield* findDeleted({ ...locations, id: registered.id }).pipe(Effect.provide(racing.layer)),
     );
+
     expect((yield* Effect.flip(unregistered.destroy)).message).toContain("was registered again");
-    expect(
-      racing.commands.filter((command) => command[0] === "podman" && command.includes("--quiet")),
-      "podman is left to the registration",
-    ).toEqual([]);
+    expect(racing.remaining("podman"), "podman is left to the registration").toEqual(containers);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

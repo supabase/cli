@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Option, Path } from "effect";
+import { Cause, Effect, Exit, Option, Path, Result } from "effect";
 import type { StackError } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag, resolveYes } from "../../../../command-internal/global-flags.ts";
@@ -18,10 +18,11 @@ import {
 import type { StackDestroyFlags } from "./destroy.command.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 
-const mapTargetError = (error: StackTargetError) =>
+const mapTargetError = (error: StackTargetError, detail?: string) =>
   new StackCommandDestroyError({
     reason: error.reason,
     message: error.message,
+    ...(detail === undefined ? {} : { detail }),
     ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
     cause: error,
   });
@@ -54,12 +55,11 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
-    const deleted =
+    const lookup =
       Option.isSome(flags.stackId) && isStackId(flags.stackId.value)
-        ? yield* api
-            .findDeleted({ ...locations, id: flags.stackId.value })
-            .pipe(Effect.mapError(destroyError))
-        : Option.none();
+        ? yield* Effect.result(api.findDeleted({ ...locations, id: flags.stackId.value }))
+        : Result.succeedNone;
+    const deleted = Result.getOrElse(lookup, Option.none);
     const target = Option.isSome(deleted)
       ? undefined
       : yield* resolver
@@ -69,7 +69,11 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
             ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
             runtime: "auto",
           })
-          .pipe(Effect.mapError(mapTargetError));
+          .pipe(
+            Effect.mapError((error) =>
+              mapTargetError(error, Result.isFailure(lookup) ? lookup.failure.message : undefined),
+            ),
+          );
     const id = Option.isSome(deleted) ? deleted.value.id : target?.id;
     if (id === undefined)
       return yield* new StackCommandDestroyError({
@@ -127,7 +131,12 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     if (result.runtimeCleanup === "skipped")
       yield* output.warn(skippedRuntimeCleanupWarning(`stack ${id}`, result));
     if (output.format !== "text") yield* output.success("", { destroyed: true, id, ...result });
-    else if (result.runtimeCleanup === "complete") yield* output.raw(`Stack ${id} destroyed.\n`);
+    else if (result.runtimeCleanup === "complete")
+      yield* output.raw(
+        target === undefined
+          ? `Removed the containers stack ${id} left behind.\n`
+          : `Stack ${id} destroyed.\n`,
+      );
     else
       yield* output.raw(
         `Stack ${id} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`,
