@@ -636,13 +636,20 @@ export const writeConfinement = (runtime: Runtime) =>
                 ]
               : [];
           // Allowed roots the named entries below cover; add one line here to extend them.
-          // `podman info` asks the host's rpm which package provides each engine binary, and rpm
-          // keeps its database under HOME; like Podman's XDG state, that is the engine's own.
+          // Podman's own client state: `podman info` asks the host's rpm which package provides each
+          // engine binary (rpm's database), a remote machine connection is SSH, and without
+          // XDG_RUNTIME_DIR (macOS) the client keeps its runtime directory under TMPDIR.
           const allowedRoots = [
             fixture.root,
             fixture.locations.cacheRoot,
             bunTranspilerCache,
-            ...(runtime === "podman" ? [path.join(home, ".rpmdb")] : []),
+            ...(runtime === "podman"
+              ? [
+                  path.join(home, ".rpmdb"),
+                  path.join(home, ".ssh"),
+                  path.join(tmp, `storage-run-${process.getuid?.()}`),
+                ]
+              : []),
           ];
           // While the stack is still running, after it has been exercised: a before/after-only
           // check misses anything a service writes and removes again before shutdown.
