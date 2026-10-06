@@ -1,8 +1,17 @@
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Duration, Effect, Exit, identity, Option, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- readiness is an inherited launcher descriptor.
 import { closeSync, writeSync } from "node:fs";
 import { SavedStack } from "../StackNamespace.ts";
-import { runStackHost, StackHostError, type StackHostOptions } from "../StackHost.ts";
+import {
+  RegistrationCheckInterval,
+  runStackHost,
+  StackHostError,
+  type StackHostOptions,
+} from "../StackHost.ts";
+
+interface HostProcessOverrides extends Pick<StackHostOptions, "release"> {
+  readonly registrationCheckInterval?: Duration.Input;
+}
 
 const writeLine = (value: unknown) =>
   Effect.gen(function* () {
@@ -62,7 +71,10 @@ const options = (
     };
   });
 
-const program = (args: ReadonlyArray<string>, overrides: Pick<StackHostOptions, "release">) =>
+const program = (
+  args: ReadonlyArray<string>,
+  { registrationCheckInterval, ...overrides }: HostProcessOverrides,
+) =>
   Effect.gen(function* () {
     let reported = false;
     const report = (value: unknown) =>
@@ -82,7 +94,11 @@ const program = (args: ReadonlyArray<string>, overrides: Pick<StackHostOptions, 
         }).pipe(Effect.exit, Effect.andThen(Effect.failCause(cause)));
       }),
     );
-  });
+  }).pipe(
+    registrationCheckInterval === undefined
+      ? identity
+      : Effect.provideService(RegistrationCheckInterval, registrationCheckInterval),
+  );
 
 const flushed = (stream: NodeJS.WriteStream) =>
   Effect.callback<void>((resume) => {
@@ -96,7 +112,7 @@ const flushed = (stream: NodeJS.WriteStream) =>
  */
 export const runHostProcess = (
   args: ReadonlyArray<string>,
-  overrides: Pick<StackHostOptions, "release"> = {},
+  overrides: HostProcessOverrides = {},
 ): Promise<never> =>
   Effect.runPromise(
     program(args, overrides).pipe(

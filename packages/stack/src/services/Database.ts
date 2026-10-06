@@ -5,8 +5,6 @@ import {
   Crypto,
   Data,
   Effect,
-  Exit,
-  Fiber,
   FileSystem,
   Layer,
   Path,
@@ -43,7 +41,7 @@ import {
 } from "../runtime/PostgresDatabaseSession.ts";
 import {
   mapToServiceError,
-  processExit as sharedProcessExit,
+  processExit,
   publishProcessLogs,
   runtimeSessionFromContainer,
 } from "../runtime/Session.ts";
@@ -190,16 +188,6 @@ const databaseError = (operation: string, cause: unknown): DatabaseError =>
   });
 
 const describePostgresExit = (code: number) => `PostgreSQL exited with code ${code}`;
-
-/** Settles a native PostgreSQL exit, waiting briefly after it for the stderr tail to drain. */
-export const processExit = <E extends { readonly message: string }>(
-  exitCode: Effect.Effect<number, E>,
-  stderr?: {
-    readonly tail: Ref.Ref<string>;
-    readonly drained: Fiber.Fiber<void>;
-  },
-): Effect.Effect<Exit.Exit<void, ServiceError>> =>
-  sharedProcessExit(exitCode, describePostgresExit, stderr);
 
 /** Exported for the cross-cutting pin test in {@link "../runtime/Container.integration.test.ts"}. */
 export const reconcileContainerPassword = Effect.fn("Database.reconcileContainerPassword")(
@@ -890,7 +878,10 @@ export const makeDatabase = (
             return {
               health: setup,
               probe: setup,
-              exit: processExit(process.exitCode, { tail: stderrTail, drained: stderrDrained }),
+              exit: processExit(process.exitCode, describePostgresExit, {
+                tail: stderrTail,
+                drained: stderrDrained,
+              }),
               stop: process.kill.pipe(Effect.mapError((cause) => errorFor("stop", cause))),
               remove: fs.remove(socketPath, { recursive: true, force: true }).pipe(
                 Effect.mapError((cause) => errorFor("remove", cause)),
