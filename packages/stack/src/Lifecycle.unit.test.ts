@@ -39,7 +39,7 @@ const run = (
 /** A runtime's unexpected exit as the service reports it: lost first, then cleaned up. */
 const crashSteps = (id: string, generation: number, now: number, cause = "crash") => [
   { event: LifecycleEvent.SessionLost({ id, generation, cause }), now },
-  { event: LifecycleEvent.Exited({ id, generation, cause, requested: false }), now },
+  { event: LifecycleEvent.Exited({ id, generation, requested: false }), now },
 ];
 
 const tagsOf = (commands: ReadonlyArray<Command> | undefined) =>
@@ -96,7 +96,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "api",
           generation: 99,
-          cause: "boom",
           requested: false,
         }),
         now: 30,
@@ -168,7 +167,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "api",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 1_040,
@@ -242,7 +240,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "studio",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 1_060,
@@ -269,7 +266,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "pg-meta",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 2_070,
@@ -283,7 +279,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "functions",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 2_080,
@@ -305,7 +300,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "database",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 3_090,
@@ -380,6 +374,34 @@ describe("Lifecycle reducer", () => {
       ]);
       expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
       expect(commandTagged(at(commandsByStep, 0), "Launch").id).toBe("a");
+    });
+
+    it("launches the newest restart candidate once, then returns to the saved input", () => {
+      const graph = makeGraph([lazy("api")]);
+      const { commandsByStep } = run(initialState(graph), [
+        { event: open("api", 1), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
+        { event: LifecycleEvent.RestartRequested({ id: "api", candidate: "first" }), now: 2 },
+        { event: LifecycleEvent.RestartRequested({ id: "api", candidate: "second" }), now: 3 },
+        { event: LifecycleEvent.RestartRequested({ id: "api" }), now: 4 },
+        { event: LifecycleEvent.Exited({ id: "api", generation: 1, requested: true }), now: 5 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 2 }), now: 6 },
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 7 },
+        { event: LifecycleEvent.Exited({ id: "api", generation: 2, requested: true }), now: 8 },
+        { event: LifecycleEvent.StartRequested({ id: "api" }), now: 9 },
+      ]);
+      expect(commandTagged(at(commandsByStep, 0), "Launch").candidate).toBeUndefined();
+      expect(commandTagged(at(commandsByStep, 5), "Launch").candidate).toBe("second");
+      expect(commandTagged(at(commandsByStep, 9), "Launch").candidate).toBeUndefined();
+    });
+
+    it("keeps no candidate for a restart the reducer rejects", () => {
+      const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
+      const { state, commandsByStep } = run(initialState(graph), [
+        { event: LifecycleEvent.RestartRequested({ id: "a", candidate: "rejected" }), now: 0 },
+      ]);
+      expect(tagsOf(commandsByStep[0])).toEqual(["RequestRejected"]);
+      expect(state.services.get("a")?.restartCandidate).toBeUndefined();
     });
   });
 
@@ -660,7 +682,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "api",
             generation: 1,
-            cause: "crash",
             requested: false,
           }),
           now: 20,
@@ -680,7 +701,7 @@ describe("Lifecycle reducer", () => {
         sessionLost("api", generation, 5),
         { event: LifecycleEvent.SessionAvailable({ id: "api", generation }), now: 6 },
         {
-          event: LifecycleEvent.Exited({ id: "api", generation, cause: "crash", requested: false }),
+          event: LifecycleEvent.Exited({ id: "api", generation, requested: false }),
           now: 7,
         },
       ]));
@@ -718,7 +739,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "api",
             generation: 1,
-            cause: undefined,
             requested: true,
           }),
           now: 5,
@@ -739,7 +759,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "api",
             generation: 1,
-            cause: "crash",
             requested: false,
           }),
           now: 4,
@@ -878,7 +897,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "database",
             generation,
-            cause: undefined,
             requested: true,
           }),
           now: 2,
@@ -963,7 +981,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "api",
             generation: 1,
-            cause: undefined,
             requested: true,
           }),
           now: 31,
@@ -1151,7 +1168,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "b",
             generation: 1,
-            cause: undefined,
             requested: true,
           }),
           now: 1_040,
@@ -1214,7 +1230,6 @@ describe("Lifecycle reducer", () => {
         event: LifecycleEvent.Exited({
           id: "api",
           generation: 1,
-          cause: undefined,
           requested: true,
         }),
         now: 30,
@@ -1497,7 +1512,6 @@ describe("Lifecycle reducer", () => {
           event: LifecycleEvent.Exited({
             id: "api",
             generation: 1,
-            cause: undefined,
             requested: true,
           }),
           now: 7,

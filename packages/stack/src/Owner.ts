@@ -245,12 +245,7 @@ const withoutInstance = (current: SavedStack, id: string): SavedStack =>
   withoutUnusedCredentials({
     ...current,
     instances: current.instances.filter((instance) => instance.id !== id),
-    composition: {
-      members: current.composition.members.filter((member) => member.id !== id),
-      dependencies: current.composition.dependencies.filter(
-        (dependency) => dependency.from !== id && dependency.to !== id,
-      ),
-    },
+    composition: Orchestrator.withoutMember(current.composition, id),
   });
 
 const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {

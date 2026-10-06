@@ -204,11 +204,6 @@ export interface Interface<Entry extends RegisteredInstance = RegisteredInstance
   ) => Effect.Effect<void, OrchestratorError | ServiceError, Scope.Scope>;
 }
 
-interface Graph {
-  readonly members: ReadonlyMap<string, CompositionMember>;
-  readonly prerequisites: ReadonlyMap<string, ReadonlyArray<string>>;
-}
-
 interface Waiter {
   readonly deferred: Deferred.Deferred<void, ServiceError>;
 }
@@ -222,30 +217,22 @@ interface Applied {
 const graphError = (operation: OrchestratorOperation, message: string, cause?: unknown) =>
   new OrchestratorError({ operation, message, ...(cause === undefined ? {} : { cause }) });
 
-const topo = (
-  ids: ReadonlyArray<string>,
-  prerequisites: ReadonlyMap<string, ReadonlyArray<string>>,
-): ReadonlyArray<string> => {
-  const result: Array<string> = [];
-  const seen = new Set<string>();
-  const visit = (id: string): void => {
-    if (seen.has(id)) return;
-    seen.add(id);
-    for (const prerequisite of prerequisites.get(id) ?? []) visit(prerequisite);
-    result.push(id);
-  };
-  for (const id of ids) visit(id);
-  return result;
-};
+/** The composition without `id`, as a member or as either end of a dependency. */
+export const withoutMember = (config: CompositionConfig, id: string): CompositionConfig => ({
+  members: config.members.filter((member) => member.id !== id),
+  dependencies: config.dependencies.filter(
+    (dependency) => dependency.from !== id && dependency.to !== id,
+  ),
+});
 
-const validateGraph = (
+const validateComposition = (
   configuration: CompositionConfig,
   values: ReadonlyMap<string, RegisteredInstance>,
-): Graph | OrchestratorError => {
-  const members = new Map<string, CompositionMember>();
+): OrchestratorError | undefined => {
+  const memberIds = new Set<string>();
   for (const member of configuration.members) {
-    if (members.has(member.id)) return graphError("configure", `Duplicate member ${member.id}`);
-    members.set(member.id, member);
+    if (memberIds.has(member.id)) return graphError("configure", `Duplicate member ${member.id}`);
+    memberIds.add(member.id);
   }
   const boundInputs = new Set<string>();
   const prerequisites = new Map<string, Array<string>>();
@@ -296,7 +283,6 @@ const validateGraph = (
     const failure = visit(id);
     if (failure !== undefined) return failure;
   }
-  return { members, prerequisites };
 };
 
 /** Every registered instance as the reducer sees it; a non-member runs as an eager standalone. */
@@ -315,6 +301,15 @@ const lifecycleGraph = (ids: Iterable<string>, configuration: CompositionConfig)
       };
     }),
   );
+
+/** The listed instances, prerequisites first. */
+const inOrder = (graph: LifecycleGraph, ids: Iterable<string>): ReadonlyArray<string> => {
+  const wanted = new Set(ids);
+  return graph.order.filter((id) => wanted.has(id));
+};
+
+const prerequisitesOf = (graph: LifecycleGraph, id: string): ReadonlyArray<string> =>
+  inOrder(graph, graph.prerequisiteClosure.get(id) ?? []);
 
 const lifecycleOf = (state: LifecycleState, id: string): Status["lifecycle"] => {
   const phase = state.services.get(id)?.phase;
@@ -412,9 +407,6 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   const composition = yield* Ref.make<CompositionConfig>({ members: [], dependencies: [] });
   const waiters = yield* Ref.make<ReadonlyMap<number, Waiter>>(new Map());
   const nextWaiterId = yield* Ref.make(1);
-  const candidates = yield* Ref.make<
-    ReadonlyMap<string, { readonly minGeneration: number; readonly value: unknown }>
-  >(new Map());
   const idleTimers = yield* FiberMap.make<string>();
   // Nothing reduces events once the owner closes, so its pending waiters are released here.
   yield* Scope.addFinalizer(
@@ -522,15 +514,12 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     return inputs;
   });
 
-  const launch = Effect.fn("Lifecycle.launch")(function* (id: string, generation: number) {
+  const launch = Effect.fn("Lifecycle.launch")(function* (
+    id: string,
+    generation: number,
+    candidate: unknown,
+  ) {
     yield* Effect.annotateCurrentSpan({ instance_id: id, generation });
-    const candidate = yield* Ref.modify(candidates, (current) => {
-      const pending = current.get(id);
-      if (pending === undefined || generation < pending.minGeneration) return [undefined, current];
-      const next = new Map(current);
-      next.delete(id);
-      return [pending.value, next];
-    });
     const started = yield* Effect.gen(function* () {
       const entry = yield* node(id);
       const inputs = yield* resolveInputs(id);
@@ -575,7 +564,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
         );
       }
       case "Launch":
-        return fork(launch(command.id, command.generation));
+        return fork(launch(command.id, command.generation, command.candidate));
       case "Stop":
         return stopGeneration(command.id, command.generation, state);
       case "Reprobe": {
@@ -775,17 +764,11 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     return yield* outcome;
   });
 
-  const prerequisitesOf = (state: LifecycleState, id: string): ReadonlyArray<string> =>
-    topo(
-      [...(state.graph.prerequisiteClosure.get(id) ?? [])],
-      new Map([...state.graph.services.values()].map((spec) => [spec.id, spec.prerequisites])),
-    );
-
   /** The readiness waits that bound an explicit operation: every prerequisite, then the target. */
   const explicitWaits = Effect.fnUntraced(function* (id: string, targetReady: boolean) {
     const state = yield* SubscriptionRef.get(lifecycle);
     return [
-      ...prerequisitesOf(state, id).map((prerequisite) => ({
+      ...prerequisitesOf(state.graph, id).map((prerequisite) => ({
         id: prerequisite,
         requireReady: true,
       })),
@@ -795,7 +778,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
 
   const bindClosure = Effect.fn("Orchestrator.bindClosure")(function* (id: string) {
     const state = yield* SubscriptionRef.get(lifecycle);
-    for (const member of [...prerequisitesOf(state, id), id]) yield* (yield* node(member)).bind;
+    for (const member of [...prerequisitesOf(state.graph, id), id])
+      yield* (yield* node(member)).bind;
   });
 
   /** Dispatches one explicit request, failing with the reducer's rejection if it refused it. */
@@ -894,36 +878,12 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     // A candidate is resolved and prepared before anything stops, so a bad one costs no downtime.
     if (config !== undefined) yield* entry.prepare(yield* resolveInputs(id), config);
     yield* bindClosure(id);
-    if (config !== undefined) {
-      // Any launch from the restart's own generation onward applies the candidate.
-      const minGeneration = (yield* SubscriptionRef.get(lifecycle)).generationCounters.get(id) ?? 1;
-      yield* Ref.update(candidates, (current) =>
-        new Map(current).set(id, { minGeneration, value: config }),
-      );
-    }
-    // Once admitted, the candidate belongs to the next launch even if this caller's wait fails.
-    const admitted = yield* Ref.make(false);
     yield* awaitAll({
-      requests: [LifecycleEvent.RestartRequested({ id })],
+      requests: [LifecycleEvent.RestartRequested({ id, candidate: config })],
       waits: yield* explicitWaits(id, false),
       traffic: false,
       operation: "restart",
-      onApplied: () => Ref.set(admitted, true),
-    }).pipe(
-      Effect.tapError(() =>
-        Ref.get(admitted).pipe(
-          Effect.flatMap((wasAdmitted) =>
-            wasAdmitted
-              ? Effect.void
-              : Ref.update(candidates, (current) => {
-                  const next = new Map(current);
-                  next.delete(id);
-                  return next;
-                }),
-          ),
-        ),
-      ),
-    );
+    });
   });
 
   const storage = <A>(id: string, operation: Effect.Effect<A, ServiceError>) =>
@@ -946,13 +906,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       Effect.gen(function* () {
         const values = new Map(yield* Ref.get(registry));
         values.delete(id);
-        const configured = yield* Ref.get(composition);
-        const next: CompositionConfig = {
-          members: configured.members.filter((member) => member.id !== id),
-          dependencies: configured.dependencies.filter(
-            (dependency) => dependency.from !== id && dependency.to !== id,
-          ),
-        };
+        const next = withoutMember(yield* Ref.get(composition), id);
         // The graph update goes first: it removes the service while the destroy still holds it.
         const applied = yield* applyLocked([
           LifecycleEvent.GraphUpdated({ graph: lifecycleGraph(values.keys(), next) }),
@@ -983,7 +937,9 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
         operation: "graph",
         message: `Dependent ${dependent.to} blocks destroy of ${id}`,
       });
-    // Any exit short of unregistering gives the destroy up, so the service is usable again.
+    // Confirmed removal unregisters the instance even if the final close fails; any earlier exit
+    // gives the destroy up, so the service is usable again.
+    const removed = yield* Ref.make(false);
     yield* Effect.uninterruptibleMask((restore) =>
       restore(
         Effect.gen(function* () {
@@ -1004,13 +960,16 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
               Effect.andThen(entry.confirmRemoved),
             ),
           );
+          yield* Ref.set(removed, true);
           yield* entry.close;
         }),
       ).pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? unregister(id)
-            : dispatch([LifecycleEvent.DestroyReleased({ id })]),
+        Effect.onExit(() =>
+          Ref.get(removed).pipe(
+            Effect.flatMap((confirmed) =>
+              confirmed ? unregister(id) : dispatch([LifecycleEvent.DestroyReleased({ id })]),
+            ),
+          ),
         ),
       ),
     );
@@ -1043,14 +1002,13 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   });
 
   const startComposition = Effect.fn("Orchestrator.startComposition")(function* () {
-    const configured = yield* Ref.get(composition);
-    const structure = validateGraph(configured, yield* Ref.get(registry));
-    if (structure instanceof OrchestratorError) return yield* structure;
-    const order = topo(
-      configured.members.map((member) => member.id),
-      structure.prerequisites,
-    );
-    const eager = new Set(order.filter((id) => structure.members.get(id)?.activation !== "lazy"));
+    const { graph } = yield* SubscriptionRef.get(lifecycle);
+    const memberIds = (yield* Ref.get(composition)).members.map((member) => member.id);
+    const order = inOrder(graph, [
+      ...memberIds,
+      ...memberIds.flatMap((id) => prerequisitesOf(graph, id)),
+    ]);
+    const eager = new Set(order.filter((id) => graph.services.get(id)?.activation !== "lazy"));
     const completions = new Map<string, Deferred.Deferred<boolean>>();
     for (const id of order) completions.set(id, yield* Deferred.make<boolean>());
     const bound = new Map<string, Exit.Exit<void, ServiceError | OrchestratorError>>();
@@ -1068,7 +1026,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       (id) =>
         Effect.gen(function* () {
           const failedPrerequisites: Array<string> = [];
-          for (const prerequisite of structure.prerequisites.get(id) ?? []) {
+          for (const prerequisite of graph.services.get(id)?.prerequisites ?? []) {
             const completion = completions.get(prerequisite);
             if (completion !== undefined && !(yield* Deferred.await(completion)))
               failedPrerequisites.push(prerequisite);
@@ -1110,13 +1068,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   });
 
   const stopIds = Effect.fn("Orchestrator.stopIds")(function* (ids: ReadonlyArray<string>) {
-    const configured = yield* Ref.get(composition);
-    const structure = validateGraph(configured, yield* Ref.get(registry));
-    if (structure instanceof OrchestratorError) return yield* structure;
-    const order = topo(ids, structure.prerequisites)
-      .filter((id) => ids.includes(id))
-      .toReversed();
-    return yield* settleOutcomes("stop", order, stop);
+    const { graph } = yield* SubscriptionRef.get(lifecycle);
+    return yield* settleOutcomes("stop", inOrder(graph, ids).toReversed(), stop);
   });
 
   const stopComposition = Effect.fn("Orchestrator.stopComposition")(function* () {
@@ -1133,10 +1086,7 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
   });
 
   const destroyNamespace = Effect.fn("Orchestrator.destroyNamespace")(function* () {
-    const values = yield* Ref.get(registry);
-    const structure = validateGraph(yield* Ref.get(composition), values);
-    if (structure instanceof OrchestratorError) return yield* structure;
-    const order = topo([...values.keys()], structure.prerequisites).toReversed();
+    const order = (yield* SubscriptionRef.get(lifecycle)).graph.order.toReversed();
     const outcomes = yield* Effect.forEach(order, (id) =>
       destroyInstance(id, "retain").pipe(
         Effect.exit,
@@ -1237,8 +1187,8 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
         Effect.gen(function* () {
           const previous = yield* Ref.get(composition);
           const values = yield* Ref.get(registry);
-          const structure = validateGraph(configuration, values);
-          if (structure instanceof OrchestratorError) return yield* structure;
+          const invalid = validateComposition(configuration, values);
+          if (invalid !== undefined) return yield* invalid;
           const affected = new Set([
             ...previous.members.map((member) => member.id),
             ...configuration.members.map((member) => member.id),

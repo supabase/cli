@@ -265,7 +265,7 @@ export const makeService = <Config>(
       const generation = record.generation;
       yield* report(
         Exit.isSuccess(cleaned)
-          ? LifecycleEvent.Exited({ id, generation, cause: error, requested: false })
+          ? LifecycleEvent.Exited({ id, generation, requested: false })
           : LifecycleEvent.StopFailed({
               id,
               generation,
@@ -452,7 +452,7 @@ export const makeService = <Config>(
         .pipe(Effect.exit);
       yield* report(
         Exit.isSuccess(stopped)
-          ? LifecycleEvent.Exited({ id, generation, cause: undefined, requested: true })
+          ? LifecycleEvent.Exited({ id, generation, requested: true })
           : LifecycleEvent.StopFailed({ id, generation, cause: Cause.squash(stopped.cause) }),
       );
     });
@@ -498,12 +498,7 @@ export const makeService = <Config>(
               // A previous failed stop can leave the reducer in `Stopping` forever; report this
               // retry's termination too, or `NetworkNamespace.release`'s endpoint check never learns.
               yield* report(
-                LifecycleEvent.Exited({
-                  id,
-                  generation: leftover.generation,
-                  cause: undefined,
-                  requested: true,
-                }),
+                LifecycleEvent.Exited({ id, generation: leftover.generation, requested: true }),
               );
             }
             const dataScope = yield* Scope.fork(owner, "parallel");

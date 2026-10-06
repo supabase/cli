@@ -42,6 +42,8 @@ const makeInstance = (
     readonly launch?: Effect.Effect<void, ServiceError>;
     readonly stop?: Effect.Effect<void, ServiceError>;
     readonly removeData?: Effect.Effect<void, ServiceError>;
+    /** Replaces the default close, which only tracks the bound state. */
+    readonly close?: Effect.Effect<void, ServiceError>;
     /** Resolves the first launch's runtime exit; later launches exit only when stopped. */
     readonly exit?: Deferred.Deferred<Exit.Exit<void, ServiceError>>;
     /** Every launch's runtime exit, for workloads that crash on demand. */
@@ -106,12 +108,16 @@ const makeInstance = (
       confirmRemoved: Effect.void,
       release: Effect.void,
       releasePorts: Effect.void,
-      close: orchestrator.status(id).pipe(
-        Effect.flatMap((state) =>
-          state.lifecycle === "stopped" && !state.wakeEnabled ? Ref.set(bound, false) : Effect.void,
+      close:
+        options.close ??
+        orchestrator.status(id).pipe(
+          Effect.flatMap((state) =>
+            state.lifecycle === "stopped" && !state.wakeEnabled
+              ? Ref.set(bound, false)
+              : Effect.void,
+          ),
+          Effect.mapError((error) => failure(error.message)),
         ),
-        Effect.mapError((error) => failure(error.message)),
-      ),
       hasEndpoint: options.endpoint ?? true,
       inputs: ["databaseUrl"],
       outputs: { url: Effect.succeed(`postgres://${id}`) },
@@ -821,6 +827,28 @@ describe("destroying an instance with admitted traffic", () => {
         expect((yield* orchestrator.status("database")).lifecycle).toBe("stopped");
       }),
     ),
+  );
+
+  it.live(
+    "unregisters an instance whose data removal was confirmed even if its final close fails",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* makeTestOrchestrator();
+          const removed = yield* Ref.make(false);
+          yield* makeInstance(orchestrator, "database", {
+            removeData: Ref.set(removed, true),
+            close: Ref.get(removed).pipe(
+              Effect.flatMap((gone) => (gone ? Effect.fail(failure("close failed")) : Effect.void)),
+            ),
+          });
+
+          const error = yield* orchestrator.destroy("database").pipe(Effect.flip);
+
+          expect(error.message).toBe("close failed");
+          expect(yield* orchestrator.instances).toEqual([]);
+        }),
+      ),
   );
 });
 

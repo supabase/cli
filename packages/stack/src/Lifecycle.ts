@@ -150,6 +150,8 @@ export interface ServiceState {
    * held and no stop is in flight. A stop, restart, start or new waiter retries the cleanup.
    */
   readonly cleanupFailure: { readonly cause: unknown } | undefined;
+  /** The newest restart candidate, consumed by the next `Launch` command. */
+  readonly restartCandidate: unknown;
 }
 
 const initialService = (spec: ServiceSpec): ServiceState => ({
@@ -166,6 +168,7 @@ const initialService = (spec: ServiceSpec): ServiceState => ({
   readinessFailure: undefined,
   reprobing: false,
   cleanupFailure: undefined,
+  restartCandidate: undefined,
 });
 
 export interface LifecycleState {
@@ -212,12 +215,7 @@ export type LifecycleEvent = Data.TaggedEnum<{
    * cleanup runs, so nothing routes to the dead session while its resources are still held.
    */
   SessionLost: { readonly id: string; readonly generation: number; readonly cause: unknown };
-  Exited: {
-    readonly id: string;
-    readonly generation: number;
-    readonly cause: unknown;
-    readonly requested: boolean;
-  };
+  Exited: { readonly id: string; readonly generation: number; readonly requested: boolean };
   /**
    * A stop or a failed launch's cleanup of `generation` failed; its resources are still held.
    * `failure` carries the launch failure or crash that ended the generation, if one did, so it
@@ -239,7 +237,8 @@ export type LifecycleEvent = Data.TaggedEnum<{
   /** Arms a service for demand-driven launches without forcing one. */
   ArmRequested: { readonly id: string };
   StopRequested: { readonly id: string };
-  RestartRequested: { readonly id: string };
+  /** `candidate`, when given, is the launch input the next launch uses in place of the saved one. */
+  RestartRequested: { readonly id: string; readonly candidate?: unknown };
   StorageReserved: { readonly id: string };
   StorageReleased: { readonly id: string };
   /** Stops the service and reserves its storage for data removal once both are free. */
@@ -256,7 +255,8 @@ export type LifecycleEvent = Data.TaggedEnum<{
 export const LifecycleEvent = Data.taggedEnum<LifecycleEvent>();
 
 export type LifecycleCommand = Data.TaggedEnum<{
-  Launch: { readonly id: string; readonly generation: number };
+  /** `candidate` is the restart's launch input, or undefined when the saved one applies. */
+  Launch: { readonly id: string; readonly generation: number; readonly candidate: unknown };
   Stop: { readonly id: string; readonly generation: number };
   ArmIdleTimer: {
     readonly id: string;
@@ -987,6 +987,7 @@ const applyEvent = (
         intent: spec.activation,
         breaker: initialBreaker,
         relaunchForced: true,
+        restartCandidate: event.candidate === undefined ? s.restartCandidate : event.candidate,
         phase: winding && generation !== undefined ? Phase.Stopping({ generation }) : s.phase,
       }));
       return [rearmPrerequisites(retryCleanup(updated, id, commands), id), commands];
@@ -1123,12 +1124,15 @@ const settle = (
       if (!prerequisitesSatisfied(next, id)) continue;
       if (!hasDemand(next, id) && !service.relaunchForced) continue;
       const generation = next.generationCounters.get(id) ?? 1;
-      emitted.push(LifecycleCommand.Launch({ id, generation }));
+      emitted.push(
+        LifecycleCommand.Launch({ id, generation, candidate: service.restartCandidate }),
+      );
       next = {
         ...setService(next, id, (s) => ({
           ...s,
           phase: Phase.Starting({ generation, stage: "preparing" }),
           relaunchForced: false,
+          restartCandidate: undefined,
           readinessFailure: undefined,
           reprobing: false,
         })),
