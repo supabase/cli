@@ -7,7 +7,7 @@
 # adjacent lines, and catalog PRs for neighbouring aliases are often open at the same time.
 FROM supabase/postgres:17.11.0.004 AS pg
 
-FROM supabase/postgres:15.19.0.003 AS pg15
+FROM supabase/postgres:15.19.0.004 AS pg15
 # Postgres 14 has no slim build; bumped by hand (Dependabot ignores supabase/postgres).
 FROM supabase/postgres:14.1.0.89 AS pg14
 # New always-on service alias: extend SERVICE_IMAGE_ALIASES in
