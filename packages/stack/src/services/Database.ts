@@ -1,6 +1,7 @@
 import { withAttemptCount } from "../internal/attempts.ts";
 import { PgClient } from "@effect/sql-pg";
 import {
+  Config,
   Context,
   Crypto,
   Data,
@@ -9,6 +10,7 @@ import {
   Fiber,
   FileSystem,
   Layer,
+  Option,
   Path,
   PubSub,
   Redacted,
@@ -410,6 +412,33 @@ const removeOwnedRoot = (
     keep,
   );
 
+const hostCaBundles = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/ssl/cert.pem",
+];
+
+/**
+ * Forwards the host's SSL_CERT_FILE or SSL_CERT_DIR, else its first CA bundle present, because the
+ * bundled OpenSSL behind http and pg_net defaults to a trust store under /nix on macOS.
+ */
+export const nativeTrustStore = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const env: Record<string, string> = {};
+  for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR"]) {
+    const value = yield* Config.option(Config.nonEmptyString(name)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isSome(value)) env[name] = value.value;
+  }
+  if (Object.keys(env).length > 0) return env;
+  for (const bundle of hostCaBundles)
+    if (yield* fs.exists(bundle).pipe(Effect.orElseSucceed(() => false)))
+      return { SSL_CERT_FILE: bundle };
+  return env;
+});
+
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
   config: DatabaseConfig,
@@ -425,6 +454,7 @@ const nativeProcess = (
   instanceId: string,
   spawner: ChildProcessSpawnerService["Service"],
   user: PasswdEntry | undefined,
+  trustStore: Readonly<Record<string, string>>,
 ): Effect.Effect<NativeProcess, ServiceError> =>
   spawnNativeProcess(
     {
@@ -444,6 +474,7 @@ const nativeProcess = (
         ...settings,
       ],
       env: {
+        ...trustStore,
         ...(user === undefined ? {} : { HOME: user.home }),
         PGDATA: paths.dataPath,
         PGSODIUM_KEY_FILE: paths.rootKeyPath,
@@ -857,6 +888,7 @@ export const makeDatabase = (
               options.instanceId,
               spawner,
               stepDownUser,
+              yield* nativeTrustStore.pipe(Effect.provideService(FileSystem.FileSystem, fs)),
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",
