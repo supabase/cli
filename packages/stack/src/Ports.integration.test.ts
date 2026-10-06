@@ -123,17 +123,20 @@ it.live(
           Effect.gen(function* () {
             if (firstCandidate === undefined) {
               firstCandidate = port;
-              // EADDRINUSE means an unrelated process already occupies the candidate, which is the
-              // collision this test needs.
-              yield* Effect.callback<void>((resume) => {
+              foreignBound = yield* Effect.callback<boolean>((resume) => {
                 foreign.once("error", (cause: NodeJS.ErrnoException) =>
-                  resume(cause.code === "EADDRINUSE" ? Effect.void : Effect.die(cause)),
+                  resume(cause.code === "EADDRINUSE" ? Effect.succeed(false) : Effect.die(cause)),
                 );
-                foreign.listen(port, "127.0.0.1", () => {
-                  foreignBound = true;
-                  resume(Effect.void);
-                });
+                foreign.listen(port, "127.0.0.1", () => resume(Effect.succeed(true)));
               });
+              // An unrelated process already holds the candidate: report the collision it caused
+              // rather than probing a listener this test doesn't own.
+              if (!foreignBound)
+                return yield* new PortError({
+                  key: "api",
+                  message: `Port ${port} is already in use`,
+                  conflict: { port, endpoint: "api", holder: "foreign" },
+                });
             }
             return yield* probed(host, port);
           });
