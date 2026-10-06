@@ -13,6 +13,7 @@ import {
   Scope,
 } from "effect";
 import * as Net from "node:net";
+import { userInfo } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   makePorts,
@@ -111,30 +112,32 @@ it.live(
         yield* saveStack(state, root, id);
         const ports = yield* makePorts(state);
         const request = { stackId: id, key: "api", host: "127.0.0.1", port: "auto" as const };
-        const bind = probedBind("api");
+        const probed = probedBind("api");
 
-        const firstScope = yield* Scope.make();
-        const first = yield* ports
-          .acquire(request, bind)
-          .pipe(Effect.provideService(Scope.Scope, firstScope));
-        yield* Scope.close(firstScope, Exit.void);
-        yield* ports.release(id, "api");
-
-        // Reacquiring the same stack and key retries the same hash-seeded candidate first, so
-        // whatever now occupies it deterministically forces the scan onto the next one.
+        // The scan's first candidate is already reserved when it reaches `bind`; occupying it
+        // there leaves no gap for a parallel test to take the port before the foreign listener.
         const foreign = Net.createServer();
-        yield* Effect.callback<void, Error>((resume) => {
-          foreign.once("error", (cause) => resume(Effect.fail(cause)));
-          foreign.listen(first.port, "127.0.0.1", () => resume(Effect.void));
-        });
+        let firstCandidate: number | undefined;
+        const bind = (host: string, port: number) =>
+          Effect.gen(function* () {
+            if (firstCandidate === undefined) {
+              firstCandidate = port;
+              yield* Effect.callback<void>((resume) => {
+                foreign.once("error", (cause) => resume(Effect.die(cause)));
+                foreign.listen(port, "127.0.0.1", () => resume(Effect.void));
+              });
+            }
+            return yield* probed(host, port);
+          });
         yield* Effect.addFinalizer(() =>
           Effect.callback<void>((resume) => {
             foreign.close(() => resume(Effect.void));
           }),
         );
 
-        const second = yield* ports.acquire(request, bind);
-        expect(second.port).not.toBe(first.port);
+        const acquired = yield* ports.acquire(request, bind);
+        expect(firstCandidate).toBeDefined();
+        expect(acquired.port).not.toBe(firstCandidate);
       }),
     ).pipe(
       Effect.provide(
@@ -441,4 +444,30 @@ it.live("reserveNativePort excludes a port a previous attempt lost from the next
       expect(second.port).not.toBe(first.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "opening the port registry keeps the traverse bit a stepped-down database needs on its directory",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const openRegistry = Layer.build(
+          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+        );
+        const directory = path.join(userInfo().homedir, ".supabase");
+        yield* openRegistry;
+        // The registry directory is an ancestor of native data, so a root-run Postgres that
+        // stepped down to another user traverses it through o+x granted by the runtime.
+        const original = (yield* fs.stat(directory)).mode & 0o7777;
+        yield* Effect.addFinalizer(() => fs.chmod(directory, original).pipe(Effect.ignore));
+        yield* fs.chmod(directory, 0o701);
+
+        yield* openRegistry;
+
+        expect(yield* fs.exists(path.join(directory, "ports.sqlite"))).toBe(true);
+        expect((yield* fs.stat(directory)).mode & 0o777).toBe(0o701);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
 );

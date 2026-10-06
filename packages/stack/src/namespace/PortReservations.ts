@@ -4,6 +4,7 @@ import { NodeServices } from "@effect/platform-node";
 import { Context, Effect, FileSystem, Layer, Path, Predicate, Scope, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { namespaceError, type NamespaceError } from "./Capabilities.ts";
+import { restrictDirectoryToOwner } from "../runtime/postgres-user.ts";
 import { errcode, openDatabase } from "./drivers/Sqlite.ts";
 import { lstatPath } from "./drivers/FileSystem.ts";
 
@@ -99,7 +100,8 @@ const connectionFor = (file: string): Effect.Effect<DatabaseSync, NamespaceError
 /**
  * Confirms `directory` (created 0700 if missing) is a real directory this uid owns, with the
  * no-follow {@link lstatPath} so a symlink planted ahead of us is refused rather than traversed.
- * Validates before changing any mode, so a symlink is never followed by `chmod` either.
+ * Validates before changing any mode, so a symlink is never followed by `chmod` either. The
+ * directory is an ancestor of native data, so an existing traverse-only grant is kept.
  */
 const securePrivateDirectory = Effect.fn("PortReservations.securePrivateDirectory")(function* (
   fs: FileSystem.FileSystem,
@@ -119,7 +121,9 @@ const securePrivateDirectory = Effect.fn("PortReservations.securePrivateDirector
       "root",
       `${directory} belongs to uid ${String(info.uid)}, not the current user`,
     );
-  yield* fs.chmod(directory, 0o700).pipe(Effect.mapError((cause) => namespaceError("root", cause)));
+  yield* restrictDirectoryToOwner(fs, directory).pipe(
+    Effect.mapError((cause) => namespaceError("root", cause)),
+  );
 });
 
 /** `getent passwd <uid>` prints one `name:passwd:uid:gid:gecos:dir:shell` line; field 6 is home. */
