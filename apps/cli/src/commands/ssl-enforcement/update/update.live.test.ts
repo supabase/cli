@@ -4,6 +4,7 @@ import { expect } from "vitest";
 import {
   experimentalProjectLiveFlags,
   type LiveFixtures,
+  queryLiveDb,
   requireLiveSuccess,
   test,
   throwWithCleanup,
@@ -15,10 +16,11 @@ type LiveRun = Awaited<ReturnType<LiveFixtures["cli"]>>;
 // Bound the polled gets and the restore so one hung subprocess cannot exhaust
 // the live testTimeout and leave the shared project with a flipped posture.
 const POLL_ATTEMPT_EXIT_TIMEOUT_MS = 20_000;
+const DB_PROBE_TIMEOUT_MS = 10_000;
 const RESTORE_EXIT_TIMEOUT_MS = 60_000;
 const PROOF_INTERVAL_MS = 2_000;
 const PROOF_TIMEOUT_MS = 60_000;
-// Fits the worst case (bounded capture/toggle + two proofs + restore) with headroom.
+// Fits the worst case (bounded capture/toggle + proofs and reboot waits + restore) with headroom.
 const LIVE_TIMEOUT_MS = 600_000;
 
 const SslEnforcementPosture = Schema.Struct({
@@ -108,6 +110,49 @@ function expectApplied(
   );
 }
 
+function postmasterStart(dbUrl: string, label: string) {
+  return Effect.tryPromise({
+    try: () =>
+      queryLiveDb<{ started: string }>(dbUrl, "select pg_postmaster_start_time()::text as started"),
+    catch: (error) =>
+      new SslEnforcementLiveError({
+        message: `${label}: ${error instanceof Error ? error.message : String(error)}`,
+        cause: error,
+      }),
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: DB_PROBE_TIMEOUT_MS,
+      orElse: () =>
+        Effect.fail(
+          new SslEnforcementLiveError({
+            message: `${label}: no answer within ${DB_PROBE_TIMEOUT_MS}ms`,
+          }),
+        ),
+    }),
+    Effect.flatMap(([row]) =>
+      row === undefined
+        ? Effect.fail(
+            new SslEnforcementLiveError({ message: `${label}: no postmaster start time` }),
+          )
+        : Effect.succeed(row.started),
+    ),
+  );
+}
+
+// Each posture change reboots the database, possibly after get already reports it applied.
+function awaitReboot(dbUrl: string, previous: string, label: string) {
+  return postmasterStart(dbUrl, label).pipe(
+    Effect.filterOrFail(
+      (started) => started !== previous,
+      () =>
+        new SslEnforcementLiveError({
+          message: `${label}: the postmaster started at ${previous} is still running`,
+        }),
+    ),
+    Effect.retry(proofSchedule),
+  );
+}
+
 // Not wired to the test `signal`: an interrupt SIGKILLs an in-flight restore
 // mid-request (the run's scope release kills the process group), so letting the
 // bounded restore run out is strictly safer.
@@ -125,6 +170,10 @@ test(
           RESTORE_EXIT_TIMEOUT_MS,
         );
         const posture = captured.currentConfig.database;
+        const initialStart = yield* postmasterStart(
+          project.dbUrl,
+          "postmaster start capture for ssl-enforcement update",
+        );
 
         const toggle = Effect.gen(function* () {
           const updated = yield* cliEffect(
@@ -146,7 +195,13 @@ test(
             !posture,
             "ssl-enforcement get proof for ssl-enforcement update",
           );
+          return yield* awaitReboot(
+            project.dbUrl,
+            initialStart,
+            "database reboot after ssl-enforcement update",
+          );
         });
+        const toggleExit = yield* Effect.exit(toggle);
 
         const restore = Effect.gen(function* () {
           const restored = yield* cliEffect(
@@ -160,10 +215,16 @@ test(
             posture,
             "ssl-enforcement get proof of the restored posture for ssl-enforcement update",
           );
+          if (Exit.isSuccess(toggleExit)) {
+            yield* awaitReboot(
+              project.dbUrl,
+              toggleExit.value,
+              "database reboot after the ssl-enforcement update restore",
+            );
+          }
         });
 
         // The restore runs whatever the toggle did; neither failure hides the other.
-        const toggleExit = yield* Effect.exit(toggle);
         const restoreExit = yield* Effect.exit(restore);
         return {
           toggleError: Exit.isFailure(toggleExit) ? Cause.squash(toggleExit.cause) : undefined,
