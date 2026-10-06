@@ -524,7 +524,7 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("keeps every owner run's gateway requests with --since start", () =>
+  it.live("keeps only the current owner run's gateway requests with --since start", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
         instances: [{ ...mail("mail-a"), launchId: 2 }],
@@ -538,19 +538,15 @@ describe("stack logs", () => {
         line(t0 + 11, "stdout", "mail new", 2),
       ]);
       yield* f.writeSegment("gateway", "gateway", [
-        launch(t0),
-        line(t0 + 2, "stdout", "first run request"),
-        launch(t0 + 10),
-        line(t0 + 12, "stdout", "second run request"),
+        launch(t0, 1),
+        line(t0 + 2, "stdout", "first run request", 1),
+        launch(t0 + 10, 2),
+        line(t0 + 12, "stdout", "second run request", 2),
       ]);
 
       const { output } = yield* f.run({ since: Option.some("start") }, "stream-json");
 
-      expect(eventLines(output.events)).toEqual([
-        "first run request",
-        "mail new",
-        "second run request",
-      ]);
+      expect(eventLines(output.events)).toEqual(["mail new", "second run request"]);
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
