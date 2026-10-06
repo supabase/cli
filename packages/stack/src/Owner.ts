@@ -142,7 +142,7 @@ export interface Interface {
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
     /**
-     * Ends ownership after a confirmed-gone registration: drains, stops every workload, and
+     * Ends ownership after a confirmed-gone registration: stops every workload, and
      * removes what it created through the same registration-independent cleanup path as destroy,
      * without touching the registration or releasing port reservations. A leftover resource past
      * the engine-unreachable backstop is logged, not thrown.
@@ -785,18 +785,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     handlers,
     getStackCredentials,
     namespace: {
-      // Shutdown drain: accept closes on every listener before any service stops, and the
-      // listener scopes only close afterward, through stop/destroy's ordinary teardown below.
-      stop: network.drain.pipe(
-        Effect.andThen(orchestrator.stopNamespace),
+      // Services stop in reverse dependency order with their listeners open, so a dependent's
+      // graceful stop can still reach its prerequisites through the proxy.
+      stop: orchestrator.stopNamespace.pipe(
         Effect.andThen(sweep),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.stopNamespace"),
       ),
       // Instance teardown retains port rows until the registration is gone; the release after
       // that is best-effort because `isGone` reclaims a gone stack's rows lazily.
-      destroy: network.drain.pipe(
-        Effect.andThen(orchestrator.destroyNamespace),
+      destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(sweep),
         Effect.andThen(removeContainerEnvRoot),
         Effect.andThen(options.state.remove(stackId)),
@@ -813,13 +811,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       // Settles admitted definition work under the same gate as stop/destroy first. Never
       // reads or writes the registration (already confirmed gone), so every step below is
       // best-effort and logs rather than fails; the caller must still be able to exit.
-      abandon: network.drain.pipe(
-        Effect.andThen(
-          orchestrator.stopNamespace.pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Abandoned stack could not confirm every workload stopped", cause),
-            ),
-          ),
+      abandon: orchestrator.stopNamespace.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Abandoned stack could not confirm every workload stopped", cause),
         ),
         Effect.andThen(
           orchestrator.instances.pipe(

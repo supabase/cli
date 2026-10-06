@@ -4,11 +4,9 @@ import { expect, it } from "@effect/vitest";
 import {
   Context,
   Crypto,
-  Data,
   Effect,
   Exit,
   FileSystem,
-  Fiber,
   Layer,
   Path,
   Redacted,
@@ -17,7 +15,7 @@ import {
 } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- forces an outstanding connection during a gated drain.
+import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- holds a raw TCP connection open across the owner stop.
 import { fileURLToPath } from "node:url";
 import * as StackNamespace from "./StackNamespace.ts";
 import {
@@ -36,99 +34,9 @@ import { watchEntry } from "../tests/watch-entry.ts";
 const shortRegistrationPollFixture = fileURLToPath(
   new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
 );
-const gatedDrainFixture = fileURLToPath(
-  new URL("../tests/gated-drain-fixture.ts", import.meta.url),
+const gatedDockerStopFixture = fileURLToPath(
+  new URL("../tests/gated-docker-stop-fixture.ts", import.meta.url),
 );
-
-class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
-
-const hostTestError = (cause: unknown) =>
-  new HostTestError({ message: cause instanceof Error ? cause.message : String(cause) });
-
-const isHttpRefused = (port: number) =>
-  Effect.callback<boolean, never>((resume) => {
-    let socket: Net.Socket;
-    try {
-      socket = Net.connect(port, "127.0.0.1");
-    } catch {
-      resume(Effect.succeed(true));
-      return Effect.void;
-    }
-    let response = "";
-    const onConnect = () =>
-      socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
-    const onData = (bytes: Buffer) => (response += bytes.toString());
-    const settle = () => resume(Effect.succeed(response.length === 0));
-    socket.once("connect", onConnect);
-    socket.on("data", onData);
-    socket.once("close", settle);
-    socket.once("error", settle);
-    return Effect.sync(() => {
-      socket.off("connect", onConnect);
-      socket.off("data", onData);
-      socket.off("close", settle);
-      socket.off("error", settle);
-      socket.destroy();
-    });
-  });
-
-/**
- * Opens a real TCP connection to the mail service's send endpoint and writes only the first half
- * of the request body, so the request stays genuinely in flight until `complete` sends the rest.
- */
-const openPartialMailSend = (port: number, subject: string) =>
-  Effect.gen(function* () {
-    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- raw wire payload split mid-body to hold the request open, not a domain model
-    const payload = JSON.stringify({
-      From: { Email: "sender@example.com" },
-      To: [{ Email: "recipient@example.com" }],
-      Subject: subject,
-      Text: "drain test",
-    });
-    const splitAt = Math.ceil(payload.length / 2);
-    const socket = yield* Effect.acquireRelease(
-      Effect.callback<Net.Socket, HostTestError>((resume) => {
-        let socket: Net.Socket;
-        try {
-          socket = Net.connect(port, "127.0.0.1");
-        } catch (cause) {
-          resume(Effect.fail(hostTestError(cause)));
-          return Effect.void;
-        }
-        const onConnect = () =>
-          socket.write(
-            `POST /api/v1/send HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${payload.length}\r\nConnection: close\r\n\r\n${payload.slice(0, splitAt)}`,
-            () => resume(Effect.succeed(socket)),
-          );
-        const onError = (cause: Error) => resume(Effect.fail(hostTestError(cause)));
-        socket.once("connect", onConnect);
-        socket.once("error", onError);
-        return Effect.sync(() => {
-          socket.off("connect", onConnect);
-          socket.off("error", onError);
-        });
-      }),
-      (socket) => Effect.sync(() => socket.destroy()),
-    );
-    const response = yield* Effect.callback<string, HostTestError>((resume) => {
-      let buffer = "";
-      const onData = (bytes: Buffer) => (buffer += bytes.toString());
-      const onEnd = () => resume(Effect.succeed(buffer));
-      const onError = (cause: Error) => resume(Effect.fail(hostTestError(cause)));
-      socket.on("data", onData);
-      socket.once("end", onEnd);
-      socket.once("error", onError);
-      return Effect.sync(() => {
-        socket.off("data", onData);
-        socket.off("end", onEnd);
-        socket.off("error", onError);
-      });
-    }).pipe(Effect.forkChild({ startImmediately: true }));
-    return {
-      complete: () => socket.write(payload.slice(splitAt)),
-      response: Fiber.join(response),
-    };
-  });
 
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
@@ -516,19 +424,56 @@ it.live.skipIf(process.platform === "win32")(
   { timeout: 180_000 },
 );
 
+/**
+ * Installs a `docker` shim the owner finds first on its PATH: the first `docker stop` announces
+ * itself by creating `waiting` in `gateDir` and blocks until the test writes the `release` FIFO,
+ * then every command runs the real docker.
+ */
+const holdDockerStops = (gateDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* fs.makeDirectory(`${gateDir}/bin`, { recursive: true });
+    yield* spawner.spawn(ChildProcess.make("mkfifo", [`${gateDir}/release`])).pipe(
+      Effect.flatMap((child) => child.exitCode),
+      Effect.scoped,
+    );
+    yield* fs.writeFileString(
+      `${gateDir}/bin/docker`,
+      [
+        "#!/bin/sh",
+        `gate='${gateDir}'`,
+        'if [ ! -e "$gate/passed" ]; then',
+        '  for arg in "$@"; do',
+        '    if [ "$arg" = stop ]; then',
+        '      : > "$gate/waiting"',
+        '      read -r _ < "$gate/release"',
+        '      : > "$gate/passed"',
+        "      break",
+        "    fi",
+        "  done",
+        "fi",
+        'PATH="${PATH#"$gate/bin:"}"',
+        'exec docker "$@"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+  });
+
 type StopTrigger = "signal" | "http";
 
 /**
  * Starts a data-preserving stop through `trigger` without waiting for it to finish: a
  * signal-driven stop runs in the owner process on its own, while an HTTP-driven stop is forked
- * so the gated drain it blocks on never blocks the caller.
+ * so the held container stop it blocks on never blocks the caller.
  */
 const triggerStop = (trigger: StopTrigger, access: HostAccess) =>
   trigger === "signal"
     ? Effect.sync(() => process.kill(access.endpoint.pid, "SIGTERM"))
     : Effect.forkScoped(shutdownOwner(access, false).pipe(Effect.ignore));
 
-const abandonsWhileStopDrains = (trigger: StopTrigger) =>
+const abandonsWhileStopRuns = (trigger: StopTrigger) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -542,7 +487,7 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
       const stateRoot = path.dirname(path.dirname(dataRoot));
       const cacheRoot = `${base}/cache`;
       const gateDir = `${base}/gate`;
-      yield* fs.makeDirectory(gateDir, { recursive: true });
+      yield* holdDockerStops(gateDir);
       const state = yield* stateFor(stateRoot);
       yield* state.save({
         id: stackId,
@@ -561,7 +506,7 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
         stateRoot,
         cacheRoot,
         stackId,
-        entrypoint: gatedDrainFixture,
+        entrypoint: gatedDockerStopFixture,
         entrypointArgs: [gateDir],
       });
       const client = yield* ownerClient(access);
@@ -580,36 +525,20 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
       const status = yield* client.status({ id: database.id });
       if (!status.endpoints.some((endpoint) => endpoint.name === "sql"))
         return yield* Effect.die("Missing database sql endpoint");
-      const mail = yield* client.createService({
-        service: "mail",
-        config: {},
-        endpoints: { http: { port: "auto" } },
-      });
-      yield* client.startService({ id: mail.id });
-      yield* client.readyService({ id: mail.id });
-      const mailPort = (yield* client.status({ id: mail.id })).endpoints.find(
-        (endpoint) => endpoint.name === "http",
-      )?.port;
-      if (mailPort === undefined) return yield* Effect.die("Missing mail http endpoint");
       const containerEnvRoot = `${dataRoot}/.container-env`;
       expect(
         yield* fs.exists(containerEnvRoot),
         "the stack's shared container-env scratch directory exists",
       ).toBe(true);
 
-      // Keeps an HTTP request in flight for the whole gated window, so drain can only resolve
-      // through the deadline this test controls, never through the work settling on its own.
-      const held = yield* openPartialMailSend(mailPort, "abandon-gated-inflight");
-
-      // Subscribes to the drain-deadline wait's own entry marker before triggering the stop, so
-      // the registration deletion below never races the gate itself.
+      // Subscribes to the held `docker stop`'s own marker before triggering the stop, so the
+      // registration deletion below never races the gate itself.
       const waiting = yield* watchEntry(gateDir, "waiting", true);
       yield* triggerStop(trigger, access);
       yield* waiting.pipe(Effect.timeout("30 seconds"));
 
       yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
       yield* fs.writeFileString(`${gateDir}/release`, "");
-      held.complete();
 
       yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
         Effect.retry({ while: hasReason("owner-exit-pending") }),
@@ -629,14 +558,14 @@ const abandonsWhileStopDrains = (trigger: StopTrigger) =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)));
 
 it.live.skipIf(process.platform === "win32")(
-  "abandons a stack whose registration disappears while a signal-driven stop is still draining",
-  () => abandonsWhileStopDrains("signal"),
+  "abandons a stack whose registration disappears while a signal-driven stop is still running",
+  () => abandonsWhileStopRuns("signal"),
   { timeout: 180_000 },
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "abandons a stack whose registration disappears while an HTTP-driven stop is still draining",
-  () => abandonsWhileStopDrains("http"),
+  "abandons a stack whose registration disappears while an HTTP-driven stop is still running",
+  () => abandonsWhileStopRuns("http"),
   { timeout: 180_000 },
 );
 
@@ -836,29 +765,27 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "drains an in-flight mail request through a real docker owner shutdown, and refuses a new connection once draining begins",
+  "closes a pinned postgres connection and exits a real owner promptly",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-drain-docker-" });
-        const stackId = `drain-docker-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-drain-docker-data-", stackId).pipe(
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-pinned-postgres-" });
+        const stackId = `pinned-postgres-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-pinned-postgres-data-", stackId).pipe(
           Effect.flatMap(fs.realPath),
         );
         const stateRoot = path.dirname(path.dirname(dataRoot));
         const cacheRoot = `${base}/cache`;
-        const gateDir = `${base}/gate`;
-        yield* fs.makeDirectory(gateDir, { recursive: true });
         const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
           runtime: "docker",
           identity: {
             projectRoot: `${base}/project`,
-            branchContext: "drain-docker-test",
+            branchContext: "pinned-postgres-test",
             stackName: stackId,
           },
           instances: [],
@@ -870,94 +797,15 @@ it.live.skipIf(process.platform === "win32")(
           stateRoot,
           cacheRoot,
           stackId,
-          entrypoint: gatedDrainFixture,
-          entrypointArgs: [gateDir],
         });
         const client = yield* ownerClient(access);
-        const mail = yield* client.createService({
-          service: "mail",
-          config: {},
-          endpoints: { http: { port: "auto" } },
-        });
-        yield* client.startService({ id: mail.id });
-        yield* client.readyService({ id: mail.id });
-        const status = yield* client.status({ id: mail.id });
-        const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
-        if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
-
-        const inFlight = yield* openPartialMailSend(port, "drain-docker-inflight");
-
-        const waiting = yield* watchEntry(gateDir, "waiting", true);
-        process.kill(access.endpoint.pid, "SIGTERM");
-        yield* waiting.pipe(Effect.timeout("30 seconds"));
-
-        expect(yield* isHttpRefused(port), "a new connection is refused once draining begins").toBe(
-          true,
-        );
-
-        inFlight.complete();
-        const response = yield* inFlight.response.pipe(Effect.timeout("10 seconds"));
-        expect(
-          response.startsWith("HTTP/1.1 200"),
-          "the in-flight request still completes during drain",
-        ).toBe(true);
-
-        yield* fs.writeFileString(`${gateDir}/release`, "");
-        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
-          Effect.retry({ while: hasReason("owner-exit-pending") }),
-          Effect.timeout("30 seconds"),
-        );
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 180_000 },
-);
-
-it.live.skipIf(process.platform === "win32")(
-  "closes a pinned postgres connection and exits a real owner without waiting for the drain deadline",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-drain-postgres-" });
-        const stackId = `drain-postgres-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-drain-postgres-data-", stackId).pipe(
-          Effect.flatMap(fs.realPath),
-        );
-        const stateRoot = path.dirname(path.dirname(dataRoot));
-        const cacheRoot = `${base}/cache`;
-        const gateDir = `${base}/gate`;
-        yield* fs.makeDirectory(gateDir, { recursive: true });
-        const state = yield* stateFor(stateRoot);
-        yield* state.save({
-          id: stackId,
-          runtime: "docker",
-          identity: {
-            projectRoot: `${base}/project`,
-            branchContext: "drain-postgres-test",
-            stackName: stackId,
-          },
-          instances: [],
-          lifetime: "detached",
-          composition: { members: [], dependencies: [] },
-        });
-        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        const access = yield* launchHost(state, {
-          stateRoot,
-          cacheRoot,
-          stackId,
-          entrypoint: gatedDrainFixture,
-          entrypointArgs: [gateDir],
-        });
-        const client = yield* ownerClient(access);
-        const password = Redacted.make("drain-postgres-password");
+        const password = Redacted.make("pinned-postgres-password");
         const database = yield* client.createService({
           service: "database",
           config: {
             version: "17",
             databasePassword: password,
-            jwtSecret: Redacted.make("drain-postgres-jwt-secret-at-least-thirty-two-characters"),
+            jwtSecret: Redacted.make("pinned-postgres-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -983,8 +831,8 @@ it.live.skipIf(process.platform === "win32")(
         const sql = Context.get(services, PgClient.PgClient);
         yield* sql.unsafe("SELECT 1");
 
-        // The gate is never released: only a drain that ignores the pinned TCP connection lets
-        // the owner finish, and the connection closes once the services stop.
+        // The owner stops services without waiting on clients, so the pinned connection closes
+        // with the database container.
         yield* Effect.callback<void, never>((resume) => {
           const probe = Net.createConnection({ host: "127.0.0.1", port });
           probe.once("connect", () => {

@@ -31,6 +31,7 @@ import * as StackNamespace from "./StackNamespace.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { watchEntry } from "../tests/watch-entry.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -213,7 +214,7 @@ it.live(
 );
 
 it.live(
-  "stops a running database within the drain deadline while a client holds an idle TCP connection",
+  "stops a running database promptly while a client holds an idle TCP connection",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -252,7 +253,7 @@ it.live(
           return Effect.sync(() => connection.destroy());
         });
 
-        // The drain deadline is 10 seconds; an idle client must not make stop wait for it.
+        // An idle client must not hold the stop open.
         yield* stack.stop.pipe(Effect.timeout("5 seconds"));
 
         client.destroy();
@@ -1149,4 +1150,114 @@ it.live("plans a project's own URL for an input whose supplying member is absent
       destroyTestStack(stack),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live(
+  "lets a dependent finish its final flush through the stack proxy while the stack stops",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-stop-order-" });
+        const options = {
+          projectRoot: root,
+          stateRoot: `${root}/state`,
+          cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+          runtime: "native",
+        } satisfies Parameters<typeof create>[0];
+        const secret = "stop-order-secret-with-at-least-thirty-two-characters";
+        const seenDirectory = `${root}/seen`;
+        yield* fs.makeDirectory(seenDirectory, { recursive: true });
+        // The analytics batch never fills or times out, so Vector's shutdown flush is the only
+        // request it sends; the file sink shows when Vector has an event to flush.
+        const vectorConfigPath = `${root}/vector.yaml`;
+        yield* fs.writeFileString(
+          vectorConfigPath,
+          [
+            "sources:",
+            "  demo:",
+            "    type: demo_logs",
+            "    format: json",
+            "    interval: 0.2",
+            "transforms:",
+            "  marked:",
+            "    type: remap",
+            "    inputs: [demo]",
+            "    source: '.event_message = \"stop-order\"'",
+            "sinks:",
+            "  seen:",
+            "    type: file",
+            "    inputs: [marked]",
+            `    path: "${seenDirectory}/events.log"`,
+            "    encoding:",
+            "      codec: json",
+            "  analytics:",
+            "    type: http",
+            "    inputs: [marked]",
+            '    uri: "${LOGFLARE_URL}/api/logs?source_name=postgres.logs"',
+            "    method: post",
+            "    encoding:",
+            "      codec: json",
+            "    request:",
+            "      headers:",
+            '        x-api-key: "${LOGFLARE_PRIVATE_ACCESS_TOKEN}"',
+            "    batch:",
+            "      max_events: 100000",
+            "      timeout_secs: 3600",
+            "    healthcheck: false",
+            "",
+          ].join("\n"),
+        );
+        const stack = yield* create(options);
+        yield* Effect.addFinalizer(() => destroyTestStack(stack));
+        const services = yield* stack.composition.supabase(
+          [
+            {
+              service: "database",
+              config: {
+                version: "17",
+                databasePassword: Redacted.make("stop-order-password"),
+                jwtSecret: Redacted.make(secret),
+                jwtExpiry: 3600,
+              },
+              endpoints: { sql: { port: "auto" } },
+            },
+            {
+              service: "analytics",
+              config: { backend: "postgres", apiKey: secret },
+              endpoints: { http: { port: "auto" } },
+            },
+            {
+              service: "vector",
+              config: { apiKey: secret, configPath: vectorConfigPath },
+              endpoints: { http: { port: "auto" } },
+            },
+          ],
+          { eager: true, keys: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
+        );
+        const vector = services.find((instance) => instance.service === "vector");
+        if (vector === undefined) return yield* Effect.die("vector service missing");
+
+        const shutDownGracefully = yield* vector.logs.pipe(
+          Stream.map(({ bytes }) => bytes),
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.filter((line) => line.includes("All components shut down gracefully")),
+          Stream.runHead,
+          // The log stream fails with the owner's exit, which a forced Vector kill delays.
+          Effect.orElseSucceed(() => Option.none<string>()),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const eventRead = yield* watchEntry(seenDirectory, "events.log", true);
+        yield* stack.composition.start;
+        yield* eventRead.pipe(Effect.timeout("60 seconds"));
+        yield* stack.stop.pipe(Effect.timeout("60 seconds"));
+
+        const shutdown = yield* Fiber.join(shutDownGracefully).pipe(Effect.timeout("10 seconds"));
+        expect(Option.isSome(shutdown), "vector finished its flush instead of being killed").toBe(
+          true,
+        );
+      }),
+    ).pipe(Effect.provide(layer)),
+  { timeout: 300_000 },
 );

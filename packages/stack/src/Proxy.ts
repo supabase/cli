@@ -22,15 +22,11 @@ export interface TcpListener {
   readonly run: <R, E, _>(
     handler: (socket: Net.Socket) => Effect.Effect<_, E, R>,
   ) => Effect.Effect<never, never, R>;
-  /** Stops accepting new connections on the listener; established connections keep flowing. */
-  readonly stopAccepting: Effect.Effect<void>;
 }
 
 /**
- * Binds a dedicated public listener and retains the socket until its scope closes. Built directly
- * on `node:net`, not `NodeSocketServer`, because `NodeSocketServer`'s `run` only exposes a combined
- * accept-and-destroy teardown: this separates closing accept (`stopAccepting`) from destroying
- * established connections, which happens when the scope closes.
+ * Binds a dedicated public listener and retains the socket until its scope closes, which also
+ * destroys every established connection.
  */
 export const bindTcp = (
   host: string,
@@ -41,7 +37,6 @@ export const bindTcp = (
     // Every accepted socket, queued or dispatched, from acceptance until close, so teardown
     // destroys all of them.
     const sockets = new Set<Net.Socket>();
-    let accepting = true;
     // A connection that arrives before `run` installs its handler is queued, the same as
     // `NodeSocketServer`'s own listener, so none are dropped in that gap.
     const pending = new Set<Net.Socket>();
@@ -52,10 +47,6 @@ export const bindTcp = (
       // Attached synchronously, before any dispatch, so a reset while a handler is still cold
       // (queued, or waiting on scoped target acquisition) never surfaces as an unhandled error.
       conn.on("error", () => conn.destroy());
-      if (!accepting) {
-        conn.destroy();
-        return;
-      }
       sockets.add(conn);
       conn.once("close", () => {
         sockets.delete(conn);
@@ -133,9 +124,6 @@ export const bindTcp = (
     return {
       address,
       run,
-      stopAccepting: Effect.sync(() => {
-        accepting = false;
-      }),
     };
   });
 

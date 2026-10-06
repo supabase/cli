@@ -1187,6 +1187,116 @@ describe("wake and idle sleep", () => {
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
+
+  describe("while the owner refuses new work", () => {
+    const makeRefusingOrchestrator = Effect.gen(function* () {
+      const draining = yield* Ref.make(false);
+      const orchestrator = yield* Orchestrator.make<RegisteredInstance>({
+        admit: () =>
+          Ref.get(draining).pipe(
+            Effect.flatMap((refusing) =>
+              refusing ? Effect.fail(failure("Owner is draining")) : Effect.void,
+            ),
+          ),
+      });
+      return { orchestrator, draining };
+    });
+
+    it.live(
+      "refuses traffic that would wake a stopped lazy service, then wakes once admitted",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { orchestrator, draining } = yield* makeRefusingOrchestrator;
+            const api = yield* makeInstance(orchestrator, "api");
+            yield* orchestrator.configure({
+              members: [{ id: "api", activation: "lazy" }],
+              dependencies: [],
+            });
+            yield* orchestrator.startComposition;
+
+            yield* Ref.set(draining, true);
+            const refused = yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+            expect(refused.message).toBe("Owner is draining");
+            expect(yield* Ref.get(api.starts)).toHaveLength(0);
+            expect((yield* api.status).lifecycle).toBe("stopped");
+
+            yield* Ref.set(draining, false);
+            yield* Effect.scoped(orchestrator.acquire("api"));
+            expect(yield* Ref.get(api.starts)).toHaveLength(1);
+            yield* orchestrator.stopNamespace;
+          }),
+        ).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.live(
+      "refuses traffic that arrives while an idle stop is in progress, without relaunching",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { orchestrator, draining } = yield* makeRefusingOrchestrator;
+            const stopping = yield* Deferred.make<void>();
+            const finishStop = yield* Deferred.make<void>();
+            const api = yield* makeInstance(orchestrator, "api", {
+              stop: Deferred.succeed(stopping, undefined).pipe(
+                Effect.andThen(Deferred.await(finishStop)),
+              ),
+            });
+            yield* orchestrator.configure({
+              members: [{ id: "api", activation: "lazy", idleMillis: 1000 }],
+              dependencies: [],
+            });
+            yield* orchestrator.startComposition;
+            yield* Effect.scoped(orchestrator.acquire("api"));
+            yield* TestClock.adjust("1 second");
+            yield* Deferred.await(stopping);
+
+            yield* Ref.set(draining, true);
+            const refused = yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.flip);
+            expect(refused.message).toBe("Owner is draining");
+
+            yield* Deferred.succeed(finishStop, undefined);
+            yield* orchestrator.stopNamespace;
+            expect(yield* Ref.get(api.starts)).toHaveLength(1);
+            expect((yield* api.status).lifecycle).toBe("stopped");
+          }),
+        ).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.live("still admits traffic to a starting or running service", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { orchestrator, draining } = yield* makeRefusingOrchestrator;
+          const launching = yield* Deferred.make<void>();
+          const launch = yield* Deferred.make<void>();
+          const api = yield* makeInstance(orchestrator, "api", {
+            launch: Deferred.succeed(launching, undefined).pipe(
+              Effect.andThen(Deferred.await(launch)),
+            ),
+          });
+          yield* orchestrator.configure({
+            members: [{ id: "api", activation: "lazy" }],
+            dependencies: [],
+          });
+          yield* orchestrator.startComposition;
+          const waking = yield* Effect.scoped(orchestrator.acquire("api")).pipe(Effect.forkChild);
+          yield* Deferred.await(launching);
+
+          yield* Ref.set(draining, true);
+          const joining = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(launch, undefined);
+          yield* Fiber.join(waking);
+          yield* Fiber.join(joining);
+          yield* Effect.scoped(orchestrator.acquire("api"));
+          expect(yield* Ref.get(api.starts)).toHaveLength(1);
+          expect((yield* api.status).lifecycle).toBe("running");
+          yield* orchestrator.stopNamespace;
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
+    );
+  });
 });
 
 describe("idle races through a real listener", () => {

@@ -150,8 +150,11 @@ export interface Status<Config = unknown> extends ServiceObservation<Config> {
   readonly destroyPending: boolean;
 }
 
-/** An explicit operation the owner may refuse, for example while it drains. */
-export type AdmittedOperation = "start" | "restart" | "storage";
+/**
+ * An operation the owner may refuse, for example while it drains. `wake` is traffic that would
+ * relaunch a service at rest.
+ */
+export type AdmittedOperation = "start" | "restart" | "storage" | "wake";
 
 /** The lifecycle authority for one stack's registered instances and their composition. */
 export interface Interface<Entry extends RegisteredInstance = RegisteredInstance> {
@@ -396,7 +399,7 @@ const cleanupError = (id: string, cause: unknown) =>
 /** Builds an orchestrator whose lifecycle actor, timers and executions live in the current scope. */
 export const make = Effect.fn("Orchestrator.make")(function* <Entry extends RegisteredInstance>(
   options: {
-    /** Refuses an explicit start, restart or storage operation, checked under the lifecycle gate. */
+    /** Refuses a start, restart, storage operation or traffic wake, checked under the lifecycle gate. */
     readonly admit?: (operation: AdmittedOperation) => Effect.Effect<void, ServiceError>;
   } = {},
 ): Effect.fn.Return<Interface<Entry>, never, Scope.Scope> {
@@ -639,7 +642,10 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     /** Explicit requests dispatched atomically before the waiters; a rejection fails the call. */
     readonly requests?: ReadonlyArray<Extract<LifecycleEvent, { readonly id: string }>>;
     readonly waits: ReadonlyArray<Wait>;
-    /** Traffic waits carry a lease and the wake budget; explicit waits carry neither. */
+    /**
+     * Traffic waits carry a lease and the wake budget; explicit waits carry neither. Traffic that
+     * finds its service neither starting nor running is admitted as a `wake`.
+     */
     readonly traffic: boolean;
     /** Checks the owner's admission guard under the same gate step as the requests. */
     readonly operation?: AdmittedOperation;
@@ -706,8 +712,18 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
     });
     // Set inside the gate, so a failure knows whether there is anything to withdraw.
     const reached = yield* Ref.make(false);
+    const admitUnderGate = Effect.gen(function* () {
+      if (admission.operation !== undefined) return yield* admit(admission.operation);
+      if (!traffic) return;
+      const state = yield* SubscriptionRef.get(lifecycle);
+      const wakes = entries.some(({ id }) => {
+        const phase = state.services.get(id)?.phase._tag;
+        return phase !== "Starting" && phase !== "Running";
+      });
+      if (wakes) yield* admit("wake");
+    });
     const guarded = withGate(
-      (admission.operation === undefined ? Effect.void : admit(admission.operation)).pipe(
+      admitUnderGate.pipe(
         Effect.andThen(Ref.set(reached, true)),
         Effect.andThen(
           applyLocked([

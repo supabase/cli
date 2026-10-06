@@ -495,7 +495,7 @@ is deleted, moved or unmounted). Every owner polls its own `<stateRoot>/<id>/sta
 interval (30 seconds by default) and treats only a confirmed ENOENT as gone; any other read error,
 such as a permission failure or a transient I/O error on an unmounted root, keeps the owner
 running and logs a warning instead. On a confirmed-gone registration the owner treats its
-ownership as ended: it drains (connection drain, above), stops every workload and removes what it
+ownership as ended: it stops every workload (ordered stop, above) and removes what it
 created through the same registration-independent `cleanupResources` path destroy uses, retrying
 transient cleanup failures and giving up only once an engine is confirmed unreachable (the leftover
 container ids are logged, not retried forever), releases its port reservations, and exits. It never
@@ -512,32 +512,31 @@ Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same 
 
 During Draining:
 
-1. Close admission to new mutations and proxy wake requests.
+1. Close admission to new mutations and to proxy traffic that would wake a service at rest.
+   Traffic to starting or running services stays admitted.
 2. Reject queued work that has not begun.
-3. Drain every stack listener, public and dependency alike (connection drain, below).
-4. Let executing instance operations settle.
-5. Cancel and settle attached commands and stop owned services through their existing operations.
-6. For destruction, remove proven-owned data and metadata after shutdown.
-7. Send the outcome, close the control endpoint and release ownership.
+3. Let executing instance operations settle.
+4. Cancel and settle attached commands and stop owned services in reverse dependency order,
+   with every listener still open (ordered stop, below).
+5. For destruction, remove proven-owned data and metadata after shutdown.
+6. Send the outcome, close the control endpoint and release ownership.
 
-**Connection drain.** Stop and destroy share one drain step, run before any service stops: accept
-closes on every stack listener, public and internal dependency traffic alike (they are the same
-listeners), so no new connection is admitted, and a request or upgrade arriving on an established HTTP
-connection is refused (503 with `Connection: close`, or a destroyed socket). Drain then waits, for at most 10 seconds, only for
-observable work: HTTP requests in flight and upgraded sockets such as WebSockets. TCP connections
-never count, so an idle pooled connection (PostgREST's database pool, for example) cannot delay
-shutdown. Services then stop, and listener scopes close afterward through the ordinary
-stop/destroy teardown, which cuts whatever remains. Accepted, documented tradeoff: during the
-drain window, an admitted request that needs a new dependency connection can fail; the deadline
-bounds that window.
+**Ordered stop.** Stop, destroy and abandonment close no listener up front. Public and internal
+dependency traffic share the same listeners, so a dependent's graceful stop (Vector flushing its
+last batch to Analytics, for example) still reaches its prerequisite through the stack proxy while
+it is running. Services stop in reverse dependency order, and each listener closes once its own
+service has stopped, through the ordinary scope teardown. Traffic that would wake a service at rest
+is refused for the whole shutdown. Accepted, documented tradeoff: the proxy offers no completion
+window, so an in-flight request survives only as far as its service's own graceful stop carries it,
+and a slow client can lose a response.
 
 **Draining is one-way.** The host holds the single serving/draining fact; the owner reads it for
-admission and the network keeps only its listener accept gate. Once a stop or destroy begins, the
+admission. Once a stop or destroy begins, the
 owner never serves again. A failed stop or destroy reports its error, the stack stays registered
 with uncertain state, and the owner exits. The next stop or destroy finds no owner and reclaims
 the stack under its lease.
 
-**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the host exits without resuming service; the stack is not reported stopped and remains registered for the next stop or destroy to reclaim. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and port reservations. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close with their services, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the host exits without resuming service; the stack is not reported stopped and remains registered for the next stop or destroy to reclaim. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and port reservations. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 
 The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes the shutdown request, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 

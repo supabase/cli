@@ -248,51 +248,6 @@ it.live(
     ),
 );
 
-it.live(
-  "refuses a new connection after stopAccepting while an established connection keeps relaying data through the scoped target",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const backend = yield* echoBackend();
-        const listener = yield* bindTcp("127.0.0.1", 0);
-        if (!Predicate.isTagged(listener.address, "TcpAddress"))
-          return yield* Effect.die("Expected TCP listener");
-        const target = Effect.succeed({ host: backend.host, port: backend.port });
-        yield* serveTcp(listener, target, "echo").pipe(Effect.forkScoped);
-        const port = listener.address.port;
-
-        const client = yield* connectAndWrite(port, "ping");
-        expect(yield* readOnceTcp(client)).toBe("ping");
-
-        yield* listener.stopAccepting;
-
-        const refused = yield* Effect.callback<boolean, never>((resume) => {
-          const probe = new Socket();
-          let responded = false;
-          let settled = false;
-          // A refused connection surfaces as a reset, a generic error, or a plain close; all three
-          // are the allowed refusal outcomes here, so long as no response ever arrived.
-          const settle = () => {
-            if (settled) return;
-            settled = true;
-            resume(Effect.succeed(!responded));
-          };
-          probe.once("data", () => {
-            responded = true;
-          });
-          probe.once("error", settle);
-          probe.once("close", settle);
-          probe.connect(port, "127.0.0.1", () => probe.write("probe"));
-          return Effect.sync(() => probe.destroy());
-        }).pipe(Effect.timeout("5 seconds"));
-        expect(refused).toBe(true);
-
-        client.write("pong");
-        expect(yield* readOnceTcp(client)).toBe("pong");
-      }),
-    ),
-);
-
 it.live("tears down a connection that arrives before run installs its handler", () =>
   Effect.gen(function* () {
     const listenerScope = yield* Scope.make();

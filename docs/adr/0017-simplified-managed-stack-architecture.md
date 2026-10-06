@@ -68,7 +68,7 @@ Disabling a capability releases its automatic port assignment; re-enabling it ma
 select a new port.
 
 Stack handles are lightweight identity-scoped clients. Creating or opening one
-does not launch a Supervisor. Successful stop drains ingress, removes every
+does not launch a Supervisor. Successful stop stops services in dependency order, removes every
 ephemeral runtime resource, persists stopped state, delivers its response, then
 closes control and releases ownership. The caller waits for both response and
 lease release. A stopped stack therefore consumes no live process, container,

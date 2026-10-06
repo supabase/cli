@@ -1,4 +1,4 @@
-import { Data, Effect, FiberSet, Ref, Scope, SubscriptionRef } from "effect";
+import { Data, Effect, FiberSet, Ref, Scope } from "effect";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
@@ -45,13 +45,6 @@ export interface HttpProxy {
   readonly host: string;
   readonly port: number;
   readonly setRoutes: (routes: ReadonlyArray<HttpRoute>) => Effect.Effect<void>;
-  /** Stops accepting new connections and closes idle ones; in-flight requests keep flowing. */
-  readonly stopAccepting: Effect.Effect<void>;
-  /**
-   * The count of connections with active work, observable until it reaches 0: a request in
-   * flight or an upgraded socket, never an idle keep-alive connection.
-   */
-  readonly outstandingConnections: SubscriptionRef.SubscriptionRef<number>;
 }
 
 const hopByHop = new Set([
@@ -428,25 +421,8 @@ export const makeHttpProxy = (options: {
       (value) => Effect.sync(() => value.destroy()),
     );
     const runRequest = yield* FiberSet.makeRuntime();
-    const services = yield* Effect.context<never>();
     const sockets = new Set<Socket>();
-    const outstandingConnections = yield* SubscriptionRef.make(0);
-    // `server.close()` also tears down active connections immediately, not just idle ones, so
-    // draining tracks acceptance separately and closes idle sockets explicitly instead.
-    let accepting = true;
-    const closeNowIdle = () => {
-      if (!accepting) server.closeIdleConnections();
-    };
     const server = createServer((request, response) => {
-      if (!accepting) {
-        response.statusCode = 503;
-        response.setHeader("Connection", "close");
-        response.end("Service Unavailable");
-        return;
-      }
-      Effect.runSyncWith(services)(
-        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
-      );
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {
@@ -481,20 +457,10 @@ export const makeHttpProxy = (options: {
               );
             }
           }),
-        ).pipe(
-          Effect.ensuring(
-            SubscriptionRef.update(outstandingConnections, (count) => count - 1).pipe(
-              Effect.andThen(Effect.sync(closeNowIdle)),
-            ),
-          ),
         ),
       );
     });
     server.on("connection", (socket) => {
-      if (!accepting) {
-        socket.destroy();
-        return;
-      }
       sockets.add(socket);
       socket.once("close", () => {
         sockets.delete(socket);
@@ -502,13 +468,6 @@ export const makeHttpProxy = (options: {
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());
-      if (!accepting) {
-        socket.destroy();
-        return;
-      }
-      Effect.runSyncWith(services)(
-        SubscriptionRef.update(outstandingConnections, (count) => count + 1),
-      );
       runRequest(
         Effect.scoped(
           Effect.gen(function* () {
@@ -526,8 +485,6 @@ export const makeHttpProxy = (options: {
                 Effect.catch(() => Effect.sync(() => socket.destroy())),
               );
           }),
-        ).pipe(
-          Effect.ensuring(SubscriptionRef.update(outstandingConnections, (count) => count - 1)),
         ),
       );
     });
@@ -557,10 +514,5 @@ export const makeHttpProxy = (options: {
           routes,
           [...next].sort((a, b) => b.prefix.length - a.prefix.length),
         ),
-      stopAccepting: Effect.sync(() => {
-        accepting = false;
-        server.closeIdleConnections();
-      }),
-      outstandingConnections,
     };
   });
