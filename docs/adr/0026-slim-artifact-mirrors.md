@@ -144,7 +144,8 @@ newer upstream: a Studio year rollover or a postgrest major bump moves that line
 postgres, which has additional pins and engine variants, assigns each release tag to a line by its
 leading version component plus any engine-variant suffix, even when the catalog carries one pin: postgres `17.11.0.002-orioledb` is on line `17-orioledb`, separate
 from stock `17`, and compares within it without the suffix. The first release of a variant line
-whose stock major the catalog carries is an **add** (branch `slim-bump/<svc>-<line>`, title
+whose stock major the catalog carries, in a catalog that already has an additional pin to insert
+after, is an **add** (branch `slim-bump/<svc>-<line>`, title
 `chore(stack): add <svc> <release_version>`) that inserts the line's pin; later releases hotfix or
 upgrade it like any other line. Any other tag on no carried line, or with a version that isn't
 comparable, is warned about and ignored rather than failing the run. Comparison strips a trailing `-sha-<hex>`, so two Studio builds dated

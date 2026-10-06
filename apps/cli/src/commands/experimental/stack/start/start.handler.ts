@@ -2,6 +2,7 @@ import {
   defaultRuntime,
   isOrioledbVersion,
   orioledbConfigVersion,
+  orioledbVersions,
   postgresVersion,
 } from "@supabase/stack/internal/artifacts";
 import {
@@ -271,7 +272,8 @@ const describeSettingChange = (
         key: settingKeyLabel(stackOrioledbVersionSetting, projectEnvValues),
         saved: savedOrioledb,
         requested: requestedOrioledb,
-        editable: true,
+        // A catalog upgrade can retire the saved build, which the config then rejects.
+        editable: savedOrioledb === "unset" || orioledbVersions().includes(savedOrioledb),
       });
     return changes;
   }

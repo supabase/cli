@@ -1541,6 +1541,40 @@ describe("experimental stack start", () => {
       }).pipe(Effect.provide(BunServices.layer)),
     );
 
+  it.live("offers no revert to an OrioleDB build the catalog no longer pins", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-retired-orioledb-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "retired"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = fixture.members.find(({ service }) => service === "database");
+      if (database?.service !== "database") return yield* Effect.die("database missing");
+      const observed = yield* database.status;
+      if (observed.config.service !== "database") return yield* Effect.die("config missing");
+      yield* database.restart({
+        ...observed.config,
+        config: { ...observed.config.config, version: "17.0.0.000-orioledb" },
+      });
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(layers(root, fixture)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining(
+          "[db] orioledb_version: saved 17.0.0.000, requested unset",
+        ),
+        suggestion: expect.stringContaining(
+          "This CLI release starts a different [db] orioledb_version than the saved stack.",
+        ),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live(
     "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
     () =>
