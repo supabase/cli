@@ -8,6 +8,7 @@ import type {
 } from "../../src/command-internal/command-permissions/registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../src/command-internal/command-permissions/global-flags.ts";
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
+import { commandTreeFor } from "./command-flags.ts";
 import { matchOperation } from "./operation-table.ts";
 
 export interface RecordedMethodUrl {
@@ -21,6 +22,8 @@ export interface DriftCheckOptions {
   /** Flags active in this test run (without the leading `--`), e.g. `["linked"]`. */
   readonly activeFlags?: ReadonlyArray<string>;
   readonly requests: ReadonlyArray<RecordedMethodUrl>;
+  /** The flags `command` really accepts (its own, inherited and root globals); when set, every active flag must be among them. */
+  readonly acceptedFlags?: ReadonlySet<string>;
   /** The Management API base URL the requests were recorded against; defaults to `https://api.supabase.com`. */
   readonly apiUrl?: string;
   /**
@@ -54,7 +57,11 @@ function knownFlagNames(
  * need their own building-block test.
  */
 export function assertPermissionDrift(options: AssertPermissionDriftOptions): void {
-  assertDriftAgainst(declaredPermissions(options.command, options.variant), options);
+  assertDriftAgainst(declaredPermissions(options.command, options.variant), {
+    ...options,
+    acceptedFlags:
+      options.acceptedFlags ?? commandTreeFor(options.variant).get(options.command)?.flags,
+  });
 }
 
 /** {@link assertPermissionDrift} against an already-resolved lookup, so each failure branch can be exercised without a real command. */
@@ -79,6 +86,14 @@ export function assertDriftAgainst(
     throw new Error(
       `assertPermissionDrift: "${command}" is declared unmapped (${declared.reason}) — it makes no CLI-side permission claims to assert drift against.`,
     );
+  }
+
+  for (const flag of activeFlags) {
+    if (options.acceptedFlags !== undefined && !options.acceptedFlags.has(flag)) {
+      throw new Error(
+        `assertPermissionDrift: "${command}": activeFlags names "${flag}", but this command does not accept --${flag} — a shared building block may mention it without the command having it.`,
+      );
+    }
   }
 
   const known = knownFlagNames(declared);
