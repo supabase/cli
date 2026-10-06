@@ -5,6 +5,7 @@ import {
   Context,
   Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
   Path,
@@ -13,6 +14,7 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
@@ -601,6 +603,36 @@ describe("database component", { timeout: 180_000 }, () => {
           container,
         ]);
 
+        // A bounded `docker events --until` replay intermittently returns nothing on Docker Desktop,
+        // so subscribe live before stop; `--since` replays anything logged before the stream attaches.
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const events = yield* spawner.spawn(
+          ChildProcess.make(
+            "docker",
+            [
+              "events",
+              "--since",
+              startedAt.output.trim(),
+              "--filter",
+              `container=${container}`,
+              "--filter",
+              "event=kill",
+              "--filter",
+              "event=die",
+              "--format",
+              '{{.Action}} {{index .Actor.Attributes "signal"}}{{index .Actor.Attributes "exitCode"}}',
+            ],
+            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+          ),
+        );
+        const observed = yield* events.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.takeUntil((line) => line.startsWith("die ")),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+
         yield* Effect.scoped(
           Effect.gen(function* () {
             const services = yield* Layer.build(
@@ -620,24 +652,8 @@ describe("database component", { timeout: 180_000 }, () => {
           }),
         );
 
-        const stoppedAt = yield* runDocker(["info", "--format", "{{.SystemTime}}"]);
-        const events = yield* runDocker([
-          "events",
-          "--since",
-          startedAt.output.trim(),
-          "--until",
-          stoppedAt.output.trim(),
-          "--filter",
-          `container=${container}`,
-          "--filter",
-          "event=kill",
-          "--filter",
-          "event=die",
-          "--format",
-          '{{.Action}} {{index .Actor.Attributes "signal"}}{{index .Actor.Attributes "exitCode"}}',
-        ]);
         expect(
-          events.output.trim().split("\n"),
+          yield* Fiber.join(observed),
           "stop sends SIGINT and PostgreSQL exits cleanly",
         ).toEqual(["kill 2", "die 0"]);
         yield* service.destroy;
