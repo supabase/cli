@@ -33,8 +33,9 @@
 /packages/api/src/generated/
 
 # Bot-generated pins and snapshots. Either owner satisfies code-owner review; `supabase-oss`
-# approves only the sync PRs that slim-release-published.yml and cli-go-api-sync.yml open, through
-# its token in the develop-only `auto-approve` environment, so those PRs can be auto-merged.
+# approves only the sync PRs that slim-release-published.yml, cli-go-api-sync.yml, and
+# api-package-sync.yml open, through its token in the develop-only `auto-approve` environment,
+# so those PRs can be auto-merged.
 /packages/stack/src/Artifacts.ts @supabase/cli @supabase-oss
 /apps/cli-go/pkg/config/templates/Dockerfile @supabase/cli @supabase-oss
 /apps/cli-go/api/v1-openapi.yaml @supabase/cli @supabase-oss

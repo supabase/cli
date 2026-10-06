@@ -12,6 +12,8 @@ jobs:
   sync:
     name: Sync API package
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
+    environment: auto-approve
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,6 +68,19 @@ jobs:
             Changes were detected in the upstream OpenAPI documents exposed by `https://api.supabase.com/api/v1-json` and `https://api.supabase.com/api/v2-json`.
           branch: sync/api-package
           base: develop
+
+      # Hourly runs re-push the open PR; skipping an approved PR avoids stacking a review per run.
+      - name: Approve Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          decision="$(GH_TOKEN="$APP_TOKEN" gh pr view --repo "$GITHUB_REPOSITORY" "$PR_NUMBER" --json reviewDecision --jq .reviewDecision)"
+          if [ "$decision" != "APPROVED" ]; then
+            gh pr review --approve --repo "$GITHUB_REPOSITORY" "$PR_NUMBER"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
 
       - name: Enable Pull Request Automerge
         if: steps.check.outputs.has_changes == 'true'
