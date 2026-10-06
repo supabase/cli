@@ -101,7 +101,7 @@ export const DatabaseConfig = Schema.Struct({
 
 const DatabaseReadyMarker = Schema.Struct({
   version: Schema.String,
-  runtime: Schema.Literals(["native", "docker"]),
+  runtime: Schema.Literals(["native", "docker", "podman"]),
   profile: Schema.Literal("supabase"),
 });
 
@@ -115,7 +115,7 @@ export interface DatabaseEndpoints extends Schema.Schema.Type<typeof DatabaseEnd
 export const DatabaseCreation = serviceCreation("database", DatabaseConfig, DatabaseEndpoints);
 export interface DatabaseCreation extends Schema.Schema.Type<typeof DatabaseCreation> {}
 
-export type DatabaseRuntime = "native" | "docker";
+export type DatabaseRuntime = "native" | "docker" | "podman";
 
 export type BackendEndpoint =
   | { readonly kind: "unix"; readonly path: string; readonly port: 5432 }

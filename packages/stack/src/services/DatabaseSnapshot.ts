@@ -101,7 +101,7 @@ export interface SnapshotBackend {
 /** Cache-scoped entries kept besides the one just saved; instance-scoped checkpoints are never pruned. */
 const retainedPrevious = 2;
 const format = "supabase-database-snapshot-v1" as const;
-const runtimes = Schema.Literals(["native", "docker"]);
+const runtimes = Schema.Literals(["native", "docker", "podman"]);
 const SnapshotIdentity = Schema.Struct({
   format: Schema.Literal(format),
   version: Schema.String,

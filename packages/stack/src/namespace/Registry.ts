@@ -65,7 +65,7 @@ export const SavedStack = Schema.Struct({
     branchContext: Schema.String,
     stackName: Schema.String,
   }),
-  runtime: Schema.Literals(["native", "docker"]),
+  runtime: Schema.Literals(["native", "docker", "podman"]),
   instances: Schema.Array(SavedInstance).check(
     Schema.makeFilter((instances) =>
       new Set(instances.map(({ id }) => id)).size === instances.length

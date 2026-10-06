@@ -6,7 +6,7 @@ import type { ServiceDefinition } from "../Service.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
 
-type CatalogRuntime = "native" | "docker";
+type CatalogRuntime = "native" | "docker" | "podman";
 
 export class CatalogError extends Data.TaggedError("CatalogError")<{
   readonly operation: string;

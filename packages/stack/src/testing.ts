@@ -114,7 +114,7 @@ export interface TestStack<
 }
 
 const runtimeOverride = Config.option(
-  Config.literals(["native", "docker"], "SUPABASE_STACK_TEST_RUNTIME"),
+  Config.literals(["native", "docker", "podman"], "SUPABASE_STACK_TEST_RUNTIME"),
 );
 
 const testFailure = (operation: string) => (cause: unknown) => stackError(operation, cause);

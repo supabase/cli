@@ -76,7 +76,7 @@ const makeCommandRunner = (options: {
   readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly runtime: "native" | "docker";
+  readonly runtime: "native" | "docker" | "podman";
   /** Shares one host-gateway probe with the host's other container runtimes. */
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */
@@ -329,7 +329,7 @@ export const layer = (options: {
   readonly project?: string;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly runtime: "native" | "docker";
+  readonly runtime: "native" | "docker" | "podman";
   /** Shares one host-gateway probe with the host's other container runtimes. */
   readonly hostGateway?: HostGateway;
   /** The engine endpoint and identity the owner resolved once at startup; absent when native. */

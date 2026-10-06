@@ -94,7 +94,7 @@ export interface StackLocations {
 export interface CreateOptions extends StackLocations {
   readonly projectRoot: string;
   readonly name?: string;
-  readonly runtime: "native" | "docker";
+  readonly runtime: "native" | "docker" | "podman";
   /**
    * A `session` stack starts its owner at creation and is destroyed when the creating handle's
    * scope closes or its process exits; a `detached` stack (the default) outlives its creator.
@@ -193,7 +193,7 @@ type AnyInstance = ServiceInstances[Kind];
  */
 export type DestroyResult =
   | { readonly runtimeCleanup: "complete" }
-  | { readonly runtimeCleanup: "skipped"; readonly engine: "docker" };
+  | { readonly runtimeCleanup: "skipped"; readonly engine: "docker" | "podman" };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -303,7 +303,7 @@ interface Connection {
  * destroy path) finishes the cleanup once the engine is reachable again.
  */
 const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(
-  function* (state: StackNamespace.Interface, saved: SavedStack, engine: "docker") {
+  function* (state: StackNamespace.Interface, saved: SavedStack, engine: "docker" | "podman") {
     const id = saved.id;
     if (yield* state.leased(id))
       return yield* failure(

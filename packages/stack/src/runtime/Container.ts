@@ -118,12 +118,13 @@ const transientPullFailure = (error: ContainerError) =>
 /** Runs one engine CLI invocation outside any pinned target, for resolving that target itself. */
 const runRaw = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  engine: ContainerEngine,
   args: ReadonlyArray<string>,
 ): Effect.Effect<string, ContainerError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(engine, args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -144,20 +145,31 @@ const runRaw = (
     ),
   );
 
+/** The container engine CLI a stack's containers run through. */
+export type ContainerEngine = "docker" | "podman";
+
 /**
  * The engine endpoint and identity an owner resolves once, at startup, and pins for its entire
  * lifetime: the container runtime, the storage helpers, the host-gateway probes and the
  * namespace's reconcile loop all share this one target instead of each resolving (and so
  * potentially disagreeing on) their own. `argv` is the explicit prefix every invocation carries
- * (`--host <endpoint>`), since the docker CLI gives that priority over `DOCKER_HOST` and context
- * switches, and since an argument, unlike an environment variable, never leaks to subprocesses a
- * launched workload spawns.
+ * (`--host <endpoint>` for Docker, `--url`/`--connection` for Podman), since the CLI gives it
+ * priority over its environment and saved defaults, and since an argument, unlike an environment
+ * variable, never leaks to subprocesses a launched workload spawns. `rootless` is whether the
+ * Podman service runs without root, which decides how host uids map into containers.
  */
-export interface EngineTarget {
-  readonly engine: "docker";
-  readonly argv: ReadonlyArray<string>;
-  readonly daemonId: string;
-}
+export type EngineTarget =
+  | {
+      readonly engine: "docker";
+      readonly argv: ReadonlyArray<string>;
+      readonly daemonId: string;
+    }
+  | {
+      readonly engine: "podman";
+      readonly argv: ReadonlyArray<string>;
+      readonly daemonId: string;
+      readonly rootless: boolean;
+    };
 
 /**
  * The active context's own name, pinned by name rather than by its endpoint alone: `context show`
@@ -167,26 +179,101 @@ export interface EngineTarget {
  */
 const resolveContextName = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
   Effect.gen(function* () {
-    const name = (yield* runRaw(spawner, ["context", "show"])).trim();
+    const name = (yield* runRaw(spawner, "docker", ["context", "show"])).trim();
     if (name.length === 0) return yield* errorFor("context", "Engine returned no active context");
     return name;
   });
 
+const nonEmptyEnv = (name: string) =>
+  Config.option(Config.string(name)).pipe(
+    Effect.map(Option.filter((value) => value.length > 0)),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const PODMAN_INFO_FORMAT =
+  "{{.Host.ServiceIsRemote}}|{{.Host.Security.Rootless}}|{{.Host.Hostname}}|{{.Store.GraphRoot}}";
+
+/** Podman has no daemon `.ID`; its host name and graph root together identify the service. */
+const podmanInfo = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  argv: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const output = yield* runRaw(spawner, "podman", [
+      ...argv,
+      "info",
+      "--format",
+      PODMAN_INFO_FORMAT,
+    ]);
+    const [remote, rootless, hostname, ...graphRoot] = output.trim().split("|");
+    const root = graphRoot.join("|");
+    if (hostname === undefined || hostname.length === 0 || root.length === 0)
+      return yield* errorFor("identity", "Engine returned an empty id");
+    return {
+      remote: remote === "true",
+      rootless: rootless === "true",
+      daemonId: `${hostname}|${root}`,
+    };
+  });
+
 /**
- * Resolves and pins, once for an owner's whole lifetime, the single docker endpoint its commands
+ * Pins the connection the Podman CLI would use: `CONTAINER_HOST` or `CONTAINER_CONNECTION` when
+ * set, otherwise the default saved connection when the CLI talks to a remote service (a
+ * `podman machine`), and nothing when it talks to a local one, which saved connections never
+ * redirect.
+ */
+const resolvePodmanTarget = Effect.fn("Container.resolvePodmanTarget")(function* (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.fn.Return<EngineTarget, ContainerError> {
+  const url = yield* nonEmptyEnv("CONTAINER_HOST");
+  const connection = yield* nonEmptyEnv("CONTAINER_CONNECTION");
+  const explicit: ReadonlyArray<string> | undefined = Option.isSome(url)
+    ? ["--url", url.value]
+    : Option.isSome(connection)
+      ? ["--connection", connection.value]
+      : undefined;
+  const bare = explicit === undefined ? yield* podmanInfo(spawner, []) : undefined;
+  let argv: ReadonlyArray<string> = explicit ?? [];
+  if (bare?.remote === true) {
+    const listing = yield* runRaw(spawner, "podman", [
+      "system",
+      "connection",
+      "list",
+      "--format",
+      "{{.Name}}|{{.Default}}",
+    ]);
+    const name = listing
+      .split("\n")
+      .map((line) => line.trim().split("|"))
+      .find(([, isDefault]) => isDefault === "true")?.[0];
+    if (name === undefined || name.length === 0)
+      return yield* errorFor("connection", "Podman has no default connection to pin");
+    argv = ["--connection", name];
+  }
+  const info = bare !== undefined && argv.length === 0 ? bare : yield* podmanInfo(spawner, argv);
+  return { engine: "podman", argv, daemonId: info.daemonId, rootless: info.rootless };
+});
+
+/**
+ * Resolves and pins, once for an owner's whole lifetime, the single engine endpoint its commands
  * target and that endpoint's own identity.
  */
 export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  engine: ContainerEngine = "docker",
 ): Effect.fn.Return<EngineTarget, ContainerError> {
-  const host = yield* Config.option(Config.string("DOCKER_HOST")).pipe(
-    Effect.map(Option.filter((value) => value.length > 0)),
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
+  yield* Effect.annotateCurrentSpan("container.engine", engine);
+  if (engine === "podman") return yield* resolvePodmanTarget(spawner);
+  const host = yield* nonEmptyEnv("DOCKER_HOST");
   const argv: ReadonlyArray<string> = Option.isSome(host)
     ? ["--host", host.value]
     : ["--context", yield* resolveContextName(spawner)];
-  const daemonId = (yield* runRaw(spawner, [...argv, "info", "--format", "{{.ID}}"])).trim();
+  const daemonId = (yield* runRaw(spawner, "docker", [
+    ...argv,
+    "info",
+    "--format",
+    "{{.ID}}",
+  ])).trim();
   if (daemonId.length === 0) return yield* errorFor("identity", "Engine returned an empty id");
   return { engine: "docker", argv, daemonId };
 });
@@ -205,7 +292,12 @@ export const probeEngineReachable = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   target: EngineTarget,
 ): Effect.Effect<boolean> =>
-  runRaw(spawner, [...target.argv, "info", "--format", "{{.ID}}"]).pipe(
+  runRaw(spawner, target.engine, [
+    ...target.argv,
+    "info",
+    "--format",
+    target.engine === "docker" ? "{{.ID}}" : "{{.Host.Hostname}}",
+  ]).pipe(
     Effect.map((id) => id.trim().length > 0),
     Effect.orElseSucceed(() => false),
   );
@@ -226,7 +318,7 @@ const HOST_GATEWAY_PROBE_TIMEOUT: Duration.Input = "15 seconds";
 const IPV4_ADDRESS = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
 
 /** The name the engine writes into `/etc/hosts` for its own host. */
-const ENGINE_HOST_NAMES = ["host.docker.internal"];
+const ENGINE_HOST_NAMES = ["host.docker.internal", "host.containers.internal"];
 
 const firstIpv4For = (hosts: string, names: ReadonlyArray<string>) =>
   hosts
@@ -677,6 +769,11 @@ export const makeContainerRuntime = (options: {
         `com.docker.compose.service=${composeService}`,
         ...(oneOff ? ["--label", "com.docker.compose.oneoff=True"] : []),
         ...(spec.user === undefined ? [] : ["--user", spec.user]),
+        // A rootless Podman maps the host uid elsewhere inside the container; keep-id maps it to
+        // itself so files written through a borrowed bind mount stay owned by the caller.
+        ...(spec.user !== undefined && options.target.engine === "podman" && options.target.rootless
+          ? ["--userns=keep-id"]
+          : []),
         "--env-file",
         envPath,
         ...(spec.mounts ?? []).flatMap((mount) => [
@@ -1041,7 +1138,7 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
   readonly stackRoot: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* runRaw(spawner, [
+  const output = yield* runRaw(spawner, options.target.engine, [
     ...options.target.argv,
     "ps",
     "--all",

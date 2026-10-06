@@ -13,7 +13,8 @@ const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
   cacheRoot: string,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const engineTarget = saved.runtime === "native" ? undefined : yield* resolveEngineTarget(spawner);
+  const engineTarget =
+    saved.runtime === "native" ? undefined : yield* resolveEngineTarget(spawner, saved.runtime);
   const context = yield* Layer.build(
     Owner.layer({ saved, root: dataRoot, cacheRoot, engineTarget }).pipe(
       Layer.provide(Layer.succeed(StackNamespace.Service, state)),
@@ -55,7 +56,9 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
       else {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const engineTarget =
-          saved.runtime === "native" ? undefined : yield* resolveEngineTarget(spawner);
+          saved.runtime === "native"
+            ? undefined
+            : yield* resolveEngineTarget(spawner, saved.runtime);
         yield* Owner.sweepContainers(saved, dataRoot, engineTarget);
       }
       return true;

@@ -6,7 +6,7 @@ import { makePorts, PortError, probeVacant } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
-export type NetworkRuntime = "native" | "docker";
+export type NetworkRuntime = "native" | "docker" | "podman";
 
 type RouteContribution = Pick<
   HttpRoute,

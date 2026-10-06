@@ -212,6 +212,39 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 cacheNamespace: "native",
                 initialized: false,
               };
+            // Podman has no volume-subpath backend; its data always lives in host directories.
+            if (options.target.engine === "podman") {
+              const present = yield* options.fs
+                .exists(markerPath)
+                .pipe(Effect.mapError((cause) => errorFor("marker", cause)));
+              yield* options.fs
+                .makeDirectory(options.cacheRoot, { recursive: true })
+                .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+              const cacheRoot = yield* options.fs
+                .realPath(options.cacheRoot)
+                .pipe(Effect.mapError((cause) => errorFor("identity", cause)));
+              const cacheNamespace = `cache-${(yield* hash(cacheRoot)).slice(0, 32)}`;
+              if (present) {
+                const marker = yield* options.fs.readFileString(markerPath).pipe(
+                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(Marker))),
+                  Effect.mapError((cause) => errorFor("marker", cause)),
+                  Effect.flatMap(validateMarker),
+                );
+                if (marker.cacheNamespace === cacheNamespace) return marker;
+                const updated = { ...marker, cacheNamespace };
+                yield* publishMarker(yield* encodeMarker(updated));
+                return updated;
+              }
+              yield* rejectUnmarkedData;
+              const value: Marker = {
+                backend: "host",
+                namespace: dataNamespace,
+                cacheNamespace,
+                initialized: false,
+              };
+              yield* publishMarker(yield* encodeMarker(value));
+              return value;
+            }
             let resolved = yield* resolveDaemon(false);
             const markerPresent = yield* options.fs
               .exists(markerPath)
@@ -332,12 +365,12 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           Effect.scoped(
             Effect.gen(function* () {
               yield* Effect.annotateCurrentSpan({
-                "process.executable.name": options.runtime,
+                "process.executable.name": options.target.engine,
                 "process.arg_count": args.length,
               });
               const child = yield* options.spawner
                 .spawn(
-                  ChildProcess.make(options.runtime, [...options.target.argv, ...args], {
+                  ChildProcess.make(options.target.engine, [...options.target.argv, ...args], {
                     stdin: "ignore",
                   }),
                 )
@@ -600,7 +633,10 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 "trap : TERM INT; while :; do sleep 3600; done",
               ]);
               if (!/^[a-f0-9]{12,64}$/u.test(created))
-                return yield* errorFor("helper", "Docker returned an invalid helper identity");
+                return yield* errorFor(
+                  "helper",
+                  `${options.target.engine === "docker" ? "Docker" : "Podman"} returned an invalid helper identity`,
+                );
               return name;
             }),
           ),
@@ -771,7 +807,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         const cached = yield* resolvedFromMemory;
         if (cached !== undefined) return Option.some(cached);
         const existing = yield* getMarkerIfPresent;
-        if (Option.isSome(existing) && options.runtime === "docker") {
+        if (Option.isSome(existing) && options.runtime !== "native") {
           yield* selected;
           return Option.some(yield* getMarker);
         }
