@@ -82,6 +82,7 @@ export const sweepOrphans = Effect.fn("Sweep.orphans")(
         ),
       );
     }
+    yield* options.state.pruneDestroyed(options.ownerId);
   },
   Effect.catchCause((cause) => Effect.logWarning("Orphan sweep failed", cause)),
 );

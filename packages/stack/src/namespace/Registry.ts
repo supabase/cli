@@ -1,10 +1,14 @@
-import { Effect, Exit, FileSystem, Path, Schedule, Schema, Scope } from "effect";
+import { Clock, Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope } from "effect";
 import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
 import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
 import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import * as Publication from "./Publication.ts";
+import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
+
+/** How long a destroyed stack's empty directories stay, so a same-id restart finds them. */
+const DESTROYED_RETENTION_MILLIS = 10 * 60 * 1000;
 
 const SafeId = Schema.String.pipe(
   Schema.refine((value): value is string => /^[a-zA-Z0-9_-]+$/u.test(value), {
@@ -80,6 +84,8 @@ export interface Interface {
   readonly list: Effect.Effect<ReadonlyArray<SavedStack>, NamespaceError>;
   readonly save: (state: SavedStack) => Effect.Effect<void, NamespaceError>;
   readonly remove: (id: string) => Effect.Effect<void, NamespaceError>;
+  /** Removes the empty directories `remove` left for stacks destroyed over ten minutes ago, other than `keep`. */
+  readonly pruneDestroyed: (keep: string) => Effect.Effect<void, NamespaceError>;
   /** Not reentrant; wrap metadata updates here, while Ports operations acquire this lock themselves. */
   readonly withLock: <A, E, R>(
     effect: Effect.Effect<A, E, R>,
@@ -186,6 +192,39 @@ export const make = (
       // The stack and data directories stay: deleting and recreating them for a restart under the
       // same id lets the container engine's file share report fresh bind sources as missing.
     });
+    const isDestroyedShell = Effect.fnUntraced(function* (id: string, now: number) {
+      const directory = stackRoot(id);
+      if ((yield* fs.stat(directory)).type !== "Directory") return false;
+      const entries = yield* fs.readDirectory(directory);
+      if (entries.length !== 1 || entries[0] !== "data") return false;
+      const data = path.join(directory, "data");
+      if ((yield* fs.stat(data)).type !== "Directory") return false;
+      if ((yield* fs.readDirectory(data)).length > 0) return false;
+      // Read after the contents, so a destroy that just emptied the directory counts as recent.
+      const modified = Option.getOrUndefined((yield* fs.stat(directory)).mtime)?.getTime();
+      return modified !== undefined && now - modified >= DESTROYED_RETENTION_MILLIS;
+    });
+    const pruneDestroyed = Effect.fn("Namespace.Registry.pruneDestroyed")(function* (keep: string) {
+      const now = yield* Clock.currentTimeMillis;
+      let removed = 0;
+      for (const id of yield* stackIds) {
+        if (id === keep) continue;
+        const pruned = yield* Effect.gen(function* () {
+          if (!(yield* isDestroyedShell(id, now))) return false;
+          yield* removeEmptyDirectory(path.join(stackRoot(id), "data"));
+          yield* removeEmptyDirectory(stackRoot(id));
+          return true;
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning(`Could not prune destroyed stack directory ${id}`, error).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+        if (pruned) removed += 1;
+      }
+      yield* Effect.annotateCurrentSpan({ removed });
+    });
     /**
      * One attempt: forks `attemptScope` under `guardScope` before opening anything, so there is
      * always a scope to close if the open or the `BEGIN IMMEDIATE` below fails or defects. Runs
@@ -236,5 +275,5 @@ export const make = (
         ),
     );
 
-    return { read, list: list(), save, remove, withLock };
+    return { read, list: list(), save, remove, pruneDestroyed, withLock };
   });

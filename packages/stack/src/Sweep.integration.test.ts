@@ -20,6 +20,7 @@ import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
+import { sweepOrphans } from "./Sweep.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
@@ -234,4 +235,51 @@ it.live.skipIf(process.platform === "win32")(
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
+);
+
+it.live(
+  "an orphan sweep removes destroyed stack directories once they are older than the restart window",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-prune-" });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root })),
+          StackNamespace.Service,
+        );
+        const elevenMinutesAgo = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 11 * 60;
+        const arrange = Effect.fn("SweepTest.arrange")(function* (
+          id: string,
+          options: { readonly old: boolean; readonly file?: string; readonly dataFile?: string },
+        ) {
+          const directory = path.join(root, id);
+          yield* fs.makeDirectory(path.join(directory, "data"), { recursive: true });
+          if (options.file !== undefined)
+            yield* fs.writeFileString(path.join(directory, options.file), "x");
+          if (options.dataFile !== undefined)
+            yield* fs.writeFileString(path.join(directory, "data", options.dataFile), "x");
+          if (options.old) yield* fs.utimes(directory, elevenMinutesAgo, elevenMinutesAgo);
+        });
+        yield* arrange("old-empty", { old: true });
+        yield* arrange("fresh-empty", { old: false });
+        yield* arrange("old-with-data", { old: true, dataFile: "PG_VERSION" });
+        yield* arrange("old-with-lock", { old: true, file: "owner.lock" });
+        yield* arrange("old-kept", { old: true });
+
+        yield* sweepOrphans({
+          state,
+          stateRoot: root,
+          cacheRoot: path.join(root, "cache"),
+          ownerId: "old-kept",
+        });
+
+        expect(yield* fs.exists(path.join(root, "old-empty"))).toBe(false);
+        expect(yield* fs.exists(path.join(root, "fresh-empty", "data"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-with-data", "data", "PG_VERSION"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-with-lock", "owner.lock"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-kept", "data"))).toBe(true);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
