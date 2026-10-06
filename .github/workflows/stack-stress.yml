@@ -40,8 +40,14 @@ jobs:
       # vitest's --repeats counts the runs after the first.
       - name: Run idle and parallel-stack scenarios repeatedly
         working-directory: packages/stack
-        run: >-
-          pnpm run test:e2e:run
-          whole-stack.${{ matrix.runtime }}.idle-parallel
-          --repeats=$((${{ inputs.iterations }} - 1))
-          --passWithNoTests=false
+        env:
+          ITERATIONS: ${{ inputs.iterations }}
+        run: |
+          if ! [ "$ITERATIONS" -ge 1 ] 2>/dev/null; then
+            echo "iterations must be a whole number of at least 1, got '$ITERATIONS'" >&2
+            exit 1
+          fi
+          pnpm run test:e2e:run \
+            whole-stack.${{ matrix.runtime }}.idle-parallel \
+            --repeats=$((ITERATIONS - 1)) \
+            --passWithNoTests=false
