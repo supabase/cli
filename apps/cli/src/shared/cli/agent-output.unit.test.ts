@@ -1,6 +1,10 @@
 import { Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { resolveAgentOutputFormat, resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import {
+  agentDefaultOutputFormatForCommand,
+  resolveAgentOutputFormat,
+  resolveAgentOutputFormatFromArgs,
+} from "./agent-output.ts";
 
 describe("resolveAgentOutputFormat", () => {
   it("defaults a coding agent to json", () => {
@@ -19,6 +23,16 @@ describe("resolveAgentOutputFormat", () => {
         detectedAgentName: Option.none(),
       }),
     ).toBe("text");
+  });
+
+  it.each([
+    { commandPath: ["functions", "serve"], stack: true, expected: "stream-json" },
+    { commandPath: ["functions", "serve"], stack: false, expected: "json" },
+    { commandPath: ["functions", "list"], stack: true, expected: "json" },
+  ] as const)("defaults $commandPath to $expected when stack is $stack", (testCase) => {
+    expect(agentDefaultOutputFormatForCommand(testCase.commandPath, testCase.stack)).toBe(
+      testCase.expected,
+    );
   });
 
   it("honors an explicit format over agent detection", () => {

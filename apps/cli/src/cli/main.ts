@@ -43,6 +43,8 @@ if (
   await Effect.runPromise(
     runCli(selectedRoot, {
       analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+      stackFunctionsServeEnabled:
+        Exit.isSuccess(selectionExit) && selectionExit.value.stackBackend === "stack",
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),

@@ -59,8 +59,12 @@ import { AiTool } from "../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../shared/telemetry/ai-tool.layer.ts";
 import { CliArgs } from "../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../shared/runtime/command-runtime.layer.ts";
-import type { CliRootCommand } from "../shared/cli/run.ts";
-import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../shared/cli/agent-output.ts";
+import { extractCommandPath, type CliRootCommand } from "../shared/cli/run.ts";
+import {
+  agentDefaultOutputFormatForCommand,
+  isBuiltInTextRequest,
+  resolveAgentOutputFormat,
+} from "../shared/cli/agent-output.ts";
 import {
   GLOBAL_FLAGS,
   AgentFlag,
@@ -213,6 +217,10 @@ export const rootCommandForFeatures = (
           // human table), so the agent JSON default only applies when it's absent.
           const outputFormat = resolveAgentOutputFormat({
             explicitOutputFormat,
+            agentDefaultOutputFormat: agentDefaultOutputFormatForCommand(
+              extractCommandPath(cliArgs.args),
+              options.stackBackend === "stack",
+            ),
             goOutputFormat: goOutput,
             agentOverride: agent,
             detectedAgentName: aiTool.name,
