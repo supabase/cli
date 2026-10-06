@@ -229,10 +229,12 @@ describe("owner persisted logs", () => {
         const [recorded] = yield* firstOutput(first.rpc.readLogs({ id: "gateway", follow: true }));
 
         expect(response.status).toBe(404);
-        expect(recorded?.text).toContain("/unrouted");
+        expect(recorded).toMatchObject({ launchId: 1, text: expect.stringContaining("/unrouted") });
         const directory = path.join(first.logsRoot, "gateway", "gateway");
         expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
         yield* Scope.close(firstScope, Exit.void);
+        // A crash right after rotation leaves an empty newest segment.
+        yield* fs.writeFileString(path.join(directory, "0000000002.log"), "");
 
         const state = Context.get(
           yield* Layer.build(State.layer({ root: first.stateRoot })),
@@ -244,8 +246,21 @@ describe("owner persisted logs", () => {
         const history = Array.from(
           yield* second.rpc.readLogs({ id: "gateway", follow: false }).pipe(Stream.runCollect),
         );
+        yield* second.rpc.startComposition();
+        const reopened = (yield* state.read(first.stack.id))?.ports.find(
+          ({ key }) => key === "api",
+        );
+        if (reopened === undefined) return yield* Effect.die("the shared API port was not claimed");
+        const again = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter((record) => isOutput(record) && record.text?.includes("/again") === true),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* client.get(`http://127.0.0.1:${reopened.port}/again`);
 
         expect(history).toContainEqual(recorded);
+        expect(Array.from(yield* Fiber.join(again))).toMatchObject([{ launchId: 2 }]);
         yield* second.namespace.destroy;
         expect(yield* fs.exists(first.logsRoot)).toBe(false);
       }),

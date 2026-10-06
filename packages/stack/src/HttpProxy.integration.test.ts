@@ -1199,6 +1199,12 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         );
       });
       const paddedAddress = yield* listen(padded);
+      // Answers with something that is not HTTP and stays open.
+      const garbled = createTcpServer((connection) => {
+        connection.on("error", () => undefined);
+        connection.once("data", () => connection.write("SSH-2.0-OpenSSH_9.9\r\n"));
+      });
+      const garbledAddress = yield* listen(garbled);
       const accesses = yield* Queue.unbounded<HttpAccess>();
       const proxy = yield* makeHttpProxy({
         host: "127.0.0.1",
@@ -1210,6 +1216,7 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
         { id: "silent", prefix: "/silent", target: Effect.succeed(silentAddress) },
         { id: "interim", prefix: "/interim", target: Effect.succeed(interimAddress) },
         { id: "padded", prefix: "/padded", target: Effect.succeed(paddedAddress) },
+        { id: "garbled", prefix: "/garbled", target: Effect.succeed(garbledAddress) },
         {
           id: "down",
           prefix: "/down",
@@ -1257,6 +1264,10 @@ it.live("records WebSocket upgrades at the handshake with the status sent to the
       const open = yield* rawClient(proxy.port, upgradeRequest("/padded"));
       expect(yield* Queue.take(accesses)).toMatchObject({ target: "/padded", status: 101 });
       open.destroy();
+
+      const relaying = yield* rawClient(proxy.port, upgradeRequest("/garbled"));
+      expect(yield* Queue.take(accesses)).toMatchObject({ target: "/garbled", status: 502 });
+      relaying.destroy();
 
       const leaving = yield* rawClient(proxy.port, upgradeRequest("/silent"));
       yield* Deferred.await(upgradeReceived);

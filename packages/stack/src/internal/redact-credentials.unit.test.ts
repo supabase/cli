@@ -72,6 +72,31 @@ describe("redactCredentials", () => {
       redacted: "https://redacted@studio.test/relative?Access_Token=redacted",
     },
     {
+      case: "redacts userinfo through its last @",
+      url: "https://alice:p@ss@client.test/cb",
+      redacted: "https://redacted@client.test/cb",
+    },
+    {
+      case: "redacts a nested scheme-relative URL with userinfo",
+      url: "/cb?redirect_to=%2F%2Falice%3Asecret%40client.test%2Fcb",
+      redacted: "/cb?redirect_to=redacted",
+    },
+    {
+      case: "redacts nested userinfo whose password has an encoded slash",
+      url: "/cb?redirect_to=https://user:pa%2Fss@client/cb",
+      redacted: "/cb?redirect_to=redacted",
+    },
+    {
+      case: "redacts a credential pair whose = is encoded",
+      url: "/auth/v1/verify?token_hash%3DOTP&x=1&token_hash%3DOTP=signup",
+      redacted: "/auth/v1/verify?redacted&x=1&redacted",
+    },
+    {
+      case: "redacts a credential after a ; or &amp; separator",
+      url: "/x?foo=1;apikey=s3&amp;token=t",
+      redacted: "/x?foo=redacted&amp;token=redacted",
+    },
+    {
       case: "redacts a value that embeds a credential pair",
       url: "/api?data=a=token=b",
       redacted: "/api?data=redacted",

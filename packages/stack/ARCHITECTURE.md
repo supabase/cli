@@ -673,15 +673,14 @@ The owner is the only subscriber of each instance's output and persists it as re
 #### Gateway access logs
 
 The shared API listener is the stack's gateway. Each completed request, and each WebSocket upgrade
-once its status line arrives, becomes one nginx combined line with a millisecond time plus
-duration, with credential
-query and fragment values (API keys, tokens, token hashes, PKCE codes), values that nest one or a
-URL with userinfo, and URL userinfo redacted in the target and the Referer. The proxy hands it to
-a bounded sliding buffer after the response settles, so logging never delays a response or holds
-a target's activity. The owner persists these lines as the `gateway` stream,
-`logs/gateway/gateway/`, with one launch per owner run numbered after the retained ones; it is
-not a service instance, so orphan
-cleanup keeps it.
+once its status line arrives, becomes one nginx combined line with a millisecond timestamp and a
+trailing duration. In the target and the Referer, credential query and fragment values (API keys,
+tokens, token hashes, PKCE codes) are redacted by name on every route, as are values that nest
+one or a URL with userinfo, and URL userinfo. The proxy hands each line to a bounded sliding
+buffer after the response settles, so logging never delays a response or holds a target's
+activity. The owner persists these lines as the `gateway` stream, `logs/gateway/gateway/`, with
+one launch per owner run numbered after the newest retained one; it is not a service instance, so
+orphan cleanup keeps it.
 
 #### Shipping logs to Analytics
 

@@ -1,5 +1,5 @@
 import { Clock, Data, Deferred, Effect, Fiber, FiberSet, Ref, Scope } from "effect";
-import { decodeQuery, redactCredentials } from "./internal/redact-credentials.ts";
+import { redactCredentials } from "./internal/redact-credentials.ts";
 import { PortError } from "./Ports.ts";
 import type { BackendAddress, ProxyError } from "./Proxy.ts";
 import {
@@ -192,6 +192,14 @@ const responseSettled = (response: ServerResponse) =>
       response.off("close", onDone);
     });
   });
+
+const decodeQuery = (value: string) => {
+  try {
+    return decodeURIComponent(value.replace(/\+/gu, " "));
+  } catch {
+    return value;
+  }
+};
 
 const queryValueFor = (value: string, keys: HttpRouteKeyRewrite["keys"]) =>
   value === keys.secretKey
@@ -490,19 +498,25 @@ const upgrade = Effect.fn("HttpProxy.upgrade")(
         // section 15.2).
         const onAnswer = (chunk: Buffer) => {
           answer += chunk.toString("latin1");
-          while (answer.includes("\r\n")) {
-            const status = Number(statusLine.exec(answer)?.[1] ?? Number.NaN);
-            if (status >= 100 && status < 200 && status !== 101) {
+          let status: number | undefined;
+          while (status === undefined && answer.includes("\r\n")) {
+            const parsed = Number(statusLine.exec(answer)?.[1] ?? Number.NaN);
+            if (parsed >= 100 && parsed < 200 && parsed !== 101) {
               const interimEnd = answer.indexOf("\r\n\r\n");
               if (interimEnd < 0) break;
               answer = answer.slice(interimEnd + 4);
               continue;
             }
-            upstream.off("data", onAnswer);
-            if (!Number.isNaN(status)) Deferred.doneUnsafe(handshake, Effect.succeed(status));
-            return;
+            status = parsed;
           }
-          if (answer.length >= answerLimit) upstream.off("data", onAnswer);
+          if (status === undefined && answer.length < answerLimit) return;
+          upstream.off("data", onAnswer);
+          // An answer without an HTTP status line is logged as 502, like an invalid upstream
+          // header in nginx, instead of waiting for the connection to close.
+          Deferred.doneUnsafe(
+            handshake,
+            Effect.succeed(status === undefined || Number.isNaN(status) ? 502 : status),
+          );
         };
         upstream.on("data", onAnswer);
         client.on("error", onClientGone);
