@@ -7,6 +7,7 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Option,
   Path,
   Predicate,
   Redacted,
@@ -215,6 +216,14 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.start;
         yield* service.ready;
         yield* service.stop;
+        // The line is recorded before initdb writes any data, so an interrupted first start has it.
+        const recorded = yield* fs.stat(
+          path.join(root, "database", ".supabase-database-line.json"),
+        );
+        const initialized = yield* fs.stat(path.join(root, "database", "data", "PG_VERSION"));
+        expect(Option.getOrThrow(recorded.mtime).getTime()).toBeLessThanOrEqual(
+          Option.getOrThrow(initialized.mtime).getTime(),
+        );
         // Initialized data without its readiness marker is what an interrupted first start leaves.
         yield* fs.remove(path.join(root, "database", ".supabase-database-ready.json"));
 
