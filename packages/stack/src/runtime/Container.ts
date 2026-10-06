@@ -281,27 +281,6 @@ export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(fu
 /** A pull worth retrying: rate-limited or a dropped connection. */
 const retryablePull = (error: ContainerError) => rateLimited(error) || transientPullFailure(error);
 
-/**
- * Probes the pinned engine target directly, with the cheapest real call (`info`), rather than
- * classifying a failure's message: a spawn failure (missing binary) or the daemon
- * endpoint refusing the connection both resolve `false`; any other failure (a daemon-relayed
- * error, for example a registry rejecting a pull while the daemon itself is up) never reaches
- * this probe and so never resolves `false` through it.
- */
-export const probeEngineReachable = (
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  target: EngineTarget,
-): Effect.Effect<boolean> =>
-  runRaw(spawner, target.engine, [
-    ...target.argv,
-    "info",
-    "--format",
-    target.engine === "docker" ? "{{.ID}}" : "{{.Host.Hostname}}",
-  ]).pipe(
-    Effect.map((id) => id.trim().length > 0),
-    Effect.orElseSucceed(() => false),
-  );
-
 const PULL_MAX_RETRIES = 4;
 
 /**
@@ -1157,7 +1136,7 @@ const listStackContainers = Effect.fn("Container.listStackContainers")(function*
 
 /**
  * Removes every container carrying this stack's identity and data-root labels and reports how
- * many remain (normally 0): the registration-independent confirming sweep abandonment uses
+ * many remain (normally 0): the registration-independent confirming sweep destroy and stop use
  * instead of depending on any helper registry's own bookkeeping. A container that disappears
  * between listing and removal is not an error, matching {@link removeContainerById}.
  */

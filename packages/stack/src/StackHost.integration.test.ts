@@ -342,8 +342,8 @@ it.live(
           cacheRoot: "/tmp/supabase-stack-artifacts",
         });
         const stopGate = yield* Deferred.make<void>();
-        const abandonEntered = yield* Deferred.make<void>();
-        const abandonGate = yield* Deferred.make<void>();
+        const destroyEntered = yield* Deferred.make<void>();
+        const destroyGate = yield* Deferred.make<void>();
         const failedOwner = {
           ...owner,
           namespace: {
@@ -353,25 +353,25 @@ it.live(
                 Effect.fail(new OrchestratorError({ operation: "stop", message: "stop failed" })),
               ),
             ),
-            abandon: Deferred.succeed(abandonEntered, undefined).pipe(
-              Effect.andThen(Deferred.await(abandonGate)),
-              Effect.andThen(owner.namespace.abandon),
+            destroy: Deferred.succeed(destroyEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(destroyGate)),
+              Effect.andThen(owner.namespace.destroy),
             ),
           },
         };
         const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
         const stopFiber = yield* Effect.forkScoped(runtime.shutdown(false));
         // Abandon is requested while the stop is still in flight, never after it has settled:
-        // the one shutdown pipeline (pass 3, A) waits for it, instead of racing its own cleanup.
+        // the one shutdown pipeline waits for it, instead of racing its own cleanup.
         const abandonFiber = yield* Effect.forkScoped(runtime.abandon);
         yield* Deferred.succeed(stopGate, undefined);
         expect(Exit.isFailure(yield* Fiber.join(stopFiber).pipe(Effect.exit))).toBe(true);
-        yield* Deferred.await(abandonEntered).pipe(Effect.timeout("2 seconds"));
+        yield* Deferred.await(destroyEntered).pipe(Effect.timeout("2 seconds"));
         expect(
           yield* Deferred.isDone(owner.draining),
           "admission stays closed while abandonment cleans up",
         ).toBe(true);
-        yield* Deferred.succeed(abandonGate, undefined);
+        yield* Deferred.succeed(destroyGate, undefined);
         yield* Fiber.join(abandonFiber).pipe(Effect.timeout("2 seconds"));
         yield* Deferred.await(runtime.exit).pipe(Effect.timeout("2 seconds"));
       }),

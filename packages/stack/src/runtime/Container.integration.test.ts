@@ -25,12 +25,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerService } from "effect/unstable/process/ChildProcessSpawner";
 import { HttpClient } from "effect/unstable/http";
 import {
-  ContainerError,
   ContainerLaunchError,
   DOCKER_HOST_ALIAS,
   makeContainerRuntime,
   makeHostGateway,
-  probeEngineReachable,
   resolveEngineTarget,
   type ContainerProcess,
   type EngineTarget,
@@ -1454,92 +1452,6 @@ describe("container process adapter", () => {
           Layer.merge(NodeServices.layer, ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
         ),
       ),
-  );
-
-  it.live("probes a real connection refusal to the engine as unreachable", () =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // A real connection attempt, not a mocked one: nothing listens on this loopback port, so
-      // the probe observes the docker CLI's own refusal directly, never a classified message.
-      const target: EngineTarget = {
-        engine: "docker",
-        argv: ["--host", "tcp://127.0.0.1:1"],
-        daemonId: "probe-test",
-      };
-      expect(
-        yield* probeEngineReachable(spawner, target),
-        "a real daemon connection refusal resolves unreachable",
-      ).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live("probes a real missing engine binary as unreachable", () =>
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fs = yield* FileSystem.FileSystem;
-      // A directory containing no `docker` binary, real `PATH` lookup included: the
-      // probe observes the engine's own spawn failure directly, never a stubbed spawner.
-      const emptyBinDir = yield* fs.makeTempDirectoryScoped({ prefix: "engine-missing-bin-" });
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the spawned child inherits PATH; this is not application config.
-      const originalPath = process.env.PATH;
-      yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
-          process.env.PATH = emptyBinDir;
-        }),
-        () =>
-          Effect.sync(() => {
-            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
-            process.env.PATH = originalPath;
-          }),
-      );
-      const target: EngineTarget = { engine: "docker", argv: [], daemonId: "probe-test" };
-      expect(
-        yield* probeEngineReachable(spawner, target),
-        "a real spawn ENOENT for the missing docker binary resolves unreachable",
-      ).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.live(
-    "keeps retrying a daemon-relayed failure, such as a registry pull refusal, while the real engine stays reachable",
-    () =>
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const target = yield* resolveEngineTarget(spawner, testEngine);
-        const attempts = yield* Ref.make(0);
-        const thirdAttemptObserved = yield* Deferred.make<void>();
-        // Simulates a registry rejecting a pull while the daemon itself answers normally: this
-        // must never be mistaken for an unavailable engine, so `retryUntilConfirmed` keeps
-        // retrying for as long as the probe keeps confirming the daemon is reachable. A third
-        // attempt is this test's own observed signal, so a slow individual probe cannot flake it.
-        const daemonRelayedFailure = Ref.updateAndGet(attempts, (count) => count + 1).pipe(
-          Effect.tap((count) =>
-            count >= 3 ? Deferred.succeed(thirdAttemptObserved, undefined) : Effect.void,
-          ),
-          Effect.andThen(
-            Effect.fail(
-              new ContainerError({
-                operation: "pull",
-                message:
-                  "Error response from daemon: pull access denied for supabase/does-not-exist-image, repository does not exist or may require 'docker login'",
-              }),
-            ),
-          ),
-        );
-        // Backoff between attempts is this test's only controlled time; the daemon probe
-        // itself stays real, so the attempts it takes to observe a third one are never rushed.
-        const retrying = yield* Effect.forkDetach(
-          Owner.retryUntilConfirmed(
-            daemonRelayedFailure,
-            probeEngineReachable(spawner, target),
-          ).pipe(Effect.provideService(Owner.RetryUntilConfirmedInitialDelay, "1 millis")),
-        );
-        // A guard against a genuine hang, not a budget this test's attempt count is sampled from.
-        yield* Deferred.await(thirdAttemptObserved).pipe(Effect.timeout("30 seconds"));
-        yield* Fiber.interrupt(retrying);
-        expect(yield* Ref.get(attempts)).toBeGreaterThanOrEqual(3);
-      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(

@@ -1,10 +1,7 @@
 import {
-  Cause,
   Context,
   Crypto,
-  Duration,
   Effect,
-  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -63,7 +60,6 @@ import {
 } from "./services/Catalog.ts";
 import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
-import * as Paths from "./namespace/Paths.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -141,16 +137,7 @@ export interface Interface {
      * containers, native socket directories and saved state.
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
-    /**
-     * Ends ownership after a confirmed-gone registration: stops every workload, and
-     * removes what it created through the same registration-independent cleanup path as destroy,
-     * without touching the registration or releasing port reservations. A leftover resource past
-     * the engine-unreachable backstop is logged, not thrown.
-     */
-    readonly abandon: Effect.Effect<void>;
   };
-  /** Direct probe of the pinned engine target; always `true` for a native stack. */
-  readonly engineAvailable: Effect.Effect<boolean>;
 }
 
 export class Service extends Context.Service<Service, Interface>()("@supabase/stack/Owner") {}
@@ -173,57 +160,6 @@ const serviceError =
 
 const rpcError = (operation: string) =>
   Effect.mapError((cause: unknown) => stackError(operation, cause));
-
-/**
- * The first backoff delay {@link retryUntilConfirmed} sleeps between attempts, doubling up to 5
- * seconds. Internal only: a test overrides this reference to observe several attempts without
- * waiting through a production-length backoff, never through an env var or `Config`.
- */
-export const RetryUntilConfirmedInitialDelay = Context.Reference<Duration.Input>(
-  "@supabase/stack/RetryUntilConfirmedInitialDelay",
-  { defaultValue: () => Duration.millis(200) },
-);
-
-/**
- * Retries `operation` with a bounded, doubling backoff until it succeeds or `engineAvailable`
- * resolves `false`: engine availability is a direct probe, never a message or cause
- * classification, so this is the one place every abandonment cleanup stage decides whether a
- * failure is worth retrying. A `false` probe fails with the operation's own last error; an
- * interruption or defect is never retried.
- */
-export const retryUntilConfirmed = <A, E>(
-  operation: Effect.Effect<A, E>,
-  engineAvailable: Effect.Effect<boolean>,
-): Effect.Effect<A, E> =>
-  Effect.gen(function* () {
-    let delay = Duration.fromInputUnsafe(yield* RetryUntilConfirmedInitialDelay);
-    while (true) {
-      const result = yield* Effect.exit(operation);
-      if (Exit.isSuccess(result)) return result.value;
-      const failure = Cause.findErrorOption(result.cause);
-      if (Option.isNone(failure)) return yield* Effect.failCause(result.cause);
-      if (!(yield* engineAvailable)) return yield* Effect.fail(failure.value);
-      yield* Effect.sleep(delay);
-      delay = Duration.min(Duration.times(delay, 2), Duration.seconds(5));
-    }
-  });
-
-/**
- * Cleans up one abandoned instance through the same confirmed, serialized execution path destroy
- * uses (`core.removeData`, under the service's execution lock, retrying only steps a previous
- * attempt didn't finish), but without a `confirm` step: abandonment never touches the registration.
- * Retries transient failures; only a confirmed-unreachable engine is logged and left behind, so a
- * recoverable failure never blocks the owner's exit.
- */
-const cleanupAbandonedInstance = (entry: Entry, engineAvailable: Effect.Effect<boolean>) =>
-  retryUntilConfirmed(entry.core.removeData(), engineAvailable).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning(
-        `Abandoned stack could not confirm cleanup of ${entry.service} ${entry.id}; leaving it behind`,
-        error,
-      ),
-    ),
-  );
 
 const mergeInputs = (creation: ServiceCreation, inputs: Record<string, string | undefined>) =>
   Schema.decodeUnknownEffect(ServiceCreation)({
@@ -261,20 +197,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   const crypto = Context.get(services, Crypto.Crypto);
   const path = Context.get(services, Path.Path);
   const fs = Context.get(services, FileSystem.FileSystem);
-  const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
   const network = yield* Network.Service;
-  // A native stack has no engine to lose, so every cleanup failure is retried forever; a docker
-  // stack probes the pinned target directly, never by classifying a failure's cause.
-  const engineAvailable: Effect.Effect<boolean> =
-    options.engineTarget === undefined
-      ? Effect.succeed(true)
-      : Container.probeEngineReachable(spawner, options.engineTarget);
-  // Shared per-launch environment-file scratch directory (Container.ts), owned by this stack as a
-  // whole rather than any one instance; registration-independent so abandonment reaches it
-  // without `Registry.remove`, which never runs then.
-  const removeContainerEnvRoot = fs
-    .remove(path.join(options.root, Paths.CONTAINER_ENV_DIRNAME), { recursive: true, force: true })
-    .pipe(Effect.mapError(serviceError("cleanup")));
   // Everything under the data root belongs to the stack, including what a killed owner left
   // mid-command (`jobs/`); the directory itself stays for `Registry.pruneDestroyed`.
   const removeDataRootEntries = fs.exists(options.root).pipe(
@@ -360,24 +283,37 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       readSaved.pipe(Effect.flatMap((current) => options.state.save(update(current)))),
     );
   // Idempotent on an already-missing registration (a deleted or already-destroyed state.json),
-  // unlike `updateState`: destroy must still be able to publish an instance's removal, or confirm
-  // there is nothing left to publish, even when the registration disappeared from under it.
+  // unlike `updateState`: destroy must still be able to confirm there is nothing left to publish
+  // when the registration, or the whole state root with its registry lock, vanished from under it.
   const removeInstanceRegistration = (id: string) =>
-    options.state.withLock(
-      options.state
-        .read(stackId)
-        .pipe(
-          Effect.flatMap((current) =>
-            current === undefined ? Effect.void : options.state.save(withoutInstance(current, id)),
-          ),
+    options.state
+      .read(stackId)
+      .pipe(
+        Effect.flatMap((registered) =>
+          registered === undefined
+            ? Effect.void
+            : options.state.withLock(
+                options.state
+                  .read(stackId)
+                  .pipe(
+                    Effect.flatMap((current) =>
+                      current === undefined
+                        ? Effect.void
+                        : options.state.save(withoutInstance(current, id)),
+                    ),
+                  ),
+              ),
         ),
-    );
+      );
 
-  const requireStopped = (configuration: CompositionConfig) =>
+  const requireStopped = (current: SavedStack) =>
     Effect.forEach(
       new Set([
-        ...configuration.members.map(({ id }) => id),
-        ...configuration.dependencies.flatMap(({ from, to }) => [from, to]),
+        ...current.composition.members.map(({ id }) => id),
+        ...current.composition.dependencies.flatMap(({ from, to }) => [from, to]),
+        ...current.instances
+          .filter(({ creation }) => consumesCredentials(creation))
+          .map(({ id }) => id),
       ]),
       (id) =>
         orchestrator.status(id).pipe(
@@ -403,7 +339,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         const current = yield* readSaved;
         const next = yield* nextCredentials(current, overrides, keys);
         if (next === current.credentials) return next;
-        if (current.credentials !== undefined) yield* requireStopped(current.composition);
+        if (current.credentials !== undefined) yield* requireStopped(current);
         yield* options.state.save({ ...current, credentials: next });
         return next;
       }),
@@ -434,13 +370,20 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
     }).pipe(Effect.provideContext(services));
 
+  const sameCreation = Schema.toEquivalence(ServiceCreation);
   const persistCreation = (entry: Pick<Entry, "id" | "creation">, creation: ServiceCreation) =>
-    updateState((current) => ({
-      ...current,
-      instances: current.instances.map((instance) =>
-        instance.id === entry.id ? { ...instance, creation } : instance,
+    Ref.get(entry.creation).pipe(
+      Effect.flatMap((saved) =>
+        sameCreation(saved, creation)
+          ? Effect.void
+          : updateState((current) => ({
+              ...current,
+              instances: current.instances.map((instance) =>
+                instance.id === entry.id ? { ...instance, creation } : instance,
+              ),
+            })).pipe(Effect.andThen(Ref.set(entry.creation, creation))),
       ),
-    })).pipe(Effect.andThen(Ref.set(entry.creation, creation)));
+    );
 
   const register = Effect.fn("Owner.register")(function* (id: string, recipe: CatalogRecipe) {
     if (Option.isSome(yield* orchestrator.get(id).pipe(Effect.option)))
@@ -816,76 +759,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
       ),
-      // Settles admitted definition work under the same gate as stop/destroy first. Never
-      // reads or writes the registration (already confirmed gone), so every step below is
-      // best-effort and logs rather than fails; the caller must still be able to exit.
-      abandon: orchestrator.stopNamespace.pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Abandoned stack could not confirm every workload stopped", cause),
-        ),
-        Effect.andThen(
-          orchestrator.instances.pipe(
-            Effect.flatMap((entries) =>
-              Effect.forEach(entries, (entry) => cleanupAbandonedInstance(entry, engineAvailable), {
-                concurrency: "unbounded",
-                discard: true,
-              }),
-            ),
-          ),
-        ),
-        // Registration-independent confirming sweep: every container carrying this stack's
-        // identity and data-root labels, found through the pinned engine directly rather than
-        // through any in-memory helper registry's own bookkeeping — covers a shared storage
-        // helper the per-instance cleanup above never removes on its own. The data-root label
-        // keeps this scoped to this owner's own containers even when another owner shares the
-        // same stack id under a different root.
-        Effect.andThen(
-          options.engineTarget === undefined
-            ? Effect.void
-            : retryUntilConfirmed(
-                Container.removeStackContainers({
-                  target: options.engineTarget,
-                  stackId,
-                  stackRoot: path.resolve(options.root),
-                }).pipe(
-                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                  Effect.mapError(serviceError("cleanup")),
-                  Effect.filterOrFail(
-                    (remaining) => remaining.length === 0,
-                    (remaining) =>
-                      new ServiceError({
-                        operation: "cleanup",
-                        message: `Containers remain: ${remaining.join(", ")}`,
-                      }),
-                  ),
-                ),
-                engineAvailable,
-              ).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning(
-                    "Abandoned stack could not confirm every container removed; leaving it behind",
-                    cause,
-                  ),
-                ),
-              ),
-        ),
-        // Filesystem-only, so always retried to confirmation regardless of engine availability:
-        // its own `force: true` tolerates an already-gone directory, never a transient failure.
-        // Port reservations are never released here: a stale reservation stays for `Ports.ts`'s
-        // own lazy reclamation once the holder's registration is confirmed gone, the abandonment
-        // trigger, so abandonment never touches `Ports.ts`'s registry at all.
-        Effect.andThen(
-          retryUntilConfirmed(removeContainerEnvRoot, Effect.succeed(true)).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Abandoned stack could not remove its container-env root", cause),
-            ),
-          ),
-        ),
-        definitionGate.withPermits(1),
-        Effect.withSpan("Owner.abandonNamespace", { attributes: { stack_id: stackId } }),
-      ),
     },
-    engineAvailable,
   } satisfies Interface;
 });
 

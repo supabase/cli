@@ -88,8 +88,6 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
  * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
  * that rejects the caller (for example on permissions), so `destroy`/`shutdown` (`effect.ts`)
  * know to leave a stack registered for retry instead of surfacing a hard failure.
- * Unrelated to abandonment's own cleanup-retry decision, which probes the engine directly instead
- * of matching a message at all.
  */
 const engineUnreachableAtStartup = (cause: unknown): boolean => {
   const message = cause instanceof Error ? cause.message : String(cause);
@@ -194,7 +192,10 @@ export interface StackHostRuntime {
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
   ) => Effect.Effect<void, StackError>;
-  /** Ends ownership after a confirmed-gone registration; joins an already-running shutdown. */
+  /**
+   * Ends ownership after a confirmed-gone registration with one best-effort destroy: it joins a
+   * running destroy and runs after a running stop settles. Failures are logged, never raised.
+   */
   readonly abandon: Effect.Effect<void>;
   readonly exit: Deferred.Deferred<void>;
 }
@@ -241,7 +242,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const exit = yield* Deferred.make<void>();
       const gate = yield* Semaphore.make(1);
-      type ShutdownMode = "stop" | "destroy" | "abandon";
+      type ShutdownMode = "stop" | "destroy";
       const current = yield* Ref.make<
         { readonly mode: ShutdownMode; readonly fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
@@ -253,17 +254,10 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           responseClosed(response).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
           scope,
         );
-      // Each stage settles and logs independently: one stage's failure (for example a retained
-      // native command's termination that cannot be confirmed) must never skip the others.
-      const settled = <E>(label: string, stage: Effect.Effect<void, E>) =>
-        stage.pipe(
-          Effect.catchCause((cause) => Effect.logError(`Abandoned stack: ${label} failed`, cause)),
-        );
-
       // Admits `mode`'s cleanup when nothing else is in flight: begins draining, forks the cleanup
       // and tracks it as `current`. Draining never reverses: a failed stop or destroy leaves its
       // failed fiber in `current` (repeat calls rejoin the same failure), and the owner exits
-      // once the response has been delivered; only abandon may replace it.
+      // once the response has been delivered; only abandonment may replace a settled stop.
       const begin = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -289,52 +283,29 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               yield* Deferred.succeed(exit, undefined);
             }
           });
-          const body: Effect.Effect<void, StackError> =
-            mode === "abandon"
-              ? Effect.gen(function* () {
-                  // Attachment/command cleanup and namespace cleanup run concurrently; each
-                  // retries until confirmed (or the engine is confirmed unavailable), and this
-                  // waits for both before the owner is permitted to exit.
-                  const commandCleanup = settled(
-                    "command cleanup",
-                    Owner.retryUntilConfirmed(
-                      attachments.stopAll.pipe(Effect.andThen(runner.cleanup)),
-                      owner.engineAvailable,
-                    ),
-                  );
-                  const namespaceCleanup = settled(
-                    "abandon namespace cleanup",
-                    owner.namespace.abandon,
-                  );
-                  yield* Effect.all([commandCleanup, namespaceCleanup], {
-                    concurrency: "unbounded",
-                    discard: true,
-                  });
-                  yield* finish;
-                })
-              : Effect.gen(function* () {
-                  yield* attachments.stopAll;
-                  yield* runner.cleanup;
-                  yield* mode === "stop" ? owner.namespace.stop : owner.namespace.destroy;
-                }).pipe(
-                  Effect.onError(() => finish),
-                  Effect.andThen(finish),
-                  Effect.mapError((cause) => stackError("shutdown", cause)),
-                );
+          const body = Effect.gen(function* () {
+            yield* attachments.stopAll;
+            yield* runner.cleanup;
+            yield* mode === "stop" ? owner.namespace.stop : owner.namespace.destroy;
+          }).pipe(
+            Effect.onError(() => finish),
+            Effect.andThen(finish),
+            Effect.mapError((cause) => stackError("shutdown", cause)),
+          );
           const fiber = yield* Effect.forkIn(body, scope);
           yield* Ref.set(current, { mode, fiber });
           return fiber;
         });
 
-      // The one shutdown pipeline: `stop`, `destroy` and `abandon` are claimed
-      // through the same gate and `current` record, never a separate join. If a shutdown is
-      // already in flight when abandonment is requested, this waits for it to settle (whatever
-      // its outcome) and then claims abandon fresh, unless that settlement was a confirmed
-      // successful destroy — ownership is already fully ended, so there is nothing left to
-      // abandon. Once abandon is claimed, nothing else can supersede it: it always joins.
+      // The one shutdown pipeline: `stop` and `destroy` are claimed through the same gate and
+      // `current` record. A repeat request rejoins the shutdown in flight (a stop after a
+      // destroy, or the same mode again), and a destroy after a stop is rejected, except for
+      // `afterStop`: abandonment waits for the stop to settle, whatever its outcome, then claims
+      // its destroy fresh.
       const claim = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+        afterStop = false,
       ): Effect.Effect<void, StackError> =>
         Effect.gen(function* () {
           while (true) {
@@ -346,23 +317,13 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     const fiber = yield* begin(mode, response);
                     return { _tag: "run", fiber } as const;
                   }
-                  if (mode === "abandon")
-                    return existing.mode === "abandon"
-                      ? ({ _tag: "run", fiber: existing.fiber } as const)
-                      : ({
-                          _tag: "await",
-                          fiber: existing.fiber,
-                          priorMode: existing.mode,
-                        } as const);
-                  if (existing.mode === "abandon")
-                    return { _tag: "run", fiber: existing.fiber } as const;
-                  if (existing.mode === "destroy" && mode === "stop")
-                    return { _tag: "run", fiber: existing.fiber } as const;
-                  if (existing.mode === "stop" && mode === "destroy")
+                  if (existing.mode === "stop" && mode === "destroy") {
+                    if (afterStop) return { _tag: "await", fiber: existing.fiber } as const;
                     return yield* new StackError({
                       operation: "shutdown",
                       message: "Shutdown mode is already selected",
                     });
+                  }
                   return { _tag: "run", fiber: existing.fiber } as const;
                 }),
               ),
@@ -371,12 +332,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
               yield* Fiber.join(decision.fiber);
               return;
             }
-            // "await": a prior stop or destroy, whether still running or already settled, is
-            // never cleared for its own sake (a repeated `shutdown` call must keep rejoining it
-            // for free); only abandon taking over after it clears the slot, so this loop's next
-            // pass can claim fresh.
-            const outcome = yield* Fiber.join(decision.fiber).pipe(Effect.exit);
-            if (decision.priorMode === "destroy" && Exit.isSuccess(outcome)) return;
+            yield* Fiber.await(decision.fiber);
             yield* gate.withPermits(1)(
               Ref.update(current, (value) => (value?.fiber === decision.fiber ? undefined : value)),
             );
@@ -389,9 +345,11 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         claim(destroy ? "destroy" : "stop", response).pipe(
           Effect.mapError((cause) => stackError("shutdown", cause)),
         );
-      // A registration-loss poll drives this, never an RPC caller, so there is no response to
-      // watch and no registration left to touch; `claim` never actually fails for this mode.
-      const abandon = claim("abandon").pipe(Effect.ignore);
+      // A registration-loss poll drives this, never an RPC caller, so there is no response to watch.
+      const abandon = claim("destroy", undefined, true).pipe(
+        Effect.tapCause((cause) => Effect.logError("Abandoned stack destroy failed", cause)),
+        Effect.ignore,
+      );
       const handlers = StackRpc.of({
         ...owner.handlers,
         runCommand: (input: RunCommandPayload) => attachments.run(input),

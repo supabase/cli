@@ -102,8 +102,7 @@ export interface ServiceInstance<Config> {
   /**
    * Removes the instance's data; the service must already be stopped.
    * `confirm`, when given, runs inside the same execution lock once resources are confirmed
-   * removed — destroy's registration publication. Omitting it (abandonment) reuses the identical
-   * confirmed, serialized cleanup without touching any registration.
+   * removed — destroy's registration publication.
    */
   readonly removeData: (
     confirm?: Effect.Effect<void, ServiceError>,

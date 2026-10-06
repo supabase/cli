@@ -639,10 +639,9 @@ describe("service execution", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          // Direct `makeService`, not `makeStandaloneService`: abandonment calls `core.removeData`
-          // without ever going through the orchestrator's own dispatch, which already retries and
-          // reports a failed stop correctly on its own (`Lifecycle.ts`'s `retryCleanup`) and so
-          // never exercises this path. Only a direct `removeData` call does.
+          // Direct `makeService`, not `makeStandaloneService`: the orchestrator's own dispatch
+          // already retries and reports a failed stop correctly (`Lifecycle.ts`'s `retryCleanup`)
+          // and so never exercises this path. Only a direct `removeData` call does.
           const plans = yield* Queue.unbounded<RuntimePlan>();
           const events = yield* Ref.make<ReadonlyArray<LifecycleEvent>>([]);
           const service = yield* makeService(makeDefinition(plans), {

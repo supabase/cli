@@ -497,13 +497,14 @@ is deleted, moved or unmounted). Every owner polls its own `<stateRoot>/<id>/sta
 interval (30 seconds by default) and treats only a confirmed ENOENT as gone; any other read error,
 such as a permission failure or a transient I/O error on an unmounted root, keeps the owner
 running and logs a warning instead. On a confirmed-gone registration the owner treats its
-ownership as ended: it stops every workload (ordered stop, above) and removes what it
-created through the same registration-independent instance cleanup destroy uses, retrying
-transient cleanup failures and giving up only once an engine is confirmed unreachable (what it
-could not remove is logged, not retried forever), and exits. It never reads or writes the
-registration again, and it does not release its port reservations: a stale reservation is
-reclaimed lazily by whichever stack next needs the port. Deletion, a move and an unmount are treated identically, because a stack whose root is
-unreachable cannot operate regardless of which of the three caused it.
+ownership as ended: after any stop already running settles, it runs the ordinary destroy once
+(ordered stop, instance data removal, label sweep, port release) and exits. The destroy is best
+effort and its failure is logged, not retried. Registration and state root need not exist for it
+to complete: confirming the absent registration skips the registry lock, so the label sweep still
+runs when the whole state root is gone. A transient engine failure during that single cleanup
+leaves labelled containers behind; the next startup, stop or destroy of a stack with the same id
+and data root sweeps them by label. Deletion, a move and an unmount are treated identically,
+because a stack whose root is unreachable cannot operate regardless of which of the three caused it.
 
 **Engine targets.** A container stack pins the engine target it first resolves, so every command it runs reaches the same engine. Docker pins `DOCKER_HOST` as `--host`, else the current context. Podman pins `CONTAINER_HOST` as `--url`, else `CONTAINER_CONNECTION` as `--connection`; with neither set, a bare `podman info` decides whether the engine is local or remote. A remote engine (macOS `podman machine`) pins the default system connection by name, and a local one adds no flags. On rootless Podman, containers that run as the caller's uid with writable borrowed bind mounts get `--userns=keep-id` so files stay owned by the caller. Containers reach host listeners through the engine's host alias, `host.docker.internal` or `host.containers.internal`.
 
@@ -524,7 +525,7 @@ During Draining:
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
-**Ordered stop.** Stop, destroy and abandonment close no listener up front. Public and internal
+**Ordered stop.** Stop and destroy close no listener up front. Public and internal
 dependency traffic share the same listeners, so a dependent's graceful stop (Vector flushing its
 last batch to Analytics, for example) still reaches its prerequisite through the stack proxy while
 it is running. Services stop in reverse dependency order, and each listener closes once its own

@@ -76,14 +76,13 @@ export interface RegisteredInstance {
   readonly close: Effect.Effect<void, ServiceError>;
   /**
    * Publishes this instance's registration removal; run only once `core.removeData`'s resources
-   * are confirmed removed, as the `confirm` step of that same execution lock. Destroy passes this;
-   * abandonment never does, because there is no registration left to update.
+   * are confirmed removed, as the `confirm` step of that same execution lock. A no-op when the
+   * registration or its state root is already gone.
    */
   readonly confirmRemoved: Effect.Effect<void, ServiceError>;
   /**
    * Closes this instance's network endpoints for good once its data is confirmed removed. Never
-   * deletes saved port assignments; abandonment never calls it, and a stale reservation stays for
-   * `Ports.ts`'s lazy reclamation once the holder's registration is confirmed gone.
+   * deletes saved port assignments.
    */
   readonly release: Effect.Effect<void, ServiceError>;
   /** Deletes this instance's saved port assignments; an individual destroy runs it, a stack-wide destroy leaves them to `Network.releaseStack`. */

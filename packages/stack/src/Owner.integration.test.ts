@@ -928,6 +928,51 @@ it.effect("refuses to generate credentials for a stack whose saved instances con
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
+it.live("blocks a credential change while a standalone credential consumer runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "stack-owner-credential-admission-",
+      });
+      const stack = initial("owner-credential-admission");
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const standalone = yield* owner.rpc.createService({
+        service: "rest",
+        config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+        endpoints: {},
+      });
+      yield* owner.rpc.startService({ id: standalone.id });
+      const before = yield* owner.getStackCredentials;
+
+      const refused = yield* owner.rpc
+        .supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: {} }],
+          keys: {
+            publishableKey: "publishable-rotated",
+            secretKey: "secret-rotated",
+            anonKey: "anon-rotated",
+            serviceRoleKey: "service-role-rotated",
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: "[]",
+            anonKeyIsOverride: true,
+            serviceRoleKeyIsOverride: true,
+          },
+        })
+        .pipe(Effect.flip);
+
+      expect(refused.message).toContain(
+        `Service ${standalone.id} must be stopped with wake disabled before stack credentials change`,
+      );
+      expect(yield* owner.getStackCredentials).toEqual(before);
+      yield* owner.rpc.stopService({ id: standalone.id });
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
 it.live("rejects a missing required input before starting or stopping the service", () =>
   Effect.scoped(
     Effect.gen(function* () {

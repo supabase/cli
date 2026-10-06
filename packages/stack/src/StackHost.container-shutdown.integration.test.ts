@@ -721,6 +721,24 @@ it.live.skipIf(process.platform === "win32")(
         const status = yield* client.status({ id: mail.id });
         const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
         if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
+        // Reachable only by the final label sweep, which runs only if confirming the absent
+        // registration does not fail on the vanished registry lock.
+        yield* engine([
+          "run",
+          "-d",
+          "--name",
+          `supabase-orphan-${stackId}`,
+          "--label",
+          `com.supabase.stack=${stackId}`,
+          "--label",
+          `com.supabase.stack-root=${dataRoot}`,
+          "--label",
+          "com.supabase.stack-managed=true",
+          helperImage,
+          "/bin/sh",
+          "-c",
+          "trap : TERM INT; while :; do sleep 3600; done",
+        ]);
 
         // Deletes the actual `<stateRoot>` itself, not just the entries inside
         // `<stateRoot>/<stackId>`: its sibling `.registry-lock.sqlite` (`Ports.ts`'s per-root
@@ -739,12 +757,12 @@ it.live.skipIf(process.platform === "win32")(
 
         expect(
           yield* containers(stackId, dataRoot),
-          "abandonment removes containers from in-memory resources alone",
+          "abandonment removes the orphan and the service containers with the registry gone",
         ).toEqual([]);
 
-        // The port reservation is never released by abandonment:
-        // a fresh stack can still claim the exact same port, through `Ports.ts`'s own lazy
-        // reclamation once the former holder's registration is confirmed gone.
+        // The vanished registry cannot release the port reservation: a fresh stack can still
+        // claim the exact same port, through `Ports.ts`'s own lazy reclamation once the former
+        // holder's registration is confirmed gone.
         const reclaimedBase = yield* fs.makeTempDirectoryScoped({
           prefix: "stack-abandon-docker-root-reclaim-",
         });
