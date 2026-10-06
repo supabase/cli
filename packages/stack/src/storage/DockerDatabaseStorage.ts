@@ -2,6 +2,7 @@ import {
   Crypto,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Option,
   Path,
@@ -572,27 +573,38 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ),
           )
           .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        const stderr = yield* child.stderr.pipe(
+          Stream.decodeText,
+          Stream.runFold(
+            () => "",
+            (tail, chunk) => (tail + chunk).slice(-4096),
+          ),
+          Effect.forkScoped,
+        );
         return yield* child.stdout.pipe(
           Stream.decodeText,
           Stream.splitLines,
           Stream.runHead,
           Effect.timeout("30 seconds"),
-          Effect.mapError((cause) => errorFor("helper", cause)),
-          Effect.flatMap((ready) =>
-            Option.isSome(ready) && ready.value === "supabase-helper-ready"
+          Effect.exit,
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) &&
+            Option.isSome(exit.value) &&
+            exit.value.value === "supabase-helper-ready"
               ? Effect.succeed(name)
-              : child.stderr.pipe(
-                  Stream.decodeText,
-                  Stream.mkString,
-                  Effect.timeout("1 second"),
-                  Effect.orElseSucceed(() => ""),
-                  Effect.flatMap((stderr) =>
-                    errorFor(
-                      "helper",
-                      stderr.trim() || "Database helper exited before becoming ready",
-                    ),
-                  ),
-                ),
+              : Effect.gen(function* () {
+                  yield* child
+                    .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+                    .pipe(Effect.ignore);
+                  const diagnostic = yield* Fiber.join(stderr).pipe(
+                    Effect.timeout("1 second"),
+                    Effect.orElseSucceed(() => ""),
+                  );
+                  const reason = Exit.isFailure(exit)
+                    ? failureMessage(exit.cause)
+                    : "Database helper exited before becoming ready";
+                  return yield* errorFor("helper", diagnostic.trim() || reason);
+                }),
           ),
           Effect.onExit((exit) =>
             Exit.isFailure(exit)
@@ -709,7 +721,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.asVoid,
         );
-      // An existing helper may be detached, so replace it with one tied to this owner's pipe.
+      // Clear a helper left behind by an earlier failed close from this owner.
       const openSharedHelper = Effect.fn("DockerDatabaseStorage.openSharedHelper")(function* (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         key: string,
@@ -717,18 +729,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         ownerId: string,
       ) {
         const name = `supabase-db-helper-${(yield* hash(`${ownerId}\0${key}`)).slice(0, 32)}`;
-        const status = yield* engineCommand([
-          "inspect",
-          "--format",
-          "{{.State.Status}}",
-          name,
-        ]).pipe(
-          Effect.map((value) => value.trim()),
-          Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-            missingContainer(cause.message) ? Effect.succeed("absent") : Effect.fail(cause),
-          ),
-        );
-        if (status !== "absent") yield* closeSharedHelper(name);
+        yield* closeSharedHelper(name);
         if (options.container === undefined)
           return yield* errorFor("helper", "Container runtime is unavailable");
         const preparedImage = yield* options.container
