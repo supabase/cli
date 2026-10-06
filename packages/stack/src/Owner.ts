@@ -275,11 +275,24 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ? Effect.succeed(true)
       : Container.probeEngineReachable(spawner, options.engineTarget);
   // Shared per-launch environment-file scratch directory (Container.ts), owned by this stack as a
-  // whole rather than any one instance; registration-independent so destroy and abandonment both
-  // reach it without depending on `Registry.remove`, which never runs during abandonment.
+  // whole rather than any one instance; registration-independent so abandonment reaches it
+  // without `Registry.remove`, which never runs then.
   const removeContainerEnvRoot = fs
     .remove(path.join(options.root, Paths.CONTAINER_ENV_DIRNAME), { recursive: true, force: true })
     .pipe(Effect.mapError(serviceError("cleanup")));
+  // Everything under the data root belongs to the stack, including what a killed owner left
+  // mid-command (`jobs/`); the directory itself stays for `Registry.pruneDestroyed`.
+  const removeDataRootEntries = fs.exists(options.root).pipe(
+    Effect.flatMap((exists) => (exists ? fs.readDirectory(options.root) : Effect.succeed([]))),
+    Effect.flatMap((names) =>
+      Effect.forEach(
+        names,
+        (name) => fs.remove(path.join(options.root, name), { recursive: true, force: true }),
+        { discard: true },
+      ),
+    ),
+    Effect.mapError(serviceError("cleanup")),
+  );
   const rejectWhileDraining = (options.draining ?? Effect.succeed(false)).pipe(
     Effect.flatMap((isDraining) =>
       isDraining
@@ -796,7 +809,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       // that is best-effort because `isGone` reclaims a gone stack's rows lazily.
       destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(sweep),
-        Effect.andThen(removeContainerEnvRoot),
+        Effect.andThen(removeDataRootEntries),
         Effect.andThen(options.state.remove(stackId)),
         Effect.andThen(
           network.releaseStack.pipe(

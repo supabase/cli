@@ -863,6 +863,36 @@ it.live("destroying one service deletes its port reservation", () =>
   ),
 );
 
+it.live("destroying a stack leaves its data root empty after an owner was killed mid-command", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-orphaned-job-" });
+      const stack = initial(`owner-orphaned-job-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const orphanedJob = `${root}/data/jobs/0b1c2d3e-orphan`;
+      yield* fs.makeDirectory(orphanedJob, { recursive: true });
+      yield* fs.writeFileString(`${orphanedJob}/config.json`, "{}");
+
+      yield* owner.namespace.destroy;
+
+      expect(yield* fs.exists(`${root}/data`)).toBe(true);
+      expect(yield* fs.readDirectory(`${root}/data`)).toEqual([]);
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>
   Effect.scoped(
     Effect.gen(function* () {
