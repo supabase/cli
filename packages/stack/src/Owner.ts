@@ -282,27 +282,30 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     options.state.withLock(
       readSaved.pipe(Effect.flatMap((current) => options.state.save(update(current)))),
     );
-  // Idempotent on an already-missing registration (a deleted or already-destroyed state.json),
-  // unlike `updateState`: destroy must still be able to confirm there is nothing left to publish
-  // when the registration, or the whole state root with its registry lock, vanished from under it.
+  // Idempotent on an already-missing registration: the registration, or the whole state root
+  // with its registry lock, may vanish under destroy, so a failure counts only while it remains.
   const removeInstanceRegistration = (id: string) =>
     options.state
-      .read(stackId)
+      .withLock(
+        options.state
+          .read(stackId)
+          .pipe(
+            Effect.flatMap((current) =>
+              current === undefined
+                ? Effect.void
+                : options.state.save(withoutInstance(current, id)),
+            ),
+          ),
+      )
       .pipe(
-        Effect.flatMap((registered) =>
-          registered === undefined
-            ? Effect.void
-            : options.state.withLock(
-                options.state
-                  .read(stackId)
-                  .pipe(
-                    Effect.flatMap((current) =>
-                      current === undefined
-                        ? Effect.void
-                        : options.state.save(withoutInstance(current, id)),
-                    ),
-                  ),
+        Effect.catch((error) =>
+          options.state
+            .read(stackId)
+            .pipe(
+              Effect.flatMap((registered) =>
+                registered === undefined ? Effect.void : Effect.fail(error),
               ),
+            ),
         ),
       );
 
