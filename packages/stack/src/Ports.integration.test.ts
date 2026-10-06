@@ -118,20 +118,29 @@ it.live(
         // there leaves no gap for a parallel test to take the port before the foreign listener.
         const foreign = Net.createServer();
         let firstCandidate: number | undefined;
+        let foreignBound = false;
         const bind = (host: string, port: number) =>
           Effect.gen(function* () {
             if (firstCandidate === undefined) {
               firstCandidate = port;
+              // EADDRINUSE means an unrelated process already occupies the candidate, which is the
+              // collision this test needs.
               yield* Effect.callback<void>((resume) => {
-                foreign.once("error", (cause) => resume(Effect.die(cause)));
-                foreign.listen(port, "127.0.0.1", () => resume(Effect.void));
+                foreign.once("error", (cause: NodeJS.ErrnoException) =>
+                  resume(cause.code === "EADDRINUSE" ? Effect.void : Effect.die(cause)),
+                );
+                foreign.listen(port, "127.0.0.1", () => {
+                  foreignBound = true;
+                  resume(Effect.void);
+                });
               });
             }
             return yield* probed(host, port);
           });
         yield* Effect.addFinalizer(() =>
           Effect.callback<void>((resume) => {
-            foreign.close(() => resume(Effect.void));
+            if (foreignBound) foreign.close(() => resume(Effect.void));
+            else resume(Effect.void);
           }),
         );
 
@@ -260,9 +269,10 @@ it.live(
         };
         yield* state.save(saved);
 
-        // Fails removing the stack's scratch directory on the first attempt only, standing in for
-        // any concrete cleanup failure (an unreachable engine, a locked file, and so on); resolved
-        // for the retry once the uncertainty would realistically have cleared.
+        // Fails removing a leftover scratch directory under the data root on the first attempt
+        // only, standing in for any concrete cleanup failure (an unreachable engine, a locked
+        // file, and so on); resolved for the retry once the uncertainty would realistically have
+        // cleared.
         const scratch = path.join(root, "data", CONTAINER_ENV_DIRNAME);
         let resolved = false;
         const unreliableFileSystem = Layer.effect(
@@ -315,6 +325,7 @@ it.live(
         );
         expect(yield* portReservations.find(realStateRoot, id, `${mail.id}:http`)).toBeDefined();
 
+        yield* fs.makeDirectory(scratch, { recursive: true });
         const firstAttempt = yield* owner.namespace.destroy.pipe(Effect.exit);
         expect(firstAttempt._tag).toBe("Failure");
         // Retained: the row survives a destroy that could not confirm nothing remains.
