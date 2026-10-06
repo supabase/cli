@@ -31,6 +31,12 @@ jobs:
           permission-pull-requests: write
           permission-contents: write
 
+      - name: Assign supabase-oss
+        run: gh pr edit --repo "$GITHUB_REPOSITORY" "$PR_NUMBER" --add-assignee supabase-oss
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
       # A rewritten PR keeps its approval; skipping it avoids stacking a review per push.
       - name: Approve pull request
         run: |
