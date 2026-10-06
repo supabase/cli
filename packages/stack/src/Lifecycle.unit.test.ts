@@ -748,6 +748,37 @@ describe("Lifecycle reducer", () => {
       expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
     });
 
+    it("ends Failed without relaunching an eager service whose crash cleanup failed and was retried by traffic", () => {
+      let state = initialState(
+        makeGraph([{ id: "database", activation: "eager", prerequisites: [] }]),
+      );
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "database", generation: 1 }), now: 1 },
+        sessionLost("database", 1, 2),
+        {
+          event: LifecycleEvent.StopFailed({ id: "database", generation: 1, cause: "busy" }),
+          now: 3,
+        },
+      ]));
+
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state, commandsByStep } = run(state, [
+        { event: open("database", 1), now: 4 },
+        { event: LifecycleEvent.WaiterCancelled({ id: "database", waiterId: 1 }), now: 5 },
+        {
+          event: LifecycleEvent.Exited({ id: "database", generation: 1, requested: true }),
+          now: 6,
+        },
+      ]));
+      expect(tagsOf(commandsByStep[0])).toContain("Stop");
+      expect(commandsByStep[2]).toEqual([]);
+      expect(state.services.get("database")?.phase).toMatchObject({
+        _tag: "Failed",
+        cause: "crash",
+      });
+    });
+
     it("ends Stopped when an explicit stop arrives during the crash's cleanup", () => {
       let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [

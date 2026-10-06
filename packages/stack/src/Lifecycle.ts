@@ -784,7 +784,12 @@ const applyEvent = (
       return [
         setService(dependentsFailed, id, (s) => ({
           ...failAllWaiters(s, id, message, cause, commands),
-          phase: Phase.Stopping({ generation }),
+          phase: Phase.Stopping({
+            generation,
+            ...(service.phase._tag === "Stopping" && service.phase.crash !== undefined
+              ? { crash: service.phase.crash }
+              : {}),
+          }),
           breaker:
             failure === undefined ||
             service.phase._tag === "Stopping" ||
