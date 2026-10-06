@@ -106,7 +106,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       "stack.runtime_cleanup": result.runtimeCleanup,
     });
     if (result.runtimeCleanup === "skipped")
-      yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, result));
+      yield* output.warn(skippedRuntimeCleanupWarning(`stack ${target.id}`, target.id));
     if (output.format !== "text")
       yield* output.success("", {
         destroyed: result.runtimeCleanup === "complete",
@@ -117,7 +117,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       yield* output.raw(`Stack ${target.id} destroyed.\n`);
     else
       yield* output.raw(
-        `Stack ${target.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy" again.\n`,
+        `Stack ${target.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy --stack-id ${target.id}" again.\n`,
       );
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

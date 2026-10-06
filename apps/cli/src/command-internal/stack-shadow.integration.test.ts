@@ -508,7 +508,7 @@ describe("stack shadow databases", () => {
         );
 
         expect(output.stderrText).toMatch(
-          /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Restore Docker and run "supabase stack destroy" again to finish removing it\.\n/u,
+          /Warning: Docker was unavailable, so Docker resources for shadow stack [0-9a-f]{64} were not removed\. Restore Docker and run "supabase stack destroy --stack-id [0-9a-f]{64}" again to finish removing it\.\n/u,
         );
       }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
     120_000,

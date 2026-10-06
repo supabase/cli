@@ -7,7 +7,6 @@ import {
   find,
   open,
   type CreateOptions,
-  type DestroyResult,
   type FindOptions,
   type FoundStack,
   type OpenOptions,
@@ -68,10 +67,7 @@ export const stackApiLayer = Layer.effect(
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
 /** Describes why a destroy left engine resources behind, without promising automatic cleanup. */
-export const skippedRuntimeCleanupWarning = (
-  subject: string,
-  _result: Extract<DestroyResult, { readonly runtimeCleanup: "skipped" }>,
-): string =>
-  `Docker was unavailable, so Docker resources for ${subject} were not removed. Restore Docker and run "supabase stack destroy" again to finish removing it.`;
+export const skippedRuntimeCleanupWarning = (subject: string, stackId: string): string =>
+  `Docker was unavailable, so Docker resources for ${subject} were not removed. Restore Docker and run "supabase stack destroy --stack-id ${stackId}" again to finish removing it.`;
 
 export type { Stack };

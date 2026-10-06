@@ -71,11 +71,11 @@ it.live(
       const f = yield* fixture("text");
       yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
       expect(f.output.stdoutText).toBe(
-        `Stack ${f.stack.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy" again.\n`,
+        `Stack ${f.stack.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy --stack-id ${f.stack.id}" again.\n`,
       );
       expect(f.output.messages).toContainEqual({
         type: "warn",
-        message: `Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed. Restore Docker and run "supabase stack destroy" again to finish removing it.`,
+        message: `Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed. Restore Docker and run "supabase stack destroy --stack-id ${f.stack.id}" again to finish removing it.`,
       });
       expect(yield* f.api.discover(f.locations)).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(live)),
