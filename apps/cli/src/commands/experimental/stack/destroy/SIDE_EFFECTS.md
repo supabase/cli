@@ -25,10 +25,12 @@ directory was deleted, destroy selects them; when none do and an engine failed t
 list its containers, the command fails naming that engine. After the same
 confirmation (`the containers deleted stack <id> left behind`) it removes them and
 prints the usual success; a deleted directory took the stack's lease with it, so
-this includes the containers of an owner that still runs. Its
-data in the state root's shared database volume stays, and containers of other
-state roots are never touched; for a deleted `SUPABASE_HOME`, run destroy with
-that `SUPABASE_HOME`.
+this includes the containers of an owner that still runs. When another process
+holds the stack's lease, destroy fails and asks to run it again; when the stack is
+registered again meanwhile, destroy fails and leaves the remaining containers to
+that registration. Its data in the state root's shared database volume stays, and
+containers of other state roots are never touched; for a deleted `SUPABASE_HOME`,
+run destroy with that `SUPABASE_HOME`.
 
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.

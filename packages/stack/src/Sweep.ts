@@ -26,7 +26,8 @@ const destroyStack = Effect.fn("Sweep.destroyStack")(function* (
  * Cleans up a stack whose lease is free, holding that lease meanwhile and marking the hold so
  * clients wait instead of mistaking it for a starting owner. Removes the stack's labelled
  * containers, only those on `engine` once the stack is no longer registered, and destroys the
- * stack when its lifetime is `session`. Returns `false` when another process holds the lease.
+ * stack when its lifetime is `session`. Returns `held` when another process holds the lease,
+ * `registered` when, with `engine`, the stack is registered again, and otherwise `reclaimed`.
  */
 export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: {
   readonly state: State.Interface;
@@ -40,7 +41,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
   const { state, id } = options;
   return yield* Effect.scoped(
     Effect.gen(function* () {
-      if (!(yield* state.lease(id))) return false;
+      if (!(yield* state.lease(id))) return "held";
       yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
       yield* state.publishHolder(id, {
         role: "sweeper",
@@ -48,12 +49,13 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
         startedAt: DateTime.formatIso(yield* DateTime.now),
       });
       const saved = yield* state.read(id);
+      if (options.engine !== undefined && saved !== undefined) return "registered";
       const stack =
         saved ?? (options.engine === undefined ? undefined : { id, runtime: options.engine });
-      if (stack === undefined) return true;
+      if (stack === undefined) return "reclaimed";
       const dataRoot = path.join(yield* fs.realPath(options.stateRoot), id, "data");
       yield* Owner.sweepContainers(stack, dataRoot);
-      if (saved === undefined) return true;
+      if (saved === undefined) return "reclaimed";
       // Reading drops saved Vector instances, so destroying does not depend on the migration.
       yield* state
         .migrate(id)
@@ -64,7 +66,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
         );
       if (saved.lifetime === "session")
         yield* destroyStack(state, saved, dataRoot, options.cacheRoot);
-      return true;
+      return "reclaimed";
     }),
   ).pipe(Effect.timeout(sweepTimeout));
 });

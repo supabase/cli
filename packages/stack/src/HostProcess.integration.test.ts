@@ -33,7 +33,7 @@ import {
   type HostAccess,
 } from "./HostProcess.ts";
 import { discover } from "./effect.ts";
-import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
+import { watchLeaseRelease } from "../tests/owner.ts";
 import * as State from "./State.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
@@ -528,6 +528,7 @@ it.live("waits out a sweeper's hold before spawning the owner of a stack it regi
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-sweeper-hold-" });
       const state = yield* makeTestState(root);
       const hold = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
       expect(yield* state.lease("stack").pipe(Scope.provide(hold))).toBe(true);
       yield* state.publishHolder("stack", {
         role: "sweeper",
@@ -559,9 +560,7 @@ it.live("waits out a sweeper's hold before spawning the owner of a stack it regi
       );
       yield* state.retractHolder("stack");
       yield* Scope.close(hold, Exit.void);
-      yield* Effect.acquireRelease(Fiber.join(launching), (access) =>
-        shutdownOwner(access, true).pipe(Effect.ignore),
-      );
+      yield* Effect.acquireRelease(Fiber.join(launching), bestEffortShutdown(root));
       expect(yield* state.read("stack")).toBeDefined();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

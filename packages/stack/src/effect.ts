@@ -1061,11 +1061,16 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
       | HttpClient.HttpClient
       | ChildProcessSpawner.ChildProcessSpawner
     >();
-    const state = yield* stateFor(options.stateRoot);
-    // An unreadable registration is left to `find`, which reports it.
-    const saved = yield* state.read(options.id).pipe(Effect.option);
-    if (Option.isNone(saved) || saved.value !== undefined) return Option.none<DeletedStack>();
-    const root = path.join(yield* fs.realPath(options.stateRoot), options.id, "data");
+    // A registry that cannot be opened or read is left to `find`, which reports it.
+    const registry = yield* Effect.gen(function* () {
+      const state = yield* stateFor(options.stateRoot);
+      const saved = yield* state.read(options.id);
+      return { state, saved, stateRoot: yield* fs.realPath(options.stateRoot) };
+    }).pipe(Effect.option);
+    if (Option.isNone(registry) || registry.value.saved !== undefined)
+      return Option.none<DeletedStack>();
+    const { state, stateRoot } = registry.value;
+    const root = path.join(stateRoot, options.id, "data");
     const probes = yield* Effect.forEach(
       ["docker", "podman"] as const,
       (engine) =>
@@ -1084,8 +1089,8 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
         ),
       { concurrency: "unbounded" },
     );
-    const matched = probes.find(({ listed }) => Result.isSuccess(listed) && listed.success);
-    if (matched === undefined) {
+    const matched = probes.filter(({ listed }) => Result.isSuccess(listed) && listed.success);
+    if (matched.length === 0) {
       for (const { engine, listed } of probes)
         if (Result.isFailure(listed))
           return yield* failure(
@@ -1094,14 +1099,18 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
           );
       return Option.none<DeletedStack>();
     }
-    const destroy = reclaimStack({ ...options, state, engine: matched.engine }).pipe(
-      Effect.flatMap((reclaimed) =>
-        reclaimed
-          ? Effect.succeed<DestroyResult>({ runtimeCleanup: "complete" })
-          : Effect.fail(
-              failure("destroy", "Another process holds this stack's lease; run destroy again"),
-            ),
-      ),
+    const destroy = Effect.gen(function* () {
+      for (const { engine } of matched) {
+        const refusal = Match.value(yield* reclaimStack({ ...options, state, engine })).pipe(
+          Match.when("reclaimed", () => undefined),
+          Match.when("held", () => "Another process holds this stack's lease; run destroy again"),
+          Match.when("registered", () => `Stack ${options.id} was registered again during destroy`),
+          Match.exhaustive,
+        );
+        if (refusal !== undefined) return yield* failure("destroy", refusal);
+      }
+      return { runtimeCleanup: "complete" } as const;
+    }).pipe(
       Effect.mapError((cause) => failure("destroy", cause)),
       Effect.provideContext(services),
     );

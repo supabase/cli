@@ -46,14 +46,20 @@ export const makeDockerDatabaseRoot = Effect.fn("DockerTest.makeDatabaseRoot")(
 
 /**
  * A container engine whose `ps --format` prints `listing`, and whose commands fail with the given
- * stderr for an engine named in `failures`; it records every command it runs.
+ * stderr for an engine named in `failures`; it records every command it runs and passes it to
+ * `onCommand` before answering.
  */
-export const engineStub = (listing: string, failures: Readonly<Record<string, string>> = {}) => {
+export const engineStub = (
+  listing: string,
+  failures: Readonly<Record<string, string>> = {},
+  onCommand: (command: ReadonlyArray<string>) => Effect.Effect<void> = () => Effect.void,
+) => {
   const commands: Array<ReadonlyArray<string>> = [];
   const spawner = ChildProcessSpawner.make((command) => {
     if (!ChildProcess.isStandardCommand(command))
       return Effect.die("Unexpected child process command");
-    commands.push([command.command, ...command.args]);
+    const argv = [command.command, ...command.args];
+    commands.push(argv);
     const failure = failures[command.command];
     const stdout = failure === undefined && command.args.includes("--format") ? listing : "";
     return Effect.succeed(
@@ -71,7 +77,7 @@ export const engineStub = (listing: string, failures: Readonly<Record<string, st
         getOutputFd: () => Stream.empty,
         unref: Effect.succeed(Effect.void),
       }),
-    );
+    ).pipe(Effect.tap(() => onCommand(argv)));
   });
   return { layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner), commands };
 };

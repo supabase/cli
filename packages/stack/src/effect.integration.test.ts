@@ -522,6 +522,7 @@ it.live("creates a deleted stack again once a hold on its lease ends", () =>
       Effect.provide(State.layer({ root: options.stateRoot })),
     );
     const hold = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(hold, Exit.void));
     expect(yield* state.lease(id).pipe(Scope.provide(hold))).toBe(true);
     const log = state.ownerLog(id);
     const contended = yield* fs.watch(`${options.stateRoot}/${id}`).pipe(
@@ -561,12 +562,15 @@ it.live("finds and removes the containers a deleted stack left in its own state 
     const foreignId = "f".repeat(64);
     const deletedData = `${locations.stateRoot}/${deletedId}/data`;
     yield* fs.makeDirectory(`${locations.stateRoot}/${strandedId}/data`, { recursive: true });
-    const listing = [
-      `${registered.id}\t${locations.stateRoot}/${registered.id}/data`,
-      `${deletedId}\t${deletedData}`,
-      `${strandedId}\t${locations.stateRoot}/${strandedId}/data`,
-      `${foreignId}\t${root}/other/${foreignId}/data`,
-    ].join("\n");
+    const listing = yield* Effect.forEach(
+      [
+        [registered.id, `${locations.stateRoot}/${registered.id}/data`],
+        [deletedId, deletedData],
+        [strandedId, `${locations.stateRoot}/${strandedId}/data`],
+        [foreignId, `${root}/other/${foreignId}/data`],
+      ],
+      (labels) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(labels),
+    ).pipe(Effect.map((lines) => lines.join("\n")));
     const engine = engineStub(listing, { podman: "Cannot connect to Podman: connection refused" });
     const found = (id: string) =>
       findDeleted({ ...locations, id }).pipe(Effect.provide(engine.layer));
@@ -576,6 +580,12 @@ it.live("finds and removes the containers a deleted stack left in its own state 
     expect(Option.isSome(yield* found(strandedId)), "a directory without its registration").toBe(
       true,
     );
+    const file = `${root}/file`;
+    yield* fs.writeFileString(file, "");
+    const unusable = yield* findDeleted({ ...locations, stateRoot: file, id: deletedId }).pipe(
+      Effect.provide(engine.layer),
+    );
+    expect(Option.isNone(unusable), "an unusable registry is left to find").toBe(true);
     const denied = { docker: "permission denied while trying to connect" };
     const onPodman = yield* findDeleted({ ...locations, id: deletedId }).pipe(
       Effect.provide(engineStub(listing, denied).layer),
@@ -588,10 +598,12 @@ it.live("finds and removes the containers a deleted stack left in its own state 
     expect(failure.message, "with no match, a refusing engine is reported").toContain(
       "Unable to list Docker containers",
     );
-    const deleted = Option.getOrThrow(yield* found(deletedId));
+    const both = engineStub(listing);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(both.layer)),
+    );
     expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
-    expect(engine.commands).toContainEqual([
-      "docker",
+    const removal = [
       "ps",
       "--all",
       "--quiet",
@@ -600,7 +612,26 @@ it.live("finds and removes the containers a deleted stack left in its own state 
       `label=com.supabase.stack=${deletedId}`,
       "--filter",
       `label=com.supabase.stack-root=${deletedData}`,
-    ]);
+    ];
+    expect(both.commands).toContainEqual(["docker", ...removal]);
+    expect(both.commands).toContainEqual(["podman", ...removal]);
+
+    const statePath = `${locations.stateRoot}/${registered.id}/state.json`;
+    yield* fs.rename(statePath, `${statePath}.aside`);
+    const reregister = yield* Effect.cached(
+      fs.rename(`${statePath}.aside`, statePath).pipe(Effect.orDie),
+    );
+    const racing = engineStub(listing, {}, (command) =>
+      command[0] === "docker" && command.includes("--quiet") ? reregister : Effect.void,
+    );
+    const unregistered = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: registered.id }).pipe(Effect.provide(racing.layer)),
+    );
+    expect((yield* Effect.flip(unregistered.destroy)).message).toContain("was registered again");
+    expect(
+      racing.commands.filter((command) => command[0] === "podman" && command.includes("--quiet")),
+      "podman is left to the registration",
+    ).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

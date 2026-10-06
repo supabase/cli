@@ -254,7 +254,7 @@ it.live("destroys a dead session stack whose saved Vector instance fails to migr
         id,
       });
 
-      expect(reclaimed).toBe(true);
+      expect(reclaimed).toBe("reclaimed");
       expect(yield* real.read(id)).toBeUndefined();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
@@ -281,14 +281,16 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
       const deletedId = "d".repeat(64);
       const foreignId = "f".repeat(64);
       const deletedData = path.join(stateRoot, deletedId, "data");
-      const listing = [
-        `owner\t${path.join(stateRoot, "owner", "data")}`,
-        `${deletedId}\t${deletedData}`,
-        `${deletedId}\t${deletedData}`,
-        `${foreignId}\t${path.join(path.dirname(stateRoot), "other", foreignId, "data")}`,
-        `../escape\t${path.join(stateRoot, "..", "escape", "data")}`,
-        "malformed",
-      ].join("\n");
+      const listing = yield* Effect.forEach(
+        [
+          ["owner", path.join(stateRoot, "owner", "data")],
+          [deletedId, deletedData],
+          [deletedId, deletedData],
+          [foreignId, path.join(path.dirname(stateRoot), "other", foreignId, "data")],
+          ["../escape", path.join(stateRoot, "..", "escape", "data")],
+        ],
+        (labels) => Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(labels),
+      ).pipe(Effect.map((lines) => [...lines, "malformed"].join("\n")));
       const engine = engineStub(listing);
       const sweep = sweepOrphans({
         state,
@@ -323,6 +325,14 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
         yield* fs.exists(path.join(stateRoot, deletedId)),
         "the sweeper's lease leaves no directory behind",
       ).toBe(false);
+      const outcome = yield* reclaimStack({
+        state,
+        stateRoot,
+        cacheRoot: path.join(stateRoot, "cache"),
+        id: "stopped",
+        engine: "docker",
+      }).pipe(Effect.provide(engine.layer));
+      expect(outcome, "a stack registered again is not reclaimed as deleted").toBe("registered");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

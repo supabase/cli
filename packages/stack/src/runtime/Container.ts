@@ -875,6 +875,10 @@ const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
   );
 });
 
+const decodeStackLabels = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
+);
+
 export const listStackContainers = Effect.fn("Container.listStackContainers")(function* (
   engine: "docker" | "podman",
 ) {
@@ -884,15 +888,13 @@ export const listStackContainers = Effect.fn("Container.listStackContainers")(fu
     "--filter",
     "label=com.supabase.stack",
     "--format",
-    '{{.Label "com.supabase.stack"}}\t{{.Label "com.supabase.stack-root"}}',
+    '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
   ]).pipe(Effect.mapError(markUnavailable));
-  return output
-    .split("\n")
-    .filter((line) => line.length > 0)
-    .map((line) => {
-      const [stackId = "", root = ""] = line.split(/\t(.*)/);
-      return { stackId, root };
-    });
+  const labels = yield* Effect.forEach(
+    output.split("\n").filter((line) => line.length > 0),
+    (line) => decodeStackLabels(line).pipe(Effect.option),
+  );
+  return labels.flatMap(Option.toArray).map(([stackId, root]) => ({ stackId, root }));
 });
 
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
