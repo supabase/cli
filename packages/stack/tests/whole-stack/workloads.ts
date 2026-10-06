@@ -10,6 +10,15 @@ export const WorkloadSnapshot = Schema.Struct({
 });
 export type WorkloadSnapshot = Schema.Schema.Type<typeof WorkloadSnapshot>;
 
+const PodmanContainers = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      Id: Schema.String,
+      Labels: Schema.Record(Schema.String, Schema.String),
+    }),
+  ),
+);
+
 export const commandOutput = Effect.fn("WholeStack.commandOutput")(
   (command: string, args: ReadonlyArray<string>) =>
     Effect.gen(function* () {
@@ -37,25 +46,35 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
       } satisfies WorkloadSnapshot;
     }
     const marker = `com.supabase.stack=${fixture.stack.id}`;
-    // Docker's `ps` template reads a label through `.Label`; Podman's has no such method.
-    const label = (key: string) =>
-      runtime === "docker" ? `{{.Label "${key}"}}` : `{{index .Labels "${key}"}}`;
-    const output = yield* commandOutput(runtime, [
-      "ps",
-      ...(includeStopped ? ["--all"] : []),
-      "--filter",
-      `label=${marker}`,
-      "--format",
-      `{{.ID}}\t${label("com.supabase.instance")}\t${label("com.supabase.stack-managed")}`,
-    ]);
-    const records = output
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const [id, instance, managed] = line.split("\t");
-        return { identity: `${id ?? ""} ${instance ?? ""}`.trim(), instance, managed };
-      })
+    const listArgs = ["ps", ...(includeStopped ? ["--all"] : []), "--filter", `label=${marker}`];
+    // Podman's `ps` templates read labels differently across versions; its JSON is stable.
+    const listed =
+      runtime === "docker"
+        ? (yield* commandOutput(runtime, [
+            ...listArgs,
+            "--format",
+            '{{.ID}}\t{{.Label "com.supabase.instance"}}\t{{.Label "com.supabase.stack-managed"}}',
+          ]))
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .map((line) => {
+              const [id, instance, managed] = line.split("\t");
+              return { id, instance, managed };
+            })
+        : (yield* Schema.decodeEffect(PodmanContainers)(
+            yield* commandOutput(runtime, [...listArgs, "--format", "json"]),
+          )).map(({ Id, Labels }) => ({
+            id: Id,
+            instance: Labels["com.supabase.instance"],
+            managed: Labels["com.supabase.stack-managed"],
+          }));
+    const records = listed
+      .map(({ id, instance, managed }) => ({
+        identity: `${id ?? ""} ${instance ?? ""}`.trim(),
+        instance,
+        managed,
+      }))
       // The stack label alone also tags best-effort containers that carry neither an instance
       // nor a `stack-managed` identity, such as the host-gateway probe (see `readProbeHosts` in
       // `Container.ts`); only the two documented identity labels promise a workload.
