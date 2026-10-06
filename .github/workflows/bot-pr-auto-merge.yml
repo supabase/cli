@@ -1,0 +1,58 @@
+name: Bot PR auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [develop]
+
+permissions: {}
+
+jobs:
+  approve-and-merge:
+    name: Approve and enable auto-merge
+    runs-on: ubuntu-latest
+    # Other apps (coding agents, CI vendors) also open PRs here and still need a maintainer.
+    # Release-notes PRs are published by a maintainer approval and must never merge.
+    if: >-
+      contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.pull_request.user.login) &&
+      contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.sender.login) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft &&
+      !startsWith(github.event.pull_request.head.ref, 'release-notes/')
+    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
+    environment: auto-approve
+    steps:
+      # pull_request_target is safe here because this job never checks out PR code.
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
+
+      - name: Assign supabase-oss
+        run: gh pr edit --repo "$GITHUB_REPOSITORY" "$PR_NUMBER" --add-assignee supabase-oss
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      # A rewritten PR keeps its approval; skipping it avoids stacking a review per push.
+      - name: Approve pull request
+        run: |
+          set -euo pipefail
+          decision="$(GH_TOKEN="$APP_TOKEN" gh pr view --repo "$GITHUB_REPOSITORY" "$PR_NUMBER" --json reviewDecision --jq .reviewDecision)"
+          if [ "$decision" != "APPROVED" ]; then
+            gh pr review --approve --repo "$GITHUB_REPOSITORY" "$PR_NUMBER"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash --repo "$GITHUB_REPOSITORY" "$PR_NUMBER"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}

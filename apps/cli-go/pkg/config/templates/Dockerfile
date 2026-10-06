@@ -19,7 +19,7 @@ FROM axllent/mailpit:v1.31.3 AS mailpit
 
 FROM postgrest/postgrest:v16.4 AS postgrest
 
-FROM supabase/postgres-meta:v0.99.0 AS pgmeta
+FROM supabase/postgres-meta:v0.100.0 AS pgmeta
 
 FROM supabase/studio:2026.10.05-sha-94b8b06 AS studio
 
@@ -35,7 +35,7 @@ FROM supabase/gotrue:v2.197.0 AS gotrue
 
 FROM supabase/realtime:v2.140.10 AS realtime
 
-FROM supabase/storage-api:v1.79.33 AS storage
+FROM supabase/storage-api:v1.79.36 AS storage
 
 FROM supabase/logflare:1.52.0 AS logflare
 # One-shot job images (not started as long-running containers); differ's alias
