@@ -202,12 +202,10 @@ const resolveNativeRuntimeRoot = (create: boolean) =>
             new ServiceError({ operation: "launch", message: `Unable to resolve ${base}`, cause }),
         ),
       );
-    // Every ancestor is checked too: a writable non-sticky one would let another uid rename the tree.
-    for (const directory of ancestorsOf(path, canonicalBase))
-      yield* confirmPrivateDirectory(directory, uid, {
-        allowRootOwner: true,
-        allowStickyWritable: true,
-      });
+    yield* confirmPrivateDirectory(canonicalBase, uid, {
+      allowRootOwner: true,
+      allowStickyWritable: true,
+    });
     const root = nativeRuntimeRootPath(path, canonicalBase, uid);
     if (create)
       yield* fs.makeDirectory(root, { mode: 0o700 }).pipe(

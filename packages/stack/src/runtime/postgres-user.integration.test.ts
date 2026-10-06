@@ -119,29 +119,25 @@ describe("acquireNativeRuntimeRoot", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live(
-    "refuses a base beneath a group- or world-writable directory without the sticky bit",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const shared = yield* fs.makeTempDirectoryScoped({
-            prefix: "native-runtime-root-shared-",
-          });
-          yield* fs.chmod(shared, 0o777);
-          const base = path.join(shared, "runtime");
-          yield* fs.makeDirectory(base, { mode: 0o700 });
+  it.live("refuses a base that is group- or world-writable without the sticky bit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({
+          prefix: "native-runtime-root-shared-",
+        });
+        yield* fs.chmod(base, 0o777);
 
-          const failure = yield* acquireNativeRuntimeRoot().pipe(
-            Effect.flip,
-            Effect.provide(Layer.succeed(NativeRuntimeRootBase, base)),
-          );
-          expect(failure.message).toContain("writable by group or others without the sticky bit");
-          expect(yield* fs.exists(nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0))).toBe(
-            false,
-          );
-        }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+        const failure = yield* acquireNativeRuntimeRoot().pipe(
+          Effect.flip,
+          Effect.provide(Layer.succeed(NativeRuntimeRootBase, base)),
+        );
+        expect(failure.message).toContain("writable by group or others without the sticky bit");
+        expect(yield* fs.exists(nativeRuntimeRootPath(path, base, process.getuid?.() ?? 0))).toBe(
+          false,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
