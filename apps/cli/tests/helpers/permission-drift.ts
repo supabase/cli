@@ -1,7 +1,8 @@
 import {
   applicableOperations,
-  COMMAND_PERMISSIONS,
+  declaredPermissions,
 } from "../../src/command-internal/command-permissions/registry.ts";
+import type { PermissionVariant } from "../../src/command-internal/command-permissions/registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../src/command-internal/command-permissions/global-flags.ts";
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import { matchOperation } from "./operation-table.ts";
@@ -17,6 +18,8 @@ export interface AssertPermissionDriftOptions {
   /** Flags active in this test run (without the leading `--`), e.g. `["linked"]`. */
   readonly activeFlags?: ReadonlyArray<string>;
   readonly requests: ReadonlyArray<RecordedMethodUrl>;
+  /** The command tree to look `command` up in; defaults to the default root (`start`/`status`/`stop` differ by stack backend). */
+  readonly variant?: PermissionVariant;
   /**
    * The happy-path check: every `required` entry that applies under `activeFlags` (and carries
    * no `context`) must have been requested. Leave unset for tests that only exercise part of a
@@ -38,32 +41,25 @@ function knownFlagNames(
 }
 
 /**
- * Fails with a descriptive message when a recorded request diverges from `command`'s declared
- * permission mapping:
- * - `activeFlags` names something `command`'s own declaration never classifies (likely a typo);
- * - an in-scope request matches no known Management API operation (a path-template typo or a
- *   missing spec entry — not something to silently ignore);
- * - the matched operation is declared for `command` but its `when` doesn't hold for
- *   `activeFlags` — check that `activeFlags` matches what this test run actually exercises;
- * - the matched operation isn't declared for `command` at all, building blocks included;
- * - with `exact: true`, a declared `required` entry that applies under `activeFlags` was never
- *   requested.
- *
- * Out-of-scope requests (not a Management API call — see `operation-table.ts`) are ignored.
- *
- * Known gap: a call a test mocks away entirely (e.g. a layer replaced wholesale, as integration
- * tests do with `DbConfigResolver`) never reaches `requests`, so this can't catch drift there —
- * those calls need their own building-block test instead.
+ * Fails when a recorded Management API request diverges from `command`'s declared permissions.
+ * Calls a test mocks away entirely (a layer replaced wholesale) never reach `requests`, so they
+ * need their own building-block test.
  */
 export function assertPermissionDrift(options: AssertPermissionDriftOptions): void {
   const { command, requests, exact = false } = options;
   const activeFlags = options.activeFlags ?? [];
-  const declared = COMMAND_PERMISSIONS.get(command);
-  if (declared === undefined) {
+  const lookup = declaredPermissions(command, options.variant);
+  if (lookup._tag === "NotFound") {
     throw new Error(
-      `assertPermissionDrift: no permission mapping declared for command "${command}" — map it in its <command>.permissions.ts before asserting drift.`,
+      `assertPermissionDrift: command "${command}" is not in the ${JSON.stringify(options.variant ?? "default")} command tree — pass \`variant\` if it only exists under a feature option (e.g. stack, compute).`,
     );
   }
+  if (lookup._tag === "Undeclared") {
+    throw new Error(
+      `assertPermissionDrift: no permission mapping declared for command "${command}" — add withPermissions(...) to its <command>.command.ts before asserting drift.`,
+    );
+  }
+  const declared = lookup.permissions;
   if (declared.status === "unmapped") {
     throw new Error(
       `assertPermissionDrift: "${command}" is declared unmapped (${declared.reason}) — it makes no CLI-side permission claims to assert drift against.`,

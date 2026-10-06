@@ -22,6 +22,11 @@ describe("operation-table", () => {
     }
   });
 
+  it("reads x-oauth-scope when the spec declares one and leaves it undefined when it doesn't", () => {
+    expect(OPERATIONS.get("v1-list-all-secrets")?.oauthScope).toBe("secrets:read");
+    expect(OPERATIONS.get("v1-list-project-addons")?.oauthScope).toBeUndefined();
+  });
+
   it("ignores a path outside the Management API's /v1/ and /v2/ prefixes", () => {
     expect(matchOperation("GET", "https://api.supabase.com/platform/cli/login/session-id")).toEqual(
       {
