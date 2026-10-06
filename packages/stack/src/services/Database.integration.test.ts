@@ -605,11 +605,14 @@ describe("database component", { timeout: 180_000 }, () => {
           ...engineTarget.argv,
           "inspect",
           "--format",
-          "{{.State.StartedAt}}",
+          "{{json .State.StartedAt}}",
           container,
         ]);
 
-        const observed = yield* observeContainerStop(container, startedAt.output.trim());
+        const observed = yield* observeContainerStop(
+          container,
+          startedAt.output.trim().replaceAll('"', ""),
+        );
 
         yield* Effect.scoped(
           Effect.gen(function* () {
