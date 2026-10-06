@@ -420,22 +420,24 @@ const hostCaBundles = [
 ];
 
 /**
- * Forwards the host's SSL_CERT_FILE or SSL_CERT_DIR, else its first CA bundle present, because the
- * bundled OpenSSL behind http and pg_net defaults to a trust store under /nix on macOS.
+ * Forwards the host's SSL_CERT_FILE and SSL_CERT_DIR, defaulting SSL_CERT_FILE to its first CA
+ * bundle present, because the bundled OpenSSL behind http and pg_net defaults to a trust store under
+ * /nix on macOS. Exported values are resolved here because PostgreSQL runs from its data directory.
  */
-export const nativeTrustStore = Effect.gen(function* () {
+const nativeTrustStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const env: Record<string, string> = {};
   for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR"]) {
     const value = yield* Config.option(Config.nonEmptyString(name)).pipe(
       Effect.orElseSucceed(() => Option.none()),
     );
-    if (Option.isSome(value)) env[name] = value.value;
+    if (Option.isSome(value)) env[name] = path.resolve(value.value);
   }
-  if (Object.keys(env).length > 0) return env;
+  if (env.SSL_CERT_FILE !== undefined) return env;
   for (const bundle of hostCaBundles)
     if (yield* fs.exists(bundle).pipe(Effect.orElseSucceed(() => false)))
-      return { SSL_CERT_FILE: bundle };
+      return { ...env, SSL_CERT_FILE: bundle };
   return env;
 });
 
@@ -888,7 +890,10 @@ export const makeDatabase = (
               options.instanceId,
               spawner,
               stepDownUser,
-              yield* nativeTrustStore.pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+              yield* nativeTrustStore.pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+              ),
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",
