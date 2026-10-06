@@ -29,9 +29,9 @@ shutdown is refused.
 
 When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes nothing: the registration, port claims and host
-data stay as they are, stderr warns that Docker resources were not removed, and
+data stay as they are, stderr warns that the stack's engine (Docker or Podman) resources were not removed, and
 the command exits 0 reporting the stack as not destroyed. Run destroy again once
-Docker is reachable. Any other engine failure, an owner starting during
+the engine is reachable. Any other engine failure, an owner starting during
 destruction, an instance whose data (including a native database's socket
 directory) cannot be removed, or a labelled container that survives removal,
 fails the command and keeps the stack registered; the error lists what
@@ -62,7 +62,7 @@ remains the backstop when no owner is left alive to do so.
 ## Output, exit codes and telemetry
 
 Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,
-`Stack <id> could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
+`Stack <id> could not be fully destroyed because <Engine> is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
 JSON and stream-json success data contain `destroyed` (`false` when engine
 cleanup was skipped), `id`, and `runtimeCleanup` (`complete` or `skipped`); a
 skipped cleanup also carries `engine`. Exit 0 on destruction or skipped engine cleanup, 1 on invalid flags, missing

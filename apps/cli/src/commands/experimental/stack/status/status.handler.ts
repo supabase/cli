@@ -6,6 +6,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
@@ -57,7 +58,7 @@ type StackReport = {
     readonly project_root: string;
     readonly branch_context: string;
   };
-  readonly runtime: "native" | "docker";
+  readonly runtime: StackRuntime;
   readonly owner: "reachable" | "unavailable";
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly readiness: "unavailable" | "starting" | "sleeping" | "stopped" | "ready" | "unhealthy";
@@ -148,7 +149,7 @@ const reportFor = (
       readonly branchContext: string;
       readonly stackName: string;
     };
-    readonly runtime: "native" | "docker";
+    readonly runtime: StackRuntime;
   },
   owner: StackReport["owner"],
   observed: ReadonlyArray<ObservedService>,

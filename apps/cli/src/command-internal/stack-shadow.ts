@@ -236,7 +236,7 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
       Effect.flatMap((result) =>
         result.runtimeCleanup === "skipped"
           ? output.raw(
-              `Warning: ${skippedRuntimeCleanupWarning(`shadow stack ${stack.id}`, stack.id)}\n`,
+              `Warning: ${skippedRuntimeCleanupWarning(`shadow stack ${stack.id}`, stack.id, result.engine)}\n`,
               "stderr",
             )
           : Effect.void,

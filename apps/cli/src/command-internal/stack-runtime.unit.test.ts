@@ -13,14 +13,14 @@ describe("selectStackRuntime", () => {
     Effect.gen(function* () {
       const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
 
-      const runtime = yield* selectStackRuntime("docker").pipe(
+      const runtime = yield* selectStackRuntime("podman").pipe(
         Effect.provideService(CommandTelemetryAttributes, {
           record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
         }),
       );
 
-      expect(runtime).toBe("docker");
-      expect((yield* Ref.get(recorded)).stack_runtime).toBe("docker");
+      expect(runtime).toBe("podman");
+      expect((yield* Ref.get(recorded)).stack_runtime).toBe("podman");
     }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, runtimeInfoLayer))),
   );
 });

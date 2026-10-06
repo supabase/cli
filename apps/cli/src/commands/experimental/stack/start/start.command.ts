@@ -22,9 +22,9 @@ const config = {
     Flag.withDescription("Open an existing stack by id."),
     Flag.optional,
   ),
-  runtime: Flag.choice("runtime", ["auto", "docker", "native"] as const).pipe(
+  runtime: Flag.choice("runtime", ["auto", "docker", "podman", "native"] as const).pipe(
     Flag.withDescription(
-      "Runtime to use for a new stack. auto selects Docker, then native, based on what is available.",
+      "Runtime to use for a new stack. auto selects Docker, then Podman, then native, based on what is available.",
     ),
     Flag.withDefault("auto" as const),
   ),
@@ -46,7 +46,7 @@ export const stackStartCommand = Command.make("start", config).pipe(
   Command.withDescription(
     "Create or resume a managed local Supabase stack using supabase/config.toml when present. " +
       "Without a config file, default settings are used and no file is created. " +
-      "For a new stack, auto selects Docker when its engine is reachable, then native on supported platforms; the choice is persisted for that stack. " +
+      "For a new stack, auto selects Docker when its engine is reachable, then Podman, then native on supported platforms; the choice is persisted for that stack. " +
       "Explicit runtime choices are honored. Values support explicit env(NAME) references and automatic SUPABASE_* overrides.",
   ),
   Command.withShortDescription("Start a managed local stack"),

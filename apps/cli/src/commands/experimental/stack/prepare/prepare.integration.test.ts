@@ -49,13 +49,18 @@ const makeProject = (config: string) =>
 interface FixtureOptions {
   readonly failPreparation?: boolean;
   readonly savedRuntime?: StackRuntime;
-  readonly engines?: { readonly docker: ContainerEngineState };
+  readonly engines?: {
+    readonly docker: ContainerEngineState;
+    readonly podman: ContainerEngineState;
+  };
   readonly runtimeInfo?: Layer.Layer<RuntimeInfo>;
 }
 
 const makeFixture = (root: string, options: FixtureOptions = {}) => {
   const { failPreparation = false } = options;
-  const engines = containerEngineSpawner(options.engines ?? { docker: "missing" });
+  const engines = containerEngineSpawner(
+    options.engines ?? { docker: "missing", podman: "missing" },
+  );
   const createdRuntimes: Array<StackRuntime> = [];
   let openCount = 0;
   let prepareCount = 0;
@@ -205,7 +210,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
         .map(({ message }) => message);
     },
     get probes() {
-      return engines.spawned.map(({ command }) => command);
+      return [...new Set(engines.spawned.map(({ command }) => command))];
     },
     get prepareCount() {
       return prepareCount;
@@ -343,7 +348,7 @@ describe("stack prepare automatic runtime selection", () => {
     );
 
   it.live("creates a Docker stack when the Docker engine answers", () =>
-    selectRuntime({ engines: { docker: "running" } }).pipe(
+    selectRuntime({ engines: { docker: "running", podman: "running" } }).pipe(
       Effect.tap((fixture) =>
         Effect.sync(() => {
           expect(fixture.createdRuntimes).toEqual(["docker"]);
@@ -354,20 +359,39 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live("creates a native stack on Linux when the Docker daemon is down", () =>
+  it.live("creates a Podman stack when Docker is not installed and Podman answers", () =>
     selectRuntime({
-      engines: { docker: "stopped" },
+      engines: { docker: "missing", podman: "running" },
       runtimeInfo: mockRuntimeInfo({ platform: "linux", arch: "x64" }),
     }).pipe(
       Effect.tap((fixture) =>
         Effect.sync(() => {
-          expect(fixture.createdRuntimes).toEqual(["native"]);
-          expect(fixture.probes).toEqual(["docker"]);
+          expect(fixture.createdRuntimes).toEqual(["podman"]);
+          expect(fixture.probes).toEqual(["docker", "podman"]);
           expect(fixture.runtimeNotices).toHaveLength(1);
-          expect(fixture.runtimeNotices[0]).toContain("uses the native runtime");
+          expect(fixture.runtimeNotices[0]).toContain("uses the Podman runtime");
+          expect(fixture.runtimeNotices[0]).toContain("supabase stack destroy");
         }),
       ),
     ),
+  );
+
+  it.live(
+    "creates a native stack on Linux when the Docker daemon is down and Podman is absent",
+    () =>
+      selectRuntime({
+        engines: { docker: "stopped", podman: "missing" },
+        runtimeInfo: mockRuntimeInfo({ platform: "linux", arch: "x64" }),
+      }).pipe(
+        Effect.tap((fixture) =>
+          Effect.sync(() => {
+            expect(fixture.createdRuntimes).toEqual(["native"]);
+            expect(fixture.probes).toEqual(["docker", "podman"]);
+            expect(fixture.runtimeNotices).toHaveLength(1);
+            expect(fixture.runtimeNotices[0]).toContain("uses the native runtime");
+          }),
+        ),
+      ),
   );
 
   for (const [platform, arch] of [
@@ -378,7 +402,7 @@ describe("stack prepare automatic runtime selection", () => {
       makeProject(databaseOnlyConfig).pipe(
         Effect.flatMap((root) => {
           const fixture = makeFixture(root, {
-            engines: { docker: "stopped" },
+            engines: { docker: "stopped", podman: "stopped" },
             runtimeInfo: mockRuntimeInfo({ platform, arch }),
           });
           return stackPrepare(flags({ runtime: "auto" })).pipe(
@@ -390,7 +414,7 @@ describe("stack prepare automatic runtime selection", () => {
                 expect(error.reason).toBe("runtime");
                 expect(error.cause).toBeInstanceOf(StackRuntimeSelectionError);
                 expect(error.message).toContain(`not supported on ${platform}/${arch}`);
-                expect(error.suggestion).toBe("Start Docker, then rerun the command.");
+                expect(error.suggestion).toBe("Start Docker or Podman, then rerun the command.");
                 expect(fixture.createdRuntimes).toEqual([]);
               }),
             ),
@@ -403,8 +427,8 @@ describe("stack prepare automatic runtime selection", () => {
 
   it.live("reuses a saved runtime without probing any engine", () =>
     selectRuntime({
-      savedRuntime: "docker",
-      engines: { docker: "running" },
+      savedRuntime: "podman",
+      engines: { docker: "running", podman: "running" },
     }).pipe(
       Effect.tap((fixture) =>
         Effect.sync(() => {
@@ -420,12 +444,12 @@ describe("stack prepare automatic runtime selection", () => {
   it.live("honors an explicit runtime without probing any engine", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
-        const fixture = makeFixture(root, { engines: { docker: "stopped" } });
-        return stackPrepare(flags({ runtime: "docker" })).pipe(
+        const fixture = makeFixture(root, { engines: { docker: "running", podman: "running" } });
+        return stackPrepare(flags({ runtime: "podman" })).pipe(
           Effect.provide(fixture.layer),
           Effect.tap(() =>
             Effect.sync(() => {
-              expect(fixture.createdRuntimes).toEqual(["docker"]);
+              expect(fixture.createdRuntimes).toEqual(["podman"]);
               expect(fixture.probes).toEqual([]);
               expect(fixture.runtimeNotices).toEqual([]);
             }),

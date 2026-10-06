@@ -12,6 +12,7 @@
     "./internal/dispatch": "./src/internal/dispatch.ts",
     "./internal/artifacts": "./src/internal/artifacts.ts",
     "./internal/composition": "./src/internal/composition.ts",
+    "./internal/engine": "./src/internal/engine.ts",
     "./internal/release": "./src/internal/release.ts",
     "./internal/test-run-label": "./src/internal/test-run-label.ts"
   },

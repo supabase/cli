@@ -2,8 +2,8 @@
 
 `supabase stack` manages local stacks with the new experimental runtime. It is unstable, its
 command interface may change, and it is excluded from the CLI compatibility promise. It is
-available when the `experimental.stack` feature flag is enabled and supports Docker and native
-runtimes.
+available when the `experimental.stack` feature flag is enabled and supports Docker, Podman, and
+native runtimes.
 
 Native PostgreSQL requires passwords for every role except `supabase_admin`. Its local bootstrap
 and password-reconciliation connection uses that administrative role, so a native
@@ -22,13 +22,13 @@ and password-reconciliation connection uses that administrative role, so a nativ
 
 Use each command's `--help` for its available targeting and runtime options.
 
-A new stack created with `--runtime auto` uses Docker when its daemon answers, and otherwise native
-on Linux x64/arm64 and macOS arm64. On other platforms without a reachable engine, the command
-fails and asks you to start Docker. The selected runtime is saved with the stack and reused without
-probing; when auto selection skips Docker, the command prints a notice saying so. To switch,
-destroy the stack or choose a different
-`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
-the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+A new stack created with `--runtime auto` uses Docker when its daemon answers, otherwise Podman
+when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64. On other
+platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
+selected runtime is saved with the stack and reused without probing; when auto selection skips
+Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
+`--stack` name. When an explicit `--runtime docker` or `--runtime podman`, or a saved container
+stack, cannot reach its engine, the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 

@@ -21,20 +21,21 @@ const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
  */
 const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function* (
   format: "text" | "json",
+  engine: "docker" | "podman" = "docker",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-runtime-" });
   const realApi = yield* StackApi;
   const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
-  const stack = yield* realApi.create({ ...locations, projectRoot: root, runtime: "docker" });
+  const stack = yield* realApi.create({ ...locations, projectRoot: root, runtime: engine });
   const api = StackApi.of({
     ...realApi,
     open: (options) =>
       realApi.open(options).pipe(
         Effect.map((opened) => ({
           ...opened,
-          destroy: Effect.succeed({ runtimeCleanup: "skipped", engine: "docker" } as const),
+          destroy: Effect.succeed({ runtimeCleanup: "skipped", engine } as const),
         })),
       ),
   });
@@ -95,6 +96,21 @@ it.live("reports skipped engine cleanup in the JSON result", () =>
         },
       }),
     );
+    expect(yield* f.api.discover(f.locations)).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(live)),
+);
+
+it.live("names Podman when a Podman stack's engine is unreachable", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture("text", "podman");
+    yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
+    expect(f.output.stdoutText).toBe(
+      `Stack ${f.stack.id} could not be fully destroyed because Podman is unreachable; restore it and run "supabase stack destroy --stack-id ${f.stack.id}" again.\n`,
+    );
+    expect(f.output.messages).toContainEqual({
+      type: "warn",
+      message: `Podman was unavailable, so Podman resources for stack ${f.stack.id} were not removed. Restore Podman and run "supabase stack destroy --stack-id ${f.stack.id}" again to finish removing it.`,
+    });
     expect(yield* f.api.discover(f.locations)).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(live)),
 );

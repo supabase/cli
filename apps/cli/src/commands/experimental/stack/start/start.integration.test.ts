@@ -35,6 +35,7 @@ import {
   mockTelemetryStateTracked,
   withEnvVar,
 } from "../../../../../tests/helpers/command-mocks.ts";
+import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -616,6 +617,61 @@ describe("experimental stack start", () => {
           message: expect.stringContaining("Native artifacts are unsupported on win32/x64"),
         });
         expect(created).toBe(false);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "creates and reports a Podman stack when automatic selection skips a stopped Docker",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-auto-podman-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "auto-podman"\n[edge_runtime]\nenabled = false\n',
+        );
+        const output = mockOutput();
+        const engines = containerEngineSpawner({ docker: "stopped", podman: "running" });
+        const fixture = fakeStack();
+        const createdRuntimes: Array<string | undefined> = [];
+        const overrides = Layer.mergeAll(
+          Layer.succeed(StackTargetResolver, {
+            resolve: () => Effect.succeed({ projectRoot: root, hostRunning: false }),
+          }),
+          Layer.succeed(StackApi, {
+            create: (options) =>
+              Effect.sync(() => {
+                createdRuntimes.push(options.runtime);
+                return fixture.stack;
+              }),
+            open: () => Effect.succeed(fixture.stack),
+            discover: () => Effect.succeed([]),
+            find: () => Effect.die("identity not used"),
+          }),
+          engines.layer,
+        );
+        yield* stackStart({
+          ...flags([
+            "rest",
+            "auth",
+            "realtime",
+            "storage",
+            "functions",
+            "studio",
+            "mail",
+            "analytics",
+            "pooler",
+          ]),
+          runtime: "auto",
+        }).pipe(Effect.provide(Layer.merge(layers(root, fixture, output, false), overrides)));
+        expect(createdRuntimes).toEqual(["podman"]);
+        expect(output.messages).toContainEqual({
+          type: "info",
+          message: expect.stringContaining(
+            "Docker didn't answer, so this new stack uses the Podman runtime",
+          ),
+        });
       }).pipe(Effect.provide(BunServices.layer)),
   );
 

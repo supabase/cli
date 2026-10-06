@@ -50,14 +50,15 @@ auto range and below the OS ephemeral range on every supported platform; this ra
 configurable, and a public port pinned inside it is rejected. A host whose ephemeral range has been widened to overlap it reintroduces the
 ephemeral-port race this reservation exists to avoid.
 
-For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
-native on Linux x64/arm64 and macOS arm64. The probe is bounded by 10 seconds. Without a reachable
-engine on other platforms, the command fails and asks the user to start Docker. When auto selection
-skips Docker, an info line names the saved native runtime and how to switch to Docker. An existing
-stack keeps its saved runtime and runs no probe. Explicit `--runtime docker` or `native` has no
-fallback.
-When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
-Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+For a new stack, `--runtime auto` selects Docker when its engine answers, then Podman when its
+engine answers, then native on Linux x64/arm64 and macOS arm64. Each probe resolves the engine
+target the owner later pins (so a local or remote Podman is judged by the same endpoint) and is
+bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and asks
+the user to start Docker or Podman. When auto selection skips Docker, an info line names the saved
+Podman or native runtime and how to switch to Docker. An existing stack keeps its saved runtime and
+runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+When an explicit or saved container runtime is unreachable, the reported failure suggests starting
+that engine, and `--runtime native` for a new stack on platforms that support native. Explicit
 `--runtime native` on a platform with no native artifacts fails before creating a stack.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code

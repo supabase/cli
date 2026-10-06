@@ -107,10 +107,14 @@ export function mockChildProcessSpawner(
 export type ContainerEngineState = "missing" | "stopped" | "running";
 
 /**
- * Spawner for a host whose `docker` command behaves as `engines` describes. Other commands fail
- * with `NotFound`, or run on the real spawner through `hidingLayer`.
+ * Spawner for a host whose `docker` and `podman` commands behave as `engines` describe, answering
+ * the identity queries engine target resolution makes. Other commands fail with `NotFound`, or run
+ * on the real spawner through `hidingLayer`.
  */
-export function containerEngineSpawner(engines: { readonly docker: ContainerEngineState }) {
+export function containerEngineSpawner(engines: {
+  readonly docker: ContainerEngineState;
+  readonly podman: ContainerEngineState;
+}) {
   const spawned: SpawnRecord[] = [];
   const notFound = (command: string) =>
     PlatformError.systemError({
@@ -119,22 +123,31 @@ export function containerEngineSpawner(engines: { readonly docker: ContainerEngi
       method: "spawn",
       pathOrDescriptor: command,
     });
+  const answer = (cmd: "docker" | "podman", args: ReadonlyArray<string>) => {
+    if (cmd === "docker") return args.includes("context") ? "default" : "docker-daemon-id";
+    return args.some((arg) => arg.includes("ServiceIsRemote"))
+      ? "false|true|host|/graph-root"
+      : "host";
+  };
   const spawner = (delegate?: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
     ChildProcessSpawner.make((command) => {
       const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
       const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
-      if (cmd !== "docker")
+      if (cmd !== "docker" && cmd !== "podman")
         return delegate === undefined ? Effect.fail(notFound(cmd)) : delegate.spawn(command);
       spawned.push({ command: cmd, args });
       const state = engines[cmd];
       if (state === "missing") return Effect.fail(notFound(cmd));
+      const running = state === "running";
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(2000 + spawned.length),
-          stdout: Stream.empty,
-          stderr: Stream.empty,
+          stdout: running ? Stream.make(encoder.encode(answer(cmd, args))) : Stream.empty,
+          stderr: running
+            ? Stream.empty
+            : Stream.make(encoder.encode("Cannot connect to the engine")),
           all: Stream.empty,
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(state === "running" ? 0 : 1)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(running ? 0 : 1)),
           isRunning: Effect.succeed(false),
           stdin: Sink.drain,
           kill: () => Effect.void,

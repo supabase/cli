@@ -13,6 +13,7 @@ import { withProjectFunctionsEnv } from "../../../../command-internal/stack-func
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
+  containerEngineName,
   selectStackRuntime,
   type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
@@ -104,13 +105,18 @@ const stackError = (
 };
 
 // A saved stack keeps its runtime, so only a new stack can switch to native.
-const dockerUnavailableSuggestion = (
+const engineUnavailableSuggestion = (
+  engine: Exclude<StackRuntime, "native">,
   runtimeInfo: { readonly platform: string; readonly arch: string },
   creating: boolean,
-) =>
-  creating && defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
-    ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
-    : "Docker CLI or daemon isn't reachable. Install or start Docker.";
+) => {
+  const name = containerEngineName(engine);
+  const base = `${name} CLI or daemon isn't reachable. Install or start ${name}`;
+  return creating &&
+    defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
+    ? `${base}, or run with --runtime native.`
+    : `${base}.`;
+};
 
 const stackAcquireError = (
   cause: StackError,
@@ -121,13 +127,17 @@ const stackAcquireError = (
   },
 ) => {
   const base = stackError(cause);
-  if (cause.reason !== "runtime-unavailable" || runtimeContext.selectedRuntime !== "docker")
-    return base;
+  const { selectedRuntime } = runtimeContext;
+  if (cause.reason !== "runtime-unavailable" || selectedRuntime === "native") return base;
   return new StackCommandStartError({
     reason: "runtime",
     message: base.message,
     ...(base.detail === undefined ? {} : { detail: base.detail }),
-    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime, runtimeContext.creating),
+    suggestion: engineUnavailableSuggestion(
+      selectedRuntime,
+      runtimeContext.runtime,
+      runtimeContext.creating,
+    ),
     cause: base.cause,
   });
 };
