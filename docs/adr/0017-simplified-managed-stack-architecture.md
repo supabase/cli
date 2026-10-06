@@ -132,14 +132,15 @@ Linux, and Windows in CI.
 
 Every managed document records one concrete runtime selection. Native and
 container runtimes never mix. For a new stack, an omitted runtime checks that
-the Docker client is installed and then probes the daemon with a short timeout;
-it selects Docker when the daemon is reachable and native otherwise. An
-installed client with an unreachable daemon selects native, and the created
-Effect handle carries a notice that the selection is persisted for that stack,
-so a later switch to Docker requires destroying the stack or choosing a new
-stack name; callers such as `stack start` decide whether to print it. Native as
+each container engine in turn, Docker then Podman, resolves the same engine
+target the stack owner pins and probes it with a 10 s timeout; it selects the
+first reachable engine and native otherwise, where native artifacts are
+supported. When Docker is skipped, the created Effect handle carries a notice
+that the selected runtime (Podman or native) is persisted for that stack, so a
+later switch to Docker requires destroying the stack or choosing a new stack
+name; callers such as `stack start` decide whether to print it. Native as
 root runs only PostgreSQL as an unprivileged user. Existing state is reused
-without probing. Callers may explicitly select native or Docker without
+without probing. Callers may explicitly select native, Docker, or Podman without
 fallback. See
 [ADR-0025](0025-ephemeral-postgres-for-schema-tooling.md) for the daemon
 probe and its interaction with ephemeral Postgres.
@@ -299,7 +300,7 @@ Tests follow consumed boundaries:
   ownership, stale-owner recovery, and interrupted cleanup;
 - supervisor integration covers detached ownership, RPC, stop, destroy,
   retirement, and wake-up; and
-- one shared stack-package E2E journey runs in native and Docker modes, starts
+- one shared stack-package E2E journey runs in native, Docker, and Podman modes, starts
   with PostgreSQL alone, activates every other service through realistic
   traffic, verifies cross-service behavior, then exercises
   stop/start and retained offline observability.
