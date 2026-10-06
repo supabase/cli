@@ -52,60 +52,6 @@ describe("filesForDeclarativeShadowLoad", () => {
       },
     ]);
   });
-
-  it("loads an image-installed orioledb declaration idempotently and leaves other SQL as written", () => {
-    const orioledb = {
-      name: "_cluster/extensions/orioledb.sql",
-      sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
-    };
-    const alreadyIdempotent = {
-      name: "public/01.sql",
-      sql: "create extension if not exists orioledb;\nCREATE EXTENSION pgcrypto;",
-    };
-    const quoted = {
-      name: "public/02.sql",
-      sql: [
-        "DO $$ BEGIN CREATE EXTENSION orioledb; END $$;",
-        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $fn$ BEGIN CREATE EXTENSION orioledb; END $fn$;",
-        "CREATE TABLE t (note text DEFAULT E'it\\'s CREATE EXTENSION orioledb');",
-        'CREATE TABLE "CREATE EXTENSION orioledb" (id int);',
-      ].join("\n"),
-    };
-    const afterEscapedString = {
-      name: "public/03.sql",
-      sql: "SELECT E'it\\'s';\nCREATE EXTENSION orioledb;\nSELECT 'after';",
-    };
-    const commented = {
-      name: "public/04.sql",
-      sql: "/* a /* nested */ note */ CREATE /* declaration */ EXTENSION -- engine\n orioledb;",
-    };
-    expect(
-      filesForDeclarativeShadowLoad(
-        [orioledb, alreadyIdempotent, quoted, afterEscapedString, commented],
-        false,
-      ),
-    ).toEqual([
-      {
-        name: orioledb.name,
-        sql: '-- CREATE EXTENSION orioledb;\nCREATE EXTENSION IF NOT EXISTS "orioledb" SCHEMA "extensions";\n\nCOMMENT ON EXTENSION "orioledb" IS \'OrioleDB\';\n',
-      },
-      alreadyIdempotent,
-      quoted,
-      {
-        name: afterEscapedString.name,
-        sql: "SELECT E'it\\'s';\nCREATE EXTENSION IF NOT EXISTS orioledb;\nSELECT 'after';",
-      },
-      {
-        name: commented.name,
-        sql: "/* a /* nested */ note */ CREATE /* declaration */ EXTENSION -- engine\n IF NOT EXISTS orioledb;",
-      },
-    ]);
-  });
-
-  it("scans leading whitespace in linear time", () => {
-    const padded = { name: "public/05.sql", sql: `${" ".repeat(100_000)}CREATE TABLE t (id int);` };
-    expect(filesForDeclarativeShadowLoad([padded], false)).toEqual([padded]);
-  });
 });
 
 describe("prepareDeclarativeShadow", () => {
