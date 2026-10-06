@@ -95,6 +95,25 @@ describe("assertDriftAgainst", () => {
     ).toThrow(/activeFlags names "lnked"/);
   });
 
+  it("rejects an active flag the command does not accept, even if a declaration condition names it", () => {
+    const withBlockCondition = declared({
+      status: "mapped",
+      operations: [
+        { operationId: "v1-list-all-secrets", kind: "required" },
+        { operationId: "v1-run-a-query", kind: "required", when: [{ flag: "password" }] },
+      ],
+      noApiEffectFlags: [],
+    });
+    expect(() =>
+      assertDriftAgainst(withBlockCondition, {
+        command: "db query",
+        activeFlags: ["password"],
+        acceptedFlags: new Set(["linked", "output"]),
+        requests: [],
+      }),
+    ).toThrow(/does not accept --password/);
+  });
+
   it("rejects an in-scope request that matches no known operation", () => {
     expect(() =>
       assertDriftAgainst(mappedCommand, {

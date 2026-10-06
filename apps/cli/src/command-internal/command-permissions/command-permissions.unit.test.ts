@@ -1,14 +1,10 @@
 import { Option } from "effect";
 import { describe, expect, it } from "vitest";
-import type { Command } from "effect/unstable/cli";
 
 import { rootCommandForFeatures } from "../../cli/root.ts";
-import {
-  commandInternals,
-  flattenSubcommands,
-  userGlobalFlagParams,
-} from "../../docs/docs-introspection.ts";
-import { unwrapToSingleParam } from "../param-introspection.ts";
+import { userGlobalFlagParams } from "../../docs/docs-introspection.ts";
+import { commandTreeFor, flagNames } from "../../../tests/helpers/command-flags.ts";
+import type { TreeNode } from "../../../tests/helpers/command-flags.ts";
 import { OPERATIONS } from "../../../tests/helpers/operation-table.ts";
 import { readPermissions } from "./command-permissions.annotation.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "./global-flags.ts";
@@ -29,57 +25,6 @@ const GO_DELEGATED_PATHS: ReadonlySet<string> = new Set([
   "db remote changes",
   "gen keys",
 ]);
-
-function flagNames(params: ReadonlyArray<unknown>): ReadonlyArray<string> {
-  return (params as Array<Parameters<typeof unwrapToSingleParam>[0]>).map((param) => {
-    const name = unwrapToSingleParam(param)?.name;
-    if (name === undefined) {
-      throw new Error(
-        "command-permissions.unit.test.ts: a flag param wraps an unrecognized Param variant — effect's Param union may have changed.",
-      );
-    }
-    return name;
-  });
-}
-
-/** A command's own flags: `config.flags`, `contextConfig.flags` (`withSharedFlags`), and whatever it registers via `withGlobalFlags` (e.g. `seed`'s persistent `--linked`/`--local`). */
-function ownFlagsOf(command: Command.Command.Any): ReadonlyArray<string> {
-  const internals = commandInternals(command);
-  return [
-    ...flagNames(internals.config.flags),
-    ...flagNames(internals.contextConfig.flags),
-    ...flagNames(userGlobalFlagParams(command)),
-  ];
-}
-
-interface TreeNode {
-  readonly command: Command.Command.Any;
-  /** The node's own flags plus every flag inherited from its ancestors, root included. */
-  readonly flags: ReadonlySet<string>;
-  readonly isLeaf: boolean;
-}
-
-function walk(
-  command: Command.Command.Any,
-  path: ReadonlyArray<string>,
-  inherited: ReadonlyArray<string>,
-  out: Map<string, TreeNode>,
-): void {
-  const flags = [...inherited, ...ownFlagsOf(command)];
-  const children = flattenSubcommands(command);
-  out.set(path.join(" "), { command, flags: new Set(flags), isLeaf: children.length === 0 });
-  for (const child of children) walk(child, [...path, child.name], flags, out);
-}
-
-function treeFor(variant: PermissionVariant): ReadonlyMap<string, TreeNode> {
-  const out = new Map<string, TreeNode>();
-  const root = rootCommandForFeatures(variant);
-  // The root's own global flags (`--output`, `--debug`, …) apply to every command but never
-  // appear on any child node, so they seed the walk instead of being discovered by it.
-  const rootFlags = ownFlagsOf(root);
-  for (const child of flattenSubcommands(root)) walk(child, [child.name], rootFlags, out);
-  return out;
-}
 
 const VARIANTS: ReadonlyArray<{ readonly name: string; readonly variant: PermissionVariant }> = [
   { name: "default backend", variant: undefined },
@@ -105,7 +50,7 @@ function declarationOf(node: TreeNode): CommandPermissions | undefined {
 }
 
 describe("command permission mapping completeness", () => {
-  const trees = VARIANTS.map(({ name, variant }) => ({ name, tree: treeFor(variant) }));
+  const trees = VARIANTS.map(({ name, variant }) => ({ name, tree: commandTreeFor(variant) }));
   const everyLeafPath = new Set(
     trees.flatMap(({ tree }) => [...tree].filter(([, node]) => node.isLeaf).map(([path]) => path)),
   );
