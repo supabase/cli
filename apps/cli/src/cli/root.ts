@@ -144,12 +144,12 @@ export function rootDescription(version: string): string {
   }
 }
 
-export const rootCommandForFeatures = (
-  options: {
-    readonly stackBackend?: StackBackend;
-    readonly computeEnabled?: boolean;
-  } = {},
-) =>
+interface RootCommandFeatures {
+  readonly stackBackend?: StackBackend;
+  readonly computeEnabled?: boolean;
+}
+
+export const rootCommandForFeatures = (options: RootCommandFeatures = {}) =>
   Command.make("supabase").pipe(
     Command.withDescription(rootDescription(CLI_VERSION)),
     Command.withSubcommands([
@@ -264,5 +264,11 @@ export const rootCommandForFeatures = (
     ),
     Command.withGlobalFlags([OutputFormatFlag, ...GLOBAL_FLAGS]),
   ) satisfies CliRootCommand;
+
+/** Pairs the root with the pre-parse setting `runCli` needs to pick the same agent default. */
+export const cliEntrypointForFeatures = (features: RootCommandFeatures) => ({
+  rootCommand: rootCommandForFeatures(features),
+  stackFunctionsServeEnabled: features.stackBackend === "stack",
+});
 
 export const rootCommand = rootCommandForFeatures();

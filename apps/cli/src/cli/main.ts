@@ -8,7 +8,7 @@ import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
-import { rootCommandForFeatures } from "./root.ts";
+import { cliEntrypointForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -28,7 +28,7 @@ const selectionExit = await Effect.runPromiseExit(
     return { stackBackend, computeEnabled };
   }).pipe(Effect.provide(BunServices.layer)),
 );
-const selectedRoot = rootCommandForFeatures(
+const { rootCommand: selectedRoot, stackFunctionsServeEnabled } = cliEntrypointForFeatures(
   Exit.isSuccess(selectionExit)
     ? selectionExit.value
     : { stackBackend: "legacy", computeEnabled: false },
@@ -43,8 +43,7 @@ if (
   await Effect.runPromise(
     runCli(selectedRoot, {
       analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-      stackFunctionsServeEnabled:
-        Exit.isSuccess(selectionExit) && selectionExit.value.stackBackend === "stack",
+      stackFunctionsServeEnabled,
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),
