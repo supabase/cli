@@ -587,10 +587,25 @@ it.live("finds and removes the containers a deleted stack left in its own state 
     );
     expect(Option.isNone(unusable), "an unusable registry is left to find").toBe(true);
     const denied = { docker: "permission denied while trying to connect" };
+    const removal = [
+      "ps",
+      "--all",
+      "--quiet",
+      "--no-trunc",
+      "--filter",
+      `label=com.supabase.stack=${deletedId}`,
+      "--filter",
+      `label=com.supabase.stack-root=${deletedData}`,
+    ];
+    const deniedEngine = engineStub(listing, denied);
     const onPodman = yield* findDeleted({ ...locations, id: deletedId }).pipe(
-      Effect.provide(engineStub(listing, denied).layer),
+      Effect.provide(deniedEngine.layer),
     );
-    expect(Option.isSome(onPodman), "a failing engine does not hide another's match").toBe(true);
+    const partial = yield* Effect.flip(Option.getOrThrow(onPodman).destroy);
+    expect(partial.message, "a failing engine is reported after the other is cleaned").toMatch(
+      /^Removed the Podman containers .* Unable to list Docker containers/,
+    );
+    expect(deniedEngine.commands).toContainEqual(["podman", ...removal]);
     const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
       Effect.provide(engineStub("", denied).layer),
       Effect.flip,
@@ -603,16 +618,6 @@ it.live("finds and removes the containers a deleted stack left in its own state 
       yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(both.layer)),
     );
     expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
-    const removal = [
-      "ps",
-      "--all",
-      "--quiet",
-      "--no-trunc",
-      "--filter",
-      `label=com.supabase.stack=${deletedId}`,
-      "--filter",
-      `label=com.supabase.stack-root=${deletedData}`,
-    ];
     expect(both.commands).toContainEqual(["docker", ...removal]);
     expect(both.commands).toContainEqual(["podman", ...removal]);
 

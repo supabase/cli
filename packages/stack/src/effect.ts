@@ -1090,14 +1090,16 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
       { concurrency: "unbounded" },
     );
     const matched = probes.filter(({ listed }) => Result.isSuccess(listed) && listed.success);
-    if (matched.length === 0) {
-      for (const { engine, listed } of probes)
-        if (Result.isFailure(listed))
-          return yield* failure(
-            "find",
+    const [unlisted] = probes.flatMap(({ engine, listed }) =>
+      Result.isFailure(listed)
+        ? [
             `Unable to list ${engine === "docker" ? "Docker" : "Podman"} containers while looking for stack ${options.id}'s leftovers: ${listed.failure.message}`,
-          );
-      return Option.none<DeletedStack>();
+          ]
+        : [],
+    );
+    if (matched.length === 0) {
+      if (unlisted === undefined) return Option.none<DeletedStack>();
+      return yield* failure("find", unlisted);
     }
     const destroy = Effect.gen(function* () {
       for (const { engine } of matched) {
@@ -1109,6 +1111,11 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
         );
         if (refusal !== undefined) return yield* failure("destroy", refusal);
       }
+      if (unlisted !== undefined)
+        return yield* failure(
+          "destroy",
+          `Removed the ${matched.map(({ engine }) => (engine === "docker" ? "Docker" : "Podman")).join(" and ")} containers stack ${options.id} left behind. ${unlisted}`,
+        );
       return { runtimeCleanup: "complete" } as const;
     }).pipe(
       Effect.mapError((cause) => failure("destroy", cause)),
