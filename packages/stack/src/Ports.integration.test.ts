@@ -460,7 +460,8 @@ it.live("reserveNativePort excludes a port a previous attempt lost from the next
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.live(
+// Windows has no POSIX mode bits and no stepped-down native database.
+it.live.skipIf(process.platform === "win32")(
   "opening the port registry keeps the traverse bit a stepped-down database needs on its directory",
   () =>
     Effect.scoped(
