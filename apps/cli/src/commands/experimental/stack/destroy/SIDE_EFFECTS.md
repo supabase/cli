@@ -17,6 +17,19 @@ and that Storage uploads are preserved. Rejection or cancellation does not open 
 destroy a stack. Discovery may create/chmod the registry directory to 0700 but
 does not launch an owner.
 
+A full `--stack-id` that is not registered under the state root makes destroy
+list stack-labelled containers on Docker and Podman before confirming; an engine
+that is not installed or not running is skipped. When containers labelled with
+that id and its data root there remain on either engine, for example because its
+directory was deleted, destroy selects them; when none do and an engine failed to
+list its containers, the command fails naming that engine. After the same
+confirmation (`the containers deleted stack <id> left behind`) it removes them and
+prints the usual success; a deleted directory took the stack's lease with it, so
+this includes the containers of an owner that still runs. Its
+data in the state root's shared database volume stays, and containers of other
+state roots are never touched; for a deleted `SUPABASE_HOME`, run destroy with
+that `SUPABASE_HOME`.
+
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.
 Cleanup failures remain errors; the command does not claim success on failure.

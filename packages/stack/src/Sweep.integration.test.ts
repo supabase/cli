@@ -18,8 +18,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime } from "./runtime/Container.ts";
 import * as State from "./State.ts";
-import { reclaimStack } from "./Sweep.ts";
-import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { reclaimStack, sweepOrphans } from "./Sweep.ts";
+import { engineStub, makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
 class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly message: string }> {}
@@ -135,7 +135,7 @@ const saved = (
 });
 
 it.live.skipIf(process.platform === "win32")(
-  "removes a dead owner's containers and session stacks at the next owner start in its root",
+  "removes dead owners' and deleted stacks' containers and session stacks at the next owner start in its root",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -165,6 +165,12 @@ it.live.skipIf(process.platform === "win32")(
         yield* Effect.sync(() => process.kill(dead.pid, "SIGKILL"));
         yield* deadReleased;
         expect(yield* containers(deadId, dataA)).toEqual([orphan]);
+        // Created after the dead owner exits, so only the next owner's sweep can remove them.
+        const deletedId = `${suffix}${suffix}`;
+        const deletedData = path.join(rootA, deletedId, "data");
+        const deletedOtherData = path.join(path.dirname(path.dirname(dataB)), deletedId, "data");
+        const deleted = yield* createOwnedContainer(deletedId, deletedData);
+        const deletedOtherRoot = yield* createOwnedContainer(deletedId, deletedOtherData);
 
         const sessionId = `session-${suffix}`;
         yield* state.save(saved(sessionId, `${rootA}/session`, "native", "session"));
@@ -175,7 +181,9 @@ it.live.skipIf(process.platform === "win32")(
         const swept = yield* Effect.all(
           [
             awaitDestroyed(orphan, since),
+            awaitDestroyed(deleted, since),
             awaitRemoval(rootA, sessionId),
+            awaitRemoval(rootA, deletedId),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],
           { concurrency: "unbounded" },
@@ -203,6 +211,11 @@ it.live.skipIf(process.platform === "win32")(
         expect(yield* containers(deadId, dataB), "another root is never swept").toEqual([
           otherRoot,
         ]);
+        expect(yield* containers(deletedId, deletedData)).toEqual([]);
+        expect(
+          yield* containers(deletedId, deletedOtherData),
+          "another root's deleted stack is never swept",
+        ).toEqual([deletedOtherRoot]);
         expect(yield* state.read(deadId), "detached stacks keep their state").toBeDefined();
         expect(yield* state.read(sessionId)).toBeUndefined();
         expect(yield* state.leased(deadId), "the sweeper released the dead stack").toBe(false);
@@ -243,6 +256,73 @@ it.live("destroys a dead session stack whose saved Vector instance fails to migr
 
       expect(reclaimed).toBe(true);
       expect(yield* real.read(id)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("sweeps deleted stacks of its own root only, on the engines its stacks use", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs
+        .makeTempDirectoryScoped({ prefix: "stack-sweep-deleted-" })
+        .pipe(Effect.flatMap(fs.realPath));
+      const real = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
+      const leased: Array<string> = [];
+      const state: State.Interface = {
+        ...real,
+        lease: (id) =>
+          Effect.suspend(() => {
+            leased.push(id);
+            return real.lease(id);
+          }),
+      };
+      const deletedId = "d".repeat(64);
+      const foreignId = "f".repeat(64);
+      const deletedData = path.join(stateRoot, deletedId, "data");
+      const listing = [
+        `owner\t${path.join(stateRoot, "owner", "data")}`,
+        `${deletedId}\t${deletedData}`,
+        `${deletedId}\t${deletedData}`,
+        `${foreignId}\t${path.join(path.dirname(stateRoot), "other", foreignId, "data")}`,
+        `../escape\t${path.join(stateRoot, "..", "escape", "data")}`,
+        "malformed",
+      ].join("\n");
+      const engine = engineStub(listing);
+      const sweep = sweepOrphans({
+        state,
+        stateRoot,
+        cacheRoot: path.join(stateRoot, "cache"),
+        ownerId: "owner",
+      }).pipe(Effect.provide(engine.layer));
+
+      yield* state.save(
+        saved("owner", path.join(stateRoot, "owner-project"), "native", "detached"),
+      );
+      yield* sweep;
+      expect(engine.commands, "a root of native stacks queries no engine").toEqual([]);
+
+      yield* state.save(
+        saved("stopped", path.join(stateRoot, "stopped-project"), "docker", "detached"),
+      );
+      yield* sweep;
+      expect(leased).toEqual(["stopped", deletedId]);
+      expect(engine.commands).toContainEqual([
+        "docker",
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        "--filter",
+        `label=com.supabase.stack=${deletedId}`,
+        "--filter",
+        `label=com.supabase.stack-root=${deletedData}`,
+      ]);
+      expect(
+        yield* fs.exists(path.join(stateRoot, deletedId)),
+        "the sweeper's lease leaves no directory behind",
+      ).toBe(false);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

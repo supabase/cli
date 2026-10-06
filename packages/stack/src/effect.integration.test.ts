@@ -20,6 +20,7 @@ import {
   create,
   discover,
   find,
+  findDeleted,
   open,
   type DatabaseInstance,
   type ServiceInstance,
@@ -31,6 +32,7 @@ import * as PromiseApi from "./index.ts";
 import * as State from "./State.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
+import { engineStub } from "../tests/docker-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 
@@ -501,6 +503,104 @@ it.live("treats a sweeper's hold as no owner and starts one once the sweep ends"
       }),
       destroyTestStack(stack),
     );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("creates a deleted stack again once a hold on its lease ends", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweeping-create-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const { id } = yield* create(options);
+    yield* fs.remove(`${options.stateRoot}/${id}`, { recursive: true });
+    const state = yield* State.Service.pipe(
+      Effect.provide(State.layer({ root: options.stateRoot })),
+    );
+    const hold = yield* Scope.make();
+    expect(yield* state.lease(id).pipe(Scope.provide(hold))).toBe(true);
+    const log = state.ownerLog(id);
+    const contended = yield* fs.watch(`${options.stateRoot}/${id}`).pipe(
+      Stream.mapEffect(() => fs.readFileString(log).pipe(Effect.orElseSucceed(() => ""))),
+      Stream.takeUntil((text) => text.includes("holds the lease")),
+      Stream.runDrain,
+      Effect.forkChild({ startImmediately: true }),
+    );
+
+    const creating = yield* create({ ...options, startOwner: true }).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Fiber.join(contended);
+    yield* Scope.close(hold, Exit.void);
+    const stack = yield* Fiber.join(creating);
+
+    yield* Effect.ensuring(
+      Effect.gen(function* () {
+        expect(stack.id).toBe(id);
+        expect((yield* discover(options))[0]?.host).toBeDefined();
+      }),
+      destroyTestStack(stack),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("finds and removes the containers a deleted stack left in its own state root", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs
+      .makeTempDirectoryScoped({ prefix: "stack-find-deleted-" })
+      .pipe(Effect.flatMap(fs.realPath));
+    const locations = { stateRoot: `${root}/state`, cacheRoot: `${root}/cache` };
+    const registered = yield* create({ ...locations, projectRoot: root, runtime: "native" });
+    const deletedId = "d".repeat(64);
+    const strandedId = "e".repeat(64);
+    const foreignId = "f".repeat(64);
+    const deletedData = `${locations.stateRoot}/${deletedId}/data`;
+    yield* fs.makeDirectory(`${locations.stateRoot}/${strandedId}/data`, { recursive: true });
+    const listing = [
+      `${registered.id}\t${locations.stateRoot}/${registered.id}/data`,
+      `${deletedId}\t${deletedData}`,
+      `${strandedId}\t${locations.stateRoot}/${strandedId}/data`,
+      `${foreignId}\t${root}/other/${foreignId}/data`,
+    ].join("\n");
+    const engine = engineStub(listing, { podman: "Cannot connect to Podman: connection refused" });
+    const found = (id: string) =>
+      findDeleted({ ...locations, id }).pipe(Effect.provide(engine.layer));
+
+    expect(Option.isNone(yield* found(registered.id)), "a registered stack").toBe(true);
+    expect(Option.isNone(yield* found(foreignId)), "another root's stack").toBe(true);
+    expect(Option.isSome(yield* found(strandedId)), "a directory without its registration").toBe(
+      true,
+    );
+    const denied = { docker: "permission denied while trying to connect" };
+    const onPodman = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engineStub(listing, denied).layer),
+    );
+    expect(Option.isSome(onPodman), "a failing engine does not hide another's match").toBe(true);
+    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engineStub("", denied).layer),
+      Effect.flip,
+    );
+    expect(failure.message, "with no match, a refusing engine is reported").toContain(
+      "Unable to list Docker containers",
+    );
+    const deleted = Option.getOrThrow(yield* found(deletedId));
+    expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
+    expect(engine.commands).toContainEqual([
+      "docker",
+      "ps",
+      "--all",
+      "--quiet",
+      "--no-trunc",
+      "--filter",
+      `label=com.supabase.stack=${deletedId}`,
+      "--filter",
+      `label=com.supabase.stack-root=${deletedData}`,
+    ]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

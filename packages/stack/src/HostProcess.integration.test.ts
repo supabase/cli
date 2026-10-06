@@ -4,13 +4,16 @@ import {
   Context,
   Data,
   DateTime,
+  Deferred,
   Effect,
+  Exit,
   FileSystem,
   Fiber,
   Layer,
   Option,
   Path,
   Schema,
+  Scope,
   Stream,
   Tracer,
 } from "effect";
@@ -30,7 +33,7 @@ import {
   type HostAccess,
 } from "./HostProcess.ts";
 import { discover } from "./effect.ts";
-import { watchLeaseRelease } from "../tests/owner.ts";
+import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import * as State from "./State.ts";
 
 class ProcessTestError extends Data.TaggedError("ProcessTestError")<{ readonly message: string }> {}
@@ -514,6 +517,52 @@ it.live("keeps the owner secret out of recorded HTTP span attributes", () =>
       expect(authorization.length, "identity and shutdown requests were traced").toBeGreaterThan(1);
       expect(authorization.every(([, value]) => value === "<redacted>")).toBe(true);
       expect(attributes.filter(([, value]) => String(value).includes(access.secret))).toEqual([]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("waits out a sweeper's hold before spawning the owner of a stack it registers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "host-process-sweeper-hold-" });
+      const state = yield* makeTestState(root);
+      const hold = yield* Scope.make();
+      expect(yield* state.lease("stack").pipe(Scope.provide(hold))).toBe(true);
+      yield* state.publishHolder("stack", {
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: "2026-01-01T00:00:00.000Z",
+      });
+      const sweeperSeen = yield* Deferred.make<void>();
+      const watched: State.Interface = {
+        ...state,
+        readHolder: (id) =>
+          state
+            .readHolder(id)
+            .pipe(
+              Effect.tap((holder) =>
+                holder?.role === "sweeper" ? Deferred.succeed(sweeperSeen, undefined) : Effect.void,
+              ),
+            ),
+      };
+      const launching = yield* launchHost(watched, {
+        stateRoot: root,
+        cacheRoot: root,
+        stackId: "stack",
+        register: savedStack(root, "held"),
+      }).pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(sweeperSeen);
+      expect(yield* fs.exists(state.ownerLog("stack")), "no owner spawned during the hold").toBe(
+        false,
+      );
+      yield* state.retractHolder("stack");
+      yield* Scope.close(hold, Exit.void);
+      yield* Effect.acquireRelease(Fiber.join(launching), (access) =>
+        shutdownOwner(access, true).pipe(Effect.ignore),
+      );
+      expect(yield* state.read("stack")).toBeDefined();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

@@ -13,12 +13,14 @@ import {
   Path,
   Predicate,
   Ref,
+  Result,
   Scope,
   Schema,
   Semaphore,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import {
   connectHost,
@@ -38,7 +40,7 @@ import {
   type PlannedInstance,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
-import { removeStackContainersCommand } from "./runtime/Container.ts";
+import { listStackContainers, removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
@@ -1046,6 +1048,69 @@ export const find = Effect.fn("Stack.find")(
   },
   Effect.mapError((cause) => failure("find", cause)),
 );
+
+/** Selects a stack that is no longer registered while containers labelled with its data root remain. */
+export const findDeleted = Effect.fn("Stack.findDeleted")(
+  function* (options: StackLocations & { readonly id: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const services = yield* Effect.context<
+      | FileSystem.FileSystem
+      | Path.Path
+      | Crypto.Crypto
+      | HttpClient.HttpClient
+      | ChildProcessSpawner.ChildProcessSpawner
+    >();
+    const state = yield* stateFor(options.stateRoot);
+    // An unreadable registration is left to `find`, which reports it.
+    const saved = yield* state.read(options.id).pipe(Effect.option);
+    if (Option.isNone(saved) || saved.value !== undefined) return Option.none<DeletedStack>();
+    const root = path.join(yield* fs.realPath(options.stateRoot), options.id, "data");
+    const probes = yield* Effect.forEach(
+      ["docker", "podman"] as const,
+      (engine) =>
+        listStackContainers(engine).pipe(
+          Effect.map((containers) =>
+            containers.some(
+              (container) => container.stackId === options.id && container.root === root,
+            ),
+          ),
+          Effect.catchIf(
+            (error) => error.reason === "engine-unavailable",
+            () => Effect.succeed(false),
+          ),
+          Effect.result,
+          Effect.map((listed) => ({ engine, listed })),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const matched = probes.find(({ listed }) => Result.isSuccess(listed) && listed.success);
+    if (matched === undefined) {
+      for (const { engine, listed } of probes)
+        if (Result.isFailure(listed))
+          return yield* failure(
+            "find",
+            `Unable to list ${engine === "docker" ? "Docker" : "Podman"} containers while looking for stack ${options.id}'s leftovers: ${listed.failure.message}`,
+          );
+      return Option.none<DeletedStack>();
+    }
+    const destroy = reclaimStack({ ...options, state, engine: matched.engine }).pipe(
+      Effect.flatMap((reclaimed) =>
+        reclaimed
+          ? Effect.succeed<DestroyResult>({ runtimeCleanup: "complete" })
+          : Effect.fail(
+              failure("destroy", "Another process holds this stack's lease; run destroy again"),
+            ),
+      ),
+      Effect.mapError((cause) => failure("destroy", cause)),
+      Effect.provideContext(services),
+    );
+    return Option.some<DeletedStack>({ id: options.id, destroy });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
+);
+
+export type DeletedStack = Pick<Stack, "id" | "destroy">;
 
 /** Selects the persisted logs of a stack; its owner does not need to run. */
 export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {

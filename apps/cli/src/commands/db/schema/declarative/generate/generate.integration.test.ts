@@ -186,6 +186,7 @@ function generateStackApi(workdir: string) {
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

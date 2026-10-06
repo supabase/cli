@@ -140,6 +140,42 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live("removes the containers a deleted stack left behind, selected by its full ID", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const id = "d".repeat(64);
+      let destroyed = 0;
+      const api = Layer.succeed(StackApi, {
+        ...f.api,
+        findDeleted: (options) =>
+          Effect.succeed(
+            options.id === id
+              ? Option.some({
+                  id,
+                  destroy: Effect.sync(() => {
+                    destroyed += 1;
+                    return { runtimeCleanup: "complete" } as const;
+                  }),
+                })
+              : Option.none(),
+          ),
+      });
+
+      yield* stackDestroy({ ...f.flags, stackId: Option.some(id) }).pipe(
+        Effect.provide(Layer.merge(f.layer, api)),
+      );
+
+      expect(destroyed).toBe(1);
+      expect(f.output.stderrText).toContain(
+        `Permanently destroying the containers deleted stack ${id} left behind. Storage upload files will be preserved.\n`,
+      );
+      expect(f.output.stdoutText).toContain(`Stack ${id} destroyed.`);
+      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
+        f.stack.id,
+      ]);
+    }).pipe(Effect.provide(live)),
+  );
+
   it.live(
     "destroys a live namespace and standalone services while preserving caller-owned uploads",
     () =>

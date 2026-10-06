@@ -126,6 +126,16 @@ const engineUnreachable = (error: ContainerError) =>
     error.message,
   );
 
+const markUnavailable = (error: ContainerError) =>
+  engineUnreachable(error)
+    ? new ContainerError({
+        operation: error.operation,
+        message: error.message,
+        cause: error.cause,
+        reason: "engine-unavailable",
+      })
+    : error;
+
 /** A pull worth retrying: rate-limited or a dropped connection, never an unreachable engine. */
 const retryablePull = (error: ContainerError) =>
   (rateLimited(error) || transientPullFailure(error)) && !engineUnreachable(error);
@@ -822,6 +832,69 @@ export const makeContainerRuntime = (options: {
     };
   });
 
+const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
+  engine: "docker" | "podman",
+  args: ReadonlyArray<string>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(engine, args, {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [stdout, stderr, code] = yield* Effect.all(
+        [
+          child.stdout.pipe(Stream.decodeText, Stream.mkString),
+          child.stderr.pipe(Stream.decodeText, Stream.mkString),
+          child.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (Number(code) !== 0)
+        return yield* errorFor(args[0] ?? "cleanup", stderr.trim() || `Engine exited with ${code}`);
+      return stdout.trim();
+    }),
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: "30 seconds",
+      orElse: () =>
+        Effect.fail(
+          errorFor(
+            args[0] ?? "cleanup",
+            `${engine} ${args[0] ?? "command"} did not respond within 30 seconds`,
+          ),
+        ),
+    }),
+    Effect.mapError((cause) =>
+      cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
+    ),
+  );
+});
+
+export const listStackContainers = Effect.fn("Container.listStackContainers")(function* (
+  engine: "docker" | "podman",
+) {
+  const output = yield* runCleanupCommand(engine, [
+    "ps",
+    "--all",
+    "--filter",
+    "label=com.supabase.stack",
+    "--format",
+    '{{.Label "com.supabase.stack"}}\t{{.Label "com.supabase.stack-root"}}',
+  ]).pipe(Effect.mapError(markUnavailable));
+  return output
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [stackId = "", root = ""] = line.split(/\t(.*)/);
+      return { stackId, root };
+    });
+});
+
 export const removeStackContainers = Effect.fn("Container.removeStackContainers")(
   (options: {
     readonly engine: "docker" | "podman";
@@ -829,40 +902,8 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
     readonly root: string;
   }) =>
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const stackRoot = options.root;
-      const run = Effect.fn("Container.runCleanupCommand")(function* (args: ReadonlyArray<string>) {
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const child = yield* spawner.spawn(
-              ChildProcess.make(options.engine, args, {
-                stdin: "ignore",
-                stdout: "pipe",
-                stderr: "pipe",
-              }),
-            );
-            const [stdout, stderr, code] = yield* Effect.all(
-              [
-                child.stdout.pipe(Stream.decodeText, Stream.mkString),
-                child.stderr.pipe(Stream.decodeText, Stream.mkString),
-                child.exitCode,
-              ],
-              { concurrency: "unbounded" },
-            );
-            if (Number(code) !== 0)
-              return yield* errorFor(
-                args[0] ?? "cleanup",
-                stderr.trim() || `Engine exited with ${code}`,
-              );
-            return stdout.trim();
-          }),
-        ).pipe(
-          Effect.timeout("30 seconds"),
-          Effect.mapError((cause) =>
-            cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
-          ),
-        );
-      });
+      const run = (args: ReadonlyArray<string>) => runCleanupCommand(options.engine, args);
       const filters = [
         "--filter",
         `label=com.supabase.stack=${options.stackId}`,
@@ -872,18 +913,7 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
       const list = () => run(["ps", "--all", "--quiet", "--no-trunc", ...filters]);
       // Only the initial listing can show the engine itself is unreachable; a later `rm` or
       // leftover check failing is a per-container cleanup problem instead.
-      const ids = (yield* list().pipe(
-        Effect.mapError((cause) =>
-          engineUnreachable(cause)
-            ? new ContainerError({
-                operation: cause.operation,
-                message: cause.message,
-                cause: cause.cause,
-                reason: "engine-unavailable",
-              })
-            : cause,
-        ),
-      ))
+      const ids = (yield* list().pipe(Effect.mapError(markUnavailable)))
         .split("\n")
         .filter((id) => id.length > 0);
       yield* Effect.forEach(

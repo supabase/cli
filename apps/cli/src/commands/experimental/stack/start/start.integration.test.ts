@@ -436,6 +436,7 @@ const layers = (
     open: () => Effect.succeed(fixture.stack),
     discover: () => Effect.succeed([]),
     find: () => Effect.die("identity not used"),
+    findDeleted: () => Effect.die("identity not used"),
   });
   return Layer.mergeAll(
     BunServices.layer,
@@ -555,6 +556,7 @@ describe("experimental stack start", () => {
         open: () => Effect.succeed(fixture.stack),
         discover: () => Effect.succeed([]),
         find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
       });
       const result = yield* stackStart(flags()).pipe(
         Effect.flip,
@@ -594,6 +596,7 @@ describe("experimental stack start", () => {
           open: () => Effect.succeed(fixture.stack),
           discover: () => Effect.succeed([]),
           find: () => Effect.die("identity not used"),
+          findDeleted: () => Effect.die("identity not used"),
         });
         const result = yield* stackStart(flags()).pipe(
           Effect.flip,
