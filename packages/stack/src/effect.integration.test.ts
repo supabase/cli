@@ -1248,6 +1248,18 @@ it.live(
           Effect.orElseSucceed(() => Option.none<string>()),
           Effect.forkScoped({ startImmediately: true }),
         );
+        const analytics = services.find((instance) => instance.service === "analytics");
+        if (analytics === undefined) return yield* Effect.die("analytics service missing");
+        // Logflare logs this only once its SIGTERM wait ends, which a forced kill pre-empts.
+        const analyticsStopped = yield* analytics.logs.pipe(
+          Stream.map(({ bytes }) => bytes),
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.filter((line) => line.includes("grace period reached, stopping the app")),
+          Stream.runHead,
+          Effect.orElseSucceed(() => Option.none<string>()),
+          Effect.forkScoped({ startImmediately: true }),
+        );
         const eventRead = yield* watchEntry(seenDirectory, "events.log", true);
         yield* stack.composition.start;
         yield* eventRead.pipe(Effect.timeout("60 seconds"));
@@ -1257,6 +1269,13 @@ it.live(
         expect(Option.isSome(shutdown), "vector finished its flush instead of being killed").toBe(
           true,
         );
+        const analyticsShutdown = yield* Fiber.join(analyticsStopped).pipe(
+          Effect.timeout("10 seconds"),
+        );
+        expect(
+          Option.isSome(analyticsShutdown),
+          "analytics stopped on its own instead of being killed",
+        ).toBe(true);
       }),
     ).pipe(Effect.provide(layer)),
   { timeout: 300_000 },

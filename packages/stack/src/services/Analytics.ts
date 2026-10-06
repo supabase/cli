@@ -51,6 +51,9 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           : { LOGFLARE_PRIVATE_ACCESS_TOKEN: creation.config.apiKey }),
         POSTGRES_BACKEND_URL: databaseUrl,
         POSTGRES_BACKEND_SCHEMA: "_analytics",
+        // Logflare waits this period after SIGTERM before stopping (a load-balancer drain delay),
+        // longer than the stack's stop grace.
+        ERL_AFLAGS: "-eval application:set_env(logflare,sigterm_shutdown_grace_period_ms,0).",
       };
     }),
   args: () => Effect.succeed(["start"]),
