@@ -389,7 +389,7 @@ describe("service execution", () => {
         yield* open(original.stopGate);
         yield* open(original.removeGate);
         yield* service.destroy;
-        expect((yield* service.execution).registered).toBe(false);
+        expect(yield* service.listed).toBe(false);
         expect((yield* Ref.get(original.state)).removed).toBe(true);
 
         yield* open(restartPreparation.gate);
@@ -670,7 +670,6 @@ describe("service execution", () => {
             "the retry's confirmed termination must reach the reducer, or it stays Stopping forever",
           ).toBe(true);
           expect((yield* Ref.get(plan.state)).removed).toBe(true);
-          expect((yield* service.get).registered).toBe(false);
         }),
       ),
   );
@@ -693,14 +692,15 @@ describe("service execution", () => {
           yield* Ref.set(plan.stopFailure, true);
 
           expect(Exit.isFailure(yield* service.destroy.pipe(Effect.exit))).toBe(true);
-          expect(yield* service.get).toMatchObject({ lifecycle: "stopping", registered: true });
+          expect(yield* service.get).toMatchObject({ lifecycle: "stopping" });
+          expect(yield* service.listed).toBe(true);
           expect(yield* Ref.get(dataRemoved)).toBe(false);
 
           yield* open(plan.stopGate);
           yield* open(plan.removeGate);
           yield* service.destroy;
           expect(yield* Ref.get(dataRemoved)).toBe(true);
-          expect((yield* service.execution).registered).toBe(false);
+          expect(yield* service.listed).toBe(false);
         }),
       ),
   );
@@ -729,7 +729,7 @@ describe("service execution", () => {
 
         const destroyed = yield* service.destroy.pipe(Effect.forkScoped);
         yield* awaitDestroyPending(service);
-        expect((yield* service.execution).registered).toBe(true);
+        expect(yield* service.listed).toBe(true);
         yield* open(storageGate);
         yield* Fiber.join(storage);
         yield* Deferred.await(removalStarted);
@@ -738,7 +738,7 @@ describe("service execution", () => {
 
         yield* open(removalGate);
         yield* Fiber.join(destroyed);
-        expect((yield* service.execution).registered).toBe(false);
+        expect(yield* service.listed).toBe(false);
       }),
     ),
   );
@@ -769,7 +769,7 @@ describe("service execution", () => {
 
         expect(yield* service.storage(Effect.succeed("stored"))).toBe("stored");
         expect(yield* Ref.get(dataRemoved)).toBe(false);
-        expect((yield* service.execution).registered).toBe(true);
+        expect(yield* service.listed).toBe(true);
         const plan = yield* makeRuntimePlan;
         yield* Queue.offer(plans, plan);
         yield* open(plan.launchGate);

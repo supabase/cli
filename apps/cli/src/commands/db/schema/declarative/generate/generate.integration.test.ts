@@ -128,7 +128,6 @@ function generateStackApi(workdir: string) {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port: STACK_GENERATE_PORT }],
       lifecycle: "running",
       health: "healthy",
-      registered: true,
       wakeEnabled: true,
       currentOperation: undefined,
       launchId: undefined,

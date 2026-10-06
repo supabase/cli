@@ -161,7 +161,6 @@ const observation = (
   currentOperation: undefined,
   launchId: undefined,
   wakeEnabled,
-  registered: true,
 });
 
 const instance = <K extends ServiceCreation["service"]>(

@@ -112,7 +112,6 @@ const instance = (
     currentOperation: undefined,
     launchId: undefined,
     wakeEnabled: view().wakeEnabled,
-    registered: true,
   });
   const base = {
     id,

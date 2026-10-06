@@ -461,7 +461,6 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
         currentOperation: undefined,
         launchId: undefined,
         wakeEnabled: state === "running",
-        registered: true,
       }),
       followStatus: Stream.empty,
       logs: Stream.empty,

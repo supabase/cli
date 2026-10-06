@@ -130,7 +130,6 @@ function syncStackApi(workdir: string, port: number) {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port }],
       lifecycle: "running",
       health: "healthy",
-      registered: true,
       wakeEnabled: true,
       currentOperation: undefined,
       launchId: undefined,

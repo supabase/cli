@@ -762,8 +762,8 @@ describe("service composition", () => {
         const orchestrator = yield* makeTestOrchestrator();
         const events = yield* Ref.make<ReadonlyArray<string>>([]);
         const failRemoval = yield* Ref.make(true);
-        const next = yield* makeInstance(orchestrator, "next", { events });
-        const failing = yield* makeInstance(orchestrator, "failing", {
+        yield* makeInstance(orchestrator, "next", { events });
+        yield* makeInstance(orchestrator, "failing", {
           events,
           removeData: Ref.get(failRemoval).pipe(
             Effect.flatMap((fail) =>
@@ -790,12 +790,11 @@ describe("service composition", () => {
           "destroy:failing",
           "destroy:next",
         ]);
-        expect((yield* failing.core.get).registered).toBe(true);
-        expect((yield* next.core.get).registered).toBe(false);
+        expect((yield* orchestrator.instances).map(({ id }) => id)).toEqual(["failing"]);
 
         yield* Ref.set(failRemoval, false);
         yield* orchestrator.destroyNamespace;
-        expect((yield* failing.core.get).registered).toBe(false);
+        expect(yield* orchestrator.instances).toEqual([]);
       }),
     ),
   );

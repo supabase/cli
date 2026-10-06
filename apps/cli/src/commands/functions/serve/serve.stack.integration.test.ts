@@ -94,7 +94,6 @@ const observation = (
   exit: undefined,
   launchId: 1,
   wakeEnabled: false,
-  registered: true,
   ...overrides,
 });
 

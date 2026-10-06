@@ -120,7 +120,6 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       currentOperation: undefined,
       launchId: undefined,
       wakeEnabled: true,
-      registered: true,
     }),
     followStatus: Stream.empty,
     logs: Stream.empty,

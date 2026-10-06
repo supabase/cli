@@ -463,7 +463,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
     // Listeners stay open while the service runs or demand can still wake it.
     const enabled = orchestrator.status(id).pipe(
-      Effect.map((status) => status.registered && !Orchestrator.isStoppedAndWakeDisabled(status)),
+      Effect.map((status) => !Orchestrator.isStoppedAndWakeDisabled(status)),
       Effect.orElseSucceed(() => false),
     );
     const configFor = (inputs: Record<string, string>, candidate: unknown) =>

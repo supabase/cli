@@ -130,7 +130,6 @@ export const Observation = Schema.Struct({
   ),
   launchId: Schema.UndefinedOr(Schema.Int),
   wakeEnabled: Schema.Boolean,
-  registered: Schema.Boolean,
 });
 export interface Observation extends Schema.Schema.Type<typeof Observation> {}
 

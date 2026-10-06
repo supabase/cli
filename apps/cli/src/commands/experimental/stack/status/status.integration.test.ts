@@ -107,7 +107,6 @@ const makeObservation = (
   currentOperation: undefined,
   launchId: undefined,
   wakeEnabled: true,
-  registered: true,
   ...input,
 });
 

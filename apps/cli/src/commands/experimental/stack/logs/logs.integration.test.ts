@@ -197,7 +197,6 @@ describe("stack logs", () => {
             yield* Deferred.await(subscribed);
             yield* Fiber.interrupt(fiber);
             expect(yield* Ref.get(released)).toBe(true);
-            expect((yield* service.status).registered).toBe(true);
             expect((yield* f.api.discover(f.locations))[0]?.host).toBeDefined();
             expect(f.telemetry.flushed).toBe(true);
           }),

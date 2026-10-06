@@ -48,8 +48,8 @@ export const makeStandaloneService = Effect.fn("Test.makeStandaloneService")(fun
       Effect.map(([status, execution]) => ({ ...status, config: execution.config })),
     ),
     observation: orchestrator.changes(id),
-    /** Execution facts that outlive the instance's registration, such as `registered`. */
-    execution: core.get,
+    /** Whether the orchestrator still lists the instance. */
+    listed: orchestrator.instances.pipe(Effect.map((entries) => entries.some((e) => e.id === id))),
     start: orchestrator.start(id),
     ready: orchestrator.ready(id),
     stop: orchestrator.stop(id),

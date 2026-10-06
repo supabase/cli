@@ -109,7 +109,6 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       currentOperation: undefined,
       launchId: undefined,
       wakeEnabled: false,
-      registered: true,
     }),
     followStatus: Stream.empty,
     logs: Stream.empty,

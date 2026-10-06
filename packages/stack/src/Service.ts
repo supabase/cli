@@ -26,7 +26,6 @@ export interface ServiceObservation<Config> {
   readonly error: ServiceError | undefined;
   readonly exit: Exit.Exit<void, ServiceError> | undefined;
   readonly currentOperation: ServiceOperation | undefined;
-  readonly registered: boolean;
 }
 
 export class ServiceError extends Data.TaggedError("ServiceError")<{
@@ -101,11 +100,10 @@ export interface ServiceInstance<Config> {
     operation: Effect.Effect<A, ServiceError>,
   ) => Effect.Effect<A, ServiceError>;
   /**
-   * Removes the instance's data and marks it unregistered; the service must already be stopped.
+   * Removes the instance's data; the service must already be stopped.
    * `confirm`, when given, runs inside the same execution lock once resources are confirmed
-   * removed and before the instance is marked unregistered — destroy's registration publication.
-   * Omitting it (abandonment) reuses the identical confirmed, serialized cleanup without touching
-   * any registration.
+   * removed — destroy's registration publication. Omitting it (abandonment) reuses the identical
+   * confirmed, serialized cleanup without touching any registration.
    */
   readonly removeData: (
     confirm?: Effect.Effect<void, ServiceError>,
@@ -143,9 +141,6 @@ const exitError = (
           }),
       );
 
-const destroyedError = (id: string) =>
-  new ServiceError({ operation: "launch", message: `Service ${id} was destroyed` });
-
 /** Creates one service's execution boundary; launches and cleanups run in the current scope. */
 export const makeService = <Config>(
   definition: ServiceDefinition<Config>,
@@ -173,7 +168,6 @@ export const makeService = <Config>(
       error: undefined,
       exit: undefined,
       currentOperation: undefined,
-      registered: true,
     });
 
     const update = (change: Partial<ServiceObservation<Config>>) =>
@@ -282,8 +276,6 @@ export const makeService = <Config>(
       handle: Scope.Closeable,
     ) {
       if (generation <= (yield* Ref.get(stoppedThrough))) return { _tag: "Fenced" } as const;
-      const observation = yield* SubscriptionRef.get(observations);
-      if (!observation.registered) return { _tag: "Failed", error: destroyedError(id) } as const;
       // The lifecycle launches only once the previous session's cleanup is confirmed.
       if ((yield* Ref.get(current)) !== undefined)
         return {
@@ -489,7 +481,6 @@ export const makeService = <Config>(
       yield* Effect.annotateCurrentSpan({ member_id: id });
       yield* execution.withPermit(
         Effect.gen(function* () {
-          if (!(yield* SubscriptionRef.get(observations)).registered) return;
           yield* update({ currentOperation: "destroy" });
           yield* Effect.gen(function* () {
             const leftover = yield* Ref.get(current);
@@ -509,7 +500,6 @@ export const makeService = <Config>(
                 Effect.ensuring(Scope.close(dataScope, Exit.void)),
               );
             yield* confirm;
-            yield* update({ registered: false });
           }).pipe(Effect.ensuring(update({ currentOperation: undefined })));
         }),
       );

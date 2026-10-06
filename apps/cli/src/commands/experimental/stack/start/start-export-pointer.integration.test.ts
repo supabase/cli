@@ -70,7 +70,6 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     currentOperation: undefined,
     launchId: undefined,
     wakeEnabled: false,
-    registered: true,
   };
   const databaseInstance = {
     id: "database-id",

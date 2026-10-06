@@ -619,7 +619,6 @@ function makeStackObservation(
     currentOperation: undefined,
     launchId: undefined,
     wakeEnabled: opts.wakeEnabled ?? false,
-    registered: true,
   };
 }
 
