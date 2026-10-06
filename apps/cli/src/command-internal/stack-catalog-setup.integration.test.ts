@@ -98,8 +98,8 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                         databaseServices: ["auth", "storage", "realtime"],
                       },
                       overlay: {
-                        webhooks: "disabled",
-                        webhooksEnabled: false,
+                        webhooks: "enabled",
+                        webhooksEnabled: true,
                         apiAutoExposeNewTables: Option.none(),
                         vault: [],
                         workdir: root,
@@ -114,7 +114,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                     args: ["--dbname", databaseUrl, "-At"],
                     stdin: Stream.make(
                       new TextEncoder().encode(
-                        "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('auth.sessions')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('storage.s3_multipart_uploads')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing');",
+                        "select coalesce(to_regclass('auth.users')::text,'missing'), coalesce(to_regclass('auth.sessions')::text,'missing'), coalesce(to_regclass('storage.objects')::text,'missing'), coalesce(to_regclass('storage.s3_multipart_uploads')::text,'missing'), coalesce(to_regclass('realtime.messages')::text,'missing'), coalesce(to_regclass('realtime.subscription')::text,'missing'), coalesce(to_regclass('public.catalog_overlay')::text,'missing'), coalesce(to_regprocedure('supabase_functions.http_request()')::text,'missing');",
                       ),
                     ),
                     stdout: (bytes) =>
@@ -124,7 +124,25 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   });
                   expect(query.exitCode, errors.join("")).toBe(0);
                   expect(rows.join("").trim()).toBe(
-                    "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay",
+                    "users|sessions|storage.objects|storage.s3_multipart_uploads|realtime.messages|realtime.subscription|catalog_overlay|supabase_functions.http_request()",
+                  );
+                  // pg_net queues webhook requests under the image's function policy.
+                  const pgNet: Array<string> = [];
+                  const pgNetQuery = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+                    args: ["--dbname", databaseUrl, "-Atq", "-v", "ON_ERROR_STOP=1"],
+                    stdin: Stream.make(
+                      new TextEncoder().encode(
+                        "begin; create table public.catalog_hook(id int); create trigger catalog_hook after insert on public.catalog_hook for each row execute function supabase_functions.http_request('http://127.0.0.1:9', 'POST', '{}', '{}', '1000'); insert into public.catalog_hook values (1); select (select count(*) from net.http_request_queue) || ';' || string_agg(format('%s:secdef=%s:search_path=%s', proname, prosecdef::text, (exists (select from unnest(proconfig) as setting where setting like 'search_path=%'))::text), ',' order by proname) from pg_proc where pronamespace = 'net'::regnamespace and proname in ('http_get', 'http_post'); rollback;",
+                      ),
+                    ),
+                    stdout: (bytes) =>
+                      Effect.sync(() => pgNet.push(new TextDecoder().decode(bytes))),
+                    stderr: (bytes) =>
+                      Effect.sync(() => errors.push(new TextDecoder().decode(bytes))),
+                  });
+                  expect(pgNetQuery.exitCode, errors.join("")).toBe(0);
+                  expect(pgNet.join("").trim()).toBe(
+                    "1;http_get:secdef=false:search_path=false,http_post:secdef=false:search_path=false",
                   );
 
                   const credentials = yield* stack.credentials.get;
