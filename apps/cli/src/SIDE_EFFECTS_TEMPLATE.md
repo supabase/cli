@@ -12,6 +12,14 @@
 > `src/commands/<command>/<subcommand>/SIDE_EFFECTS.md` for subcommands).
 > Fill in every section. Use `—` for "none" rather than leaving a section empty.
 > See `src/commands/orgs/list/SIDE_EFFECTS.md` for a complete example.
+>
+> **Exit code shared by every command:** when stdout or stderr is a pipe whose reader has
+> exited (for example `supabase projects list | head -1`), the CLI drops further writes to that
+> stream, stops the command as Ctrl+C would (a self-managed command such as `functions serve`
+> runs its own shutdown), lets its cleanup finish, and exits `141` (128 + SIGPIPE) without an
+> error message. So Ctrl+C on a pipeline such as `supabase start 2>&1 | tee start.log` exits
+> `141`, not `130`, once the cleanup writes to the pipe whose reader died with it. A command's
+> exit-code table notes this in one line below it instead of adding a row.
 
 ---
 

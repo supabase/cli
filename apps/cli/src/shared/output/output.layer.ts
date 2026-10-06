@@ -16,6 +16,7 @@ import {
 import { styleText } from "node:util";
 import { DateTime, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
 
+import { isBrokenPipe } from "../runtime/process-control.layer.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -51,12 +52,17 @@ function formatTaskMessage(message: string | undefined): string | undefined {
 /**
  * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
  * does not, so a streamed payload piped to a slow consumer buffers in memory.
+ * A write to a closed pipe is dropped, so cleanup still finishes; `runCli` then exits 141.
  */
 const stdioWriter =
   (stdio: typeof Stdio.Stdio.Service) =>
   (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
     Stream.make(chunk).pipe(
       Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+      Effect.catchIf(
+        (error) => isBrokenPipe(error.cause),
+        () => Effect.void,
+      ),
       Effect.orDie,
     );
 
@@ -70,7 +76,12 @@ export const textOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
     const tty = yield* Tty;
-    const write = stdioWriter(yield* Stdio.Stdio);
+    const stdio = yield* Stdio.Stdio;
+    const write = stdioWriter(stdio);
+    // The failure report also goes through the sink, which waits for the write to settle, so a
+    // closed stderr pipe is known before `runCli` picks the exit code. A failed report is dropped.
+    const report = (text: string) =>
+      Stream.make(text).pipe(Stream.run(stdio.stderr()), Effect.ignore);
     const scope = yield* Effect.scope;
 
     const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
@@ -445,7 +456,7 @@ export const textOutputLayer = Layer.effect(
       result: () => Effect.void,
       success: (message: string) => Effect.sync(() => logAround(log.success, message)),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           // A command failure is terminal, so a still-shown task spinner is dropped.
           if (activeSpinner !== undefined) {
             activeSpinner.handle.clear();
@@ -454,21 +465,19 @@ export const textOutputLayer = Layer.effect(
           }
           // Bypasses clack's `log.error` framing (`│` guide + `■` icon): a
           // red-styled message on stderr, optionally followed by a suggestion.
-          process.stderr.write(styleText("red", err.message) + "\n");
+          yield* report(styleText("red", err.message) + "\n");
           if (err.detail !== undefined && err.detail !== err.message) {
-            process.stderr.write(styleText("gray", err.detail) + "\n");
+            yield* report(styleText("gray", err.detail) + "\n");
           }
           if (err.suggestion !== undefined) {
-            process.stderr.write(err.suggestion + "\n");
+            yield* report(err.suggestion + "\n");
           } else if (
             err.message !== CONTEXT_CANCELED_MESSAGE &&
             !process.argv.includes("--debug")
           ) {
             // Withheld for the canceled sentinel: declining a prompt is a
             // user decision, not something to troubleshoot.
-            process.stderr.write(
-              "Try rerunning the command with --debug to troubleshoot the error.\n",
-            );
+            yield* report("Try rerunning the command with --debug to troubleshoot the error.\n");
           }
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>

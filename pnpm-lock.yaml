@@ -234,7 +234,7 @@ overrides:
 packageExtensionsChecksum: sha256-gAA6Mc6Jn3jUpogzVWO9hE5trVRioaB8peQBgDbyG6I=
 
 patchedDependencies:
-  '@effect/platform-node-shared@4.0.0-rc.112': ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128
+  '@effect/platform-node-shared@4.0.0-rc.112': 1f3a542ba2680f125bb1d97b83c4d88ac05748928d82aed6e74df03f8389ac7d
   '@effect/vitest@4.0.0-rc.112': fbd126f7e68e041231312d90b8c02f705f12b66c2cb2d6fc246f5c12a4ed9787
   '@libpg-query/parser@17.6.10': ed67c0ca88b6ced3ec50fd6862f191d6192a246cf20d9c777d45efdb8373bed3
 
@@ -7125,13 +7125,13 @@ snapshots:
 
   '@effect/platform-bun@4.0.0-rc.112(effect@4.0.0-rc.112)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)
+      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=1f3a542ba2680f125bb1d97b83c4d88ac05748928d82aed6e74df03f8389ac7d)(effect@4.0.0-rc.112)
       effect: 4.0.0-rc.112
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)':
+  '@effect/platform-node-shared@4.0.0-rc.112(patch_hash=1f3a542ba2680f125bb1d97b83c4d88ac05748928d82aed6e74df03f8389ac7d)(effect@4.0.0-rc.112)':
     dependencies:
       '@types/ws': 8.18.1
       effect: 4.0.0-rc.112
@@ -7142,7 +7142,7 @@ snapshots:
 
   '@effect/platform-node@4.0.0-rc.112(effect@4.0.0-rc.112)(redis@6.2.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=ae37153251ecf7edd0be9de349cc18b4b13c8cf3bd7e9ead20e8e891716af128)(effect@4.0.0-rc.112)
+      '@effect/platform-node-shared': 4.0.0-rc.112(patch_hash=1f3a542ba2680f125bb1d97b83c4d88ac05748928d82aed6e74df03f8389ac7d)(effect@4.0.0-rc.112)
       effect: 4.0.0-rc.112
       mime: 4.1.0
       redis: 6.2.1

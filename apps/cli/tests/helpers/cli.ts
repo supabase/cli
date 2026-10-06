@@ -371,6 +371,8 @@ export function spawnSupabase(
     cleanupProcessGroupOnClose?: boolean;
     /** Maximum time to wait for the process to exit before force-killing it. */
     exitTimeoutMs?: number;
+    /** POSIX only: start the CLI with this stream on a pipe whose reader has already exited. */
+    closedPipe?: "stdout" | "stderr";
   },
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
@@ -403,6 +405,20 @@ export function spawnSupabase(
   env["SUPABASE_CLI_BINARY_OVERRIDE"] = BINARY_PATH;
   execCmd = "node";
   execArgs = [SHIM_PATH, ...args];
+  if (options?.closedPipe !== undefined) {
+    // fd 3 is the FIFO's only reader and closes before the CLI starts, as with `| true` once `true`
+    // is gone, so writes to the stream fail with EPIPE. A reader process's exit could EINTR the open.
+    const fd = options.closedPipe === "stdout" ? 1 : 2;
+    execArgs = [
+      "-c",
+      `mkfifo "$1" || exit; exec 3<> "$1"; exec ${fd}> "$1"; exec 3>&-; shift; exec "$@"`,
+      "sh",
+      path.join(homeDir, `${options.closedPipe}.fifo`),
+      execCmd,
+      ...execArgs,
+    ];
+    execCmd = "/bin/sh";
+  }
   const proc = spawn(execCmd, execArgs, {
     cwd: options?.cwd,
     env,

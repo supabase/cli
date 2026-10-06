@@ -1,6 +1,9 @@
+import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Console, Effect, Exit, Layer } from "effect";
+import { Console, Effect, Exit, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { branchesCommand } from "../../commands/branches/branches.command.ts";
 import { GLOBAL_FLAGS, OutputFormatFlag } from "../../command-internal/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
@@ -259,5 +262,94 @@ describe("nested command parsing", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
     }),
+  );
+});
+
+describe("closed output pipe (CLI-2507)", () => {
+  const source = (relative: string) =>
+    JSON.stringify(fileURLToPath(new URL(relative, import.meta.url)));
+  // A self-managed `functions serve` stand-in run through the real `runCli`: it writes once, then
+  // stops only through its own `awaitSignal` shutdown, which records a marker.
+  const selfManagedServe = `
+import { writeFileSync } from "node:fs";
+import { Effect, Layer } from "effect";
+import { Command } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
+import { runCli } from ${source("./run.ts")};
+import { analyticsLayer } from ${source("../../telemetry/analytics.layer.ts")};
+import { outputLayerFor } from ${source("../output/output.layer.ts")};
+import { Output } from ${source("../output/output.service.ts")};
+import { ProcessControl } from ${source("../runtime/process-control.service.ts")};
+import { ttyLayer } from ${source("../runtime/tty.layer.ts")};
+const serve = Command.make("serve").pipe(
+  Command.withHandler(() =>
+    Effect.gen(function* () {
+      yield* (yield* Output).raw("Serving functions\\n");
+      yield* (yield* ProcessControl).awaitSignal();
+      yield* Effect.sync(() => writeFileSync(process.env.SHUTDOWN_MARKER ?? "", "stopped"));
+    }).pipe(Effect.provide(outputLayerFor("text")), Effect.provide(ttyLayer)),
+  ),
+);
+const functions = Command.make("functions").pipe(Command.withSubcommands([serve]));
+await Effect.runPromise(
+  runCli(Command.make("supabase").pipe(Command.withSubcommands([functions])), {
+    analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+    agentDefaultOutputFormat: "text",
+  }),
+);
+`;
+
+  it.live.skipIf(process.platform === "win32")(
+    "stops a self-managed command through its own shutdown and exits 141 when stdout closes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-closed-pipe-" });
+        const bun = yield* Effect.fromNullishOr(Bun.which("bun"));
+        const marker = path.join(dir, "shutdown.marker");
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // fd 3 is the FIFO's only reader and closes before the CLI starts, so stdout writes fail
+        // with EPIPE, as with `| head -1` once `head` is gone.
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            "/bin/sh",
+            [
+              "-c",
+              'mkfifo "$1" || exit; exec 3<> "$1"; exec 1> "$1"; exec 3>&-; shift; exec "$@"',
+              "sh",
+              path.join(dir, "stdout.fifo"),
+              bun,
+              "-e",
+              selfManagedServe,
+              "_",
+              "functions",
+              "serve",
+            ],
+            {
+              cwd: fileURLToPath(new URL("../../..", import.meta.url)),
+              env: {
+                SHUTDOWN_MARKER: marker,
+                SUPABASE_HOME: dir,
+                SUPABASE_TELEMETRY_DISABLED: "1",
+              },
+              extendEnv: true,
+              stdin: "ignore",
+              forceKillAfter: "1 second",
+            },
+          ),
+        );
+        const stderr: Array<string> = [];
+        yield* Stream.decodeText(child.stderr).pipe(
+          Stream.runForEach((text) => Effect.sync(() => stderr.push(text))),
+          Effect.forkScoped,
+        );
+        // Guards a child that never stops, so the failure shows its stderr, not a bare test timeout.
+        const exitCode = yield* child.exitCode.pipe(Effect.timeoutOption("20 seconds"));
+
+        expect(Option.getOrUndefined(exitCode), `stderr so far: ${stderr.join("")}`).toBe(141);
+        expect(yield* fs.readFileString(marker)).toBe("stopped");
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    30_000,
   );
 });

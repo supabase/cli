@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { Data, Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { holdBrokenPipes } from "../../shared/runtime/process-control.layer.ts";
 import { HealthCheckTimeoutError } from "./health-check.ts";
 import { isUnhealthyStartError, rollbackStart } from "./rollback.ts";
 
@@ -95,6 +96,35 @@ describe("rollbackStart", () => {
         "network",
       ]);
     });
+  });
+
+  it.live("finishes the teardown on a closed stderr pipe, recording it for exit 141", () => {
+    const mock = mockSpawner({ exitCode: 0, stdout: "" });
+    // As on a closed pipe: the write fails, and `error` is emitted after it returns.
+    vi.spyOn(process.stderr, "write").mockImplementation(() => {
+      process.nextTick(() =>
+        process.stderr.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+      );
+      return false;
+    });
+    return Effect.gen(function* () {
+      const closed = yield* holdBrokenPipes([process.stderr]);
+      yield* rollbackStart(
+        mock.spawner,
+        "com.supabase.cli.project=my-app",
+        true,
+        "/tmp/rollback-unit-test-workdir",
+        false,
+      );
+      yield* Deferred.await(closed);
+      expect(mock.spawned.map((args) => args[0])).toEqual([
+        "ps",
+        "container",
+        "version",
+        "volume",
+        "network",
+      ]);
+    }).pipe(Effect.scoped);
   });
 
   it.live("swallows a rollback failure, logging it to stderr instead of failing the effect", () => {

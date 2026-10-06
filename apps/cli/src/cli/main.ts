@@ -9,6 +9,11 @@ import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
 import { cliEntrypointForFeatures } from "./root.ts";
+import { exitOnBrokenPipe } from "../shared/runtime/process-control.layer.ts";
+
+const releaseBrokenPipeExit = exitOnBrokenPipe([process.stdout, process.stderr], (code) =>
+  process.exit(code),
+);
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -41,6 +46,8 @@ if (
     defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
   ))
 ) {
+  // From here `runCli` owns closed pipes: it stops the command, runs its cleanup, then exits 141.
+  releaseBrokenPipeExit();
   await Effect.runPromise(
     runCli(selectedRoot, {
       analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),

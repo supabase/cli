@@ -36,6 +36,8 @@
 | `1`  | API error — non-2xx response from `/v1/projects` |
 | `1`  | network / connection failure                     |
 
+A closed stdout or stderr pipe exits `141`; see the [template](../../../SIDE_EFFECTS_TEMPLATE.md).
+
 ## Telemetry Events Fired
 
 | Event                  | When                                       | Notable properties / groups         |

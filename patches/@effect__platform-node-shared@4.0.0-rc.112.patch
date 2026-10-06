@@ -13,3 +13,20 @@ index aa8abbe375f40350f9a5a12f36143d5d85802485..5a86ce881e6a5aa1358059dc0f10ec09
        sink = NodeSink.fromWritable({
          evaluate: () => childProcess.stdin,
          onError: error => toPlatformError("fromWritable(stdin)", toError(error), command),
+diff --git a/dist/NodeSink.js b/dist/NodeSink.js
+index 7a9ff8eb99cc68be37d95fb2d156693c7d51318d..14caaa3d197488c983758f6f97776a4fc04223c3 100644
+--- a/dist/NodeSink.js
++++ b/dist/NodeSink.js
+@@ -48,6 +48,12 @@ export const fromWritableChannel = options => Channel.fromTransform(pull => {
+ export const pullIntoWritable = options => options.pull.pipe(Effect.flatMap(chunk => {
+   let i = 0;
+   return Effect.callback(function loop(resume) {
++    // A writable that already errored emits neither `error` nor `drain` again, so a write that
++    // waited for them would never settle.
++    if (options.writable.errored) {
++      resume(Effect.fail(options.onError(options.writable.errored)));
++      return;
++    }
+     for (; i < chunk.length;) {
+       const success = options.writable.write(chunk[i++], options.encoding);
+       if (!success) {

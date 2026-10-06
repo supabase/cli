@@ -96,6 +96,8 @@ convention used elsewhere in config loading, and take precedence over the corres
 | `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (rejected at config-load time)                                                                                                                                                                                                                               |
 | `1`  | `api.enabled` and `api.tls.enabled` are true, both `cert_path` and `key_path` are set, but one of the files can't be read                                                                                                                                                                                                                                       |
 
+A closed stdout or stderr pipe exits `141`; see the [template](../../SIDE_EFFECTS_TEMPLATE.md).
+
 > The linked-state resolution (CLI-2167 follow-up, TS-only) never affects the exit code or any of
 > the failure conditions above — it never fails (see `resolveLinkedState`'s doc comment),
 > and every one of `status`'s existing failure paths (workdir, config, Docker/health) is untouched.

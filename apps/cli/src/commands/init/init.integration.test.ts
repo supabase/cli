@@ -10,6 +10,7 @@ import {
   Layer,
   Option,
   Path,
+  Sink,
   Stdio,
 } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -92,23 +93,23 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
     }
 
     const writes: Array<string> = [];
-    const originalWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = ((chunk: string | Uint8Array) => {
-      writes.push(stripAnsi(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)));
-      return true;
-    }) as typeof process.stderr.write;
+    const stderr = () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Effect.sync(() => {
+          writes.push(
+            stripAnsi(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
+          );
+        }),
+      );
 
     yield* Effect.gen(function* () {
       const out = yield* Output;
       yield* out.fail(normalizeCause(exit.cause));
     }).pipe(
       Effect.provide(
-        textOutputLayer.pipe(Layer.provide(Layer.mergeAll(mockTty({}), Stdio.layerTest({})))),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.stderr.write = originalWrite;
-        }),
+        textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({}), Stdio.layerTest({ stderr }))),
+        ),
       ),
     );
 

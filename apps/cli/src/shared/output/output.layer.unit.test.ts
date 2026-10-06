@@ -1,9 +1,24 @@
+import { Writable } from "node:stream";
+import { BunSink } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { holdBrokenPipes } from "../runtime/process-control.layer.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
@@ -109,6 +124,15 @@ describe("Output", () => {
     const layer = textOutputLayer.pipe(
       Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), mockStdio().layer)),
     );
+    const capturedLayer = () => {
+      const stdio = mockStdio();
+      return {
+        stdio,
+        layer: textOutputLayer.pipe(
+          Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), stdio.layer)),
+        ),
+      };
+    };
 
     it.effect("task uses clack spinner and can resolve into info", () =>
       Effect.gen(function* () {
@@ -169,12 +193,7 @@ describe("Output", () => {
     );
 
     it.effect("fail writes Go-byte-identical red message + suggestion to stderr", () => {
-      const writes: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      }) as typeof process.stderr.write;
+      const { stdio, layer } = capturedLayer();
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({
@@ -183,35 +202,23 @@ describe("Output", () => {
           detail: "extra detail",
           suggestion: "try again",
         });
-        expect(writes).toEqual([
+        expect(stdio.stderr).toEqual([
           "\x1B[31mtest error\x1B[39m\n",
           "\x1B[90mextra detail\x1B[39m\n",
           "try again\n",
         ]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            process.stderr.write = originalWrite;
-          }),
-        ),
-      );
+      }).pipe(Effect.provide(layer));
     });
 
     it.effect("fail falls back to the --debug suggestion when caller provides none", () => {
-      const writes: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
+      const { stdio, layer } = capturedLayer();
       const originalArgv = process.argv;
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      }) as typeof process.stderr.write;
       // Strip --debug from argv so the fallback fires.
       process.argv = originalArgv.filter((arg) => arg !== "--debug");
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "E_TEST", message: "boom" });
-        expect(writes).toEqual([
+        expect(stdio.stderr).toEqual([
           "\x1B[31mboom\x1B[39m\n",
           "Try rerunning the command with --debug to troubleshoot the error.\n",
         ]);
@@ -219,7 +226,6 @@ describe("Output", () => {
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            process.stderr.write = originalWrite;
             process.argv = originalArgv;
           }),
         ),
@@ -227,23 +233,17 @@ describe("Output", () => {
     });
 
     it.effect("fail omits the --debug suggestion when --debug is set", () => {
-      const writes: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
+      const { stdio, layer } = capturedLayer();
       const originalArgv = process.argv;
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      }) as typeof process.stderr.write;
       process.argv = [...originalArgv, "--debug"];
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "E_TEST", message: "boom" });
-        expect(writes).toEqual(["\x1B[31mboom\x1B[39m\n"]);
+        expect(stdio.stderr).toEqual(["\x1B[31mboom\x1B[39m\n"]);
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            process.stderr.write = originalWrite;
             process.argv = originalArgv;
           }),
         ),
@@ -251,24 +251,18 @@ describe("Output", () => {
     });
 
     it.effect("fail withholds the --debug fallback for a declined-prompt cancellation", () => {
-      const writes: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
+      const { stdio, layer } = capturedLayer();
       const originalArgv = process.argv;
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      }) as typeof process.stderr.write;
       // Strip --debug from argv so only the canceled-sentinel check can suppress the hint.
       process.argv = originalArgv.filter((arg) => arg !== "--debug");
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "LogoutCancelledError", message: CONTEXT_CANCELED_MESSAGE });
-        expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n"]);
+        expect(stdio.stderr).toEqual(["\x1B[31mcontext canceled\x1B[39m\n"]);
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            process.stderr.write = originalWrite;
             process.argv = originalArgv;
           }),
         ),
@@ -276,12 +270,7 @@ describe("Output", () => {
     });
 
     it.effect("fail still prints an explicit caller suggestion for a cancellation", () => {
-      const writes: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      }) as typeof process.stderr.write;
+      const { stdio, layer } = capturedLayer();
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({
@@ -289,15 +278,8 @@ describe("Output", () => {
           message: CONTEXT_CANCELED_MESSAGE,
           suggestion: "custom hint",
         });
-        expect(writes).toEqual(["\x1B[31mcontext canceled\x1B[39m\n", "custom hint\n"]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            process.stderr.write = originalWrite;
-          }),
-        ),
-      );
+        expect(stdio.stderr).toEqual(["\x1B[31mcontext canceled\x1B[39m\n", "custom hint\n"]);
+      }).pipe(Effect.provide(layer));
     });
 
     it.effect("promptText passes validate callback to clack", () => {
@@ -523,21 +505,24 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    it.effect("clears a shown task spinner before rendering a command failure", () =>
-      Effect.gen(function* () {
-        const writes = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    it.effect("clears a shown task spinner before rendering a command failure", () => {
+      const order: string[] = [];
+      const stderr = () =>
+        Sink.forEach((_item: string | Uint8Array) => Effect.sync(() => order.push("write")));
+      const sunk = textOutputLayer.pipe(
+        Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), Stdio.layerTest({ stderr }))),
+      );
+      return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.task("Starting local Supabase stack...");
         yield* TestClock.adjust(200);
+        mockClack.spinnerHandle.clear.mockImplementation(() => order.push("clear"));
 
         yield* out.fail({ code: "E_TEST", message: "no database", suggestion: "retry" });
-        const [clear] = mockClack.spinnerHandle.clear.mock.invocationCallOrder;
-        const [firstWrite] = writes.mock.invocationCallOrder;
-        writes.mockRestore();
 
-        expect(clear).toBeLessThan(firstWrite!);
-      }).pipe(Effect.provide(layer)),
-    );
+        expect(order).toEqual(["clear", "write", "write"]);
+      }).pipe(Effect.provide(sunk));
+    });
 
     it.effect("promptText interrupts on cancel", () => {
       mockClack.text.mockResolvedValue(Symbol.for("clack:cancel"));
@@ -758,6 +743,68 @@ describe("Output", () => {
         ]);
         expect(mockClack.log.success).toHaveBeenCalledWith("Loaded organizations.");
       }).pipe(Effect.provide(layer)),
+    );
+
+    // Like Bun's stdout or stderr on a closed pipe: writes fail with EPIPE, and only the first
+    // emits `error`.
+    const closedPipe = () =>
+      new Writable({
+        autoDestroy: false,
+        write: (_chunk, _encoding, callback) =>
+          callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" })),
+      });
+    const closedPipeLayer = (pipe: Writable, method: "stdout" | "stderr") =>
+      textOutputLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            mockTty({ stdoutIsTty: false }),
+            Stdio.layerTest({
+              [method]: () =>
+                BunSink.fromWritable({
+                  evaluate: () => pipe,
+                  onError: (cause) =>
+                    PlatformError.systemError({ module: "Stdio", method, _tag: "Unknown", cause }),
+                  endOnDone: false,
+                }),
+            }),
+          ),
+        ),
+      );
+
+    it.effect(
+      "drops writes to a closed pipe, so a cleanup that writes there still finishes",
+      () => {
+        const cleanup: Array<string> = [];
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          yield* out
+            .raw("payload\n")
+            .pipe(
+              Effect.ensuring(
+                out
+                  .raw("cleanup\n")
+                  .pipe(Effect.andThen(Effect.sync(() => cleanup.push("finished")))),
+              ),
+            );
+
+          expect(cleanup).toEqual(["finished"]);
+        }).pipe(Effect.provide(closedPipeLayer(closedPipe(), "stdout")));
+      },
+    );
+
+    it.effect("returns from a failure report into a closed stderr pipe only once it is seen", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stderr = closedPipe();
+          const closed = yield* holdBrokenPipes([stderr]);
+          yield* Effect.gen(function* () {
+            const out = yield* Output;
+            yield* out.fail({ code: "E_TEST", message: "boom", suggestion: "retry" });
+          }).pipe(Effect.provide(closedPipeLayer(stderr, "stderr")));
+
+          expect(yield* Deferred.isDone(closed)).toBe(true);
+        }),
+      ),
     );
   });
 

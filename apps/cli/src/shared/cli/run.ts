@@ -5,6 +5,7 @@ import {
   Config,
   Console,
   Crypto,
+  Deferred,
   Effect,
   Exit,
   FileSystem,
@@ -39,7 +40,11 @@ import { cliConfigProviderLayer } from "../config/cli-config-provider.layer.ts";
 import { cliProjectHomeLayer } from "../config/cli-project-home.layer.ts";
 import { cliProjectContextLayer } from "../config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../config/project-link-state.layer.ts";
-import { processControlLayer } from "../runtime/process-control.layer.ts";
+import {
+  holdBrokenPipes,
+  processControlLayer,
+  processControlLayerUntil,
+} from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
@@ -574,8 +579,9 @@ function cliProgramFor<
   args: ReadonlyArray<string>,
   options: RunCliOptions<BeforeParseError>,
   outputFormat: OutputFormat,
+  processControl: Layer.Layer<ProcessControl>,
 ) {
-  const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
+  const runtimeLayer = Layer.mergeAll(processControl, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference leaks some subcommand-provided services; these stand-ins die
     // if a root-level invocation ever touches them.
@@ -652,44 +658,49 @@ export const runCli = Effect.fnUntraced(function* <
     const aiTool = yield* AiTool;
     return resolveAgentOutputFormatFromArgs(args, aiTool.name, options.agentDefaultOutputFormat);
   }).pipe(Effect.provide(aiToolLayer));
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+  const cliProgram = (processControl: Layer.Layer<ProcessControl>) =>
+    cliProgramFor(rootCommand, args, options, outputFormat, processControl);
 
   const signalAwareLayer = processControlLayer.pipe(
     Layer.provideMerge(runtimeInfoLayer),
     Layer.provideMerge(ttyLayer),
     Layer.provideMerge(BunServices.layer),
   );
-  const signalAwareProgram = Effect.scoped(
-    Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
-      const cliFiber = yield* cliProgram.pipe(Effect.forkScoped);
-      const outcome = yield* Effect.raceFirst(
-        Fiber.await(cliFiber).pipe(Effect.map((exit) => ({ _tag: "cli" as const, exit }))),
-        processControl
-          .awaitSignal()
-          .pipe(Effect.map((signal) => ({ _tag: "signal" as const, signal }))),
-      );
+  const signalAwareProgram = (pipeClosed: Deferred.Deferred<void>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processControl = yield* ProcessControl;
+        yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
+        const cliFiber = yield* cliProgram(processControlLayer).pipe(Effect.forkScoped);
+        const outcome = yield* Effect.raceAllFirst([
+          Fiber.await(cliFiber).pipe(Effect.map((exit) => ({ _tag: "cli" as const, exit }))),
+          processControl.awaitSignal().pipe(Effect.as({ _tag: "signal" as const })),
+          // A closed stdout/stderr pipe stops the command as SIGPIPE would, through the same cleanup.
+          Deferred.await(pipeClosed).pipe(Effect.as({ _tag: "signal" as const })),
+        ]);
 
-      if (outcome._tag === "signal") {
-        // SIGHUP must also stay held once cleanup begins.
-        yield* Effect.scoped(
-          processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
-        );
-        return yield* Effect.interrupt;
-      }
+        if (outcome._tag === "signal") {
+          // SIGHUP must also stay held once cleanup begins.
+          yield* Effect.scoped(
+            processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
+          );
+          return yield* Effect.interrupt;
+        }
 
-      return yield* outcome.exit;
-    }),
-  ).pipe(Effect.provide(signalAwareLayer));
+        return yield* outcome.exit;
+      }),
+    ).pipe(Effect.provide(signalAwareLayer));
 
-  const selfManagedSignalProgram = Effect.scoped(
-    Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
-      return yield* cliProgram;
-    }),
-  ).pipe(Effect.provide(processControlLayer));
+  // A closed stdout/stderr pipe reaches a self-managed command as a signal, so it stops through
+  // its own shutdown.
+  const selfManagedSignalProgram = (pipeClosed: Deferred.Deferred<void>) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processControl = yield* ProcessControl;
+        yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
+        return yield* cliProgram(processControlLayerUntil(Deferred.await(pipeClosed)));
+      }),
+    ).pipe(Effect.provide(processControlLayer));
 
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const runToExitCodeLayer = outputLayerFor(outputFormat).pipe(
@@ -707,13 +718,18 @@ export const runCli = Effect.fnUntraced(function* <
     Layer.provideMerge(cliConfigProviderLayer),
   );
 
-  const runToExitCode = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  const runToExitCode = <A, E, R>(
+    program: Effect.Effect<A, E, R>,
+    pipeClosed: Deferred.Deferred<void>,
+  ) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
       const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
       const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
+      // Once cleanup has run, a closed stdout/stderr pipe exits 141 unreported, as SIGPIPE would.
+      if (yield* Deferred.isDone(pipeClosed)) return 141;
       const afterSuccessHook = options.afterSuccess;
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
         code === 0
@@ -761,17 +777,26 @@ export const runCli = Effect.fnUntraced(function* <
       const exitCode = yield* processControl.getExitCode;
       yield* afterSuccess(exitCode ?? 0, false);
       return exitCode ?? 0;
-    }).pipe(Effect.provide(runToExitCodeLayer));
+    }).pipe(
+      // Also when the pipe closes under the failure report or the success trailers.
+      Effect.flatMap((code) =>
+        Effect.map(Deferred.isDone(pipeClosed), (closed) => (closed ? 141 : code)),
+      ),
+      Effect.provide(runToExitCodeLayer),
+    );
 
   // The exit code is resolved inside the traced scope so its flush completes before
   // `processControl.exit`, which skips finalizers.
-  const handledProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  const handledProgram = <A, E, R>(
+    program: (pipeClosed: Deferred.Deferred<void>) => Effect.Effect<A, E, R>,
+  ) =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
+      const pipeClosed = yield* holdBrokenPipes();
       const exitCode = yield* resolveTraceSettings.pipe(
         Effect.flatMap((settings) =>
           withTraceExport(settings, { "process.boot_ms": bootMs })(
-            runToExitCode(program).pipe(
+            runToExitCode(program(pipeClosed), pipeClosed).pipe(
               Effect.tap((code) => Effect.annotateCurrentSpan("process.exit_code", code)),
               Effect.flatMap((code) =>
                 code === 0 ? Effect.succeed(code) : Effect.fail(new CliNonZeroExit(code)),
@@ -783,6 +808,7 @@ export const runCli = Effect.fnUntraced(function* <
       );
       return yield* processControl.exit(exitCode);
     }).pipe(
+      Effect.scoped,
       Effect.withTracerEnabled(false),
       Effect.provideService(HttpClient.TracerPropagationEnabled, false),
       Effect.provide(handledProgramLayer),
