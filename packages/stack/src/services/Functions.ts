@@ -133,6 +133,9 @@ export const makeSpec = (
         creation.config.serviceRoleKey ??
         (jwt === undefined ? undefined : yield* serviceJwt("service_role", jwt));
       return {
+        // The image has no passwd entry: Docker then defaults HOME to /, Podman leaves it unset,
+        // and the runtime needs it to place its Deno cache.
+        ...(container ? { HOME: "/" } : {}),
         ...creation.config.env,
         ...(http === undefined ? {} : { EDGE_RUNTIME_PORT: String(http.port) }),
         SUPABASE_INTERNAL_FUNCTIONS_ROOT: root,
