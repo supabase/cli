@@ -112,12 +112,12 @@ function expectApplied(
 
 function postmasterStart(dbUrl: string, label: string) {
   return Effect.tryPromise({
-    try: (signal) =>
+    try: () =>
       queryLiveDb<{ started: string }>(
         dbUrl,
         "select pg_postmaster_start_time()::text as started",
         undefined,
-        signal,
+        DB_PROBE_TIMEOUT_MS,
       ),
     catch: (error) =>
       new SslEnforcementLiveError({
