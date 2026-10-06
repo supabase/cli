@@ -174,6 +174,7 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 };
 
@@ -182,6 +183,7 @@ const unusedStackApi = Layer.succeed(StackApi, {
   open: () => Effect.die("unused"),
   discover: () => Effect.die("unused"),
   find: () => Effect.die("unused"),
+  findDeleted: () => Effect.die("unused"),
 });
 
 function mockResolver(opts: {
