@@ -2,7 +2,10 @@ import {
   applicableOperations,
   declaredPermissions,
 } from "../../src/command-internal/command-permissions/registry.ts";
-import type { PermissionVariant } from "../../src/command-internal/command-permissions/registry.ts";
+import type {
+  DeclaredPermissionsLookup,
+  PermissionVariant,
+} from "../../src/command-internal/command-permissions/registry.ts";
 import { GLOBAL_NO_API_EFFECT_FLAGS } from "../../src/command-internal/command-permissions/global-flags.ts";
 import type { CommandPermissions } from "../../src/command-internal/command-permissions/model.ts";
 import { matchOperation } from "./operation-table.ts";
@@ -12,20 +15,25 @@ export interface RecordedMethodUrl {
   readonly url: string;
 }
 
-export interface AssertPermissionDriftOptions {
+export interface DriftCheckOptions {
   /** The declared command path, e.g. `"secrets list"`. */
   readonly command: string;
   /** Flags active in this test run (without the leading `--`), e.g. `["linked"]`. */
   readonly activeFlags?: ReadonlyArray<string>;
   readonly requests: ReadonlyArray<RecordedMethodUrl>;
-  /** The command tree to look `command` up in; defaults to the default root (`start`/`status`/`stop` differ by stack backend). */
-  readonly variant?: PermissionVariant;
+  /** The Management API base URL the requests were recorded against; defaults to `https://api.supabase.com`. */
+  readonly apiUrl?: string;
   /**
    * The happy-path check: every `required` entry that applies under `activeFlags` (and carries
    * no `context`) must have been requested. Leave unset for tests that only exercise part of a
    * command's calls.
    */
   readonly exact?: boolean;
+}
+
+export interface AssertPermissionDriftOptions extends DriftCheckOptions {
+  /** The command tree to look `command` up in; defaults to the default root (`start`/`status`/`stop` differ by stack backend). */
+  readonly variant?: PermissionVariant;
 }
 
 /** Every flag name `command`'s declaration classifies anywhere — a global, a no-effect flag, or a `when` condition. */
@@ -46,9 +54,16 @@ function knownFlagNames(
  * need their own building-block test.
  */
 export function assertPermissionDrift(options: AssertPermissionDriftOptions): void {
+  assertDriftAgainst(declaredPermissions(options.command, options.variant), options);
+}
+
+/** {@link assertPermissionDrift} against an already-resolved lookup, so each failure branch can be exercised without a real command. */
+export function assertDriftAgainst(
+  lookup: DeclaredPermissionsLookup,
+  options: DriftCheckOptions & { readonly variant?: PermissionVariant },
+): void {
   const { command, requests, exact = false } = options;
   const activeFlags = options.activeFlags ?? [];
-  const lookup = declaredPermissions(command, options.variant);
   if (lookup._tag === "NotFound") {
     throw new Error(
       `assertPermissionDrift: command "${command}" is not in the ${JSON.stringify(options.variant ?? "default")} command tree — pass \`variant\` if it only exists under a feature option (e.g. stack, compute).`,
@@ -81,7 +96,7 @@ export function assertPermissionDrift(options: AssertPermissionDriftOptions): vo
   const requestedIds = new Set<string>();
 
   for (const request of requests) {
-    const match = matchOperation(request.method, request.url);
+    const match = matchOperation(request.method, request.url, options.apiUrl);
     if (match.kind === "out-of-scope") continue;
     if (match.kind === "unmatched") {
       throw new Error(
