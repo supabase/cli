@@ -11,10 +11,11 @@ jobs:
   approve-and-merge:
     name: Approve and enable auto-merge
     runs-on: ubuntu-latest
+    # Other apps (coding agents, CI vendors) also open PRs here and still need a maintainer.
     # Release-notes PRs are published by a maintainer approval and must never merge.
     if: >-
-      github.event.pull_request.user.type == 'Bot' &&
-      github.event.sender.type == 'Bot' &&
+      contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.pull_request.user.login) &&
+      contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.sender.login) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
       !startsWith(github.event.pull_request.head.ref, 'release-notes/')
