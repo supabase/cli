@@ -20,12 +20,12 @@ does not launch an owner.
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.
 Cleanup failures remain errors; the command does not claim success on failure.
-A failed destroy may leave its owner running; retry destruction or use
-`stack stop` to shut down that owner.
+Shutdown is one-way: a failed destroy leaves the stack registered and its
+owner exits; the next command retries.
 
-As with `stack stop`, the owner drains live connections on every stack listener
-(up to 10 seconds) before any service stops, so a request in flight when
-destroy is issued can still complete.
+As with `stack stop`, services stop in reverse dependency order with every
+stack listener still open, and traffic that would wake a stopped service during
+shutdown is refused.
 
 When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes nothing: the registration, port claims and host
@@ -62,7 +62,7 @@ remains the backstop when no owner is left alive to do so.
 ## Output, exit codes and telemetry
 
 Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,
-`Stack <id> could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy" again.`
+`Stack <id> could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
 JSON and stream-json success data contain `destroyed` (`false` when engine
 cleanup was skipped), `id`, and `runtimeCleanup` (`complete` or `skipped`); a
 skipped cleanup also carries `engine`. Exit 0 on destruction or skipped engine cleanup, 1 on invalid flags, missing

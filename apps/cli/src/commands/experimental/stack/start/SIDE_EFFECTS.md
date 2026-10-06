@@ -69,9 +69,9 @@ stay owner-restricted between launches otherwise. A directory inside the cached 
 never chmodded; it keeps the archive's own mode, and startup fails if one is not already traversable.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
-Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A
+Lazy services stop after 60 seconds without traffic, Studio after 5 minutes. A
 service that a running service depends on, such as pg-meta for Studio, stays up until that
-dependent stops. Functions has no automatic idle stop. `--eager` makes all selected services eager.
+dependent stops. `--eager` makes all selected services eager.
 Changes to activation policy take effect after stopping and starting the stack, including when a
 later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
 artifact preparation.

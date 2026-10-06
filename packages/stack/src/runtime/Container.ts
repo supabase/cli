@@ -152,9 +152,6 @@ const runRaw = (
  * (`--host <endpoint>`), since the docker CLI gives that priority over `DOCKER_HOST` and context
  * switches, and since an argument, unlike an environment variable, never leaks to subprocesses a
  * launched workload spawns.
- *
- * `engine` keeps the seam a future Podman driver would plug into; only `"docker"` is resolved
- * today.
  */
 export interface EngineTarget {
   readonly engine: "docker";

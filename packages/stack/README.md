@@ -177,11 +177,11 @@ await stack.composition.configure({
 await stack.composition.start();
 ```
 
-Bindings supply ordinary configuration values; a URL alone never creates a dependency. An independent REST instance can instead receive an external database URL. Lazy members receive public listeners before their processes start. Public traffic starts an armed instance and waits for health, up to a 120-second wake budget; inspector connections can attach before health succeeds. A prerequisite stays awake while any dependent runs. A crashed instance stays armed and the next request wakes it again; after three consecutive failures it fails fast for a cooldown of 30 seconds, doubling up to 5 minutes, until the cooldown elapses or an explicit start. Explicit stop disables wake. An individual restart runs the instance explicitly; restart the composition to reapply its lazy policy.
+Bindings supply ordinary configuration values; a URL alone never creates a dependency. An independent REST instance can instead receive an external database URL. Lazy members receive public listeners before their processes start. Public traffic starts an armed instance and waits for health, up to a 120-second wake budget; inspector connections can attach before health succeeds. A prerequisite stays awake while any dependent runs. A crashed instance stays armed and the next request wakes it again; after repeated failures it fails fast for a 30-second cooldown, until the cooldown elapses or an explicit start. Explicit stop disables wake. An individual restart runs the instance explicitly; restart the composition to reapply its lazy policy.
 
 - Instance methods affect that instance, subject to dependency checks.
 - Composition methods affect selected members; startup also includes declared prerequisites.
-- `stack.stop()` stops every owned instance and attached command and returns after confirming owner exit. Without a live owner nothing runs, so it returns without starting one; an instance's `stop()` behaves the same way.
+- `stack.stop()` stops every owned instance and attached command and returns after confirming owner exit. Without a live owner it does not start one: it reclaims the stack's leftover workloads under the stack lease, and fails if another process holds the lease or the cleanup fails. An instance's `stop()` without a live owner has nothing to stop and returns without starting one.
 - `stack.destroy()` additionally removes owned data and registrations, and also waits for owner exit.
 - `stack.close()` disposes the client and invalidates its active observation iterators. Closing the creating client of a session stack destroys the stack. Stopping the last instance leaves the owner available.
 

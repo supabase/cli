@@ -273,7 +273,7 @@ Admission requires the target and its whole prerequisite closure to be ready. An
 
 ### Crash-loop breaker
 
-Each launch failure or unrequested exit counts once per generation. Three consecutive failures open the breaker for a fixed 30 seconds. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt, and a further failure reopens it for the same 30 seconds. An explicit start, restart or composition start resets the breaker.
+Each launch failure or unrequested exit counts once per generation. Three failures, each within five minutes of the previous one, open the breaker for a fixed 30 seconds; a failure after a longer quiet spell starts a new count. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt, and a further failure reopens it for the same 30 seconds. An explicit start, restart or composition start resets the breaker.
 
 ### Chart 3: dependency awareness lives in the reducer
 
@@ -496,15 +496,14 @@ interval (30 seconds by default) and treats only a confirmed ENOENT as gone; any
 such as a permission failure or a transient I/O error on an unmounted root, keeps the owner
 running and logs a warning instead. On a confirmed-gone registration the owner treats its
 ownership as ended: it stops every workload (ordered stop, above) and removes what it
-created through the same registration-independent `cleanupResources` path destroy uses, retrying
-transient cleanup failures and giving up only once an engine is confirmed unreachable (the leftover
-container ids are logged, not retried forever), releases its port reservations, and exits. It never
-reads or writes the registration again, and it does not publish a registration removal: there is
-nothing left to update, and any resource claim it already recorded stays available for a future
-reconcile. Deletion, a move and an unmount are treated identically, because a stack whose root is
+created through the same registration-independent instance cleanup destroy uses, retrying
+transient cleanup failures and giving up only once an engine is confirmed unreachable (what it
+could not remove is logged, not retried forever), and exits. It never reads or writes the
+registration again, and it does not release its port reservations: a stale reservation is
+reclaimed lazily by whichever stack next needs the port. Deletion, a move and an unmount are treated identically, because a stack whose root is
 unreachable cannot operate regardless of which of the three caused it.
 
-**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data, the registration and its port reservations, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it only confirms that no owner holds the stack's lease, leaves the registration, port reservations and host data untouched, and returns `{ runtimeCleanup: "skipped", engine }`; run it again once the engine is reachable. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 

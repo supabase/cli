@@ -18,11 +18,11 @@ It fails when another process holds the lease or the cleanup fails, so a stack
 whose owner exited after a failed stop can be stopped again. If an owner
 disappears after discovery, the shutdown error remains a failure.
 
-Before any service stops, the owner stops accepting new connections on every
-stack listener and lets connections already established keep flowing for up to
-10 seconds, then cuts whatever remains. A request in flight when `stop` is
-issued can still complete, at the cost of the command waiting up to that long
-longer for shutdown to finish.
+Services stop in reverse dependency order with every stack listener still open,
+so a dependent's graceful stop can still reach its prerequisite; each listener
+closes once its own service has stopped. Traffic that would wake a stopped
+service during shutdown is refused. Shutdown is one-way: a failed stop leaves
+the stack registered and the owner exits, and the next stop retries.
 
 Text confirms each successful shutdown and identifies each stack that had no owner.
 JSON and stream-json success data contain `stopped` and `notRunning` ID arrays.

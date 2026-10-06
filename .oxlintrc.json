@@ -69,9 +69,10 @@
     {
       // Default for the whole stack package (`src/**` and `tests/**`): on top of the repo-wide
       // namespace restriction above, raw `node:fs`/`node:sqlite` are confined to namespace drivers
-      // and a short enumerated list of existing files. The files below are pre-existing direct
-      // namespace consumers the facade doesn't cover yet (tracked for step 3) or raw-primitive
-      // users; they get their own, narrower overrides further down.
+      // and a short enumerated list of files. The excluded files are direct namespace consumers
+      // the facade doesn't cover or raw-primitive users; they get narrower overrides further down.
+      // oxlint JSON has no shared lists, so the direct-consumer files are listed here and again in
+      // the override that restores the raw-primitive rules for them; keep the two in sync.
       "files": ["packages/stack/src/**", "packages/stack/tests/**"],
       "excludeFiles": [
         "packages/stack/src/namespace/**",
@@ -243,8 +244,8 @@
       }
     },
     {
-      // Existing direct namespace consumers the facade doesn't cover yet (tracked for step 3);
-      // none of them touch raw node:fs/node:sqlite themselves, so that restriction stays on.
+      // Direct namespace consumers the facade doesn't cover; none of them touch raw
+      // node:fs/node:sqlite themselves, so that restriction stays on.
       // - Network.ts, Ports.ts (+its integration test), port-reservation.e2e.test.ts: read/reserve
       //   ports through PortReservations, not yet on the facade.
       // - Owner.ts: needs PortReservations and owned/borrowed Paths.
@@ -304,8 +305,8 @@
     },
     {
       // `host/CommandRunner.ts` needs Environment and borrow from the namespace, plus the
-      // raw `rmdir` Effect's FileSystem has no non-recursive equivalent for (see its existing
-      // disable comment); sqlite stays off-limits.
+      // raw `rmdir` Effect's FileSystem has no non-recursive equivalent for; sqlite stays
+      // off-limits.
       "files": ["packages/stack/src/host/CommandRunner.ts"],
       "rules": {
         "no-restricted-imports": [
@@ -352,16 +353,16 @@
     },
     {
       // Standalone process outside the Effect runtime, launched before any service is wired up: it
-      // calls the sqlite-pin driver and raw node:fs/node:sqlite directly by design (see its
-      // existing disable comments), so none of the namespace restrictions apply here.
+      // calls the sqlite-pin driver and raw node:fs/node:sqlite directly by design, so none of
+      // the namespace restrictions apply here.
       "files": ["packages/stack/src/runtime/native-launcher.ts"],
       "rules": {
         "no-restricted-imports": "off"
       }
     },
     {
-      // Raw node:fs with an existing disable comment explaining why Effect's FileSystem can't do
-      // the job; none of these import namespace internals or raw sqlite.
+      // Raw node:fs where Effect's FileSystem can't do the job (each import's disable comment
+      // gives the reason); none of these import namespace internals or raw sqlite.
       "files": [
         "packages/stack/src/internal/host-process.ts",
         "packages/stack/src/Sweep.integration.test.ts",
@@ -406,8 +407,8 @@
     },
     {
       // Standalone fixture process the lease waits on, outside any Effect runtime: it takes the
-      // same raw sqlite lock as the lease it waits for and reports over a raw fd (see its existing
-      // disable comments). It doesn't import namespace internals, so that restriction stays on.
+      // same raw sqlite lock as the lease it waits for and reports over a raw fd.
+      // It doesn't import namespace internals, so that restriction stays on.
       "files": ["packages/stack/tests/lease-wait-fixture.ts"],
       "rules": {
         "no-restricted-imports": [

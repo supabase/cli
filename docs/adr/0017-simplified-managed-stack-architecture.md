@@ -137,11 +137,10 @@ it selects Docker when the daemon is reachable and native otherwise. An
 installed client with an unreachable daemon selects native, and the created
 Effect handle carries a notice that the selection is persisted for that stack,
 so a later switch to Docker requires destroying the stack or choosing a new
-stack name; callers such as `stack start` decide whether to print it. Native is
-refused as uid 0. Existing state is reused without probing. Callers may
-explicitly select native, Docker, or Podman without fallback, and an omitted
-engine for an explicit container runtime defaults to Docker. Podman is
-supported only on local Linux hosts. See
+stack name; callers such as `stack start` decide whether to print it. Native as
+root runs only PostgreSQL as an unprivileged user. Existing state is reused
+without probing. Callers may explicitly select native or Docker without
+fallback. See
 [ADR-0025](0025-ephemeral-postgres-for-schema-tooling.md) for the daemon
 probe and its interaction with ephemeral Postgres.
 Persisted state records the resolved exact engine. Capability releases and
