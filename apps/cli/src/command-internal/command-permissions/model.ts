@@ -1,10 +1,4 @@
-/**
- * Plain, serializable data describing which Management API operations a command may call. No
- * functions live on the data itself, so it can be read by future consumers (docs, help, a
- * `--show-permissions` flag) without depending on this module's helpers. The operation's FGA
- * permissions themselves are looked up separately, from the spec (see
- * `tests/helpers/operation-table.ts`), keyed by `operationId`.
- */
+/** Serializable description of the Management API operations a command may call, keyed by the spec's `operationId`. */
 
 type PermissionKind = "required" | "best-effort";
 
@@ -44,12 +38,6 @@ export type CommandPermissions =
       readonly noApiEffectFlags: ReadonlyArray<string>;
     }
   | { readonly status: "unmapped"; readonly reason: "go-delegated" };
-
-/** One command group's permission mapping — every leaf starts in `pending`, moving to `declared` as it's mapped. */
-export interface PermissionGroup {
-  readonly declared: ReadonlyMap<string, CommandPermissions>;
-  readonly pending: ReadonlyArray<string>;
-}
 
 /**
  * Builds a named building block, tagging every entry with `source` so a command that includes it

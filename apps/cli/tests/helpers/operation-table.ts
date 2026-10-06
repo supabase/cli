@@ -12,11 +12,14 @@ export interface Operation {
   readonly pathTemplate: string;
   /** `x-fga-permissions`: any one of these sets satisfies the check; every id in a set is required. */
   readonly fga: ReadonlyArray<ReadonlyArray<string>>;
+  /** `x-oauth-scope`, e.g. `"secrets:read"`; `undefined` when the spec declares none. */
+  readonly oauthScope: string | undefined;
 }
 
 interface OpenApiOperation {
   readonly operationId?: string;
   readonly "x-fga-permissions"?: ReadonlyArray<ReadonlyArray<string>>;
+  readonly "x-oauth-scope"?: string;
 }
 
 interface OpenApiDocument {
@@ -37,6 +40,7 @@ function buildOperations(): ReadonlyMap<string, Operation> {
         method: method.toUpperCase(),
         pathTemplate,
         fga: op["x-fga-permissions"] ?? [],
+        oauthScope: op["x-oauth-scope"],
       });
     }
   }
