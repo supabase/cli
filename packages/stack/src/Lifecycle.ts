@@ -3,6 +3,8 @@ import { Data } from "effect";
 const waiterCap = 256;
 const breakerThreshold = 3;
 const breakerCooldownMillis = 30_000;
+/** Failures further apart than this are unrelated; it exceeds the cooldown so a reopened breaker keeps counting. */
+const breakerWindowMillis = 300_000;
 /** The pause between a failed re-check of a blocking session and the next one. */
 const reprobeSpacingMillis = 1_000;
 
@@ -91,12 +93,14 @@ const Phase = Data.taggedEnum<Phase>();
 
 interface BreakerState {
   readonly consecutiveFailures: number;
+  readonly lastFailureAt: number | undefined;
   readonly openUntil: number | undefined;
   readonly lastCause: unknown;
 }
 
 const initialBreaker: BreakerState = {
   consecutiveFailures: 0,
+  lastFailureAt: undefined,
   openUntil: undefined,
   lastCause: undefined,
 };
@@ -606,14 +610,18 @@ const countFailure = (
   now: number,
   commands: Array<LifecycleCommand>,
 ): BreakerState => {
-  const consecutiveFailures = service.breaker.consecutiveFailures + 1;
+  const { lastFailureAt } = service.breaker;
+  const consecutiveFailures =
+    lastFailureAt !== undefined && now - lastFailureAt > breakerWindowMillis
+      ? 1
+      : service.breaker.consecutiveFailures + 1;
   if (consecutiveFailures < breakerThreshold)
-    return { consecutiveFailures, openUntil: undefined, lastCause: cause };
+    return { consecutiveFailures, lastFailureAt: now, openUntil: undefined, lastCause: cause };
   const openUntil = now + breakerCooldownMillis;
   commands.push(
     LifecycleCommand.ArmCooldownTimer({ id, openUntil, delayMillis: breakerCooldownMillis }),
   );
-  return { consecutiveFailures, openUntil, lastCause: cause };
+  return { consecutiveFailures, lastFailureAt: now, openUntil, lastCause: cause };
 };
 
 const recordFailure = (

@@ -458,6 +458,38 @@ describe("Lifecycle reducer", () => {
       expect(tagsOf(commandsByStep[0]).toSorted()).toEqual(["AdmitConnection", "AdmitConnection"]);
     });
 
+    it("never opens for failures spaced wider than the window, but a fast start-ready-crash loop still does", () => {
+      const graph = makeGraph([lazy("flaky")]);
+      const crashCycle = (initial: LifecycleState, waiterId: number, now: number) => {
+        let state = initial;
+        ({ state } = run(state, [{ event: open("flaky", waiterId), now }]));
+        const generation = startingGeneration(state, "flaky");
+        ({ state } = run(state, [
+          { event: LifecycleEvent.LaunchSucceeded({ id: "flaky", generation }), now: now + 1 },
+          {
+            event: LifecycleEvent.Exited({
+              id: "flaky",
+              generation,
+              cause: "crash",
+              requested: false,
+            }),
+            now: now + 2,
+          },
+        ]));
+        return state;
+      };
+
+      const day = 86_400_000;
+      let daily = initialState(graph);
+      for (const waiterId of [1, 2, 3]) daily = crashCycle(daily, waiterId, waiterId * day);
+      expect(daily.services.get("flaky")?.breaker.openUntil).toBeUndefined();
+      expect(daily.services.get("flaky")?.breaker.consecutiveFailures).toBe(1);
+
+      let loop = initialState(graph);
+      for (const waiterId of [1, 2, 3]) loop = crashCycle(loop, waiterId, waiterId * 1_000);
+      expect(loop.services.get("flaky")?.breaker.openUntil).toBeDefined();
+    });
+
     it("reopens for the same fixed cooldown on a further failure, and an explicit start resets it", () => {
       const graph = makeGraph([lazy("flaky")]);
       let state = initialState(graph);
