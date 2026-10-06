@@ -114,7 +114,8 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       yield* output.success("", {
         destroyed: result.runtimeCleanup === "complete",
         id: target.id,
-        ...result,
+        runtime_cleanup: result.runtimeCleanup,
+        ...(result.runtimeCleanup === "skipped" ? { engine: result.engine } : {}),
       });
     else if (result.runtimeCleanup === "complete")
       yield* output.raw(`Stack ${target.id} destroyed.\n`);

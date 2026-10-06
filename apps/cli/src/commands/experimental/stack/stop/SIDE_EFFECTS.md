@@ -25,7 +25,7 @@ service during shutdown is refused. Shutdown is one-way: a failed stop leaves
 the stack registered and the owner exits, and the next stop retries.
 
 Text confirms each successful shutdown and identifies each stack that had no owner.
-JSON and stream-json success data contain `stopped` and `notRunning` ID arrays.
+JSON and stream-json success data contain `stopped` and `not_running` ID arrays.
 A missing default selection reports `found: false`; an unknown explicit name or
 ID fails. A single selection reads only the selected stack's state document; an
 unreadable document fails the selection instead of being reported as missing.

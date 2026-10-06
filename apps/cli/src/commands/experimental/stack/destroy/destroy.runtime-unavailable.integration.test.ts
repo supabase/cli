@@ -91,7 +91,7 @@ it.live("reports skipped engine cleanup in the JSON result", () =>
         data: {
           destroyed: false,
           id: f.stack.id,
-          runtimeCleanup: "skipped",
+          runtime_cleanup: "skipped",
           engine: "docker",
         },
       }),

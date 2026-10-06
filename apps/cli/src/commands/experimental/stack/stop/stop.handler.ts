@@ -154,6 +154,6 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
       for (const id of notRunning)
         yield* output.raw(`Stack ${id} was not running; leftover resources were reclaimed.\n`);
       if (results.length === 0) yield* output.raw("No managed stacks found.\n");
-    } else yield* output.success("", { stopped, notRunning });
+    } else yield* output.success("", { stopped, not_running: notRunning });
   }).pipe(Effect.ensuring(telemetry.flush));
 });

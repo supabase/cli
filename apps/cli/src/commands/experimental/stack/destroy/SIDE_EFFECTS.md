@@ -64,7 +64,7 @@ remains the backstop when no owner is left alive to do so.
 Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,
 `Stack <id> could not be fully destroyed because <Engine> is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
 JSON and stream-json success data contain `destroyed` (`false` when engine
-cleanup was skipped), `id`, and `runtimeCleanup` (`complete` or `skipped`); a
+cleanup was skipped), `id`, and `runtime_cleanup` (`complete` or `skipped`); a
 skipped cleanup also carries `engine`. Exit 0 on destruction or skipped engine cleanup, 1 on invalid flags, missing
 selection, rejected/cancelled confirmation or cleanup failure, and 130 on
 interruption. Standard command telemetry is unchanged, with no custom events.
