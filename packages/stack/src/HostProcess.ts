@@ -512,8 +512,19 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
               );
               if (line.type === "error") {
                 yield* awaitExit(child).pipe(Effect.timeout("5 seconds"), Effect.ignore);
-                if (line.reason === "lease-held" && options.register === undefined)
-                  return { _tag: "LeaseHeld" } as const;
+                if (line.reason === "lease-held") {
+                  if (options.register === undefined) return { _tag: "LeaseHeld" } as const;
+                  // Only a sweeper or a registering owner holds an unregistered stack's lease, briefly.
+                  const saved = yield* state
+                    .read(options.stackId)
+                    .pipe(Effect.mapError((cause) => error("startup", cause)));
+                  if (saved === undefined)
+                    return yield* error(
+                      "startup",
+                      "Another process holds the lease of this unregistered stack",
+                      "sweeping",
+                    );
+                }
                 return yield* line.reason === "lease-held" || line.reason === "exists"
                   ? error("startup", "Stack already exists; use open")
                   : failure(line.message, line.reason);
@@ -564,7 +575,11 @@ export const launchHost = Effect.fn("HostProcess.launchHost")(function* (
         Effect.catchIf(hasReason("not-running"), () => Effect.succeed(Option.none())),
       );
       if (Option.isSome(existing)) return existing.value;
-    }
+    } else if (
+      (yield* state.leased(options.stackId)) &&
+      (yield* state.readHolder(options.stackId))?.role === "sweeper"
+    )
+      return yield* error("startup", "Another owner is sweeping this stack", "sweeping");
     const spawned = yield* spawnOwner(state, options, entrypoint);
     return spawned._tag === "Ready" ? spawned.access : yield* connectHost(state, options.stackId);
   });

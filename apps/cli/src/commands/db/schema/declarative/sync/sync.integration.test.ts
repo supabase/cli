@@ -188,6 +188,7 @@ function syncStackApi(workdir: string, port: number) {
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

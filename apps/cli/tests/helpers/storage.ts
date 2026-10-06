@@ -285,6 +285,7 @@ export function buildStorageStackApi(
           open: () => Effect.die("Service not found: supabase/stack/StackApi"),
           discover: () => Effect.die("Service not found: supabase/stack/StackApi"),
           find: () => Effect.die("Service not found: supabase/stack/StackApi"),
+          findDeleted: () => Effect.die("Service not found: supabase/stack/StackApi"),
         })
       : Layer.succeed(StackApi, {
           create: () => Effect.die("unused"),
@@ -295,6 +296,7 @@ export function buildStorageStackApi(
                 ? Option.none()
                 : Option.some({ definition, host: undefined }),
             ),
+          findDeleted: () => Effect.die("unused"),
           open: () => {
             findStackCalls.push({ projectRoot: workdir });
             return Effect.succeed(stack);

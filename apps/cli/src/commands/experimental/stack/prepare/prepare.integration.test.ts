@@ -193,6 +193,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
         }),
       discover: () => Effect.succeed([]),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     }),
   );
   return {

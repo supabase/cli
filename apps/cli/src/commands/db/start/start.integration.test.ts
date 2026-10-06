@@ -363,6 +363,7 @@ function setup(opts: SetupOpts = {}) {
     open: () => Effect.die("unused"),
     discover: () => Effect.die("unused"),
     find: () => Effect.die("unused"),
+    findDeleted: () => Effect.die("unused"),
   });
 
   const layer = Layer.mergeAll(
@@ -1760,6 +1761,7 @@ describe("db start stack backend", () => {
               })
             : Option.none(),
         ),
+      findDeleted: () => Effect.die("unused"),
     });
 
   it.live("creates and starts only the primary database", () => {
