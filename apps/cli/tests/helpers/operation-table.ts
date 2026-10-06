@@ -93,9 +93,8 @@ function literalSegmentCount(template: string): number {
 /** An absolute URL starts with a scheme; checking only the start avoids mistaking a path-only URL whose query embeds one (e.g. `/v1/projects?redirect=https://example.com`) for an absolute URL. */
 const ABSOLUTE_URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 
-function requestPathname(url: string): string {
-  return ABSOLUTE_URL_SCHEME.test(url) ? new URL(url).pathname : url.split("?")[0]!;
-}
+/** Origin of the Management API under test; an absolute request to any other origin is out of scope. */
+const DEFAULT_API_ORIGIN = "https://api.supabase.com";
 
 function isInScopePath(pathname: string): boolean {
   return IN_SCOPE_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -107,15 +106,24 @@ export type OperationMatch =
   | { readonly kind: "out-of-scope" };
 
 /**
- * Resolves `method` + `url` (absolute or path-only) to the operation whose path template it
- * matches, turning each `{param}` segment into a wildcard for exactly one path segment. A path
- * outside {@link IN_SCOPE_PATH_PREFIXES} resolves to `"out-of-scope"` without consulting
+ * Resolves `method` + `url` to the operation whose path template it matches, turning each
+ * `{param}` segment into a wildcard for exactly one path segment. A path-only `url` is resolved
+ * against `apiOrigin`. An absolute `url` on another origin, or a path outside
+ * {@link IN_SCOPE_PATH_PREFIXES}, resolves to `"out-of-scope"` without consulting
  * {@link OPERATIONS}; an in-scope path matching no known operation resolves to `"unmatched"`,
  * which callers should treat as a real gap (a path-template typo or a missing spec entry), not
  * something to ignore.
  */
-export function matchOperation(method: string, url: string): OperationMatch {
-  const pathname = requestPathname(url);
+export function matchOperation(
+  method: string,
+  url: string,
+  apiOrigin: string = DEFAULT_API_ORIGIN,
+): OperationMatch {
+  const parsed = new URL(url, apiOrigin);
+  if (ABSOLUTE_URL_SCHEME.test(url) && parsed.origin !== new URL(apiOrigin).origin) {
+    return { kind: "out-of-scope" };
+  }
+  const pathname = parsed.pathname;
   if (!isInScopePath(pathname)) return { kind: "out-of-scope" };
 
   const upperMethod = method.toUpperCase();

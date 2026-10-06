@@ -184,8 +184,9 @@ describe("command permission mapping completeness", () => {
             for (const cond of entry.when ?? []) {
               // A command's own entry must name one of its own flags. An entry a building block
               // contributed (`entry.source` set) only has to name a real flag somewhere in the CLI:
-              // some commands include a block without accepting every flag the block's conditions
-              // mention, and the condition simply never applies to them (see `model.ts`'s `block`).
+              // a command can include a block without accepting every flag its conditions mention.
+              // On such a command a presence condition is false and an absence condition holds
+              // (see `model.ts`'s `block`).
               const validNames = entry.source === undefined ? node.flags : everyRealFlag;
               expect(
                 validNames.has(cond.flag),

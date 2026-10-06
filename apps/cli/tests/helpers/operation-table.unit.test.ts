@@ -23,8 +23,32 @@ describe("operation-table", () => {
   });
 
   it("reads x-oauth-scope when the spec declares one and leaves it undefined when it doesn't", () => {
-    expect(OPERATIONS.get("v1-list-all-secrets")?.oauthScope).toBe("secrets:read");
-    expect(OPERATIONS.get("v1-list-project-addons")?.oauthScope).toBeUndefined();
+    const scoped = OPERATIONS.get("v1-list-all-secrets");
+    const unscoped = OPERATIONS.get("v1-list-project-addons");
+    expect(scoped).toBeDefined();
+    expect(unscoped).toBeDefined();
+    expect(scoped?.oauthScope).toBe("secrets:read");
+    expect(unscoped?.oauthScope).toBeUndefined();
+  });
+
+  it("treats an absolute request to another origin as out of scope, even on a /v2/ path", () => {
+    expect(
+      matchOperation("GET", "https://registry.example.com/v2/org/image/manifests/latest"),
+    ).toEqual({ kind: "out-of-scope" });
+  });
+
+  it("resolves absolute requests against a custom API origin, and ignores the default one", () => {
+    const customOrigin = "http://localhost:54321";
+    expect(matchOperation("GET", `${customOrigin}/v1/projects`, customOrigin).kind).toBe("matched");
+    expect(matchOperation("GET", "https://api.supabase.com/v1/projects", customOrigin)).toEqual({
+      kind: "out-of-scope",
+    });
+  });
+
+  it("resolves a path-only URL the same as its absolute form, ignoring the fragment", () => {
+    const pathOnly = matchOperation("GET", "/v1/projects#section");
+    expect(pathOnly.kind).toBe("matched");
+    expect(pathOnly).toEqual(matchOperation("GET", "https://api.supabase.com/v1/projects#section"));
   });
 
   it("ignores a path outside the Management API's /v1/ and /v2/ prefixes", () => {
