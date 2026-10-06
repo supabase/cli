@@ -846,6 +846,27 @@ describe("stack owner lease", () => {
     ),
   );
 
+  // Windows refuses to delete a stack directory while its lease file is open.
+  it.live.skipIf(process.platform === "win32")(
+    "keeps a successor's lease file when a holder of a removed stack releases",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-lease-successor-" });
+          const state = yield* makeTestState(root);
+          const first = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(first, Exit.void));
+          expect(yield* state.lease("gone").pipe(Scope.provide(first))).toBe(true);
+          yield* fs.remove(`${root}/gone`, { recursive: true });
+
+          expect(yield* state.lease("gone")).toBe(true);
+          yield* Scope.close(first, Exit.void);
+          expect(yield* state.leased("gone")).toBe(true);
+        }),
+      ),
+  );
+
   it.live("reports a free lease without creating a lease file", () =>
     run(
       Effect.gen(function* () {

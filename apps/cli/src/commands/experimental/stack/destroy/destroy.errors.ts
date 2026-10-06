@@ -15,6 +15,7 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
     | "lifecycle"
     | "unknown";
   readonly message: string;
+  readonly detail?: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
 }> {
