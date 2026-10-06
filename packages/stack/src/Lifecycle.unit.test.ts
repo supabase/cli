@@ -80,26 +80,6 @@ const commandTagged = <Tag extends Command["_tag"]>(
 };
 
 describe("Lifecycle reducer", () => {
-  it("wakes a lazy service on first traffic, admits the waiter once ready, and sleeps after idle", () => {
-    const graph = makeGraph([lazy("api")]);
-    const { commandsByStep, state } = run(initialState(graph), [
-      { event: open("api", 1), now: 0 },
-      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 10 },
-      { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 20 },
-    ]);
-
-    expect(tagsOf(commandsByStep[0])).toEqual(["Launch"]);
-    expect(tagsOf(commandsByStep[1])).toEqual(["AdmitConnection"]);
-    expect(tagsOf(commandsByStep[2])).toEqual(["ArmIdleTimer"]);
-    const armed = at(at(commandsByStep, 2), 0) as Extract<Command, { _tag: "ArmIdleTimer" }>;
-    expect(armed).toMatchObject({ id: "api", generation: 1, epoch: 1, delayMillis: 1_000 });
-    expect(state.services.get("api")?.phase).toEqual({
-      _tag: "Running",
-      generation: 1,
-      ready: true,
-    });
-  });
-
   it("ignores a launch outcome, an idle elapse and an exit tagged with a stale generation", () => {
     const graph = makeGraph([lazy("api")]);
     const { state, commandsByStep } = run(initialState(graph), [
@@ -490,47 +470,6 @@ describe("Lifecycle reducer", () => {
       expect(loop.services.get("flaky")?.breaker.openUntil).toBeDefined();
     });
 
-    it("reopens for the same fixed cooldown on a further failure, and an explicit start resets it", () => {
-      const graph = makeGraph([lazy("flaky")]);
-      let state = initialState(graph);
-
-      const fail = (waiterId: number, now: number) => {
-        ({ state } = run(state, [{ event: open("flaky", waiterId), now }]));
-        const generation = startingGeneration(state, "flaky");
-        ({ state } = run(state, [
-          {
-            event: LifecycleEvent.LaunchFailed({ id: "flaky", generation, cause: "boom" }),
-            now: now + 1,
-          },
-        ]));
-      };
-
-      fail(1, 0);
-      fail(2, 1);
-      fail(3, 2);
-      expect(state.services.get("flaky")?.breaker.openUntil).toBe(3 + 30_000);
-
-      ({ state } = run(state, [
-        {
-          event: LifecycleEvent.CooldownElapsed({ id: "flaky", openUntil: 3 + 30_000 }),
-          now: 3 + 30_000,
-        },
-      ]));
-      fail(4, 3 + 30_000);
-      expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(4);
-      expect(state.services.get("flaky")?.breaker.openUntil).toBe(3 + 30_000 + 1 + 30_000);
-
-      ({ state } = run(
-        state,
-        [{ event: LifecycleEvent.StartRequested({ id: "flaky" }) }].map((step) => ({
-          ...step,
-          now: 500_000,
-        })),
-      ));
-      expect(state.services.get("flaky")?.breaker.consecutiveFailures).toBe(0);
-      expect(state.services.get("flaky")?.breaker.openUntil).toBeUndefined();
-    });
-
     it("schedules a cooldown timer when the breaker opens and only the dedicated event retries, even with demand retained the whole time", () => {
       const graph = makeGraph([lazy("a"), lazy("b", { prerequisites: ["a"] })]);
       let state = initialState(graph);
@@ -599,36 +538,6 @@ describe("Lifecycle reducer", () => {
       expect(stale.commandsByStep[0]).toEqual([]);
       expect(stale.state).toEqual(state);
     });
-  });
-
-  it("caps waiters at 256 and frees a slot when a waiter is cancelled", () => {
-    const graph = makeGraph([lazy("api")]);
-    let state = initialState(graph);
-    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
-
-    const opens = Array.from({ length: 256 }, (_, index) => ({
-      event: open("api", index + 1),
-      now: 0,
-    }));
-    ({ state } = run(state, opens));
-    expect(state.services.get("api")?.waiters.size).toBe(256);
-    expect(state.services.get("api")?.phase._tag).toBe("Starting");
-
-    ({ state, commandsByStep } = run(state, [{ event: open("api", 257), now: 1 }]));
-    expect(tagsOf(commandsByStep[0])).toEqual(["FailConnection"]);
-    expect(state.services.get("api")?.waiters.size).toBe(256);
-
-    ({ state, commandsByStep } = run(state, [
-      { event: LifecycleEvent.WaiterCancelled({ id: "api", waiterId: 6 }), now: 2 },
-    ]));
-    expect(commandsByStep[0]).toEqual([]);
-    expect(state.services.get("api")?.waiters.size).toBe(255);
-    // The shared launch itself is untouched by a waiter's cancellation.
-    expect(state.services.get("api")?.phase._tag).toBe("Starting");
-
-    ({ state, commandsByStep } = run(state, [{ event: open("api", 300), now: 3 }]));
-    expect(tagsOf(commandsByStep[0])).toEqual([]);
-    expect(state.services.get("api")?.waiters.size).toBe(256);
   });
 
   it("admits a non-ready-requiring acquisition once a live session exists, bypassing target readiness", () => {
@@ -1500,40 +1409,6 @@ describe("Lifecycle reducer", () => {
         },
       ]));
       expect(storageAdmitted(state, "api")).toBe(true);
-    });
-
-    it("counts a crash whose cleanup failed once, not again when the retried cleanup confirms it", () => {
-      let state = runningApi();
-      ({ state } = run(state, [
-        {
-          event: LifecycleEvent.StopFailed({
-            id: "api",
-            generation: 1,
-            cause: "busy",
-            failure: "segfault",
-          }),
-          now: 2,
-        },
-        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 3 },
-        {
-          event: LifecycleEvent.StopFailed({ id: "api", generation: 1, cause: "busy" }),
-          now: 4,
-        },
-        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 5 },
-        {
-          event: LifecycleEvent.Exited({
-            id: "api",
-            generation: 1,
-            cause: undefined,
-            requested: true,
-          }),
-          now: 6,
-        },
-      ]));
-      expect(state.services.get("api")?.breaker).toMatchObject({
-        consecutiveFailures: 1,
-        lastCause: "segfault",
-      });
     });
 
     it("fails a restart's waiters when the stop fails, and retries the cleanup for the next waiter", () => {

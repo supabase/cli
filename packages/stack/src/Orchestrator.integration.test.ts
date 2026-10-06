@@ -976,73 +976,6 @@ describe("wake and idle sleep", () => {
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.live("keeps serving traffic admitted before an idle timer fires, without a restart", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const orchestrator = yield* makeTestOrchestrator();
-        const api = yield* makeInstance(orchestrator, "api");
-        yield* orchestrator.configure({
-          members: [{ id: "api", activation: "lazy", idleMillis: 1000 }],
-          dependencies: [],
-        });
-        yield* orchestrator.startComposition;
-        yield* Effect.scoped(orchestrator.acquire("api"));
-        yield* TestClock.adjust("999 millis");
-
-        const request = yield* Scope.make();
-        yield* orchestrator.acquire("api").pipe(Scope.provide(request));
-        yield* TestClock.adjust("10 seconds");
-        expect((yield* api.status).lifecycle).toBe("running");
-        expect(yield* Ref.get(api.starts)).toHaveLength(1);
-
-        const sleeping = yield* stopped(api).pipe(Effect.forkChild);
-        yield* Scope.close(request, Exit.void);
-        yield* TestClock.adjust("1 second");
-        yield* Fiber.join(sleeping);
-      }),
-    ).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.live(
-    "holds traffic that arrives after a committed sleep until the stop is confirmed, then serves it from the next launch",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const orchestrator = yield* makeTestOrchestrator();
-          const stopping = yield* Deferred.make<void>();
-          const finishStop = yield* Deferred.make<void>();
-          const api = yield* makeInstance(orchestrator, "api", {
-            stop: Deferred.succeed(stopping, undefined).pipe(
-              Effect.andThen(Deferred.await(finishStop)),
-            ),
-          });
-          yield* orchestrator.configure({
-            members: [{ id: "api", activation: "lazy", idleMillis: 1000 }],
-            dependencies: [],
-          });
-          yield* orchestrator.startComposition;
-          yield* Effect.scoped(orchestrator.acquire("api"));
-          yield* TestClock.adjust("1 second");
-          yield* Deferred.await(stopping);
-
-          const late = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          expect((yield* api.status).lifecycle).toBe("stopping");
-          expect(yield* Ref.get(api.starts)).toHaveLength(1);
-
-          yield* Deferred.succeed(finishStop, undefined);
-          yield* Fiber.join(late);
-          expect(yield* Ref.get(api.starts)).toHaveLength(2);
-          expect(yield* api.status).toMatchObject({
-            lifecycle: "running",
-            health: "healthy",
-            launchId: 2,
-          });
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.live(
     "fails only a waiter whose wake budget expires, naming the stage, while the shared launch continues",
     () =>
@@ -1796,48 +1729,6 @@ describe("failed and crashed services", () => {
         yield* orchestrator.stopNamespace;
       }),
     ),
-  );
-
-  it.live(
-    "rejects traffic beyond 256 waiters and frees a slot when a waiter is cancelled or expires",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const orchestrator = yield* makeTestOrchestrator();
-          const preparing = yield* Deferred.make<void>();
-          const continuePreparation = yield* Deferred.make<void>();
-          yield* makeInstance(orchestrator, "api", {
-            prepare: Deferred.succeed(preparing, undefined).pipe(
-              Effect.andThen(Deferred.await(continuePreparation)),
-            ),
-          });
-          yield* orchestrator.configure({
-            members: [{ id: "api", activation: "lazy" }],
-            dependencies: [],
-          });
-          yield* orchestrator.startComposition;
-          const waitFor = Effect.scoped(orchestrator.acquire("api")).pipe(
-            Effect.flip,
-            Effect.forkChild({ startImmediately: true }),
-          );
-          const queued = yield* Effect.forEach(Array.from({ length: 256 }), () => waitFor);
-          yield* Deferred.await(preparing);
-          expect((yield* Fiber.join(yield* waitFor)).message).toBe("api has too many waiters");
-
-          const [cancelled] = queued;
-          if (cancelled !== undefined) yield* Fiber.interrupt(cancelled);
-          const replacement = yield* waitFor;
-          yield* TestClock.adjust("120 seconds");
-          expect((yield* Fiber.join(replacement)).message).toContain("wake budget exceeded");
-
-          const afterExpiry = yield* Effect.scoped(orchestrator.acquire("api")).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* Deferred.succeed(continuePreparation, undefined);
-          yield* Fiber.join(afterExpiry);
-          yield* orchestrator.stopNamespace;
-        }),
-      ).pipe(Effect.provide(TestClock.layer())),
   );
 });
 

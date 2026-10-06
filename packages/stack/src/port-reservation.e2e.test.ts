@@ -11,7 +11,7 @@ import { testEngine } from "../tests/test-engine.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
 
 /**
- * Step 1.4's per-user port reservation registry: a stopped stack keeps its public ports across
+ * The per-user port reservation registry: a stopped stack keeps its public ports across
  * every other stack's starts and across state roots, a restart recovers the same ports or fails
  * with a structured `PortConflict`, and destroy (but never stop or a kill) releases them.
  */

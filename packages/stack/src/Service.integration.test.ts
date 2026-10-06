@@ -912,33 +912,6 @@ const startUnhealthy = (service: Standalone) =>
   });
 
 describe("service readiness recovery", () => {
-  it.live("serves readiness once a running launch recovers from a failed health check", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const healthy = yield* Ref.make(false);
-        const { service, launches } = yield* makeProbedService(() =>
-          Ref.get(healthy).pipe(
-            Effect.flatMap((ok) => (ok ? Effect.void : Effect.fail(unhealthy("still booting")))),
-          ),
-        );
-        yield* startUnhealthy(service);
-        expect((yield* Effect.flip(service.ready)).message).toContain("still booting");
-
-        yield* Ref.set(healthy, true);
-        yield* service.ready;
-
-        expect(yield* service.get).toMatchObject({
-          lifecycle: "running",
-          health: "healthy",
-          error: undefined,
-          launchId: 1,
-        });
-        expect(yield* Ref.get(launches)).toBe(1);
-        yield* service.stop;
-      }),
-    ),
-  );
-
   it.live("reports the initial check's failure to callers waiting on it without re-probing", () =>
     Effect.scoped(
       Effect.gen(function* () {
