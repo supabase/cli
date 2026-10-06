@@ -1,5 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import { fileURLToPath } from "node:url";
 import {
   ConfigProvider,
   Crypto,
@@ -16,6 +17,7 @@ import {
   Sink,
   Scope,
   Ref,
+  Schedule,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -79,7 +81,9 @@ const fakeHelperEngine = () => {
       const shellIndex = args.indexOf("/bin/sh");
       const image = args[shellIndex - 1];
       return image !== undefined && local.has(image)
-        ? Effect.succeed(handle(0, "abcdef0123456789"))
+        ? Effect.succeed(
+            handle(0, args.includes("-i") ? "supabase-helper-ready\n" : "abcdef0123456789"),
+          )
         : Effect.succeed(handle(1, "", `Unable to find image '${image ?? ""}' locally`));
     }
     if (args[0] === "exec" || args[0] === "rm") return Effect.succeed(handle(0, "done"));
@@ -125,6 +129,61 @@ const docker = Effect.fn("DockerStorageTest.docker")((args: ReadonlyArray<string
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 describe("Docker database storage", { timeout: 120_000 }, () => {
+  it.live("removes a database helper when its owner is killed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if (process.platform === "win32") return;
+        const fs = yield* FileSystem.FileSystem;
+        const crypto = yield* Crypto.Crypto;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-owner-death-" });
+        const stackId = `storage-owner-death-${yield* crypto.randomUUIDv4}`;
+        const filter = `label=com.supabase.stack=${stackId}`;
+        const child = yield* spawner.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [
+              "--experimental-strip-types",
+              fileURLToPath(new URL("./fixtures/helper-owner.ts", import.meta.url)),
+              stackId,
+              root,
+            ],
+            { stdin: "ignore" },
+          ),
+        );
+        yield* Effect.addFinalizer(() =>
+          docker(["ps", "-aq", "--filter", filter]).pipe(
+            Effect.flatMap((ids) =>
+              ids.length === 0
+                ? Effect.void
+                : docker(["rm", "-f", ...ids.split("\n")]).pipe(Effect.asVoid),
+            ),
+            Effect.ignore,
+          ),
+        );
+        const ready = yield* child.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.filter((line) => line === "HELPER_READY"),
+          Stream.runHead,
+          Effect.timeout("60 seconds"),
+        );
+        if (Option.isNone(ready))
+          return yield* new DockerTestError({ message: "Owner exited before helper was ready" });
+        expect(yield* docker(["ps", "--filter", filter, "--format", "{{.Names}}"])).not.toBe("");
+        if (yield* child.isRunning) yield* child.kill({ killSignal: "SIGKILL" });
+        yield* docker(["ps", "-aq", "--filter", filter]).pipe(
+          Effect.flatMap((ids) =>
+            ids.length === 0
+              ? Effect.void
+              : new DockerTestError({ message: `Orphaned database helper: ${ids}` }),
+          ),
+          Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 50 }),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live("waits for helper creation to settle before cleaning up an interrupted operation", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -148,15 +207,17 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
             }
             return ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(0),
-              exitCode: (creating
-                ? Deferred.await(release).pipe(Effect.andThen(Ref.set(present, true)))
-                : Effect.void
-              ).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
               isRunning: Effect.succeed(false),
               kill: () => Effect.void,
               stdin: Sink.drain,
               stdout: creating
-                ? Stream.succeed(new TextEncoder().encode("a".repeat(64)))
+                ? Stream.fromEffect(
+                    Deferred.await(release).pipe(
+                      Effect.andThen(Ref.set(present, true)),
+                      Effect.as(new TextEncoder().encode("supabase-helper-ready\n")),
+                    ),
+                  )
                 : Stream.empty,
               stderr: Stream.empty,
               all: Stream.empty,
@@ -189,6 +250,7 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         yield* Deferred.await(started);
         yield* Effect.sync(() => operation.interruptUnsafe());
         yield* Effect.yieldNow;
+        expect(yield* Ref.get(removals)).toBe(0);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.await(operation);
         expect(yield* Ref.get(removals)).toBe(1);
@@ -235,6 +297,9 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const run = engine.commands.find((args) => args[0] === "run");
         const shellIndex = run?.indexOf("/bin/sh") ?? -1;
         expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(run).toContain("--rm");
+        expect(run).toContain("-i");
+        expect(run).not.toContain("-d");
         expect(
           engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
         ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
@@ -302,6 +367,9 @@ describe("Docker database storage", { timeout: 120_000 }, () => {
         const run = engine.commands.find((args) => args[0] === "run");
         const shellIndex = run?.indexOf("/bin/sh") ?? -1;
         expect(run?.[shellIndex - 1]).toBe(helperMirror);
+        expect(run).toContain("--rm");
+        expect(run).toContain("-i");
+        expect(run).not.toContain("-d");
         expect(
           engine.commands.filter((args) => args[0] === "pull").map((args) => args.at(-1)),
         ).toEqual([expect.stringContaining("ghcr.io/supabase/cli/postgres:"), helperMirror]);
