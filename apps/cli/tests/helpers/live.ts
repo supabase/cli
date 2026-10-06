@@ -278,11 +278,13 @@ export async function queryLiveDb<T extends Record<string, unknown>>(
   dbUrl: string,
   query: string,
   values?: ReadonlyArray<unknown>,
+  signal?: AbortSignal,
 ): Promise<T[]> {
   // Verified TLS against the Supabase CA, so the query works whatever the project's SSL enforcement.
   const client = new pg.Client({ connectionString: dbUrl, ssl: { ca: rootCaBundle() } });
   // A restart that drops an idle or closing client surfaces only as an `error` event.
   client.on("error", () => {});
+  signal?.addEventListener("abort", () => void client.end(), { once: true });
   await client.connect();
   try {
     const result = await client.query(query, values === undefined ? undefined : [...values]);
