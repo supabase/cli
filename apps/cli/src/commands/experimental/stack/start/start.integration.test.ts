@@ -86,11 +86,7 @@ const session: DbSession = {
 const instance = (
   creation: ServiceCreation,
   id: string,
-  lifecycle: () => "stopped" | "starting" | "running",
-  wakeEnabled: () => boolean,
-  health: () => "starting" | "healthy" | "unhealthy" | undefined = () =>
-    lifecycle() === "running" ? "healthy" : undefined,
-  ready: () => Effect.Effect<void, StackError> = () => Effect.void,
+  view: () => MemberView,
 ): ServiceInstances[ServiceCreation["service"]] => {
   const status = (config: ServiceCreation) => ({
     id,
@@ -108,20 +104,20 @@ const instance = (
             ]
           : [],
     config,
-    lifecycle: lifecycle(),
-    health: health(),
+    lifecycle: view().lifecycle,
+    health: view().health,
     error: undefined,
     cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
     launchId: undefined,
-    wakeEnabled: wakeEnabled(),
+    wakeEnabled: view().wakeEnabled,
     registered: true,
   });
   const base = {
     id,
     start: Effect.void,
-    ready: Effect.suspend(ready),
+    ready: Effect.suspend(() => view().ready),
     stop: Effect.void,
     restart: () => Effect.void,
     destroy: Effect.void,
@@ -226,11 +222,44 @@ const requireConcreteCreation = (creation: ServiceCreationInput): ServiceCreatio
   };
 };
 
+interface MemberView {
+  readonly lifecycle: "stopped" | "starting" | "running";
+  readonly wakeEnabled: boolean;
+  readonly health: "starting" | "healthy" | "unhealthy" | undefined;
+  readonly ready: Effect.Effect<void, StackError>;
+}
+
 interface MemberStatus {
   readonly lifecycle?: "stopped" | "starting" | "running";
   readonly wakeEnabled?: boolean;
   readonly health?: "starting" | "healthy" | "unhealthy";
 }
+
+const credentialsFor = (
+  database: ServiceCreationInput | undefined,
+  options: Parameters<Stack["composition"]["supabase"]>[1],
+): StackCredentials => {
+  const config = database?.service === "database" ? database.config : undefined;
+  return {
+    jwtSecret:
+      config?.jwtSecret === undefined ? DEFAULT_LOCAL_JWT_SECRET : Redacted.value(config.jwtSecret),
+    postgresRootKey:
+      config?.rootKey === undefined ? DEFAULT_POSTGRES_ROOT_KEY : Redacted.value(config.rootKey),
+    databasePassword:
+      config?.databasePassword === undefined
+        ? DEFAULT_LOCAL_DATABASE_PASSWORD
+        : Redacted.value(config.databasePassword),
+    publishableKey: options?.keys?.publishableKey ?? "sb_publishable_test",
+    secretKey: options?.keys?.secretKey ?? "sb_secret_test",
+    anonKey: options?.keys?.anonKey ?? "anon-token",
+    serviceRoleKey: options?.keys?.serviceRoleKey ?? "service-token",
+    jwks: '{"keys":[]}',
+    gotrueJwtKeys: options?.keys?.gotrueJwtKeys ?? "[]",
+    remoteJwks: options?.keys?.remoteJwks ?? "[]",
+    anonKeyIsOverride: options?.keys?.anonKeyIsOverride ?? false,
+    serviceRoleKeyIsOverride: options?.keys?.serviceRoleKeyIsOverride ?? false,
+  };
+};
 
 const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let members: Array<ServiceInstances[keyof ServiceInstances]> = [];
@@ -244,19 +273,17 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
   let activations = new Map<string, "eager" | "lazy">();
   const memberStatuses = new Map<string, MemberStatus>();
   const memberReadiness = new Map<string, Effect.Effect<void, StackError>>();
-  let savedCredentials: StackCredentials = {
-    jwtSecret: DEFAULT_LOCAL_JWT_SECRET,
-    postgresRootKey: DEFAULT_POSTGRES_ROOT_KEY,
-    databasePassword: DEFAULT_LOCAL_DATABASE_PASSWORD,
-    publishableKey: "sb_publishable_test",
-    secretKey: "sb_secret_test",
-    anonKey: "anon-token",
-    serviceRoleKey: "service-token",
-    jwks: '{"keys":[]}',
-    gotrueJwtKeys: "[]",
-    remoteJwks: "[]",
-    anonKeyIsOverride: false,
-    serviceRoleKeyIsOverride: false,
+  let savedCredentials = credentialsFor(undefined, undefined);
+  const memberView = (id: string): MemberView => {
+    const status = memberStatuses.get(id);
+    const memberLifecycle = status?.lifecycle ?? lifecycle;
+    return {
+      lifecycle: memberLifecycle,
+      wakeEnabled:
+        status?.wakeEnabled ?? (lifecycle === "running" && activations.get(id) === "lazy"),
+      health: status?.health ?? (memberLifecycle === "running" ? "healthy" : undefined),
+      ready: memberReadiness.get(id) ?? Effect.void,
+    };
   };
   const stack: Stack = {
     id: "a".repeat(64),
@@ -281,31 +308,10 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       supabase: (creations: ReadonlyArray<ServiceCreationInput>, options) =>
         Effect.sync(() => {
           composed += 1;
-          const database = creations.find((creation) => creation.service === "database");
-          const jwtSecret =
-            database?.service === "database" && database.config.jwtSecret !== undefined
-              ? Redacted.value(database.config.jwtSecret)
-              : DEFAULT_LOCAL_JWT_SECRET;
-          savedCredentials = {
-            jwtSecret,
-            postgresRootKey:
-              database?.service === "database" && database.config.rootKey !== undefined
-                ? Redacted.value(database.config.rootKey)
-                : DEFAULT_POSTGRES_ROOT_KEY,
-            databasePassword:
-              database?.service === "database" && database.config.databasePassword !== undefined
-                ? Redacted.value(database.config.databasePassword)
-                : DEFAULT_LOCAL_DATABASE_PASSWORD,
-            publishableKey: options?.keys?.publishableKey ?? "sb_publishable_test",
-            secretKey: options?.keys?.secretKey ?? "sb_secret_test",
-            anonKey: options?.keys?.anonKey ?? "anon-token",
-            serviceRoleKey: options?.keys?.serviceRoleKey ?? "service-token",
-            jwks: '{"keys":[]}',
-            gotrueJwtKeys: options?.keys?.gotrueJwtKeys ?? "[]",
-            remoteJwks: options?.keys?.remoteJwks ?? "[]",
-            anonKeyIsOverride: options?.keys?.anonKeyIsOverride ?? false,
-            serviceRoleKeyIsOverride: options?.keys?.serviceRoleKeyIsOverride ?? false,
-          };
+          savedCredentials = credentialsFor(
+            creations.find((creation) => creation.service === "database"),
+            options,
+          );
           const previousMembers = members;
           members = creations.map((creation) => {
             const previous = previousMembers.find(({ service }) => service === creation.service);
@@ -313,20 +319,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
               previous !== undefined && options?.reuseIds?.includes(previous.id)
                 ? previous.id
                 : `${creation.service}-member-${composed}`;
-            return instance(
-              requireConcreteCreation(creation),
-              id,
-              () => memberStatuses.get(id)?.lifecycle ?? lifecycle,
-              () =>
-                memberStatuses.get(id)?.wakeEnabled ??
-                (lifecycle === "running" && activations.get(id) === "lazy"),
-              () => {
-                const status = memberStatuses.get(id);
-                if (status?.health !== undefined) return status.health;
-                return (status?.lifecycle ?? lifecycle) === "running" ? "healthy" : undefined;
-              },
-              () => memberReadiness.get(id) ?? Effect.void,
-            );
+            return instance(requireConcreteCreation(creation), id, () => memberView(id));
           });
           activations = new Map(
             members.map(({ id, service }) => [
@@ -1441,108 +1434,97 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  // The `#!/bin/sh` shim is never picked up on Windows, which only resolves `docker.exe` on PATH.
-  it.live.skipIf(process.platform === "win32")(
-    "leaves no stack registered when a new stack's owner cannot reach the Docker daemon",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          'project_id = "create-failure"\n',
-        );
-        yield* fs.makeDirectory(`${root}/bin`);
-        yield* fs.writeFileString(
-          `${root}/bin/docker`,
-          "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
-        );
-        yield* fs.chmod(`${root}/bin/docker`, 0o755);
-        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
-        const originalPath = process.env.PATH;
-        // oxlint-disable-next-line effecttsgo/process-env-in-effect -- see above.
-        process.env.PATH = `${root}/bin:${originalPath ?? ""}`;
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            // oxlint-disable-next-line effecttsgo/process-env-in-effect -- restores the mutation made above.
-            process.env.PATH = originalPath;
-          }),
-        );
-        const output = mockOutput();
-        const target = Layer.succeed(StackTargetResolver, {
-          resolve: () =>
-            Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
-        });
-        const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
-
-        const error = yield* stackStart(flags()).pipe(
-          Effect.flip,
-          Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
-        );
-        expect(error.message).toContain("Cannot connect to the Docker daemon");
-        expect(error).toBeInstanceOf(StackCommandStartError);
-        if (error instanceof StackCommandStartError) {
-          expect(error.reason).toBe("runtime");
-          expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
-        }
-        expect(output.stderrText).not.toContain("Failed to stop");
-
-        const stacks = yield* StackApi.pipe(
-          Effect.flatMap((stackApi) =>
-            stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
-          ),
-          Effect.provide(api),
-        );
-        expect(stacks).toEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
-
-  it.live("leaves no stack registered when a new stack's owner finds no Docker CLI", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
-      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "create-failure"\n');
-      // An empty PATH hides any installed Docker CLI on every platform.
-      yield* fs.makeDirectory(`${root}/empty-bin`);
-      // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
-      const envKeys = Object.keys(process.env);
-      const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-      yield* withEnvVar(
-        pathKey,
-        `${root}/empty-bin`,
+  const unreachableDocker = [
+    {
+      name: "cannot reach the Docker daemon",
+      // The `#!/bin/sh` shim is never picked up on Windows, which only resolves `docker.exe` on PATH.
+      posixOnly: true,
+      message: "Cannot connect to the Docker daemon",
+      // A `docker` first on PATH that reports an unreachable daemon, as the real CLI does.
+      path: (root: string, inherited: string) =>
         Effect.gen(function* () {
-          const output = mockOutput();
-          const target = Layer.succeed(StackTargetResolver, {
-            resolve: () =>
-              Effect.succeed({ projectRoot: root, runtime: "docker" as const, hostRunning: false }),
-          });
-          const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
-
-          const error = yield* stackStart(flags()).pipe(
-            Effect.flip,
-            Effect.provide(Layer.mergeAll(layers(root, fakeStack(), output, false), target, api)),
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${root}/bin`);
+          yield* fs.writeFileString(
+            `${root}/bin/docker`,
+            "#!/bin/sh\necho 'Cannot connect to the Docker daemon at unix:///shim/docker.sock. Is the docker daemon running?' >&2\nexit 1\n",
           );
-          expect(error.message).toContain("docker context show");
-          expect(error).toBeInstanceOf(StackCommandStartError);
-          if (error instanceof StackCommandStartError) {
-            expect(error.reason).toBe("runtime");
-            expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
-          }
-          expect(output.stderrText).not.toContain("Failed to stop");
-
-          const stacks = yield* StackApi.pipe(
-            Effect.flatMap((stackApi) =>
-              stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
-            ),
-            Effect.provide(api),
-          );
-          expect(stacks).toEqual([]);
+          yield* fs.chmod(`${root}/bin/docker`, 0o755);
+          return `${root}/bin:${inherited}`;
         }),
-      );
-    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
-  );
+    },
+    {
+      name: "finds no Docker CLI",
+      posixOnly: false,
+      message: "docker context show",
+      // An empty PATH hides any installed Docker CLI on every platform.
+      path: (root: string) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${root}/empty-bin`);
+          return `${root}/empty-bin`;
+        }),
+    },
+  ];
+
+  for (const row of unreachableDocker) {
+    it.live.skipIf(row.posixOnly && process.platform === "win32")(
+      `leaves no stack registered when a new stack's owner ${row.name}`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-create-failure-" });
+          yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/supabase/config.toml`,
+            'project_id = "create-failure"\n',
+          );
+          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- Windows names the variable `Path`; the detached owner inherits it.
+          const envKeys = Object.keys(process.env);
+          const pathKey = envKeys.find((key) => key.toUpperCase() === "PATH") ?? "PATH";
+          // oxlint-disable-next-line effecttsgo/process-env-in-effect -- the detached host subprocess inherits PATH; this is not application config.
+          const path = yield* row.path(root, process.env[pathKey] ?? "");
+          yield* withEnvVar(
+            pathKey,
+            path,
+            Effect.gen(function* () {
+              const output = mockOutput();
+              const target = Layer.succeed(StackTargetResolver, {
+                resolve: () =>
+                  Effect.succeed({
+                    projectRoot: root,
+                    runtime: "docker" as const,
+                    hostRunning: false,
+                  }),
+              });
+              const api = stackApiLayer.pipe(Layer.provide(BunServices.layer));
+
+              const error = yield* stackStart(flags()).pipe(
+                Effect.flip,
+                Effect.provide(
+                  Layer.mergeAll(layers(root, fakeStack(), output, false), target, api),
+                ),
+              );
+              expect(error.message).toContain(row.message);
+              expect(error).toBeInstanceOf(StackCommandStartError);
+              if (error instanceof StackCommandStartError) {
+                expect(error.reason).toBe("runtime");
+                expect(error.suggestion).toContain("Docker CLI or daemon isn't reachable");
+              }
+              expect(output.stderrText).not.toContain("Failed to stop");
+
+              const stacks = yield* StackApi.pipe(
+                Effect.flatMap((stackApi) =>
+                  stackApi.discover({ stateRoot: `${root}/.supabase/stacks` }),
+                ),
+                Effect.provide(api),
+              );
+              expect(stacks).toEqual([]);
+            }),
+          );
+        }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+    );
+  }
 
   it.live(
     "stops, without destroying, the owner when startup fails after the stack is acquired",

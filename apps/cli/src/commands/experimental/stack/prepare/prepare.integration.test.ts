@@ -22,6 +22,7 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
+import { CommandTelemetryAttributes } from "../../../../telemetry/command-telemetry-attributes.ts";
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
@@ -62,6 +63,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     options.engines ?? { docker: "missing", podman: "missing" },
   );
   const createdRuntimes: Array<StackRuntime> = [];
+  const recordedRuntimes: Array<unknown> = [];
   let openCount = 0;
   let prepareCount = 0;
   let startCount = 0;
@@ -167,6 +169,12 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     mockCommandSettings({ workdir: root, supabaseHome: root }),
     output.layer,
     telemetry.layer,
+    Layer.succeed(CommandTelemetryAttributes, {
+      record: (values) =>
+        Effect.sync(() => {
+          if (values.stack_runtime !== undefined) recordedRuntimes.push(values.stack_runtime);
+        }),
+    }),
     Layer.succeed(StackTargetResolver, {
       resolve: (input) =>
         Effect.succeed({
@@ -198,6 +206,9 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     layer,
     get createdRuntimes() {
       return createdRuntimes;
+    },
+    get recordedRuntimes() {
+      return recordedRuntimes;
     },
     get openCount() {
       return openCount;
@@ -441,7 +452,7 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live("honors an explicit runtime without probing any engine", () =>
+  it.live("honors an explicit runtime without probing any engine and records it on telemetry", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root, { engines: { docker: "running", podman: "running" } });
@@ -450,6 +461,7 @@ describe("stack prepare automatic runtime selection", () => {
           Effect.tap(() =>
             Effect.sync(() => {
               expect(fixture.createdRuntimes).toEqual(["podman"]);
+              expect(fixture.recordedRuntimes).toEqual(["podman"]);
               expect(fixture.probes).toEqual([]);
               expect(fixture.runtimeNotices).toEqual([]);
             }),
