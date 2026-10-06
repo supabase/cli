@@ -431,7 +431,9 @@ it.live.skipIf(process.platform === "win32")(
 /**
  * Installs an engine CLI shim the owner finds first on its PATH: the first `stop` announces
  * itself by creating `waiting` in `gateDir` and blocks until the test writes the `release` FIFO,
- * then every command runs the real engine. Returns the idempotent, scope-owned `release`.
+ * then every command runs the real engine. The gate only holds once the test has created `armed`,
+ * so a one-shot container stopped during startup never takes it. Returns the idempotent,
+ * scope-owned `release`.
  */
 const holdDockerStops = (gateDir: string) =>
   Effect.gen(function* () {
@@ -447,7 +449,7 @@ const holdDockerStops = (gateDir: string) =>
       [
         "#!/bin/sh",
         `gate='${gateDir}'`,
-        'if [ ! -e "$gate/passed" ]; then',
+        'if [ -e "$gate/armed" ] && [ ! -e "$gate/passed" ]; then',
         '  for arg in "$@"; do',
         '    if [ "$arg" = stop ]; then',
         '      : > "$gate/waiting"',
@@ -551,6 +553,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
       // Subscribes to the held engine stop's own marker before triggering the stop, so the
       // registration deletion below never races the gate itself.
       const waiting = yield* watchEntry(gateDir, "waiting", true);
+      yield* fs.writeFileString(`${gateDir}/armed`, "");
       yield* triggerStop(trigger, access);
       yield* waiting.pipe(Effect.timeout("30 seconds"));
 
