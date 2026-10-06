@@ -37,13 +37,16 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
       } satisfies WorkloadSnapshot;
     }
     const marker = `com.supabase.stack=${fixture.stack.id}`;
+    // Docker's `ps` template reads a label through `.Label`; Podman's has no such method.
+    const label = (key: string) =>
+      runtime === "docker" ? `{{.Label "${key}"}}` : `{{index .Labels "${key}"}}`;
     const output = yield* commandOutput(runtime, [
       "ps",
       ...(includeStopped ? ["--all"] : []),
       "--filter",
       `label=${marker}`,
       "--format",
-      '{{.ID}}\t{{.Label "com.supabase.instance"}}\t{{.Label "com.supabase.stack-managed"}}',
+      `{{.ID}}\t${label("com.supabase.instance")}\t${label("com.supabase.stack-managed")}`,
     ]);
     const records = output
       .split("\n")
