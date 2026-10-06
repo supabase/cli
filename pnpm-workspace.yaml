@@ -108,7 +108,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node-shared@4.0.0-rc.112"
   - "@effect/sql-pg@4.0.0-rc.112"
   - "@effect/vitest@4.0.0-rc.112"
-  - "@supabase/pg-delta@1.0.0-alpha.57"
+  - "@supabase/pg-delta@1.0.0-alpha.58"
   - "@supabase/pg-topo@1.0.0-alpha.8"
   - "@supabase/postgrest-typegen@0.4.0"
   - "@supabase/typegen@0.2.2"
