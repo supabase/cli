@@ -714,6 +714,29 @@ describe("lock-guarded staging", () => {
   );
 
   it.live(
+    "leaves a staging lock file that has no directory yet for the preparer that is about to take it",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-opening-lock-",
+          });
+          const key = "database/postgres-opening-lock";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          yield* store.prepare({ ...request, key });
+          const openingLock = `${root}/${key}/.staging/opening-token.lock`;
+          yield* fs.writeFile(openingLock, new Uint8Array());
+
+          yield* triggerSweep(root);
+
+          expect(yield* fs.exists(openingLock)).toBe(true);
+        }),
+      ),
+    20_000,
+  );
+
+  it.live(
     "never touches a live preparer's staging directory while another preparer runs",
     () =>
       withPlatform(
@@ -761,9 +784,9 @@ describe("pins", () => {
           const key = "database/postgres-pin-inprocess";
           const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
 
-          const firstScope = yield* Scope.make();
+          const firstScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
           const firstUse = yield* store.use({ ...request, key }).pipe(Scope.provide(firstScope));
-          const secondScope = yield* Scope.make();
+          const secondScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
           const secondUse = yield* store.use({ ...request, key }).pipe(Scope.provide(secondScope));
           expect(firstUse.path).toBe(secondUse.path);
 
@@ -1077,7 +1100,7 @@ describe("pins", () => {
           const prepared = yield* store.prepare({ ...request, key });
 
           const environment = yield* Environment.confine(fs, path, `${root}/home`);
-          const processScope = yield* Scope.make();
+          const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
           yield* spawnNativeProcess(
             {
               executable: "/bin/sleep",
@@ -1121,7 +1144,7 @@ describe("pins", () => {
           const pidPath = path.join(root, "descendant.pid");
           const readyPath = path.join(root, "ready");
           const goPath = path.join(root, "go");
-          const processScope = yield* Scope.make();
+          const processScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
           // The descendant ignores SIGTERM and records its own pid, then the leader signals
           // readiness and waits for the test's own release file before exiting: only the
           // group-wide SIGKILL in the launcher's exit handler can end the descendant.

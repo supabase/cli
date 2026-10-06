@@ -533,15 +533,17 @@ const stagingLockFor = (path: Path.Path, stagingRoot: string, token: string) =>
 /** A staging lock's own file, or the rollback journal SQLite leaves while a transaction is open. */
 const STAGING_LOCK_SUFFIX = /\.lock(-journal)?$/u;
 
-/** Every `.staging` token with a directory, a lock file, or both: a reap target either way. */
+/**
+ * Every `.staging` token with a directory. A bare lock file is skipped: its owner creates the
+ * lock before taking it and the directory only afterwards, so reaping it could unlink a lock
+ * about to be taken.
+ */
 const listStagingTokens = (
   fs: FileSystem.FileSystem,
   stagingRoot: string,
 ): Effect.Effect<ReadonlyArray<string>> =>
   fs.readDirectory(stagingRoot).pipe(
-    Effect.map((names) =>
-      Array.from(new Set(names.map((name) => name.replace(STAGING_LOCK_SUFFIX, "")))),
-    ),
+    Effect.map((names) => names.filter((name) => !STAGING_LOCK_SUFFIX.test(name))),
     Effect.orElseSucceed(() => []),
   );
 
