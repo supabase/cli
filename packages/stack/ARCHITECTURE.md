@@ -271,6 +271,8 @@ A service has demand while it holds leases or waiters, after an explicit start, 
 
 Admission requires the target and its whole prerequisite closure to be ready. An inspector acquisition needs only a live target session. A readiness failure is not terminal: the session keeps running, and the waiters that awaited that readiness itself, or explicitly through a dependent, fail with its error. While any other waiter is still blocked on it, the reducer keeps re-checking that generation, one check at a time and one second apart after a failed re-check, until it recovers, its generation ends or no waiter needs it; the waiters' budgets bound how long that lasts. Losing a prerequisite never replaces a healthy dependent; a crashed prerequisite with running dependents relaunches because they keep demand on it.
 
+A destroy that holds its storage reservation owns the service: removing it from the graph succeeds even while work leases are outstanding, and a lease released afterwards is ignored.
+
 ### Crash-loop breaker
 
 Each launch failure or unrequested exit counts once per generation. Three failures, each within five minutes of the previous one, open the breaker for a fixed 30 seconds; a failure after a longer quiet spell starts a new count. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt, and a further failure reopens it for the same 30 seconds. An explicit start, restart or composition start resets the breaker.

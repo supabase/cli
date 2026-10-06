@@ -747,6 +747,35 @@ describe("service composition", () => {
   );
 });
 
+describe("destroying an instance with admitted traffic", () => {
+  it.live("removes the instance even while its traffic lease is held", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* makeTestOrchestrator();
+        yield* makeInstance(orchestrator, "database");
+        yield* makeInstance(orchestrator, "rest");
+        yield* orchestrator.configure({
+          members: [
+            { id: "database", activation: "lazy" },
+            { id: "rest", activation: "lazy" },
+          ],
+          dependencies: [{ from: "database", to: "rest" }],
+        });
+        yield* orchestrator.startComposition;
+        const request = yield* Scope.make();
+        yield* orchestrator.acquire("rest").pipe(Scope.provide(request));
+
+        yield* orchestrator.destroy("rest");
+        expect((yield* orchestrator.instances).map(({ id }) => id)).not.toContain("rest");
+        yield* orchestrator.stop("database");
+
+        yield* Scope.close(request, Exit.void);
+        expect((yield* orchestrator.status("database")).lifecycle).toBe("stopped");
+      }),
+    ),
+  );
+});
+
 describe("wake and idle sleep", () => {
   it.live(
     "does not let a prerequisite idle-sleep while its dependent is still preparing to wake",

@@ -946,7 +946,6 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
       Effect.gen(function* () {
         const values = new Map(yield* Ref.get(registry));
         values.delete(id);
-        yield* Ref.set(registry, values);
         const configured = yield* Ref.get(composition);
         const next: CompositionConfig = {
           members: configured.members.filter((member) => member.id !== id),
@@ -954,11 +953,15 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
             (dependency) => dependency.from !== id && dependency.to !== id,
           ),
         };
-        yield* Ref.set(composition, next);
-        yield* applyLocked([
-          LifecycleEvent.DestroyReleased({ id }),
+        // The graph update goes first: it removes the service while the destroy still holds it.
+        const applied = yield* applyLocked([
           LifecycleEvent.GraphUpdated({ graph: lifecycleGraph(values.keys(), next) }),
+          LifecycleEvent.DestroyReleased({ id }),
         ]);
+        const rejected = rejectionFor(applied.commands, id);
+        if (rejected !== undefined) return yield* rejected;
+        yield* Ref.set(registry, values);
+        yield* Ref.set(composition, next);
       }),
     );
 

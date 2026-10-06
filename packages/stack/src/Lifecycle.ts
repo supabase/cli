@@ -1023,10 +1023,14 @@ const applyEvent = (
           !specsEqual(previousSpec, nextSpec)
         );
       });
-      const blockedIds = [...removedIds, ...changedIds].filter((id) => {
-        const service = state.services.get(id);
-        return service !== undefined && isActiveForGraphUpdate(service);
-      });
+      // A destroy holding its reservation owns the service, so its removal can't be blocked.
+      const destroyed = (id: string) => state.services.get(id)?.destroy === "reserved";
+      const blockedIds = [...removedIds.filter((id) => !destroyed(id)), ...changedIds].filter(
+        (id) => {
+          const service = state.services.get(id);
+          return service !== undefined && isActiveForGraphUpdate(service);
+        },
+      );
       if (blockedIds.length > 0) {
         for (const id of blockedIds)
           commands.push(
