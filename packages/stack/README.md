@@ -61,6 +61,8 @@ Creating a service records its definition. Configured public ports are bound dur
 
 Native public listeners bind to loopback. Container-runtime (Docker and Podman) public proxies bind all interfaces so services inside the container network can reach them; those listeners are reachable from the LAN according to the host firewall.
 
+On macOS, Podman runs containers in a `podman machine` VM. A full stack needs about 8 GiB of VM memory (`podman machine set --memory 8192`); the 2 GiB default runs out of memory and the kernel kills services.
+
 Functions use a package-provided, self-contained Edge Runtime main service unless the configuration supplies `bootstrap` source; only an explicit `bootstrap` is saved with the service definition. Database versions belong in `config.version`; other recipes accept an optional top-level artifact `version`.
 
 On Linux, native Functions project files must be outside `/tmp`: Edge Runtime uses a private filesystem at that path. Docker mounts project files at a separate runtime path.
