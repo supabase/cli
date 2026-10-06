@@ -14,14 +14,14 @@ import {
   Ref,
   Stream,
 } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
-import { makeDockerDatabaseRoot, runDocker } from "../../tests/docker-fixture.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { makeDockerDatabaseRoot, runEngine } from "../../tests/docker-fixture.ts";
+import { observeContainerStop, cleanStopEvents } from "../../tests/engine-events.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 
 const config: DatabaseConfig = {
   version: "17",
@@ -59,8 +59,8 @@ const query = (
 describe("database component", { timeout: 180_000 }, () => {
   for (const target of [
     { runtime: "native", version: "17" },
-    { runtime: "docker", version: "15" },
-    { runtime: "docker", version: "17" },
+    { runtime: testEngine, version: "15" },
+    { runtime: testEngine, version: "17" },
   ] as const)
     it.live(
       `preserves default encryption keys and Vault secrets after ${target.runtime} PostgreSQL ${target.version} recreation`,
@@ -70,7 +70,7 @@ describe("database component", { timeout: 180_000 }, () => {
             const fs = yield* FileSystem.FileSystem;
             const path = yield* Path.Path;
             const root =
-              target.runtime === "docker"
+              target.runtime !== "native"
                 ? yield* makeDockerDatabaseRoot("stack-default-key-", "default-key-test")
                 : yield* fs.makeTempDirectoryScoped({ prefix: "stack-default-key-" });
             const recipe = yield* makeDatabase({
@@ -79,7 +79,7 @@ describe("database component", { timeout: 180_000 }, () => {
               root,
               cacheRoot: artifactCacheRoot,
               runtime: target.runtime,
-              ...(target.runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+              ...(target.runtime !== "native" ? { engineTarget } : {}),
             });
             const defaults: DatabaseConfig = {
               healthTimeoutMs: 120_000,
@@ -433,8 +433,8 @@ describe("database component", { timeout: 180_000 }, () => {
             instanceId: "database",
             root,
             cacheRoot,
-            runtime: "docker",
-            engineTarget: dockerEngineTarget,
+            runtime: testEngine,
+            engineTarget,
           });
           const service = yield* makeStandaloneService(database.definition, {
             id: "database:container",
@@ -489,8 +489,8 @@ describe("database component", { timeout: 180_000 }, () => {
             instanceId: "database",
             root,
             cacheRoot,
-            runtime: "docker",
-            engineTarget: dockerEngineTarget,
+            runtime: testEngine,
+            engineTarget,
           });
           const replacementPassword = Redacted.make("reopened-target-password");
           const reopenedService = yield* makeStandaloneService(reopened.definition, {
@@ -514,49 +514,53 @@ describe("database component", { timeout: 180_000 }, () => {
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     );
 
-  it.live("groups the database and its storage helper under one compose project", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const stackId = "stack-compose-group";
-        const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
-        const database = yield* makeDatabase({
-          stackId,
-          instanceId: "database",
-          project: "my.app",
-          root,
-          cacheRoot: artifactCacheRoot,
-          runtime: "docker",
-          engineTarget: dockerEngineTarget,
-        });
-        const service = yield* makeStandaloneService(database.definition, {
-          id: "database:group",
-          config,
-        });
-        yield* service.start;
-        yield* service.ready;
-        const listed = yield* runDocker([
-          "ps",
-          "--filter",
-          `label=com.supabase.stack-root=${path.resolve(root)}`,
-          "--format",
-          '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
-        ]);
-        const rows = listed.output
-          .split("\n")
-          .filter((line) => line.trim().length > 0)
-          .map((line) => line.trim().split("|"));
-        expect(rows.some(([name]) => name?.startsWith("supabase-db-helper-"))).toBe(true);
-        expect(new Set(rows.map(([, project]) => project))).toEqual(
-          new Set(["supabase-my-app-stack-compos"]),
-        );
-        expect(new Set(rows.map(([, , group]) => group))).toEqual(
-          new Set(["database", "database-helper"]),
-        );
-        yield* service.destroy;
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  );
+  // The storage helper joins the compose project only with the Docker volume backend.
+  describe.runIf(testEngine === "docker")("Docker volume storage", () => {
+    it.live("groups the database and its storage helper under one compose project", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const stackId = "stack-compose-group";
+          const root = yield* makeDockerDatabaseRoot("stack-database-group-", stackId);
+          const database = yield* makeDatabase({
+            stackId,
+            instanceId: "database",
+            project: "my.app",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: testEngine,
+            engineTarget,
+          });
+          const service = yield* makeStandaloneService(database.definition, {
+            id: "database:group",
+            config,
+          });
+          yield* service.start;
+          yield* service.ready;
+          const listed = yield* runEngine([
+            ...engineTarget.argv,
+            "ps",
+            "--filter",
+            `label=com.supabase.stack-root=${path.resolve(root)}`,
+            "--format",
+            '{{.Names}}|{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.compose.service"}}',
+          ]);
+          const rows = listed.output
+            .split("\n")
+            .filter((line) => line.trim().length > 0)
+            .map((line) => line.trim().split("|"));
+          expect(rows.some(([name]) => name?.startsWith("supabase-db-helper-"))).toBe(true);
+          expect(new Set(rows.map(([, project]) => project))).toEqual(
+            new Set(["supabase-my-app-stack-compos"]),
+          );
+          expect(new Set(rows.map(([, , group]) => group))).toEqual(
+            new Set(["database", "database-helper"]),
+          );
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    );
+  });
 
   it.live("shuts PostgreSQL down fast while a client stays connected across stop", () =>
     Effect.scoped(
@@ -569,8 +573,8 @@ describe("database component", { timeout: 180_000 }, () => {
           instanceId: "database",
           root,
           cacheRoot: artifactCacheRoot,
-          runtime: "docker",
-          engineTarget: dockerEngineTarget,
+          runtime: testEngine,
+          engineTarget,
         });
         const service = yield* makeStandaloneService(database.definition, {
           id: "database:shutdown",
@@ -580,7 +584,8 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.ready;
         const endpoint = yield* database.endpoint;
         if (endpoint.kind !== "tcp") return yield* Effect.die("Expected a TCP endpoint");
-        const listed = yield* runDocker([
+        const listed = yield* runEngine([
+          ...engineTarget.argv,
           "ps",
           "--filter",
           `label=com.supabase.stack-root=${path.resolve(root)}`,
@@ -596,42 +601,15 @@ describe("database component", { timeout: 180_000 }, () => {
           .filter((name) => name.length > 0 && !name.startsWith("supabase-db-helper-"));
         expect(containers).toHaveLength(1);
         const container = containers.join("");
-        const startedAt = yield* runDocker([
+        const startedAt = yield* runEngine([
+          ...engineTarget.argv,
           "inspect",
           "--format",
           "{{.State.StartedAt}}",
           container,
         ]);
 
-        // A bounded `docker events --until` replay intermittently returns nothing on Docker Desktop,
-        // so subscribe live before stop; `--since` replays anything logged before the stream attaches.
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const events = yield* spawner.spawn(
-          ChildProcess.make(
-            "docker",
-            [
-              "events",
-              "--since",
-              startedAt.output.trim(),
-              "--filter",
-              `container=${container}`,
-              "--filter",
-              "event=kill",
-              "--filter",
-              "event=die",
-              "--format",
-              '{{.Action}} {{index .Actor.Attributes "signal"}}{{index .Actor.Attributes "exitCode"}}',
-            ],
-            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
-          ),
-        );
-        const observed = yield* events.stdout.pipe(
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.takeUntil((line) => line.startsWith("die ")),
-          Stream.runCollect,
-          Effect.forkScoped,
-        );
+        const observed = yield* observeContainerStop(container, startedAt.output.trim());
 
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -655,7 +633,7 @@ describe("database component", { timeout: 180_000 }, () => {
         expect(
           yield* Fiber.join(observed),
           "stop sends SIGINT and PostgreSQL exits cleanly",
-        ).toEqual(["kill 2", "die 0"]);
+        ).toEqual(cleanStopEvents);
         yield* service.destroy;
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),

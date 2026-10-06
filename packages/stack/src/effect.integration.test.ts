@@ -25,6 +25,8 @@ import {
 } from "./effect.ts";
 import { initialization, postgres } from "./Commands.ts";
 import { fileURLToPath } from "node:url";
+import { testEngine } from "../tests/test-engine.ts";
+import type { ContainerEngine } from "./runtime/Container.ts";
 import { launchHost } from "./HostProcess.ts";
 import * as PromiseApi from "./index.ts";
 import * as StackNamespace from "./StackNamespace.ts";
@@ -264,7 +266,7 @@ it.live(
   { timeout: 60_000 },
 );
 
-const resetDataStory = (runtime: "native" | "docker") =>
+const resetDataStory = (runtime: "native" | ContainerEngine) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: `stack-reset-data-${runtime}-` });
@@ -445,7 +447,7 @@ it.live("resets native database data through the public RPC", () => resetDataSto
   timeout: 10 * 60_000,
 });
 
-it.live("resets Docker database data through the public RPC", () => resetDataStory("docker"), {
+it.live("resets container database data through the public RPC", () => resetDataStory(testEngine), {
   timeout: 15 * 60_000,
 });
 

@@ -37,7 +37,7 @@ const snapshotOutput = (runtime: Runtime, fixture: WholeStack, includeStopped: b
       } satisfies WorkloadSnapshot;
     }
     const marker = `com.supabase.stack=${fixture.stack.id}`;
-    const output = yield* commandOutput("docker", [
+    const output = yield* commandOutput(runtime, [
       "ps",
       ...(includeStopped ? ["--all"] : []),
       "--filter",
@@ -78,8 +78,8 @@ export const assertWorkloadsGone = Effect.fn("WholeStack.assertWorkloadsGone")(
     Effect.gen(function* () {
       expect(snapshot.identities.length).toBeGreaterThan(0);
       const current = yield* snapshotOutput(runtime, fixture, includeStopped);
-      if (runtime === "docker") expect(current.identities).toEqual([]);
-      if (runtime === "docker" && includeStopped) expect(current.managedIdentities).toEqual([]);
+      if (runtime !== "native") expect(current.identities).toEqual([]);
+      if (runtime !== "native" && includeStopped) expect(current.managedIdentities).toEqual([]);
       for (const marker of snapshot.markers)
         expect(current.identities.some((identity) => identity.includes(marker))).toBe(false);
       for (const identity of snapshot.identities)

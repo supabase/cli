@@ -26,8 +26,9 @@ import {
   waitForOwnerExit,
   type HostAccess,
 } from "./HostProcess.ts";
-import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
+import { makeContainerRuntime } from "./runtime/Container.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { holdReleaseFifo } from "../tests/release-fifo.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
@@ -42,12 +43,16 @@ const gatedDockerStopFixture = fileURLToPath(
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 
-const docker = Effect.fn("StackHostContainerShutdownTest.docker")((args: ReadonlyArray<string>) =>
+const engine = Effect.fn("StackHostContainerShutdownTest.engine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, [...engineTarget.argv, ...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -58,7 +63,7 @@ const docker = Effect.fn("StackHostContainerShutdownTest.docker")((args: Readonl
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* Effect.die(`docker ${args.join(" ")} failed: ${stderr}`);
+        return yield* Effect.die(`${testEngine} ${args.join(" ")} failed: ${stderr}`);
       return stdout.trim();
     }),
   ),
@@ -70,7 +75,7 @@ const stateFor = (root: string) =>
   );
 
 const containers = (stackId: string, dataRoot: string) =>
-  docker([
+  engine([
     "ps",
     "--all",
     "--quiet",
@@ -84,7 +89,7 @@ const containers = (stackId: string, dataRoot: string) =>
 const removeContainers = (stackId: string, dataRoot: string) =>
   containers(stackId, dataRoot).pipe(
     Effect.flatMap((ids) =>
-      Effect.forEach(ids, (id) => docker(["rm", "--force", id]).pipe(Effect.ignore), {
+      Effect.forEach(ids, (id) => engine(["rm", "--force", id]).pipe(Effect.ignore), {
         concurrency: 1,
         discard: true,
       }),
@@ -98,7 +103,7 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
     if (current === undefined)
       yield* state.save({
         id: stackId,
-        runtime: "docker",
+        runtime: testEngine,
         identity: { projectRoot, branchContext: "container-shutdown-test", stackName: stackId },
         instances: [],
         lifetime: "detached",
@@ -126,10 +131,8 @@ it.live.skipIf(process.platform === "win32")(
         const rootA = path.dirname(path.dirname(dataA));
         const rootB = path.dirname(path.dirname(dataB));
         const cacheRoot = `${base}/cache`;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const target = yield* resolveEngineTarget(spawner);
         const helper = yield* makeContainerRuntime({
-          target,
+          target: engineTarget,
           root: dataA,
         });
         yield* helper.prepare(helperImage);
@@ -251,7 +254,7 @@ it.live.skipIf(process.platform === "win32")(
         const stateB3 = yield* stateFor(rootB);
         yield* stateA3.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project-a`,
             branchContext: "container-shutdown-test",
@@ -263,7 +266,7 @@ it.live.skipIf(process.platform === "win32")(
         });
         yield* stateB3.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project-b`,
             branchContext: "container-shutdown-test",
@@ -360,7 +363,7 @@ it.live.skipIf(process.platform === "win32")(
         const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
             branchContext: "abandon-docker-test",
@@ -426,9 +429,9 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 /**
- * Installs a `docker` shim the owner finds first on its PATH: the first `docker stop` announces
+ * Installs an engine CLI shim the owner finds first on its PATH: the first `stop` announces
  * itself by creating `waiting` in `gateDir` and blocks until the test writes the `release` FIFO,
- * then every command runs the real docker. Returns the idempotent, scope-owned `release`.
+ * then every command runs the real engine. Returns the idempotent, scope-owned `release`.
  */
 const holdDockerStops = (gateDir: string) =>
   Effect.gen(function* () {
@@ -440,7 +443,7 @@ const holdDockerStops = (gateDir: string) =>
       Effect.scoped,
     );
     yield* fs.writeFileString(
-      `${gateDir}/bin/docker`,
+      `${gateDir}/bin/${testEngine}`,
       [
         "#!/bin/sh",
         `gate='${gateDir}'`,
@@ -455,7 +458,7 @@ const holdDockerStops = (gateDir: string) =>
         "  done",
         "fi",
         'PATH="${PATH#"$gate/bin:"}"',
-        'exec docker "$@"',
+        `exec ${testEngine} "$@"`,
         "",
       ].join("\n"),
       { mode: 0o755 },
@@ -493,7 +496,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
       const state = yield* stateFor(stateRoot);
       yield* state.save({
         id: stackId,
-        runtime: "docker",
+        runtime: testEngine,
         identity: {
           projectRoot: `${base}/project`,
           branchContext: "abandon-gated-test",
@@ -545,7 +548,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
         "the stack's shared container-env scratch directory exists",
       ).toBe(true);
 
-      // Subscribes to the held `docker stop`'s own marker before triggering the stop, so the
+      // Subscribes to the held engine stop's own marker before triggering the stop, so the
       // registration deletion below never races the gate itself.
       const waiting = yield* watchEntry(gateDir, "waiting", true);
       yield* triggerStop(trigger, access);
@@ -602,7 +605,7 @@ it.live.skipIf(process.platform === "win32")(
         const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
             branchContext: "abandon-docker-label-test",
@@ -623,7 +626,7 @@ it.live.skipIf(process.platform === "win32")(
         // container carries only the stack's identity label, simulating a leaked storage helper
         // no claim or helper-registry bookkeeping ever reaches. Only the
         // registration-independent label sweep can remove it.
-        yield* docker([
+        yield* engine([
           "run",
           "-d",
           "--name",
@@ -679,7 +682,7 @@ it.live.skipIf(process.platform === "win32")(
         const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
             branchContext: "abandon-docker-root-test",
@@ -796,7 +799,7 @@ it.live.skipIf(process.platform === "win32")(
         const state = yield* stateFor(stateRoot);
         yield* state.save({
           id: stackId,
-          runtime: "docker",
+          runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
             branchContext: "pinned-postgres-test",

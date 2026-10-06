@@ -9,7 +9,6 @@ import {
   Fiber,
   FileSystem,
   Layer,
-  Option,
   Path,
   Queue,
   Stream,
@@ -18,10 +17,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
-import { makeContainerRuntime, resolveEngineTarget } from "./runtime/Container.ts";
+import { makeContainerRuntime } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { awaitContainerRemoved } from "../tests/engine-events.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
 class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly message: string }> {}
@@ -29,12 +30,16 @@ class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly messa
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 
-const docker = Effect.fn("SweepTest.docker")((args: ReadonlyArray<string>) =>
+const engine = Effect.fn("SweepTest.engine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, [...engineTarget.argv, ...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -45,7 +50,7 @@ const docker = Effect.fn("SweepTest.docker")((args: ReadonlyArray<string>) =>
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* Effect.die(`docker ${args.join(" ")} failed: ${stderr}`);
+        return yield* Effect.die(`${testEngine} ${args.join(" ")} failed: ${stderr}`);
       return stdout.trim();
     }),
   ),
@@ -57,7 +62,7 @@ const labels = (stackId: string, dataRoot: string) => [
 ];
 
 const containers = (stackId: string, dataRoot: string) =>
-  docker([
+  engine([
     "ps",
     "--all",
     "--quiet",
@@ -67,45 +72,12 @@ const containers = (stackId: string, dataRoot: string) =>
 
 const createOwnedContainer = (stackId: string, dataRoot: string) =>
   Effect.acquireRelease(
-    docker([
+    engine([
       "create",
       ...labels(stackId, dataRoot).flatMap((label) => ["--label", label.slice("label=".length)]),
       helperImage,
     ]),
-    (id) => docker(["rm", "--force", id]).pipe(Effect.ignore),
-  );
-
-/** Completes when Docker reports the container destroyed, including events before subscription. */
-const awaitDestroyed = (id: string, since: number) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const events = yield* spawner.spawn(
-        ChildProcess.make(
-          "docker",
-          [
-            "events",
-            "--since",
-            String(since),
-            "--filter",
-            `container=${id}`,
-            "--filter",
-            "event=destroy",
-            "--format",
-            "{{.Actor.ID}}",
-          ],
-          { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
-        ),
-      );
-      const destroyed = yield* events.stdout.pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.filter((line) => line.trim() === id),
-        Stream.runHead,
-      );
-      if (Option.isNone(destroyed))
-        return yield* new SweepTestError({ message: "Docker event stream ended" });
-    }),
+    (id) => engine(["rm", "--force", id]).pipe(Effect.ignore),
   );
 
 /**
@@ -170,10 +142,8 @@ it.live.skipIf(process.platform === "win32")(
         );
         const rootA = path.dirname(path.dirname(dataA));
         const cacheRoot = `${path.dirname(rootA)}/cache`;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const target = yield* resolveEngineTarget(spawner);
         const helper = yield* makeContainerRuntime({
-          target,
+          target: engineTarget,
           root: dataA,
         });
         yield* helper.prepare(helperImage);
@@ -182,7 +152,7 @@ it.live.skipIf(process.platform === "win32")(
           StackNamespace.Service,
         );
 
-        yield* state.save(saved(deadId, `${rootA}/dead`, "docker", "detached"));
+        yield* state.save(saved(deadId, `${rootA}/dead`, testEngine, "detached"));
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))
           .endpoint;
         const orphan = yield* createOwnedContainer(deadId, dataA);
@@ -200,7 +170,7 @@ it.live.skipIf(process.platform === "win32")(
         const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
         const swept = yield* Effect.all(
           [
-            awaitDestroyed(orphan, since),
+            awaitContainerRemoved(orphan, since),
             awaitRemoval(path.join(rootA, sessionId), "state.json"),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],

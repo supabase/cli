@@ -1,14 +1,18 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Stream } from "effect";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
+import { testEngine } from "./test-engine.ts";
 
-/** Runs a Docker CLI command and returns its combined output and exit code. */
-export const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
+/**
+ * Runs a command of the selected test engine's CLI and returns its combined output and exit code.
+ * It does not pin the engine target, so it works before an engine is known to be reachable.
+ */
+export const runEngine = Effect.fn("DockerTest.runEngine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, args, { stdout: "pipe", stderr: "pipe" }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [

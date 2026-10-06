@@ -4,7 +4,7 @@ import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
@@ -17,8 +17,8 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
-  engineTarget: dockerEngineTarget,
+  runtime: testEngine,
+  engineTarget,
 });
 
 interface MailpitMessages {

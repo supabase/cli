@@ -22,7 +22,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
@@ -35,19 +35,19 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
-  engineTarget: dockerEngineTarget,
+  runtime: testEngine,
+  engineTarget,
 });
 
-const dockerInfo = Effect.scoped(
+const engineInfo = Effect.scoped(
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["info"], { stdout: "pipe", stderr: "pipe" }),
+      ChildProcess.make(testEngine, ["info"], { stdout: "pipe", stderr: "pipe" }),
     );
     return yield* Stream.mkString(Stream.decodeText(child.all));
   }),
-).pipe(Effect.orElseSucceed(() => "docker info unavailable"));
+).pipe(Effect.orElseSucceed(() => `${testEngine} info unavailable`));
 
 describe("service catalog", () => {
   it.live(
@@ -451,7 +451,7 @@ describe("service catalog", () => {
   );
 });
 
-for (const runtime of ["native", "docker"] as const) {
+for (const runtime of ["native", testEngine] as const) {
   it.live(
     `serves configured function files, secrets and JWT policies in ${runtime}`,
     () =>
@@ -521,7 +521,7 @@ for (const runtime of ["native", "docker"] as const) {
               stackId: "c".repeat(64),
               instanceId: "configured",
               runtime,
-              ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+              ...(runtime !== "native" ? { engineTarget } : {}),
               cacheRoot: "/tmp/supabase-stack-artifacts",
             },
           );
@@ -575,8 +575,8 @@ for (const runtime of ["native", "docker"] as const) {
             Effect.tapCause(() =>
               Effect.gen(function* () {
                 yield* Effect.logError(`Functions ${runtime} logs:\n${yield* Ref.get(logs)}`);
-                if (runtime === "docker")
-                  yield* Effect.logError(`docker info:\n${yield* dockerInfo}`);
+                if (runtime !== "native")
+                  yield* Effect.logError(`${testEngine} info:\n${yield* engineInfo}`);
               }),
             ),
           );

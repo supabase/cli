@@ -16,10 +16,12 @@ import { postgres } from "../../src/Commands.ts";
 import { homedir, tmpdir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { create, type Stack } from "../../src/effect.ts";
+import type { ContainerEngine } from "../../src/runtime/Container.ts";
 import type { Observation } from "../../src/Rpc.ts";
 import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
+import { testEngine } from "../test-engine.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -39,7 +41,7 @@ export const serviceNames = [
   "pooler",
 ] as const;
 
-export type Runtime = "native" | "docker";
+export type Runtime = "native" | ContainerEngine;
 export type WholeStack = Readonly<{
   readonly stack: Stack;
   readonly services: ReadonlyArray<AnyService>;
@@ -112,6 +114,12 @@ const ownerLogTail = Effect.fn("WholeStack.ownerLogTail")(
 
 export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
   Effect.gen(function* () {
+    // The test helpers observe and clean up through the selected engine, so a container runtime
+    // must be that engine.
+    if (runtime !== "native" && runtime !== testEngine)
+      return yield* Effect.die(
+        `Whole-stack ${runtime} scenarios need SUPABASE_STACK_TEST_ENGINE=${runtime}`,
+      );
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({
       prefix: `stack-whole-${runtime}-`,
@@ -144,7 +152,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
       Effect.gen(function* () {
         const current = yield* Ref.get(owner);
         const destroy = Option.isSome(current) ? destroyTestStack(current.value) : Effect.void;
-        yield* runtime === "docker"
+        yield* runtime !== "native"
           ? destroy.pipe(Effect.ensuring(cleanupDockerRoot(storageRoot)))
           : destroy;
       }),

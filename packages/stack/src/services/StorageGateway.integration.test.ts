@@ -12,7 +12,7 @@ import * as StackNamespace from "../StackNamespace.ts";
 import type { SavedStack } from "../StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
@@ -69,7 +69,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
     state,
     root: dataRoot,
     cacheRoot,
-    ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+    ...(runtime !== "native" ? { engineTarget } : {}),
   });
   yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
   const created = yield* owner.rpc.supabaseComposition({
@@ -100,7 +100,7 @@ const serveStorage = Effect.fnUntraced(function* (runtime: SavedStack["runtime"]
   return { url, serviceRoleKey, storageRoot };
 });
 
-for (const runtime of ["native", "docker"] as const)
+for (const runtime of ["native", testEngine] as const)
   it.live(
     `accepts S3 requests signed over the gateway path and resumes TUS uploads there (${runtime})`,
     () =>
@@ -162,7 +162,7 @@ for (const runtime of ["native", "docker"] as const)
           expect(patch.status, yield* patch.text).toBe(204);
           expect(patch.headers["upload-offset"]).toBe("5");
 
-          if (runtime === "docker") {
+          if (runtime !== "native") {
             // The container writes into storageRoot, a borrowed host directory; the host user
             // must still own what it created there, not the engine's own root (see Container's
             // `user` field).

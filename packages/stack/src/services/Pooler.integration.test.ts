@@ -7,7 +7,7 @@ import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
@@ -20,8 +20,8 @@ const options = (root: string) => ({
 const dockerOptions = (root: string) => ({
   ...options(root),
   cacheRoot: `${root}/cache`,
-  runtime: "docker" as const,
-  engineTarget: dockerEngineTarget,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -56,7 +56,7 @@ describe("service catalog", () => {
           const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
           const dockerDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/_supabase`;
           const nativeDatabaseUrl = `postgresql://supabase_admin:postgres@${databaseEndpoint.host}:${databaseEndpoint.port}/_supabase`;
-          for (const runtime of ["native", "docker"] as const) {
+          for (const runtime of ["native", testEngine] as const) {
             for (const poolMode of ["transaction", "session"] as const) {
               const tenant = `catalog-${runtime}-${poolMode}`;
               const poolerRecipe = yield* makeServiceRecipe(

@@ -30,7 +30,7 @@ const writeLine = (value: unknown) =>
 
 /**
  * A real owner entrypoint, identical to `internal/host-process.ts`, except it puts
- * `<gateDir>/bin` first on PATH so a test can interpose on the `docker` commands the owner runs.
+ * `<gateDir>/bin` first on PATH so a test can interpose on the container engine commands the owner runs.
  */
 const [stateRoot, cacheRoot, stackId, gateDir, ...rest] = process.argv.slice(2);
 

@@ -25,6 +25,7 @@ import {
 import { create, open } from "../effect.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import { captureOwnerPid, watchLeaseRelease } from "../../tests/owner.ts";
+import { testEngine } from "../../tests/test-engine.ts";
 
 class PublishBarrierError extends Data.TaggedError("PublishBarrierError")<{
   readonly message: string;
@@ -317,12 +318,12 @@ it.live(
   20_000,
 );
 
-const docker = Effect.fn("Namespace.e2e.docker")((args: ReadonlyArray<string>) =>
+const engine = Effect.fn("Namespace.e2e.engine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -333,13 +334,13 @@ const docker = Effect.fn("Namespace.e2e.docker")((args: ReadonlyArray<string>) =
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* Effect.die(`docker ${args.join(" ")} failed: ${stderr}`);
+        return yield* Effect.die(`${testEngine} ${args.join(" ")} failed: ${stderr}`);
       return stdout.trim();
     }),
   ),
 );
 
-// Needs a real Docker daemon, which only the Linux CI runner has.
+// Needs a real container engine, which only the Linux CI runner has.
 it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
   "removes exactly the containers a SIGKILLed owner left behind, with no manual cleanup",
   () =>
@@ -353,7 +354,7 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
           projectRoot: root,
           stateRoot,
           cacheRoot,
-          runtime: "docker",
+          runtime: testEngine,
           startOwner: true,
         });
         yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.ignore));
@@ -361,7 +362,7 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
         yield* mail.start;
         yield* mail.ready;
 
-        const containerIds = (yield* docker([
+        const containerIds = (yield* engine([
           "ps",
           "--all",
           "--quiet",
@@ -383,7 +384,7 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
 
         // Killing the owner leaves the container running; nothing in this test removes it.
         expect(
-          yield* docker(["inspect", "--format", "{{.State.Status}}", String(containerId)]),
+          yield* engine(["inspect", "--format", "{{.State.Status}}", String(containerId)]),
         ).not.toBe("");
 
         const reopened = yield* open({
@@ -394,7 +395,7 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
         });
         yield* Effect.addFinalizer(() => reopened.destroy.pipe(Effect.ignore));
 
-        const remaining = yield* docker([
+        const remaining = yield* engine([
           "ps",
           "--all",
           "--quiet",
@@ -403,7 +404,7 @@ it.live.skipIf(process.platform === "win32" || process.platform === "darwin")(
           `label=com.supabase.stack=${stack.id}`,
         ]);
         expect(remaining).toBe("");
-        const inspectExit = yield* docker([
+        const inspectExit = yield* engine([
           "inspect",
           "--format",
           "{{.State.Status}}",

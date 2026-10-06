@@ -1,5 +1,6 @@
 import { expect } from "@effect/vitest";
 import { Effect, FileSystem, Option, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 interface TreeEntry {
   readonly isFile: boolean;
@@ -9,36 +10,60 @@ interface TreeEntry {
 
 export type Tree = ReadonlyMap<string, TreeEntry>;
 
-/** Snapshots every path under `root`, or an empty tree when `root` does not exist yet. */
-export const snapshotTree = Effect.fn("Confinement.snapshotTree")(function* (root: string) {
+/**
+ * Snapshots every path under `root`, or an empty tree when `root` does not exist yet. A directory
+ * listed in `opaque` is recorded but never entered, for data a container engine owns under a
+ * mapped uid that the host user cannot traverse.
+ */
+export const snapshotTree = Effect.fn("Confinement.snapshotTree")(function* (
+  root: string,
+  opaque: ReadonlyArray<string> = [],
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   if (!(yield* fs.exists(root))) return new Map<string, TreeEntry>();
-  const entries = yield* fs.readDirectory(root, { recursive: true });
-  const stats = yield* Effect.forEach(
-    entries,
-    (entry) => {
-      const full = path.join(root, entry);
-      return fs.stat(full).pipe(
-        Effect.map((info): readonly [string, TreeEntry] => [
-          full,
-          {
-            isFile: info.type === "File",
-            size: info.size,
-            mtimeMs: Option.match(info.mtime, {
-              onNone: () => 0,
-              onSome: (date) => date.getTime(),
-            }),
-          },
-        ]),
-        // A path can disappear between listing and stat (e.g. a service's own temp file); treat it
-        // as absent rather than failing the whole snapshot.
-        Effect.orElseSucceed(() => [full, { isFile: false, size: 0n, mtimeMs: 0 }] as const),
+  const entries = new Map<string, TreeEntry>();
+  const visit = (directory: string): Effect.Effect<void, PlatformError> =>
+    Effect.gen(function* () {
+      const names = yield* fs.readDirectory(directory);
+      yield* Effect.forEach(
+        names,
+        (name) =>
+          Effect.gen(function* () {
+            const full = path.join(directory, name);
+            const info = yield* fs.stat(full).pipe(Effect.option);
+            // A path can disappear between listing and stat (e.g. a service's own temp file); treat
+            // it as absent rather than failing the whole snapshot.
+            if (Option.isNone(info)) {
+              entries.set(full, { isFile: false, size: 0n, mtimeMs: 0 });
+              return;
+            }
+            entries.set(full, {
+              isFile: info.value.type === "File",
+              size: info.value.size,
+              mtimeMs: Option.match(info.value.mtime, {
+                onNone: () => 0,
+                onSome: (date) => date.getTime(),
+              }),
+            });
+            // A symlink is recorded but not followed, matching a recursive directory listing.
+            if (
+              info.value.type === "Directory" &&
+              !opaque.includes(full) &&
+              (yield* fs.readLink(full).pipe(Effect.isFailure))
+            )
+              yield* visit(full);
+          }),
+        { concurrency: 8, discard: true },
       );
-    },
-    { concurrency: 8 },
-  );
-  return new Map(stats);
+    }).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.void,
+      ),
+    );
+  yield* visit(root);
+  return entries as Tree;
 });
 
 export interface ConfinementViolation {

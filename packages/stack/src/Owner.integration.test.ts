@@ -1,6 +1,6 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { PgClient } from "@effect/sql-pg";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -15,7 +15,7 @@ import type { SavedStack } from "./StackNamespace.ts";
 import { DEFAULT_LOCAL_JWT_SECRET } from "./Defaults.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
-import { dockerEngineTarget } from "../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 
 const stateFor = (root: string) =>
@@ -35,11 +35,10 @@ const initial = (id: string): SavedStack => ({
   composition: { members: [], dependencies: [] },
 });
 
-const initialDocker = (id: string): SavedStack => ({ ...initial(id), runtime: "docker" });
+const initialContainer = (id: string): SavedStack => ({ ...initial(id), runtime: testEngine });
 
-/** Container ids docker still reports for `stackId`, by the label every instance container carries. */
 /**
- * Container ids docker still reports for `instanceId`, by the labels an instance's own containers
+ * Container ids the engine still reports for `instanceId`, by the labels an instance's own containers
  * carry. Excludes a stack-wide shared volume helper (labeled only with the stack, never the
  * instance), which outlives any one instance's destroy and is torn down on its own lifecycle.
  */
@@ -49,8 +48,9 @@ const containersForInstance = (stackId: string, instanceId: string) =>
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
         ChildProcess.make(
-          "docker",
+          testEngine,
           [
+            ...engineTarget.argv,
             "ps",
             "-a",
             "--filter",
@@ -981,7 +981,7 @@ it.live(
         const tempRoot = yield* fs.makeTempDirectoryScoped({
           prefix: "stack-owner-no-registration-state-",
         });
-        const stack = initialDocker(stackId);
+        const stack = initialContainer(stackId);
         const state = yield* stateFor(`${tempRoot}/state`);
         yield* state.save(stack);
         const owner = yield* ownerFor({
@@ -989,7 +989,7 @@ it.live(
           state,
           root: dataRoot,
           cacheRoot,
-          engineTarget: dockerEngineTarget,
+          engineTarget,
         });
         yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
@@ -1040,92 +1040,95 @@ it.live(
   120_000,
 );
 
-it.live(
-  "destroys a database's container and storage namespace, and releases its port reservation, after the whole data root is deleted",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const stackId = `owner-no-data-root-${randomUUID().slice(0, 8)}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-data-root-", stackId);
-        const tempRoot = yield* fs.makeTempDirectoryScoped({
-          prefix: "stack-owner-no-data-root-state-",
-        });
-        const stack = initialDocker(stackId);
-        const state = yield* stateFor(`${tempRoot}/state`);
-        yield* state.save(stack);
-        const owner = yield* ownerFor({
-          saved: stack,
-          state,
-          root: dataRoot,
-          cacheRoot,
-          engineTarget: dockerEngineTarget,
-        });
-        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+// The Docker volume backend has no Podman counterpart: Podman keeps database data in host directories.
+describe.runIf(testEngine === "docker")("Docker volume storage", () => {
+  it.live(
+    "destroys a database's container and storage namespace, and releases its port reservation, after the whole data root is deleted",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const stackId = `owner-no-data-root-${randomUUID().slice(0, 8)}`;
+          const dataRoot = yield* makeDockerDatabaseRoot("stack-owner-no-data-root-", stackId);
+          const tempRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "stack-owner-no-data-root-state-",
+          });
+          const stack = initialContainer(stackId);
+          const state = yield* stateFor(`${tempRoot}/state`);
+          yield* state.save(stack);
+          const owner = yield* ownerFor({
+            saved: stack,
+            state,
+            root: dataRoot,
+            cacheRoot,
+            engineTarget,
+          });
+          yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
-        const created = yield* owner.rpc.createService({
-          service: "database",
-          config: {
-            version: "17",
-            databasePassword: Redacted.make("owner-no-data-root-password"),
-            jwtSecret: Redacted.make("owner-no-data-root-jwt-secret-at-least-32-characters"),
-            jwtExpiry: 3600,
-          },
-          endpoints: { sql: { port: "auto" } },
-        });
-        yield* owner.rpc.startService({ id: created.id });
-        yield* owner.rpc.readyService({ id: created.id });
+          const created = yield* owner.rpc.createService({
+            service: "database",
+            config: {
+              version: "17",
+              databasePassword: Redacted.make("owner-no-data-root-password"),
+              jwtSecret: Redacted.make("owner-no-data-root-jwt-secret-at-least-32-characters"),
+              jwtExpiry: 3600,
+            },
+            endpoints: { sql: { port: "auto" } },
+          });
+          yield* owner.rpc.startService({ id: created.id });
+          yield* owner.rpc.readyService({ id: created.id });
 
-        const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
-        const portReservations = Context.get(
-          yield* Layer.build(PortReservations.layer),
-          PortReservations.Service,
-        );
-        expect(
-          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
-        ).toBeDefined();
-        expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
-        const marker = yield* Schema.decodeEffect(Schema.fromJsonString(InstanceMarker))(
-          yield* fs.readFileString(`${dataRoot}/${created.id}/.supabase-database-storage.json`),
-        );
-        if (marker.backend !== "docker" || marker.volume === undefined)
-          return yield* Effect.die("Docker test selected host fallback");
-        const volume = marker.volume;
+          const realStateRoot = yield* fs.realPath(`${tempRoot}/state`);
+          const portReservations = Context.get(
+            yield* Layer.build(PortReservations.layer),
+            PortReservations.Service,
+          );
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeDefined();
+          expect(yield* containersForInstance(stackId, created.id)).not.toHaveLength(0);
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(InstanceMarker))(
+            yield* fs.readFileString(`${dataRoot}/${created.id}/.supabase-database-storage.json`),
+          );
+          if (marker.backend !== "docker" || marker.volume === undefined)
+            return yield* Effect.die("Docker test selected host fallback");
+          const volume = marker.volume;
 
-        // The database sleeps; its storage object (inside the still-running owner) keeps the
-        // identity it already resolved in memory, then the whole owned data root disappears (the
-        // volume host, a disk failure, manual cleanup).
-        yield* owner.rpc.stopService({ id: created.id });
-        expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
-        yield* fs.remove(dataRoot, { recursive: true, force: true });
+          // The database sleeps; its storage object (inside the still-running owner) keeps the
+          // identity it already resolved in memory, then the whole owned data root disappears (the
+          // volume host, a disk failure, manual cleanup).
+          yield* owner.rpc.stopService({ id: created.id });
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          yield* fs.remove(dataRoot, { recursive: true, force: true });
 
-        yield* owner.rpc.destroyService({ id: created.id });
+          yield* owner.rpc.destroyService({ id: created.id });
 
-        expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
-        expect(
-          yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
-        ).toBeUndefined();
-        const remainingNamespace = yield* runDocker([
-          "run",
-          "--rm",
-          "--mount",
-          `type=volume,src=${volume},dst=/store`,
-          "busybox:1.36",
-          "/bin/sh",
-          "-c",
-          `[ -e /store/${marker.namespace} ] && echo present || echo absent`,
-        ]);
-        expect(remainingNamespace.trim()).toBe("absent");
-        yield* runDocker(["volume", "rm", volume]);
-      }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          NodeServices.layer,
-          NodeHttpClient.layerNodeHttp,
-          PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          expect(yield* containersForInstance(stackId, created.id)).toHaveLength(0);
+          expect(
+            yield* portReservations.find(realStateRoot, stackId, `${created.id}:sql`),
+          ).toBeUndefined();
+          const remainingNamespace = yield* runDocker([
+            "run",
+            "--rm",
+            "--mount",
+            `type=volume,src=${volume},dst=/store`,
+            "docker.io/library/busybox:1.36",
+            "/bin/sh",
+            "-c",
+            `[ -e /store/${marker.namespace} ] && echo present || echo absent`,
+          ]);
+          expect(remainingNamespace.trim()).toBe("absent");
+          yield* runDocker(["volume", "rm", volume]);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeHttpClient.layerNodeHttp,
+            PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+          ),
         ),
       ),
-    ),
-  120_000,
-);
+    120_000,
+  );
+});

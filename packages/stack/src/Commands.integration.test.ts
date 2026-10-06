@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { postgres } from "./Commands.ts";
+import type { ContainerEngine } from "./runtime/Container.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { CommandError } from "./host/CommandRunner.ts";
 import type { PgProveOptions, PostgresCommand } from "./Commands.ts";
@@ -25,7 +26,7 @@ import { makeDatabase } from "./services/Database.ts";
 import { makeStandaloneService } from "../tests/standalone-service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
-import { dockerEngineTarget } from "../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -37,12 +38,12 @@ const makeTestCommandRunner = (options: {
   readonly stackId: string;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly runtime: "native" | "docker";
+  readonly runtime: "native" | ContainerEngine;
 }) =>
   Layer.build(
     CommandRunner.layer({
       ...options,
-      ...(options.runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+      ...(options.runtime !== "native" ? { engineTarget } : {}),
     }),
   ).pipe(Effect.map((context) => Context.get(context, CommandRunner.Service)));
 
@@ -77,14 +78,14 @@ const runPostgres = (
   });
 
 describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
-  for (const runtime of ["native", "docker"] as const) {
+  for (const runtime of ["native", testEngine] as const) {
     it.live(`${runtime} runs SQL from stdin, streams a dump, and returns client failure`, () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const stackId = `tools-integration-${randomUUID()}`;
           const root =
-            runtime === "docker"
+            runtime !== "native"
               ? yield* makeDockerDatabaseRoot("stack-tools-", stackId)
               : yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const database = yield* makeDatabase({
@@ -93,7 +94,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             stackId,
             instanceId: "database",
             runtime,
-            ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+            ...(runtime !== "native" ? { engineTarget } : {}),
           });
           const service = yield* makeStandaloneService(database.definition, {
             id: "database",
@@ -228,14 +229,14 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
   }
 
   for (const major of [15, 17] as const) {
-    for (const runtime of ["native", "docker"] as const) {
+    for (const runtime of ["native", testEngine] as const) {
       it.live(`${runtime} runs bundled pg_prove for PostgreSQL ${major}`, () =>
         Effect.scoped(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const stackId = `tools-pgprove-${runtime}-${major}-${randomUUID()}`;
             const root =
-              runtime === "docker"
+              runtime !== "native"
                 ? yield* makeDockerDatabaseRoot(`stack-pgprove-${major}-`, stackId)
                 : yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const database = yield* makeDatabase({
@@ -244,7 +245,7 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               stackId,
               instanceId: "database",
               runtime,
-              ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+              ...(runtime !== "native" ? { engineTarget } : {}),
             });
             const service = yield* makeStandaloneService(database.definition, {
               id: "database",

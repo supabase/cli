@@ -11,7 +11,7 @@ import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { ProxyError } from "../Proxy.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const makeTestState = (root: string) =>
@@ -40,8 +40,8 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
-  engineTarget: dockerEngineTarget,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -58,12 +58,12 @@ describe("service catalog", () => {
           yield* state.save({
             id: stackId,
             identity: { projectRoot: root, branchContext: "test", stackName: "catalog" },
-            runtime: "docker",
+            runtime: testEngine,
             instances: [],
             lifetime: "detached",
             composition: { members: [], dependencies: [] },
           });
-          const network = yield* makeTestNetwork({ stackId, runtime: "docker", state });
+          const network = yield* makeTestNetwork({ stackId, runtime: testEngine, state });
           const secret = "catalog-rest-secret-with-at-least-32-chars";
           const databaseRecipe = yield* makeServiceRecipe(
             {

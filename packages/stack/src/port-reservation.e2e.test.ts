@@ -7,6 +7,8 @@ import { ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import { captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { testEngine } from "../tests/test-engine.ts";
+import type { ContainerEngine } from "./runtime/Container.ts";
 
 /**
  * Step 1.4's per-user port reservation registry: a stopped stack keeps its public ports across
@@ -44,7 +46,7 @@ const foreignListener = (host: string, port: number) =>
 const makeStack = Effect.fn("PortReservation.makeStack")(function* (
   fs: FileSystem.FileSystem,
   cacheRoot: string,
-  runtime: "native" | "docker" = "native",
+  runtime: "native" | ContainerEngine = "native",
 ) {
   const root = yield* fs.makeTempDirectoryScoped({ prefix: `port-reservation-${runtime}-` });
   const stack = yield* create({
@@ -281,7 +283,7 @@ it.live(
         yield* stackA.destroy;
 
         const { stack: stackB } = yield* makeStack(fs, cacheRoot, "native");
-        const { stack: stackC } = yield* makeStack(fs, cacheRoot, "docker");
+        const { stack: stackC } = yield* makeStack(fs, cacheRoot, testEngine);
         const mailB = yield* stackB.services.create(mailOn(port));
         const mailC = yield* stackC.services.create(mailOn(port));
         const [exitB, exitC] = yield* Effect.all(

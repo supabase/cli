@@ -260,7 +260,7 @@ const resolvePodmanTarget = Effect.fn("Container.resolvePodmanTarget")(function*
  */
 export const resolveEngineTarget = Effect.fn("Container.resolveEngineTarget")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  engine: ContainerEngine = "docker",
+  engine: ContainerEngine,
 ): Effect.fn.Return<EngineTarget, ContainerError> {
   yield* Effect.annotateCurrentSpan("container.engine", engine);
   if (engine === "podman") return yield* resolvePodmanTarget(spawner);

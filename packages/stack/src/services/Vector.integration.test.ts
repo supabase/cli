@@ -5,20 +5,21 @@ import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
-import { dockerEngineTarget } from "../../tests/engine-target.ts";
+import type { ContainerEngine } from "../runtime/Container.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
 
-const options = (root: string, runtime: "docker" | "native") => ({
+const options = (root: string, runtime: ContainerEngine | "native") => ({
   stackId: "catalog-test",
   instanceId: "vector",
   root,
   cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
   runtime,
-  ...(runtime === "docker" ? { engineTarget: dockerEngineTarget } : {}),
+  ...(runtime !== "native" ? { engineTarget } : {}),
 });
 
 describe("vector recipe", () => {
-  for (const runtime of ["docker", "native"] as const) {
+  for (const runtime of [testEngine, "native"] as const) {
     it.live(
       `serves health without a custom config and cleans up on destroy, including interrupted writes (${runtime})`,
       () =>
@@ -80,7 +81,7 @@ describe("vector recipe", () => {
               config: { analyticsUrl: "http://analytics", configPath: pipeline },
               endpoints: { http: { port: "auto" } },
             },
-            options(root, "docker"),
+            options(root, testEngine),
           );
           const vector = yield* makeStandaloneService(recipe.definition, {
             id: "vector",
@@ -110,7 +111,7 @@ describe("vector recipe", () => {
               config: { analyticsUrl: "http://analytics" },
               endpoints: { http: { port: "auto" } },
             },
-            options(root, "docker"),
+            options(root, testEngine),
           );
           const vector = yield* makeStandaloneService(recipe.definition, {
             id: "vector",
@@ -164,7 +165,7 @@ describe("vector recipe", () => {
                 config: { analyticsUrl: "http://analytics", configPath },
                 endpoints: { http: { port: "auto" } },
               },
-              options(root, "docker"),
+              options(root, testEngine),
             );
             const vector = yield* makeStandaloneService(recipe.definition, {
               id: "vector",

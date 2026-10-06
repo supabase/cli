@@ -1,7 +1,7 @@
 import { expect } from "@effect/vitest";
-import { Cause, Effect, FileSystem, Path, Ref, Schema } from "effect";
+import { Cause, Config, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { open } from "../../src/effect.ts";
-import { runDocker } from "../docker-fixture.ts";
+import { runEngine } from "../docker-fixture.ts";
 import {
   allMembers,
   clearStackOwner,
@@ -542,8 +542,8 @@ const resolveRealDockerHost = Effect.gen(function* () {
   // oxlint-disable-next-line effecttsgo/process-env-in-effect -- reads the real environment before it is sandboxed below.
   const configured = process.env.DOCKER_HOST;
   if (configured !== undefined && configured.length > 0) return configured;
-  const name = (yield* runDocker(["context", "show"])).output.trim();
-  const host = (yield* runDocker([
+  const name = (yield* runEngine(["context", "show"])).output.trim();
+  const host = (yield* runEngine([
     "context",
     "inspect",
     name,
@@ -552,6 +552,23 @@ const resolveRealDockerHost = Effect.gen(function* () {
   ])).output.trim();
   if (host.length === 0) return yield* Effect.die(`Context ${name} has no docker endpoint`);
   return host;
+});
+
+/**
+ * Rootless Podman runs its engine in-process and keeps image and container storage under the XDG
+ * data and config roots, so the sandboxed owner must keep the real ones to find them. Like the
+ * docker CLI's client state, that engine state is outside this test's confinement contract.
+ */
+const resolveRealPodmanState = Effect.gen(function* () {
+  const home = yield* Config.string("HOME");
+  return {
+    XDG_DATA_HOME: yield* Config.string("XDG_DATA_HOME").pipe(
+      Config.withDefault(`${home}/.local/share`),
+    ),
+    XDG_CONFIG_HOME: yield* Config.string("XDG_CONFIG_HOME").pipe(
+      Config.withDefault(`${home}/.config`),
+    ),
+  };
 });
 
 /**
@@ -582,6 +599,7 @@ export const writeConfinement = (runtime: Runtime) =>
       // the sandboxed owner to a `DOCKER_HOST` pin instead of its real context is an accepted
       // tradeoff for that, not something this test tries to confine.
       const dockerHost = runtime === "docker" ? yield* resolveRealDockerHost : undefined;
+      const podmanState = runtime === "podman" ? yield* resolveRealPodmanState : undefined;
       yield* withSandboxEnvironment(
         {
           HOME: home,
@@ -589,8 +607,8 @@ export const writeConfinement = (runtime: Runtime) =>
           TMP: tmp,
           TEMP: tmp,
           XDG_CACHE_HOME: path.join(home, ".cache"),
-          XDG_CONFIG_HOME: path.join(home, ".config"),
-          XDG_DATA_HOME: path.join(home, ".local", "share"),
+          XDG_CONFIG_HOME: podmanState?.XDG_CONFIG_HOME ?? path.join(home, ".config"),
+          XDG_DATA_HOME: podmanState?.XDG_DATA_HOME ?? path.join(home, ".local", "share"),
           XDG_STATE_HOME: path.join(home, ".local", "state"),
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: bunTranspilerCache,
           DOCKER_HOST: dockerHost ?? "",
@@ -602,12 +620,27 @@ export const writeConfinement = (runtime: Runtime) =>
           yield* clearIdleTimers(fixture);
           yield* fixture.stack.composition.start;
           yield* exerciseStack(fixture, "confinement");
+          // Podman keeps database files on the host under a subordinate uid the host user cannot
+          // traverse, so that one directory is recorded but not entered; every other path under
+          // the roots is still diffed.
+          const opaque =
+            runtime === "podman"
+              ? [
+                  path.join(
+                    fixture.locations.stateRoot,
+                    fixture.stack.id,
+                    "data",
+                    service(fixture, "database").id,
+                    "data",
+                  ),
+                ]
+              : [];
           // Allowed roots the named entries below cover; add one line here to extend them.
           const allowedRoots = [fixture.root, fixture.locations.cacheRoot, bunTranspilerCache];
           // While the stack is still running, after it has been exercised: a before/after-only
           // check misses anything a service writes and removes again before shutdown.
           const duringHome = yield* snapshotTree(home);
-          const duringTmp = yield* snapshotTree(tmp);
+          const duringTmp = yield* snapshotTree(tmp, opaque);
           assertConfinedTo(diffTrees(beforeHome, duringHome), allowedRoots);
           assertConfinedTo(diffTrees(beforeTmp, duringTmp), allowedRoots);
           yield* proveConfinementDetectsViolations(home, duringHome, allowedRoots);
@@ -615,7 +648,7 @@ export const writeConfinement = (runtime: Runtime) =>
           yield* fixture.stack.destroy;
           yield* clearStackOwner(fixture);
           assertConfinedTo(diffTrees(beforeHome, yield* snapshotTree(home)), allowedRoots);
-          assertConfinedTo(diffTrees(beforeTmp, yield* snapshotTree(tmp)), allowedRoots);
+          assertConfinedTo(diffTrees(beforeTmp, yield* snapshotTree(tmp, opaque)), allowedRoots);
         }),
       );
     }),
