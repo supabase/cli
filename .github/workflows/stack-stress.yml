@@ -23,10 +23,12 @@ jobs:
     name: Run stack stress scenarios (${{ matrix.runtime }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 90
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
     strategy:
       fail-fast: false
       matrix:
-        runtime: [native, docker]
+        runtime: [native, docker, podman]
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
@@ -36,6 +38,10 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
 
       # vitest's --repeats counts the runs after the first.
       - name: Run idle and parallel-stack scenarios repeatedly

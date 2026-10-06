@@ -127,7 +127,11 @@ jobs:
       # registry cross-process and publication-crash scenarios run on Linux too.
       - name: Run stack namespace e2e tests
         working-directory: packages/stack
-        run: pnpm test:e2e:run src/namespace/Namespace.e2e.test.ts --passWithNoTests=false
+        run: >-
+          pnpm test:e2e:run
+          src/namespace/Namespace.e2e.test.ts
+          src/port-reservation.e2e.test.ts
+          --passWithNoTests=false
 
   test-stack-ports:
     if: |
@@ -340,23 +344,9 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
 
-      # Rootless Podman needs subordinate id ranges and a per-user runtime directory; the user
-      # service is started explicitly so /run/user/<uid> exists before the first podman call.
-      - name: Prepare rootless Podman
+      - name: Setup Podman
         if: matrix.runtime == 'podman'
-        run: |
-          if ! command -v podman >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y podman
-          fi
-          user="$(id -un)"
-          grep -q "^${user}:" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${user}"
-          sudo loginctl enable-linger "${user}"
-          sudo systemctl start "user@$(id -u).service"
-          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
-          XDG_RUNTIME_DIR="/run/user/$(id -u)" podman system migrate
-          podman version
-          podman info
+        uses: ./.github/actions/setup-podman
 
       - name: Run stack end-to-end tests
         run: >-
@@ -391,22 +381,8 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
           go-cache: "false"
 
-      # Rootless Podman needs subordinate id ranges and a per-user runtime directory; the user
-      # service is started explicitly so /run/user/<uid> exists before the first podman call.
-      - name: Prepare rootless Podman
-        run: |
-          if ! command -v podman >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y podman
-          fi
-          user="$(id -un)"
-          grep -q "^${user}:" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${user}"
-          sudo loginctl enable-linger "${user}"
-          sudo systemctl start "user@$(id -u).service"
-          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
-          XDG_RUNTIME_DIR="/run/user/$(id -u)" podman system migrate
-          podman version
-          podman info
+      - name: Setup Podman
+        uses: ./.github/actions/setup-podman
 
       # The suites that drive a real container engine; the rest of the integration project is
       # engine-independent and runs in test-integration.
