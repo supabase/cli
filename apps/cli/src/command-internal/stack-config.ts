@@ -127,119 +127,25 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
   return isRecord(value) ? value : undefined;
 };
 
-const explicitPort = (
+/** The configured port when `path` is set in `config.toml` or by its `SUPABASE_<PATH>` env var, else undefined. */
+const portIfSet = (
   document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-): number | undefined => {
-  const value = section(document, sectionName)?.[key];
-  return typeof value === "number" ? value : undefined;
-};
-
-const envPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  key: string,
-  configured: number,
   env: Readonly<Record<string, string>>,
-): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  return explicitPort(document, sectionName, key) === undefined ? undefined : configured;
-};
-
-const envNestedPortOrConfigured = (
-  name: string,
-  document: Readonly<Record<string, unknown>> | undefined,
-  sectionName: string,
-  nestedSection: string,
-  key: string,
+  path: readonly [string, ...string[]],
   configured: number,
-  env: Readonly<Record<string, string>>,
 ): number | undefined => {
-  if (envOverride(name, undefined, env) !== undefined) return configured;
-  const nested = section(section(document, sectionName), nestedSection);
-  return typeof nested?.[key] === "number" ? configured : undefined;
+  if (envOverride(["SUPABASE", ...path].join("_").toUpperCase(), undefined, env) !== undefined) {
+    return configured;
+  }
+  const key = path[path.length - 1] ?? "";
+  const parent = path
+    .slice(0, -1)
+    .reduce<Readonly<Record<string, unknown>> | undefined>(
+      (node, name) => section(node, name),
+      document,
+    );
+  return typeof parent?.[key] === "number" ? configured : undefined;
 };
-
-/** A port setting's `config.toml` section/key and the `SUPABASE_*` env var that overrides it. */
-interface PortSetting {
-  readonly envVar: string;
-  readonly section: string;
-  readonly nestedSection?: string;
-  readonly key: string;
-}
-
-const DB_PORT: PortSetting = {
-  envVar: "SUPABASE_DB_PORT",
-  section: "db",
-  key: "port",
-};
-const API_PORT: PortSetting = {
-  envVar: "SUPABASE_API_PORT",
-  section: "api",
-  key: "port",
-};
-const STUDIO_PORT: PortSetting = {
-  envVar: "SUPABASE_STUDIO_PORT",
-  section: "studio",
-  key: "port",
-};
-const DB_POOLER_PORT: PortSetting = {
-  envVar: "SUPABASE_DB_POOLER_PORT",
-  section: "db",
-  nestedSection: "pooler",
-  key: "port",
-};
-const LOCAL_SMTP_PORT: PortSetting = {
-  envVar: "SUPABASE_LOCAL_SMTP_PORT",
-  section: "local_smtp",
-  key: "port",
-};
-const LOCAL_SMTP_SMTP_PORT: PortSetting = {
-  envVar: "SUPABASE_LOCAL_SMTP_SMTP_PORT",
-  section: "local_smtp",
-  key: "smtp_port",
-};
-const LOCAL_SMTP_POP3_PORT: PortSetting = {
-  envVar: "SUPABASE_LOCAL_SMTP_POP3_PORT",
-  section: "local_smtp",
-  key: "pop3_port",
-};
-const ANALYTICS_PORT: PortSetting = {
-  envVar: "SUPABASE_ANALYTICS_PORT",
-  section: "analytics",
-  key: "port",
-};
-const ANALYTICS_VECTOR_PORT: PortSetting = {
-  envVar: "SUPABASE_ANALYTICS_VECTOR_PORT",
-  section: "analytics",
-  key: "vector_port",
-};
-const EDGE_RUNTIME_INSPECTOR_PORT: PortSetting = {
-  envVar: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-  section: "edge_runtime",
-  key: "inspector_port",
-};
-
-/** Resolves one `PortSetting` against the loaded document and env, picking the nested variant when needed. */
-const resolvePort = (
-  setting: PortSetting,
-  document: Readonly<Record<string, unknown>> | undefined,
-  configured: number,
-  env: Readonly<Record<string, string>>,
-): number | undefined =>
-  setting.nestedSection === undefined
-    ? envPortOrConfigured(setting.envVar, document, setting.section, setting.key, configured, env)
-    : envNestedPortOrConfigured(
-        setting.envVar,
-        document,
-        setting.section,
-        setting.nestedSection,
-        setting.key,
-        configured,
-        env,
-      );
 
 const authProviderNames = [
   "apple",
@@ -1149,53 +1055,53 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const dbPort = resolvePort(
-        DB_PORT,
+      const dbPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["db", "port"],
         validatedConfig.db.port,
-        context.projectEnvValues,
       );
-      const apiPort = resolvePort(
-        API_PORT,
+      const apiPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["api", "port"],
         validatedConfig.api.port,
-        context.projectEnvValues,
       );
-      const studioPort = resolvePort(
-        STUDIO_PORT,
+      const studioPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["studio", "port"],
         validatedConfig.studio.port,
-        context.projectEnvValues,
       );
-      const poolerPort = resolvePort(
-        DB_POOLER_PORT,
+      const poolerPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["db", "pooler", "port"],
         validatedConfig.db.pooler.port,
-        context.projectEnvValues,
       );
-      const mailPort = resolvePort(
-        LOCAL_SMTP_PORT,
+      const mailPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["local_smtp", "port"],
         validatedConfig.local_smtp.port,
-        context.projectEnvValues,
       );
-      const mailSmtpPort = resolvePort(
-        LOCAL_SMTP_SMTP_PORT,
+      const mailSmtpPort = portIfSet(
         document,
+        context.projectEnvValues,
+        ["local_smtp", "smtp_port"],
         validatedConfig.local_smtp.smtp_port ?? 0,
-        context.projectEnvValues,
       );
-      const mailPop3Port = resolvePort(
-        LOCAL_SMTP_POP3_PORT,
+      const mailPop3Port = portIfSet(
         document,
+        context.projectEnvValues,
+        ["local_smtp", "pop3_port"],
         validatedConfig.local_smtp.pop3_port ?? 0,
-        context.projectEnvValues,
       );
-      const analyticsPort = resolvePort(
-        ANALYTICS_PORT,
+      const analyticsPort = portIfSet(
         document,
-        validatedConfig.analytics.port,
         context.projectEnvValues,
+        ["analytics", "port"],
+        validatedConfig.analytics.port,
       );
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
@@ -1325,11 +1231,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     config: { apiKey: "api-key" },
                     endpoints: {
                       http: endpoint(
-                        resolvePort(
-                          ANALYTICS_VECTOR_PORT,
+                        portIfSet(
                           document,
-                          validatedConfig.analytics.vector_port ?? 0,
                           context.projectEnvValues,
+                          ["analytics", "vector_port"],
+                          validatedConfig.analytics.vector_port ?? 0,
                         ),
                       ),
                     },
@@ -1361,11 +1267,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     endpoints: {
                       http: endpoint(apiPort),
                       inspector: endpoint(
-                        resolvePort(
-                          EDGE_RUNTIME_INSPECTOR_PORT,
+                        portIfSet(
                           document,
-                          validatedConfig.edge_runtime.inspector_port,
                           context.projectEnvValues,
+                          ["edge_runtime", "inspector_port"],
+                          validatedConfig.edge_runtime.inspector_port,
                         ),
                       ),
                     },
