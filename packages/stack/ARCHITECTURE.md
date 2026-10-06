@@ -80,10 +80,10 @@ stateDiagram-v2
     Stopped --> Starting: demand or explicit start
     Starting --> Running: session available
     Starting --> Failed: launch failed, cleanup confirmed
-    Running --> Failed: unexpected exit, cleanup confirmed
-    Running --> Stopping: stop, restart or idle sleep
-    Starting --> Stopping: stop or restart
-    Stopping --> Stopped: cleanup confirmed
+    Running --> Stopping: unexpected exit, stop, restart or idle sleep
+    Starting --> Stopping: unexpected exit, stop or restart
+    Stopping --> Failed: unexpected exit, cleanup confirmed
+    Stopping --> Stopped: stop, restart or idle sleep, cleanup confirmed
     Stopping --> Stopping: cleanup failed, retried on request
     Failed --> Starting: demand, behind the breaker
     Failed --> Stopped: explicit stop
@@ -98,7 +98,7 @@ stateDiagram-v2
     end note
 ```
 
-Each phase after `Stopped` belongs to one generation. The final marker means the registration no longer exists. `destroy` of a running instance stops it, then removes its data under a storage reservation, which it takes once any running storage operation releases it. A generation whose cleanup fails stays stopping, holding its resources; the next stop, restart, start or waiter retries the remaining cleanup. A dead process is never reported as running, nor unfinished cleanup as stopped. Failed data removal leaves the registration present. Restart composes stop and launch; it adds no stable state.
+Each phase after `Stopped` belongs to one generation. The final marker means the registration no longer exists. `destroy` of a running instance stops it, then removes its data under a storage reservation, which it takes once any running storage operation releases it. A generation whose cleanup fails stays stopping, holding its resources; the next stop, restart, start or waiter retries the remaining cleanup. A workload that exits on its own enters `Stopping` at once, so no traffic routes to its dead endpoint while cleanup runs; it counts toward the breaker then, and ends `Failed` once cleanup is confirmed. A dead process is never reported as running, nor unfinished cleanup as stopped. Failed data removal leaves the registration present. Restart composes stop and launch; it adds no stable state.
 
 ### Chart 2: health does not hold the lifecycle gate
 
@@ -247,7 +247,7 @@ Explicit stop and restart wait on the reducer state itself: a stop completes whe
 
 ### The execution boundary
 
-`Service.ts` executes one generation at a time and owns its resources from before preparation until cleanup is confirmed. A launch prepares, acquires the runtime under the service's execution lock, reports the live session, then runs the readiness check. A stop fences its generation under the same lock, so a launch of that generation that has not acquired its runtime never will; it then interrupts the attempt while it prepares or checks readiness, and cleans only that generation's session, never a newer one. Every outcome is reported: `SessionAvailable`, `LaunchSucceeded`, `ReadinessLost`/`ReadinessRecovered`, `LaunchFailed` and `Exited` once cleanup is confirmed, or `StopFailed` while resources are still held.
+`Service.ts` executes one generation at a time and owns its resources from before preparation until cleanup is confirmed. A launch prepares, acquires the runtime under the service's execution lock, reports the live session, then runs the readiness check. A stop fences its generation under the same lock, so a launch of that generation that has not acquired its runtime never will; it then interrupts the attempt while it prepares or checks readiness, and cleans only that generation's session, never a newer one. Every outcome is reported: `SessionAvailable`, `LaunchSucceeded`, `ReadinessLost`/`ReadinessRecovered`, `LaunchFailed`, `SessionLost` as soon as a runtime exits on its own, and `Exited` once cleanup is confirmed, or `StopFailed` while resources are still held.
 
 A generation whose cleanup failed stays `stopping` with its cleanup failure recorded. Nothing launches and no storage operation is admitted while it holds resources, and its waiters fail with the cleanup error. The next explicit stop, restart or start, or the next waiter, retries only the remaining cleanup.
 

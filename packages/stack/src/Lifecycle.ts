@@ -86,7 +86,8 @@ type Phase = Data.TaggedEnum<{
   Stopped: {};
   Starting: { readonly generation: number; readonly stage: Stage };
   Running: { readonly generation: number; readonly ready: boolean };
-  Stopping: { readonly generation: number };
+  /** `crash` marks a generation whose runtime exited on its own: its cleanup ends in `Failed`. */
+  Stopping: { readonly generation: number; readonly crash?: { readonly cause: unknown } };
   Failed: { readonly generation: number; readonly cause: unknown };
 }>;
 const Phase = Data.taggedEnum<Phase>();
@@ -206,6 +207,11 @@ export type LifecycleEvent = Data.TaggedEnum<{
   SessionAvailable: { readonly id: string; readonly generation: number };
   LaunchSucceeded: { readonly id: string; readonly generation: number };
   LaunchFailed: { readonly id: string; readonly generation: number; readonly cause: unknown };
+  /**
+   * A generation's runtime exited on its own and its cleanup has begun. Reported before the
+   * cleanup runs, so nothing routes to the dead session while its resources are still held.
+   */
+  SessionLost: { readonly id: string; readonly generation: number; readonly cause: unknown };
   Exited: {
     readonly id: string;
     readonly generation: number;
@@ -715,15 +721,42 @@ const applyEvent = (
         break;
       return [recordFailure(state, id, generation, cause, now, commands), commands];
     }
+    case "SessionLost": {
+      const { id, generation, cause } = event;
+      const service = state.services.get(id);
+      if (
+        service === undefined ||
+        (service.phase._tag !== "Starting" && service.phase._tag !== "Running") ||
+        service.phase.generation !== generation
+      )
+        break;
+      // The crash counts and fails its waiters now; the generation then winds down like a stop.
+      const failed = recordFailure(state, id, generation, cause, now, commands);
+      return [
+        setService(failed, id, (s) => ({
+          ...s,
+          phase: Phase.Stopping({ generation, crash: { cause } }),
+        })),
+        commands,
+      ];
+    }
     case "Exited": {
-      const { id, generation, cause, requested } = event;
+      const { id, generation, requested } = event;
       const service = state.services.get(id);
       if (service === undefined || generationOf(service.phase) !== generation) break;
       if (service.phase._tag === "Stopping" || requested) {
+        // An explicit stop that arrived during a crash's cleanup wins: it ends `Stopped`.
+        const crash =
+          service.phase._tag === "Stopping" && service.intent !== "stopped"
+            ? service.phase.crash
+            : undefined;
         return [
           setService(state, id, (s) => ({
             ...s,
-            phase: Phase.Stopped(),
+            phase:
+              crash === undefined
+                ? Phase.Stopped()
+                : Phase.Failed({ generation, cause: crash.cause }),
             idleArmedEpoch: undefined,
             readinessFailure: undefined,
             reprobing: false,
@@ -732,8 +765,6 @@ const applyEvent = (
           commands,
         ];
       }
-      if (service.phase._tag === "Running" || service.phase._tag === "Starting")
-        return [recordFailure(state, id, generation, cause, now, commands), commands];
       break;
     }
     case "StopFailed": {

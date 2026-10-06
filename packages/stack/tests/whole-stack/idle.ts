@@ -1,5 +1,5 @@
 import { expect } from "@effect/vitest";
-import { Context, Effect, Fiber, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
@@ -14,6 +14,7 @@ import {
   type WholeStack,
 } from "./fixture.ts";
 import { subscribeRealtime } from "./websocket.ts";
+import { killWorkload } from "./workloads.ts";
 
 class IdleProbeError extends Schema.TaggedError<IdleProbeError>()("IdleProbeError", {
   message: Schema.String,
@@ -234,7 +235,23 @@ export const restartIdleWake = (runtime: Runtime) =>
 
       const rewarm = yield* requestWithHeaders(restUrl, headers);
       expect(rewarm.status, rewarm.body).toBe(200);
-      expect((yield* rest.status).lifecycle).toBe("running");
+      const awake = yield* rest.status;
+      expect(awake.lifecycle).toBe("running");
+
+      yield* killWorkload(runtime, fixture, rest.id);
+      const crashed = yield* rest.followStatus.pipe(
+        Stream.filter((status) => status.lifecycle === "stopped"),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      expect(crashed.exit !== undefined && Exit.isFailure(crashed.exit)).toBe(true);
+      expect(crashed.wakeEnabled).toBe(true);
+
+      const rewake = yield* requestWithHeaders(restUrl, headers);
+      expect(rewake.status, rewake.body).toBe(200);
+      const woken = yield* rest.status;
+      expect(woken.lifecycle).toBe("running");
+      expect(woken.launchId).toBeGreaterThan(awake.launchId ?? Number.POSITIVE_INFINITY);
     }),
   );
 

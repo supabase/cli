@@ -702,6 +702,54 @@ describe("service composition", () => {
     ).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.live("holds traffic through a crashed workload's cleanup, then re-wakes it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* makeTestOrchestrator();
+        const crashed = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
+        const cleanupStarted = yield* Deferred.make<void>();
+        const cleanupGate = yield* Deferred.make<void>();
+        const rest = yield* makeInstance(orchestrator, "rest", {
+          exit: crashed,
+          stop: Deferred.succeed(cleanupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(cleanupGate)),
+          ),
+        });
+        yield* orchestrator.configure({
+          members: [{ id: "rest", activation: "lazy", idleMillis: 10_000 }],
+          dependencies: [],
+        });
+        yield* orchestrator.startComposition;
+        yield* Effect.scoped(orchestrator.acquire("rest"));
+        const firstLaunch = (yield* rest.status).launchId;
+
+        yield* Deferred.succeed(
+          crashed,
+          Exit.fail(new ServiceError({ operation: "process", message: "crashed" })),
+        );
+        yield* Deferred.await(cleanupStarted);
+        expect((yield* rest.status).lifecycle).toBe("stopping");
+
+        const admitted = yield* Deferred.make<void>();
+        const waking = yield* Effect.scoped(orchestrator.acquire("rest")).pipe(
+          Effect.andThen(Deferred.succeed(admitted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 second");
+        expect(yield* Deferred.isDone(admitted)).toBe(false);
+        expect(yield* Ref.get(rest.starts)).toHaveLength(1);
+
+        yield* Deferred.succeed(cleanupGate, undefined);
+        yield* Fiber.join(waking);
+        expect(yield* Ref.get(rest.starts)).toHaveLength(2);
+        const status = yield* rest.status;
+        expect(status.lifecycle).toBe("running");
+        expect(status.launchId).not.toBe(firstLaunch);
+        yield* orchestrator.stopNamespace;
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.live("continues namespace destruction after a service data removal fails", () =>
     Effect.scoped(
       Effect.gen(function* () {

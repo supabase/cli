@@ -235,7 +235,10 @@ export const makeService = <Config>(
       );
     });
 
-    /** Cleans a session whose runtime exited on its own, then reports the exit. */
+    /**
+     * Reports a session whose runtime exited on its own as lost before anything else, so traffic
+     * stops routing to it while its cleanup runs; then cleans it and reports the exit.
+     */
     const observeExit = Effect.fn("Service.observeExit")(function* (
       record: SessionRecord,
       exit: Exit.Exit<void, ServiceError>,
@@ -244,6 +247,10 @@ export const makeService = <Config>(
       const error =
         exitError("exit", exit) ??
         new ServiceError({ operation: "exit", message: "Runtime exited unexpectedly" });
+      if ((yield* Ref.get(current)) !== record) return;
+      yield* report(
+        LifecycleEvent.SessionLost({ id, generation: record.generation, cause: error }),
+      );
       const cleaned = yield* execution.withPermit(
         Effect.gen(function* () {
           if ((yield* Ref.get(current)) !== record) return undefined;

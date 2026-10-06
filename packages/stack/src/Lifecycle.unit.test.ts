@@ -36,6 +36,12 @@ const run = (
   return { state, commandsByStep };
 };
 
+/** A runtime's unexpected exit as the service reports it: lost first, then cleaned up. */
+const crashSteps = (id: string, generation: number, now: number, cause = "crash") => [
+  { event: LifecycleEvent.SessionLost({ id, generation, cause }), now },
+  { event: LifecycleEvent.Exited({ id, generation, cause, requested: false }), now },
+];
+
 const tagsOf = (commands: ReadonlyArray<Command> | undefined) =>
   (commands ?? []).map((command) => command._tag);
 
@@ -95,11 +101,13 @@ describe("Lifecycle reducer", () => {
         }),
         now: 30,
       },
+      { event: LifecycleEvent.SessionLost({ id: "api", generation: 99, cause: "boom" }), now: 40 },
     ]);
 
     expect(commandsByStep[1]).toEqual([]);
     expect(commandsByStep[2]).toEqual([]);
     expect(commandsByStep[3]).toEqual([]);
+    expect(commandsByStep[4]).toEqual([]);
     expect(state.services.get("api")?.phase).toEqual({
       _tag: "Starting",
       generation: 1,
@@ -446,15 +454,7 @@ describe("Lifecycle reducer", () => {
         const generation = startingGeneration(state, "flaky");
         ({ state } = run(state, [
           { event: LifecycleEvent.LaunchSucceeded({ id: "flaky", generation }), now: now + 1 },
-          {
-            event: LifecycleEvent.Exited({
-              id: "flaky",
-              generation,
-              cause: "crash",
-              requested: false,
-            }),
-            now: now + 2,
-          },
+          ...crashSteps("flaky", generation, now + 2),
         ]));
         return state;
       };
@@ -623,20 +623,131 @@ describe("Lifecycle reducer", () => {
     const { state: idle } = run(ready, [
       { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 15 },
     ]);
-    const { state: afterExit, commandsByStep: exitCommands } = run(idle, [
-      {
-        event: LifecycleEvent.Exited({
-          id: "api",
-          generation: 1,
-          cause: "crash",
-          requested: false,
-        }),
-        now: 20,
-      },
-    ]);
+    const { state: afterExit, commandsByStep: exitCommands } = run(idle, crashSteps("api", 1, 20));
     expect(afterExit.services.get("api")?.phase).toMatchObject({ _tag: "Failed", cause: "crash" });
     expect(afterExit.services.get("api")?.breaker.consecutiveFailures).toBe(1);
-    expect(exitCommands[0]).toEqual([]);
+    expect(exitCommands).toEqual([[], []]);
+  });
+
+  describe("crash cleanup", () => {
+    const sessionLost = (id: string, generation: number, now: number) => ({
+      event: LifecycleEvent.SessionLost({ id, generation, cause: "crash" }),
+      now,
+    });
+
+    it("stops routing to a crashed session at once and re-wakes it for traffic that arrived during the cleanup", () => {
+      let state = initialState(makeGraph([lazy("api")]));
+      ({ state } = run(state, [
+        { event: open("api", 1), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
+        { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 2 },
+      ]));
+
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state, commandsByStep } = run(state, [
+        sessionLost("api", 1, 10),
+        { event: open("api", 2), now: 11 },
+        { event: LifecycleEvent.SessionAvailable({ id: "api", generation: 1 }), now: 12 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 13 },
+      ]));
+      expect(commandsByStep).toEqual([[], [], [], []]);
+      expect(state.services.get("api")?.phase).toMatchObject({ _tag: "Stopping", generation: 1 });
+      expect(state.services.get("api")?.waiters.size).toBe(1);
+      expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
+
+      ({ state, commandsByStep } = run(state, [
+        {
+          event: LifecycleEvent.Exited({
+            id: "api",
+            generation: 1,
+            cause: "crash",
+            requested: false,
+          }),
+          now: 20,
+        },
+      ]));
+      expect(commandTagged(at(commandsByStep, 0), "Launch").generation).toBe(2);
+      expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
+    });
+
+    it("fails the waiters of a generation that crashes while starting and ignores its late session", () => {
+      let state = initialState(makeGraph([lazy("api")]));
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
+      const generation = startingGeneration(state, "api");
+
+      ({ state, commandsByStep } = run(state, [
+        sessionLost("api", generation, 5),
+        { event: LifecycleEvent.SessionAvailable({ id: "api", generation }), now: 6 },
+        {
+          event: LifecycleEvent.Exited({ id: "api", generation, cause: "crash", requested: false }),
+          now: 7,
+        },
+      ]));
+      expect(commandTagged(at(commandsByStep, 0), "FailConnection")).toMatchObject({
+        waiterId: 1,
+        cause: "crash",
+      });
+      expect(commandsByStep[1]).toEqual([]);
+      expect(commandsByStep[2]).toEqual([]);
+      expect(state.services.get("api")?.phase).toMatchObject({ _tag: "Failed", cause: "crash" });
+      expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
+    });
+
+    it("counts a crash once when its cleanup fails and a retried stop then confirms it", () => {
+      let state = initialState(makeGraph([lazy("api")]));
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
+        sessionLost("api", 1, 2),
+        {
+          event: LifecycleEvent.StopFailed({
+            id: "api",
+            generation: 1,
+            cause: "busy",
+            failure: "crash",
+          }),
+          now: 3,
+        },
+      ]));
+      expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
+
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 4 },
+        {
+          event: LifecycleEvent.Exited({
+            id: "api",
+            generation: 1,
+            cause: undefined,
+            requested: true,
+          }),
+          now: 5,
+        },
+      ]));
+      expect(state.services.get("api")?.phase._tag).toBe("Stopped");
+      expect(state.services.get("api")?.breaker.consecutiveFailures).toBe(1);
+    });
+
+    it("ends Stopped when an explicit stop arrives during the crash's cleanup", () => {
+      let state = initialState(makeGraph([lazy("api")]));
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "api" }), now: 0 },
+        { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 1 },
+        sessionLost("api", 1, 2),
+        { event: LifecycleEvent.StopRequested({ id: "api" }), now: 3 },
+        {
+          event: LifecycleEvent.Exited({
+            id: "api",
+            generation: 1,
+            cause: "crash",
+            requested: false,
+          }),
+          now: 4,
+        },
+      ]));
+      expect(state.services.get("api")?.phase._tag).toBe("Stopped");
+      expect(storageAdmitted(state, "api")).toBe(true);
+    });
   });
 
   it("rejects stopping or restarting a prerequisite while a dependent is active", () => {
@@ -999,12 +1110,7 @@ describe("Lifecycle reducer", () => {
       // until the third failure opens the breaker and a finally rests in `Failed`.
       const crash = (now: number) => {
         const generation = currentGeneration(state, "a");
-        ({ state } = run(state, [
-          {
-            event: LifecycleEvent.Exited({ id: "a", generation, cause: "crash", requested: false }),
-            now,
-          },
-        ]));
+        ({ state } = run(state, crashSteps("a", generation, now)));
       };
       crash(30);
       crash(31);
@@ -1347,19 +1453,8 @@ describe("Lifecycle reducer", () => {
       expect(tagsOf(commandsByStep[1])).toEqual([]);
 
       ({ state } = run(state, [{ event: open("studio", 2), now: 5 }]));
-      ({ commandsByStep } = run(state, [
-        {
-          event: LifecycleEvent.Exited({
-            id: "analytics",
-            generation: 1,
-            cause: "gone",
-            requested: false,
-          }),
-          now: 6,
-        },
-        lost(7),
-      ]));
-      expect(tagsOf(commandsByStep[1]).includes("Reprobe")).toBe(false);
+      ({ commandsByStep } = run(state, [...crashSteps("analytics", 1, 6, "gone"), lost(7)]));
+      expect(tagsOf(commandsByStep[2]).includes("Reprobe")).toBe(false);
     });
   });
 

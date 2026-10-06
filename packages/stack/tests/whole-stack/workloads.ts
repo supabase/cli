@@ -95,6 +95,36 @@ export const captureWorkloads = Effect.fn("WholeStack.captureWorkloads")(
     snapshotOutput(runtime, fixture, includeStopped),
 );
 
+/**
+ * Kills one instance's workload the way a crash would: SIGKILL of the native workload process
+ * (the launcher's child, so the launcher survives to report the exit), or `kill` of its container.
+ */
+export const killWorkload = Effect.fn("WholeStack.killWorkload")(
+  (runtime: Runtime, fixture: WholeStack, instanceId: string) =>
+    Effect.gen(function* () {
+      const { identities } = yield* snapshotOutput(runtime, fixture, false);
+      if (runtime !== "native") {
+        const container = identities
+          .map((identity) => identity.split(" "))
+          .find(([, instance]) => instance === instanceId)?.[0];
+        if (container === undefined) return yield* Effect.die(`No container for ${instanceId}`);
+        yield* commandOutput(runtime, ["kill", container]);
+        return;
+      }
+      const launcher = identities
+        .map((identity) => /^(\d+)\s.*supabase-workload-id=(\S+)$/.exec(identity))
+        .find((match) => match?.[2] === instanceId)?.[1];
+      if (launcher === undefined) return yield* Effect.die(`No launcher for ${instanceId}`);
+      const children = (yield* commandOutput("ps", ["-axo", "pid=,ppid="]))
+        .split("\n")
+        .map((line) => /^\s*(\d+)\s+(\d+)\s*$/.exec(line))
+        .filter((match) => match?.[2] === launcher)
+        .map((match) => match?.[1] ?? "");
+      if (children.length === 0) return yield* Effect.die(`No workload under launcher ${launcher}`);
+      yield* commandOutput("kill", ["-9", ...children]);
+    }),
+);
+
 export const assertWorkloadsGone = Effect.fn("WholeStack.assertWorkloadsGone")(
   (runtime: Runtime, fixture: WholeStack, snapshot: WorkloadSnapshot, includeStopped = false) =>
     Effect.gen(function* () {
