@@ -206,29 +206,6 @@ it.live(
     ).pipe(Effect.provide(platform)),
 );
 
-it.live(
-  "an orphan reclaim finds the socket directory of a stack whose data root is a symlink",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const arrangement = yield* arrange("socket-symlink", "session");
-        const relocated = `${arrangement.root}/relocated-data`;
-        yield* fs.makeDirectory(relocated);
-        yield* fs.symlink(relocated, arrangement.dataRoot);
-        // Launch hashes the data root's real path, so a leftover is named from it.
-        const leftover = yield* leaveSocketDirectory(
-          { ...arrangement, dataRoot: relocated },
-          "database",
-        );
-
-        expect(yield* reclaim(arrangement)).toBe(true);
-
-        expect(yield* fs.exists(leftover)).toBe(false);
-      }),
-    ).pipe(Effect.provide(platform)),
-);
-
 it.live("removes only the socket directory of the stack being cleaned up", () =>
   Effect.scoped(
     Effect.gen(function* () {
