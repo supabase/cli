@@ -649,6 +649,7 @@ const JwkSchema = Schema.Struct({
   y: Schema.optionalKey(Schema.String),
 });
 const decodeJwks = Schema.decodeUnknownSync(Schema.Array(JwkSchema));
+const decodeSigningKeysJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Reads and JSON-decodes `signingKeysPath` into an array of {@link Jwk}, using `node:fs`
@@ -668,7 +669,7 @@ function readSigningKeysFile(workdir: string, signingKeysPath: string): Readonly
   try {
     // `Jwk.key_ops` is mutable (required for Node's `createPrivateKey`/`JsonWebKey` input), so
     // it's copied into a fresh array rather than widening the schema's readonly output type.
-    return decodeJwks(JSON.parse(contents)).map((jwk) => ({
+    return decodeJwks(decodeSigningKeysJson(contents)).map((jwk) => ({
       ...jwk,
       key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
     }));

@@ -1999,7 +1999,7 @@ describe("resolveLocalConfigValues", () => {
       writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
       const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
-        "failed to decode signing keys: ",
+        "failed to decode signing keys: Expected a valid JSON string",
       );
     });
 
