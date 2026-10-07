@@ -1,7 +1,9 @@
 import {
+  Cause,
   Crypto,
   Effect,
   Exit,
+  Fiber,
   FileSystem,
   Option,
   Path,
@@ -515,6 +517,7 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
 
       const helperId = yield* Ref.make<string | undefined>(undefined);
       const helperImage = yield* Ref.make<string | undefined>(undefined);
+      const helperScopeRef = yield* Ref.make<Scope.Scope | undefined>(undefined);
       const helperCleanupPending = yield* Ref.make(false);
       const operationLock = yield* Semaphore.make(1);
       const ownerScope = yield* Scope.Scope;
@@ -535,19 +538,113 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
             ...(mount.readOnly ? ["ro"] : []),
           ].join(","),
         ]);
+      const startAttachedHelper = Effect.fn("DockerDatabaseStorage.startAttachedHelper")(function* (
+        name: string,
+        mounts: ReadonlyArray<DatabaseStorageMount>,
+        image: string,
+        labels: ReadonlyArray<string>,
+      ) {
+        const testRunLabel = yield* testRunLabelArgs();
+        const child = yield* options.spawner
+          .spawn(
+            ChildProcess.make(
+              options.runtime,
+              [
+                "run",
+                "--rm",
+                "-i",
+                "--name",
+                name,
+                "--label",
+                "com.supabase.stack-managed=true",
+                "--label",
+                `com.supabase.stack=${options.stackId}`,
+                ...labels.flatMap((label) => ["--label", label]),
+                "--label",
+                `com.supabase.stack-root=${options.path.resolve(options.root)}`,
+                ...composeHelperLabels,
+                ...testRunLabel,
+                ...mountArgs(mounts),
+                image,
+                "/bin/sh",
+                "-c",
+                "trap 'exit 0' TERM INT; printf 'supabase-helper-ready\\n'; while IFS= read -r line; do :; done",
+              ],
+              { stdin: "pipe", stdout: "pipe", stderr: "pipe", forceKillAfter: "5 seconds" },
+            ),
+          )
+          .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        const stderr = yield* child.stderr.pipe(
+          Stream.decodeText,
+          Stream.runFold(
+            () => "",
+            (tail, chunk) => (tail + chunk).slice(-4096),
+          ),
+          Effect.forkScoped,
+        );
+        return yield* child.stdout.pipe(
+          Stream.decodeText,
+          Stream.splitLines,
+          Stream.runHead,
+          Effect.timeout("30 seconds"),
+          Effect.exit,
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) &&
+            Option.isSome(exit.value) &&
+            exit.value.value === "supabase-helper-ready"
+              ? Effect.succeed(name)
+              : Effect.gen(function* () {
+                  yield* child
+                    .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+                    .pipe(Effect.ignore);
+                  const diagnostic = yield* Fiber.join(stderr).pipe(
+                    Effect.timeout("1 second"),
+                    Effect.orElseSucceed(() => ""),
+                  );
+                  const tail = diagnostic.trim();
+                  const reason = Exit.isFailure(exit)
+                    ? Option.match(Cause.findErrorOption(exit.cause), {
+                        onNone: () => Cause.pretty(exit.cause),
+                        onSome: (error) =>
+                          Cause.isTimeoutError(error)
+                            ? "Database helper did not become ready within 30 seconds"
+                            : failureMessage(error),
+                      })
+                    : "Database helper exited before becoming ready";
+                  // Stderr can hold only warnings unless the helper exited on its own.
+                  return yield* errorFor(
+                    "helper",
+                    Exit.isFailure(exit) && tail !== "" ? `${reason}: ${tail}` : tail || reason,
+                  );
+                }),
+          ),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? child
+                  .kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })
+                  .pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
+      });
       const removeHelper = Effect.fn("DockerDatabaseStorage.removeHelper")(() =>
         Effect.uninterruptible(
           Effect.gen(function* () {
             const current = yield* Ref.get(helperId);
             if (current !== undefined) {
+              const helperScope = yield* Ref.get(helperScopeRef);
               // Keep the owned identity until the remote container is gone.
               yield* engineCommand(["rm", "-f", current]).pipe(
                 Effect.catchTag("DockerDatabaseStorageError", (cause) =>
                   /no such container/iu.test(cause.message) ? Effect.void : Effect.fail(cause),
                 ),
+                Effect.ensuring(
+                  helperScope === undefined ? Effect.void : Scope.close(helperScope, Exit.void),
+                ),
               );
               yield* Ref.set(helperId, undefined);
               yield* Ref.set(helperImage, undefined);
+              yield* Ref.set(helperScopeRef, undefined);
               yield* Ref.set(helperCleanupPending, false);
             }
           }),
@@ -601,35 +698,14 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                 Effect.mapError((cause) => errorFor("helper", cause)),
               );
               const name = `supabase-db-helper-${token}`;
-              const testRunLabel = yield* testRunLabelArgs();
-              // Register the deterministic owned name before the remote create starts so an
-              // interrupted docker run can still be removed by the same scope.
+              // Register the owned name before remote create so interrupted startup can remove it.
               yield* Ref.set(helperId, name);
               yield* Ref.set(helperImage, image);
-              const created = yield* engineCommand([
-                "run",
-                "-d",
-                "--name",
-                name,
-                "--label",
-                "com.supabase.stack-managed=true",
-                "--label",
-                `com.supabase.stack=${options.stackId}`,
-                "--label",
+              const helperScope = yield* Scope.make();
+              yield* Ref.set(helperScopeRef, helperScope);
+              return yield* startAttachedHelper(name, mounts, preparedImage, [
                 `com.supabase.instance=${options.instanceId}`,
-                "--label",
-                `com.supabase.stack-root=${options.path.resolve(options.root)}`,
-                ...composeHelperLabels,
-                ...testRunLabel,
-                ...mountArgs(mounts),
-                preparedImage,
-                "/bin/sh",
-                "-c",
-                "trap : TERM INT; while :; do sleep 3600; done",
-              ]);
-              if (!/^[a-f0-9]{12,64}$/u.test(created))
-                return yield* errorFor("helper", "Docker returned an invalid helper identity");
-              return name;
+              ]).pipe(Scope.provide(helperScope));
             }),
           ),
       );
@@ -657,81 +733,30 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
           ),
           Effect.asVoid,
         );
-      // A container left in `created` cannot exec; remove it and start another.
-      const openSharedHelper = (
+      // Clear a helper left behind by an earlier failed close from this owner.
+      const openSharedHelper = Effect.fn("DockerDatabaseStorage.openSharedHelper")(function* (
         mounts: ReadonlyArray<DatabaseStorageMount>,
         key: string,
         image: string,
         ownerId: string,
-      ) =>
-        Effect.gen(function* () {
-          const name = `supabase-db-helper-${(yield* hash(`${ownerId}\0${key}`)).slice(0, 32)}`;
-          const status = yield* engineCommand([
-            "inspect",
-            "--format",
-            "{{.State.Status}}",
-            name,
-          ]).pipe(
-            Effect.map((value) => value.trim()),
-            Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-              missingContainer(cause.message) ? Effect.succeed("absent") : Effect.fail(cause),
-            ),
-          );
-          if (status === "running" || status === "restarting" || status === "paused") return name;
-          if (status === "created" || status === "exited" || status === "dead") {
-            const removed = yield* engineCommand(["rm", name]).pipe(
-              Effect.map(() => "removed"),
-              Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-                missingContainer(cause.message)
-                  ? Effect.succeed("absent")
-                  : /is running|running container/iu.test(cause.message)
-                    ? Effect.succeed("running")
-                    : Effect.fail(cause),
-              ),
-            );
-            if (removed === "running") return name;
-          }
-          if (options.container === undefined)
-            return yield* errorFor("helper", "Container runtime is unavailable");
-          const preparedImage = yield* options.container
-            .prepareImage(image)
-            .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
-          const testRunLabel = yield* testRunLabelArgs();
-          return yield* Effect.uninterruptible(
-            engineCommand([
-              "run",
-              "-d",
-              "--name",
-              name,
-              "--label",
-              "com.supabase.stack-managed=true",
-              "--label",
-              "com.supabase.stack-helper=volume",
-              "--label",
-              `com.supabase.stack=${options.stackId}`,
-              "--label",
-              `com.supabase.stack-root=${options.path.resolve(options.root)}`,
-              ...composeHelperLabels,
-              ...testRunLabel,
-              ...mountArgs(mounts),
-              preparedImage,
-              "/bin/sh",
-              "-c",
-              "trap : TERM INT; while :; do sleep 3600; done",
-            ]).pipe(
-              Effect.as(name),
-              Effect.catchTag("DockerDatabaseStorageError", (cause) =>
-                /already in use/iu.test(cause.message) ? Effect.succeed(name) : Effect.fail(cause),
-              ),
-            ),
-          ).pipe(
-            Effect.onExit((exit) =>
-              Exit.isFailure(exit)
-                ? closeSharedHelper(name).pipe(Effect.catch(Effect.logError))
-                : Effect.void,
-            ),
-          );
-        });
+      ) {
+        const name = `supabase-db-helper-${(yield* hash(`${ownerId}\0${key}`)).slice(0, 32)}`;
+        yield* closeSharedHelper(name);
+        if (options.container === undefined)
+          return yield* errorFor("helper", "Container runtime is unavailable");
+        const preparedImage = yield* options.container
+          .prepareImage(image)
+          .pipe(Effect.mapError((cause) => errorFor("helper", cause)));
+        return yield* Effect.uninterruptible(
+          startAttachedHelper(name, mounts, preparedImage, ["com.supabase.stack-helper=volume"]),
+        ).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? closeSharedHelper(name).pipe(Effect.catch(Effect.logError))
+              : Effect.void,
+          ),
+        );
+      });
       const runHelper = Effect.fn("DockerDatabaseStorage.helper")((
         command: string,
         mounts: ReadonlyArray<DatabaseStorageMount>,

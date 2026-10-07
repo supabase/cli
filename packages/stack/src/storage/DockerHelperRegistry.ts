@@ -6,7 +6,7 @@ export interface DockerHelperRegistry {
   /** Runs `body` with the helper for `key`, opening it once per host lifetime. */
   readonly use: <A, E>(
     key: string,
-    open: Effect.Effect<string, E>,
+    open: Effect.Effect<string, E, Scope.Scope>,
     close: (id: string) => Effect.Effect<void, E>,
     body: (id: string) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E>;
@@ -67,7 +67,7 @@ export const makeDockerHelperRegistry = (
     );
     const openOnce = <E>(
       key: string,
-      open: Effect.Effect<string, E>,
+      open: Effect.Effect<string, E, Scope.Scope>,
       close: (id: string) => Effect.Effect<void, E>,
     ) =>
       exclusive(
@@ -75,14 +75,23 @@ export const makeDockerHelperRegistry = (
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             if ((yield* Ref.get(helpers)).has(key)) return;
-            const id = yield* restore(open);
+            const helperScope = yield* Scope.make();
+            const id = yield* restore(open).pipe(
+              Scope.provide(helperScope),
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit) ? Scope.close(helperScope, exit) : Effect.void,
+              ),
+            );
             const generation = yield* Ref.updateAndGet(generations, (value) => value + 1);
             yield* Ref.update(helpers, (map) =>
               new Map(map).set(key, {
                 id,
                 generation,
                 close: (helperId) =>
-                  close(helperId).pipe(Effect.catch((cause) => Effect.logError(cause))),
+                  close(helperId).pipe(
+                    Effect.catch((cause) => Effect.logError(cause)),
+                    Effect.ensuring(Scope.close(helperScope, Exit.void)),
+                  ),
               }),
             );
           }),
@@ -90,7 +99,7 @@ export const makeDockerHelperRegistry = (
       );
     const use = <A, E>(
       key: string,
-      open: Effect.Effect<string, E>,
+      open: Effect.Effect<string, E, Scope.Scope>,
       close: (id: string) => Effect.Effect<void, E>,
       body: (id: string) => Effect.Effect<A, E>,
     ): Effect.Effect<A, E> =>
