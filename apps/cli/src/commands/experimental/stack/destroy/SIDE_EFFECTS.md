@@ -70,13 +70,14 @@ routing/settings can read project configuration and profiles.
 Destruction releases this stack's rows in the per-user port registry at
 `<passwd home>/.supabase/ports.sqlite` (independent of `SUPABASE_HOME`, with no
 override) only once cleanup is confirmed complete; a destroy that fails
-keeps the stack's reservations, and its ports remain unavailable
-to other stacks until a later destroy succeeds. A reservation whose owning
+keeps the stack's automatic reservations, and those ports remain unavailable
+to other stacks until a later destroy succeeds; configured ports are released
+with their listeners. A reservation whose owning
 stack's state was deleted without going through destroy (for example a removed
 or unmounted state root) is released lazily by whichever stack next needs that
 port. That stack's still-running owner notices the lost registration within its
 next check (30 seconds by default), stops its workloads and exits without
-deleting data or releasing reservations.
+deleting data; its configured ports are released with their listeners.
 
 ## Output, exit codes and telemetry
 
