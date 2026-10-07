@@ -179,8 +179,7 @@ const ownerDeathScenario = (shared: boolean) =>
         ChildProcess.make(
           process.execPath,
           [
-            "--experimental-strip-types",
-            fileURLToPath(new URL("./fixtures/helper-owner.ts", import.meta.url)),
+            fileURLToPath(new URL("../../tests/helper-owner-fixture.ts", import.meta.url)),
             stackId,
             root,
             ...(shared ? ["shared"] : []),

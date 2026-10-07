@@ -1,9 +1,9 @@
 import { NodeServices } from "@effect/platform-node";
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { makeContainerRuntime } from "../../runtime/Container.ts";
-import { makeDockerDatabaseStorage } from "../DockerDatabaseStorage.ts";
-import { makeDockerHelperRegistry } from "../DockerHelperRegistry.ts";
+import { makeContainerRuntime } from "../src/runtime/Container.ts";
+import { makeDockerDatabaseStorage } from "../src/storage/DockerDatabaseStorage.ts";
+import { makeDockerHelperRegistry } from "../src/storage/DockerHelperRegistry.ts";
 
 const stackId = process.argv[2];
 const root = process.argv[3];
