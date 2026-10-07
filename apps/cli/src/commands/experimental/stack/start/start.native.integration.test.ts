@@ -157,7 +157,6 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
     output,
     telemetry,
     layer: Layer.mergeAll(
-      BunServices.layer,
       FetchHttpClient.layer,
       runtimeInfoLayer,
       settings,
@@ -173,7 +172,7 @@ const makeLayers = (root: string, apiLayer = liveStackApi, workdir = root) => {
       Layer.succeed(CommandPlatformApiFactory, { make: Effect.die("unused") }),
       stdinLayer.pipe(Layer.provide(tty)),
       tty,
-    ),
+    ).pipe(Layer.provideMerge(BunServices.layer)),
   };
 };
 

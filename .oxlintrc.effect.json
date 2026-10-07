@@ -22,6 +22,8 @@
     "!apps/cli/tests/helpers/secrets-live.ts",
     "!apps/cli/tests/helpers/storage-live.ts",
     "!apps/cli/src/command-internal/db-config.parse.*",
+    "!apps/cli/src/command-internal/db-connection.*",
+    "!apps/cli/src/command-internal/db-dns.*",
     "!apps/cli/src/command-internal/experimental-feature.ts",
     "!apps/cli/src/command-internal/pgpass.*",
     "!apps/cli/src/command-internal/pgservicefile.*",
