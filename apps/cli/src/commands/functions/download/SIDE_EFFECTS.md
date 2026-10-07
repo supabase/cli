@@ -129,10 +129,11 @@ Same envelope as `json` above (including on the Docker-unbundle path).
 ### `--legacy-bundle` is removed
 
 The flag is removed: passing it (with any value, including `--legacy-bundle=false`) fails
-with a removal error before any download, Docker, or API work runs. The suggestion reads:
+with a removal error before any download, Docker, or API work runs. `<slug>` is the requested
+Function name (the literal `<slug>` when none was given). The suggestion reads:
 
 ```
-Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker.
+Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.
 ```
 
 It is checked before `--use-api`/`--use-docker` mutual-exclusivity validation, so combining

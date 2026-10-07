@@ -7,8 +7,17 @@
 
 ADR 0016 described a residual Go delegation surface in `src/legacy/`: a handful of commands still
 proxying to the Go binary (`GoProxy`) while the rest of the CLI had already been natively ported to
-TypeScript. That surface has now been fully replaced natively (CLI-2432) — no command in the
-TypeScript CLI spawns `supabase-go` anymore.
+TypeScript. The remaining deprecated surfaces were removed rather than ported (CLI-2432); each now
+exits 1 with replacement guidance:
+
+- `db remote changes` → `db diff --linked`
+- `gen keys` → `projects api-keys`
+- `db diff --use-pg-schema` → the default engine or `--use-pg-delta`
+- `functions download --legacy-bundle` → `--use-api`
+- `db branch create|delete|list|switch` has no local replacement (hosted preview branches via
+  `supabase branches` are a different feature)
+
+No command in the TypeScript CLI spawns `supabase-go` anymore.
 
 That leaves `apps/cli-go/` — roughly 300 tracked files across three Go modules (the root CLI
 module, the `fsevents` helper module, and the separately-tagged `pkg` module) — serving nothing.

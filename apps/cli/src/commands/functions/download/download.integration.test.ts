@@ -1894,6 +1894,9 @@ describe("functions download", () => {
           throw new Error(`unexpected error: ${String(error)}`);
         }
         expect(error.kind).toBe("flag");
+        expect(error.suggestion).toBe(
+          "Retry with `supabase functions download --use-api hello-world` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.",
+        );
         expect(Runtime.getErrorExitCode(error)).toBe(1);
         expect(api.requests).toEqual([]);
       }).pipe(Effect.provide(layer));
@@ -1926,6 +1929,35 @@ describe("functions download", () => {
       }
       expect(error.kind).toBe("flag");
       expect(api.requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps the <slug> placeholder in the --legacy-bundle hint when no name was given", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockCommandPlatformApi();
+    const layer = Layer.mergeAll(
+      buildTestRuntime({
+        out,
+        api,
+        cliSettings: mockCommandSettings({ workdir: tempRoot.current }),
+      }),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "--legacy-bundle"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* functionsDownload({
+        ...baseFlags,
+        functionName: Option.none(),
+        legacyBundle: Option.some(true),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(RemovedSurfaceError);
+      if (!(error instanceof RemovedSurfaceError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      expect(error.suggestion).toContain("`supabase functions download --use-api <slug>`");
     }).pipe(Effect.provide(layer));
   });
 

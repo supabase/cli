@@ -16,9 +16,10 @@ export const functionsDownload = Effect.fn("functions.download")(function* (
   flags: FunctionsDownloadFlags,
 ) {
   if (Option.isSome(flags.legacyBundle)) {
+    const slug = Option.getOrElse(flags.functionName, () => "<slug>");
     return yield* removedFlag(
       "--legacy-bundle",
-      "Retry with `supabase functions download --use-api <slug>` to unbundle server-side without Docker.",
+      `Retry with \`supabase functions download --use-api ${slug}\` to unbundle server-side without Docker. If that also fails and the Function was deployed with a CLI older than 1.120.0, redeploy it with the current CLI.`,
     );
   }
   const api = yield* CommandPlatformApi;

@@ -837,13 +837,13 @@ function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text)
 }
 
 /**
- * Attaches the legacy-bundle hint to any Docker-extraction failure —
+ * Attaches the `--use-api` retry hint to any Docker-extraction failure —
  * network/volume creation, container create/start, log streaming, or a
  * non-zero exit code alike. Only normalizes (never re-prefixes) whatever
  * {@link describeContainerCliFailure} reports, since
  * `ensureDockerNetwork`/`ensureDockerNamedVolume` prefix their own context.
  */
-function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => string) {
+function withUseApiRetrySuggestion(slug: string, styleAqua?: (text: string) => string) {
   return (cause: unknown): Error =>
     Object.assign(new Error(describeContainerCliFailure(cause)), {
       suggestion: suggestUseApiRetry(slug, styleAqua),
@@ -851,7 +851,7 @@ function withLegacyBundleSuggestion(slug: string, styleAqua?: (text: string) => 
 }
 
 /**
- * Same as {@link withLegacyBundleSuggestion}, plus a `step` prefix: unlike
+ * Same as {@link withUseApiRetrySuggestion}, plus a `step` prefix: unlike
  * `ensureDockerNetwork`/`ensureDockerNamedVolume`'s self-describing errors,
  * `runChildProcess`'s own failure carries no context about which command
  * was running.
@@ -993,10 +993,10 @@ const downloadWithDockerUnbundle = Effect.fn("functions.download.dockerUnbundle"
     // `image` is already pull-resolved once for the whole invocation — see
     // `downloadFunctions`'s own resolve site — not re-resolved per slug.
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
+      Effect.mapError(withUseApiRetrySuggestion(slug, styleAqua)),
     );
     yield* ensureDockerNamedVolume(cacheVolume.name, projectId, projectEnvValues).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
+      Effect.mapError(withUseApiRetrySuggestion(slug, styleAqua)),
     );
 
     // On Bitbucket, the named-volume bind is dropped entirely (not just its
@@ -1214,7 +1214,7 @@ export const downloadFunctions = Effect.fn("functions.download")(function* <
           image: yield* resolveFunctionsDockerImage(
             edgeRuntimeImage.rawImage,
             edgeRuntimeImage.projectEnvValues,
-          ).pipe(Effect.mapError(withLegacyBundleSuggestion(slugs[0] ?? "", styleAqua))),
+          ).pipe(Effect.mapError(withUseApiRetrySuggestion(slugs[0] ?? "", styleAqua))),
         };
 
   const downloaded: string[] = [];
