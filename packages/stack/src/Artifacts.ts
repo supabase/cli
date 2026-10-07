@@ -131,7 +131,14 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
       },
     },
     "bin/supabase-postgres-start",
-    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
+    [
+      "bin/supabase-postgres-start",
+      "bin/postgres",
+      "bin/pg_dump",
+      "bin/pg_dumpall",
+      "bin/pg_prove",
+      "bin/psql",
+    ],
     {
       "15.19.0.004": {
         upstreamVersion: "15.19.0.004",
