@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   Option,
+  Path,
   Redacted,
   Ref,
   Result,
@@ -19,6 +20,10 @@ import { create, StackError, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import type { Command } from "@supabase/stack/commands";
+import { ensureStackWebhookSchema } from "./db-bootstrap/db-setup.ts";
+import { parseConnectionString } from "./db-config.parse.ts";
+import { DbConnection, type DbSession } from "./db-connection.service.ts";
+import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
 
@@ -143,6 +148,44 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
                   expect(pgNetQuery.exitCode, errors.join("")).toBe(0);
                   expect(pgNet.join("").trim()).toBe(
                     "1;http_get:secdef=false:search_path=false,http_post:secdef=false:search_path=false",
+                  );
+
+                  // The main database already has supabase_functions, so race on a fresh one.
+                  const hostDatabaseUrl = (yield* database.credentials({ from: "host" }))
+                    .databaseUrl;
+                  if (hostDatabaseUrl === undefined)
+                    return yield* Effect.die("host database URL missing");
+                  const host = parseConnectionString(hostDatabaseUrl);
+                  if (host === undefined) return yield* Effect.die("host database URL unparseable");
+                  yield* Effect.scoped(
+                    Effect.gen(function* () {
+                      const path = yield* Path.Path;
+                      const db = yield* DbConnection;
+                      const admin = yield* db.connect(host, {
+                        isLocal: true,
+                        dnsResolver: "native",
+                      });
+                      yield* admin.exec("create database webhook_schema_race");
+                      const race = { ...host, database: "webhook_schema_race" };
+                      const [first, second] = yield* Effect.all([
+                        db.connect(race, { isLocal: true, dnsResolver: "native" }),
+                        db.connect(race, { isLocal: true, dnsResolver: "native" }),
+                      ]);
+                      const missing = first.query(
+                        "select to_regnamespace('supabase_functions') is null as missing",
+                      );
+                      expect(yield* missing).toEqual([{ missing: true }]);
+                      const ensure = Effect.fn(function* (session: DbSession) {
+                        const sqlPath = yield* fs.makeTempDirectoryScoped({
+                          prefix: "webhook-race-",
+                        });
+                        yield* ensureStackWebhookSchema(session, fs, path, sqlPath);
+                      });
+                      yield* Effect.all([ensure(first), ensure(second)], {
+                        concurrency: "unbounded",
+                      });
+                      expect(yield* missing).toEqual([{ missing: false }]);
+                    }),
                   );
 
                   const credentials = yield* stack.credentials.get;
@@ -279,6 +322,7 @@ describe("stack catalog setup", { timeout: 180_000 }, () => {
               FetchHttpClient.layer,
               buildOutput.layer,
               stackCatalogSetupLayer,
+              dbConnectionLayer,
             ),
           ),
         );
