@@ -55,21 +55,43 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Any GitHub user can submit an approving review on a public repo.
+      - id: reviewer
+        name: Check reviewer permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWER: ${{ github.event.review.user.login }}
+        run: |
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${REVIEWER}/permission" --jq '[.permission, .role_name] | join(" ")')
+          case " ${role} " in
+            *" admin "* | *" maintain "* | *" write "*)
+              echo "allowed=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::Skipping fast-forward: ${REVIEWER} lacks write access (${role})"
+              ;;
+          esac
       - id: app-token
+        if: steps.reviewer.outputs.allowed == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
-      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
+      - if: steps.reviewer.outputs.allowed == 'true'
+        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
         with:
           persist-credentials: true
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       - name: Fast-forward main
+        if: steps.reviewer.outputs.allowed == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           git checkout main
-          git merge --ff-only "${{ github.event.pull_request.head.sha }}"
+          git merge --ff-only "${HEAD_SHA}"
           git push origin main
 
   plan:
