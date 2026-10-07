@@ -613,6 +613,14 @@ const walkCache = (
     const generations: Array<CacheWalk["generations"][number]> = [];
     const stagingRoots: Array<string> = [];
     for (const name of names) {
+      // readLink succeeds only on a symlink; a link is never a cache entry, so it is left alone.
+      if (
+        yield* fs.readLink(path.join(root, name)).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        )
+      )
+        continue;
       if (name === STAGING_DIR_NAME) {
         stagingRoots.push(path.join(root, name));
         continue;
