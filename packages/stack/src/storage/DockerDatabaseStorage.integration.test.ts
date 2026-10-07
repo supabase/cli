@@ -221,11 +221,12 @@ const ownerDeathScenario = (shared: boolean) =>
         ready.value.value !== "HELPER_READY"
       ) {
         yield* child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore);
-        const [stderr, code] = yield* Effect.all([Fiber.join(stderrOutput), child.exitCode], {
-          concurrency: "unbounded",
-        });
+        const [stderr, exited] = yield* Effect.all(
+          [Fiber.join(stderrOutput), Effect.exit(child.exitCode)],
+          { concurrency: "unbounded" },
+        );
         return yield* new DockerTestError({
-          message: `Owner exited before helper was ready (stdout: ${Exit.isSuccess(ready) && Option.isSome(ready.value) ? ready.value.value : "<empty>"}, stderr: ${stderr.trim() || "<empty>"}, exit: ${code}${Exit.isFailure(ready) ? `, cause: ${ready.cause}` : ""})`,
+          message: `Owner exited before helper was ready (stdout: ${Exit.isSuccess(ready) && Option.isSome(ready.value) ? ready.value.value : "<empty>"}, stderr: ${stderr.trim() || "<empty>"}, exit: ${Exit.isSuccess(exited) ? exited.value : "killed by signal"}${Exit.isFailure(ready) ? `, cause: ${ready.cause}` : ""})`,
         });
       }
       const id = yield* docker([
