@@ -314,7 +314,7 @@ describe("LogForwarder", () => {
         yield* release;
         yield* Scope.close(firstLaunch, Exit.void);
         // The retired session may save the asleep record as pending to launch 1 before it ends,
-        // which holds the next post until that launch's flush window passed.
+        // which holds the next post until its saved deadline plus the flush window passed.
         const unavailable = yield* nextPost(logflare, manual);
         yield* manual.sleeping(pollMillis);
         yield* manual.advance(flushWindowMillis);
