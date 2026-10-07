@@ -674,45 +674,46 @@ export const makeDatabase = (
       Effect.mapError((cause) => errorFor("launch", cause)),
     );
 
+    /**
+     * Why the instance's data cannot serve `requested`, or `undefined` when it can. Prepare runs
+     * outside the lifecycle gate, so the gated launch checks again before touching the data.
+     */
+    const reuseFailure = Effect.fn("Database.reuseFailure")(function* (requested: string) {
+      const recreate = recreateStackAdvice(String(options.stackId));
+      const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
+      if (yield* fs.exists(markerPath)) {
+        const marker = yield* fs
+          .readFileString(markerPath)
+          .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
+        return postgresLine(marker.version) === postgresLine(requested) &&
+          marker.runtime === options.runtime
+          ? undefined
+          : `Initialized database data is ${marker.version} on the ${marker.runtime} runtime, but ${requested} on the ${options.runtime} runtime was requested; ${recreate}`;
+      }
+      const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
+      if (options.runtime !== "native" || !(yield* fs.exists(versionPath))) return undefined;
+      const linePath = path.join(instanceRoot, lineMarkerFile);
+      const recorded = (yield* fs.exists(linePath))
+        ? (yield* fs
+            .readFileString(linePath)
+            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseLineMarker)))))
+            .line
+        : undefined;
+      const reason = unusableDatabaseData(
+        {
+          major: (yield* fs.readFileString(versionPath)).trim(),
+          line: recorded,
+          initialized: false,
+        },
+        requested,
+      );
+      return reason === undefined ? undefined : `${reason}; ${recreate}`;
+    });
+
     const prepare = Effect.fn("Database.prepare")(
       function* (input: DatabaseConfig) {
-        const requested = postgresVersion(input.version);
-        const recreate = recreateStackAdvice(String(options.stackId));
-        const markerPath = path.join(instanceRoot, ".supabase-database-ready.json");
-        const hasMarker = yield* fs.exists(markerPath);
-        if (hasMarker) {
-          const marker = yield* fs
-            .readFileString(markerPath)
-            .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseReadyMarker))));
-          if (
-            postgresLine(marker.version) !== postgresLine(requested) ||
-            marker.runtime !== options.runtime
-          )
-            return yield* errorFor(
-              "prepare",
-              `Initialized database data is ${marker.version} on the ${marker.runtime} runtime, but ${requested} on the ${options.runtime} runtime was requested; ${recreate}`,
-            );
-        }
-        const versionPath = path.join(instanceRoot, "data", "PG_VERSION");
-        if (!hasMarker && options.runtime === "native" && (yield* fs.exists(versionPath))) {
-          const linePath = path.join(instanceRoot, lineMarkerFile);
-          const recorded = (yield* fs.exists(linePath))
-            ? (yield* fs
-                .readFileString(linePath)
-                .pipe(
-                  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(DatabaseLineMarker))),
-                )).line
-            : undefined;
-          const reason = unusableDatabaseData(
-            {
-              major: (yield* fs.readFileString(versionPath)).trim(),
-              line: recorded,
-              initialized: false,
-            },
-            requested,
-          );
-          if (reason !== undefined) return yield* errorFor("prepare", `${reason}; ${recreate}`);
-        }
+        const reason = yield* reuseFailure(postgresVersion(input.version));
+        if (reason !== undefined) return yield* errorFor("prepare", reason);
         yield* prepareArtifact(input);
       },
       Effect.mapError((cause) => errorFor("prepare", cause)),
@@ -836,6 +837,10 @@ export const makeDatabase = (
             version: postgresVersion(context.config.version),
             rootKey: context.config.rootKey ?? Redacted.make(DEFAULT_POSTGRES_ROOT_KEY),
           };
+          const reuse = yield* reuseFailure(config.version).pipe(
+            Effect.mapError((cause) => errorFor("launch", cause)),
+          );
+          if (reuse !== undefined) return yield* errorFor("launch", reuse);
           if (storage !== undefined)
             yield* storage
               .prepare(config.version)

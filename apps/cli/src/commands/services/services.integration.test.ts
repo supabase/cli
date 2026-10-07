@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { catalogPins } from "@supabase/stack/internal/artifacts";
+import { catalogPins, orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command } from "effect/unstable/cli";
 import {
@@ -396,6 +396,30 @@ describe("services", () => {
           local: catalogUpstreamVersion("postgres", { additional: true }),
         }),
       );
+    }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
+  it.live("reports the pinned OrioleDB build selected by SUPABASE_DB_ORIOLEDB_VERSION", () =>
+    Effect.gen(function* () {
+      const workdir = yield* makeProjectWithDbMajorVersion(17);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const [orioledb = ""] = orioledbVersions();
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", ".env"),
+        `SUPABASE_DB_ORIOLEDB_VERSION=${orioledb}\n`,
+      );
+      const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+      yield* services({}).pipe(Effect.provide(Layer.mergeAll(layer, stackBackendLayer("stack"))));
+
+      expect(yield* decodeServiceRows(out.stdoutText)).toContainEqual(
+        expect.objectContaining({
+          name: "ghcr.io/supabase/cli/postgres",
+          local: `${orioledb}-orioledb`,
+        }),
+      );
+      expect(out.stderrText).toBe("");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

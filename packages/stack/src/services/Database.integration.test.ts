@@ -216,6 +216,17 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.start;
         yield* service.ready;
         yield* service.stop;
+        // A restart can pass prepare before the first start writes readiness; launch checks again.
+        const prepared = yield* makeService(
+          { ...recipe.definition, prepare: () => Effect.void },
+          { id: "database", config: { ...config, version: "17.11.0.002-orioledb" } },
+        );
+        expect(
+          (yield* Effect.flip(prepared.start.pipe(Effect.andThen(prepared.ready)))).message,
+        ).toContain("17.11.0.002-orioledb on the native runtime was requested");
+        expect(yield* fs.readFileString(path.join(root, "database", "data", "PG_VERSION"))).toBe(
+          "17\n",
+        );
         // The line is recorded before initdb writes any data, so an interrupted first start has it.
         const recorded = yield* fs.stat(
           path.join(root, "database", ".supabase-database-line.json"),
