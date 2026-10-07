@@ -309,6 +309,7 @@ const fixture = (
             host: undefined,
           }),
         ),
+      findDeleted: () => Effect.die("unused"),
     } satisfies StackApi["Service"];
     const api = Layer.succeed(StackApi, apiService);
     const layer = Layer.mergeAll(

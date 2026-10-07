@@ -13,12 +13,14 @@ import {
   Path,
   Predicate,
   Ref,
+  Result,
   Scope,
   Schema,
   Semaphore,
   Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import {
   connectHost,
@@ -38,7 +40,7 @@ import {
   type PlannedInstance,
   type SupabaseCompositionOptions,
 } from "./composition/Supabase.ts";
-import { removeStackContainersCommand } from "./runtime/Container.ts";
+import { listStackContainers, removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
@@ -1046,6 +1048,85 @@ export const find = Effect.fn("Stack.find")(
   },
   Effect.mapError((cause) => failure("find", cause)),
 );
+
+/** Selects a stack that is no longer registered while containers labelled with its data root remain. */
+export const findDeleted = Effect.fn("Stack.findDeleted")(
+  function* (options: StackLocations & { readonly id: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const services = yield* Effect.context<
+      | FileSystem.FileSystem
+      | Path.Path
+      | Crypto.Crypto
+      | HttpClient.HttpClient
+      | ChildProcessSpawner.ChildProcessSpawner
+    >();
+    // A registry that cannot be opened or read is left to `find`, which reports it.
+    const registry = yield* Effect.gen(function* () {
+      const state = yield* stateFor(options.stateRoot);
+      const saved = yield* state.read(options.id);
+      return { state, saved, stateRoot: yield* fs.realPath(options.stateRoot) };
+    }).pipe(Effect.option);
+    if (Option.isNone(registry) || registry.value.saved !== undefined)
+      return Option.none<DeletedStack>();
+    const { state, stateRoot } = registry.value;
+    const root = path.join(stateRoot, options.id, "data");
+    const probes = yield* Effect.forEach(
+      ["docker", "podman"] as const,
+      (engine) =>
+        listStackContainers(engine).pipe(
+          Effect.map((containers) =>
+            containers.some(
+              (container) => container.stackId === options.id && container.root === root,
+            ),
+          ),
+          Effect.catchIf(
+            (error) => error.reason === "engine-unavailable",
+            () => Effect.succeed(false),
+          ),
+          Effect.result,
+          Effect.map((listed) => ({ engine, listed })),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const matched = probes.filter(({ listed }) => Result.isSuccess(listed) && listed.success);
+    const [unlisted] = probes.flatMap(({ engine, listed }) =>
+      Result.isFailure(listed)
+        ? [
+            `Unable to list ${engine === "docker" ? "Docker" : "Podman"} containers while looking for stack ${options.id}'s leftovers: ${listed.failure.message}`,
+          ]
+        : [],
+    );
+    if (matched.length === 0) {
+      if (unlisted === undefined) return Option.none<DeletedStack>();
+      return yield* failure("find", unlisted);
+    }
+    const destroy = Effect.gen(function* () {
+      for (const { engine } of matched) {
+        const refusal = Match.value(yield* reclaimStack({ ...options, state, engine })).pipe(
+          Match.when("reclaimed", () => undefined),
+          Match.when("held", () => "Another process holds this stack's lease; run destroy again"),
+          Match.when("registered", () => `Stack ${options.id} was registered again during destroy`),
+          Match.exhaustive,
+        );
+        if (refusal !== undefined) return yield* failure("destroy", refusal);
+      }
+      if (unlisted !== undefined)
+        return yield* failure(
+          "destroy",
+          `Removed the ${matched.map(({ engine }) => (engine === "docker" ? "Docker" : "Podman")).join(" and ")} containers stack ${options.id} left behind. ${unlisted}`,
+        );
+      return { runtimeCleanup: "complete" } as const;
+    }).pipe(
+      Effect.mapError((cause) => failure("destroy", cause)),
+      Effect.provideContext(services),
+    );
+    return Option.some<DeletedStack>({ id: options.id, destroy });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
+);
+
+export type DeletedStack = Pick<Stack, "id" | "destroy">;
 
 /** Selects the persisted logs of a stack; its owner does not need to run. */
 export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
