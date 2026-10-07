@@ -71,6 +71,7 @@ disabling safe compaction.
 | `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / selected pg-delta engine / diff failure                                           |
+| `1`  | destructive changes found with `--fail-on-destructive`, before migration files are written          |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
 | `1`  | repairable legacy extension omissions in non-interactive mode                                       |
 
@@ -88,6 +89,10 @@ stderr after generating and writing — on both interactive and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
+
+`--fail-on-destructive` prints the generated SQL and drop warnings, then exits
+with code 1 before prompting for a migration name, writing migration files, or
+applying the migration. Without the flag, drop warnings remain advisory.
 
 A manifest-less CLI tree is refused by two compatibility gates — one when the
 tree fails to load on the bundled engine's shadow, one when the plan drops an

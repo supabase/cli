@@ -42,6 +42,11 @@ const config = {
     ),
     Flag.optional,
   ),
+  failOnDestructive: Flag.boolean("fail-on-destructive").pipe(
+    Flag.withDescription(
+      "Exit with an error without writing a migration when the schema diff contains destructive changes.",
+    ),
+  ),
 } as const;
 
 // `--no-cache` is a shared flag on the `declarative` group (read from the parent),
@@ -75,6 +80,7 @@ export const dbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
             name: merged.name,
             apply: merged.apply,
             "no-apply": merged.noApply,
+            "fail-on-destructive": merged.failOnDestructive,
           },
           // Telemetry reports changed flags by canonical name, so map the shorthands: `sync
           // -s public -f out.sql` must log `schema`/`file`.

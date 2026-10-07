@@ -85,6 +85,18 @@ export class DeclarativeDiffError extends Data.TaggedError("DeclarativeDiffError
   }
 }
 
+/** Sync stopped before writing a migration because its schema diff contains destructive changes. */
+export class DeclarativeDestructiveChangesError extends Data.TaggedError(
+  "DeclarativeDestructiveChangesError",
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** Sync stopped because a manifest-less legacy schema needs an explicit migration choice. */
 export class DeclarativeCompatibilityError extends Data.TaggedError(
   "DeclarativeCompatibilityError",

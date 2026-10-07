@@ -417,6 +417,7 @@ const flags = (over: Partial<DbSchemaDeclarativeSyncFlags> = {}): DbSchemaDeclar
   name: over.name ?? Option.none(),
   apply: over.apply ?? Option.none(),
   noApply: over.noApply ?? Option.none(),
+  failOnDestructive: over.failOnDestructive ?? false,
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
@@ -973,6 +974,27 @@ describe("db schema declarative sync integration", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("--fail-on-destructive refuses the diff before writing a migration", () => {
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\nDROP TABLE c;\n",
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* seedDeclarative(tmp.current);
+      const exit = yield* dbSchemaDeclarativeSync(flags({ failOnDestructive: true })).pipe(
+        Effect.exit,
+      );
+      expect(failError(exit)).toMatchObject({
+        _tag: "DeclarativeDestructiveChangesError",
+        suggestion: expect.stringContaining("rerun without --fail-on-destructive"),
+      });
+      expect(yield* fs.exists(path.join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("--apply: batches the migration and history through the native session", () => {
     const s = setup(tmp.current, {
