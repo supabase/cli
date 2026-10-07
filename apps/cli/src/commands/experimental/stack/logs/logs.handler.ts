@@ -1,9 +1,10 @@
-import { DateTime, Effect, Option, Path, Stream } from "effect";
+import { Clock, Effect, Option, Path, Stream } from "effect";
+import { streamStackLogs, type SavedStack, type StackLogRecord } from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
+import { dim } from "../../../../command-internal/colors.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
-import { stripControlSequences } from "../../../../shared/output/strip-control-sequences.ts";
 import {
   StackApi,
   StackTargetError,
@@ -13,6 +14,15 @@ import {
 } from "../stack.shared.ts";
 import { StackCommandLogsError } from "./logs.errors.ts";
 import type { StackLogsFlags } from "./logs.command.ts";
+import {
+  isAfter,
+  isFromLaunch,
+  makeHistoryCollector,
+  makeTextFormatter,
+  parseSince,
+  truncationFooter,
+} from "./logs.format.ts";
+import { logEvent, type LogSource } from "../../../../command-internal/stack-log-events.ts";
 
 const targetError = (cause: StackTargetError) =>
   new StackCommandLogsError({
@@ -23,6 +33,48 @@ const targetError = (cause: StackTargetError) =>
   });
 const logsError = (cause: { readonly message: string }) =>
   new StackCommandLogsError({ reason: "unknown", message: cause.message, cause });
+
+type SavedInstance = SavedStack["instances"][number];
+interface Selected {
+  readonly id: string;
+  readonly service: string;
+}
+
+const select = (
+  definition: SavedStack,
+  requested: ReadonlyArray<string>,
+): Effect.Effect<ReadonlyArray<Selected>, StackCommandLogsError> => {
+  const subject = ({ id, creation }: SavedInstance): Selected => ({
+    id,
+    service: creation.service,
+  });
+  if (requested.length === 0) {
+    const members = new Set(definition.composition.members.map(({ id }) => id));
+    const selected = definition.instances.filter(({ id }) => members.has(id)).map(subject);
+    return selected.length === 0
+      ? Effect.fail(
+          new StackCommandLogsError({
+            reason: "flags",
+            message: "The stack has no composition members to read.",
+            suggestion: "Select a standalone service with --service.",
+          }),
+        )
+      : Effect.succeed(selected);
+  }
+  const unmatched = requested.find(
+    (value) =>
+      !definition.instances.some(({ id, creation }) => id === value || creation.service === value),
+  );
+  if (unmatched !== undefined)
+    return Effect.fail(
+      new StackCommandLogsError({ reason: "flags", message: `No service matches ${unmatched}.` }),
+    );
+  return Effect.succeed(
+    definition.instances
+      .filter(({ id, creation }) => requested.includes(id) || requested.includes(creation.service))
+      .map(subject),
+  );
+};
 
 export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: StackLogsFlags) {
   const telemetry = yield* TelemetryState;
@@ -39,11 +91,19 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
     }).pipe(Effect.mapError(targetError));
-    if (output.format === "json")
+    if (flags.follow && output.format === "json")
       return yield* new StackCommandLogsError({
         reason: "flags",
-        message: "Live logs require text or stream-json output.",
-        suggestion: "Use --output-format stream-json.",
+        message: "Following logs requires text or stream-json output.",
+        suggestion: "Use --output-format stream-json, or omit --follow.",
+      });
+    const now = yield* Clock.currentTimeMillis;
+    const since = Option.isNone(flags.since) ? undefined : parseSince(flags.since.value, now);
+    if (Option.isSome(flags.since) && since === undefined)
+      return yield* new StackCommandLogsError({
+        reason: "flags",
+        message: `Invalid --since value ${flags.since.value}.`,
+        suggestion: "Use a duration such as 10m or 1h30m, an ISO-8601 time, or start.",
       });
     const target = yield* resolver
       .resolve({
@@ -53,73 +113,104 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
       })
       .pipe(Effect.mapError(targetError));
-    if (target.id === undefined)
+    if (target.id === undefined || target.definition === undefined)
       return yield* new StackCommandLogsError({
         reason: "flags",
         message: "No managed stack exists for the selected project.",
         suggestion: "Run supabase stack start first.",
       });
+    if (flags.follow && !target.hostRunning)
+      return yield* new StackCommandLogsError({
+        reason: "lifecycle",
+        message: "The stack is not running, so there are no new lines to follow.",
+        suggestion:
+          "Run supabase stack logs without --follow to read retained logs, or supabase stack start first.",
+      });
+    const selected = yield* select(target.definition, flags.service);
+    yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
+    const stackId = target.id;
     const locations = {
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
-    if (!target.hostRunning)
-      return yield* new StackCommandLogsError({
-        reason: "lifecycle",
-        message: "No owner is reachable; live logs are unavailable.",
-        suggestion: "Run supabase stack start first.",
-      });
-    const stack = yield* api.open({ ...locations, id: target.id }).pipe(Effect.mapError(logsError));
-    const instances = yield* stack.services.list.pipe(Effect.mapError(logsError));
-    const composition = yield* stack.composition.describe.pipe(Effect.mapError(logsError));
-    const requested = Option.getOrUndefined(flags.service);
-    const selected = instances.filter((instance) =>
-      requested === undefined
-        ? composition.members.some(({ id }) => id === instance.id)
-        : instance.service === requested || instance.id === requested,
-    );
-    if (selected.length === 0)
-      return yield* new StackCommandLogsError({
-        reason: "flags",
-        message:
-          requested === undefined
-            ? "The stack has no composition members to stream."
-            : `No service matches ${requested}.`,
-      });
-    yield* Effect.annotateCurrentSpan({ "stack.service_count": selected.length });
-    const streams = selected.map((instance) =>
-      instance.logs.pipe(
-        Stream.groupByKey((entry) => entry.stream),
-        Stream.flatMap(
-          ([channel, chunks]) =>
-            chunks.pipe(
-              Stream.map(({ bytes }) => bytes),
-              Stream.decodeText,
-              Stream.splitLines,
-              Stream.map((line) => ({
-                service: instance.service,
-                instance_id: instance.id,
-                stream: channel,
-                line,
-              })),
+    const sinceTime = since?.kind === "time" ? { since: since.iso } : {};
+    const collector = makeHistoryCollector(flags.tail, since?.kind === "start");
+    if (flags.tail > 0)
+      yield* streamStackLogs({
+        stateRoot: locations.stateRoot,
+        stackId,
+        instances: selected.map(({ id }) => id),
+        ...sinceTime,
+      }).pipe(
+        Stream.mapError(logsError),
+        Stream.runForEach((record) => Effect.sync(() => collector.push(record))),
+      );
+    const { window, positions: printed, launches } = collector.finish();
+
+    if (output.format === "json")
+      return yield* output.result(window.records.map((record) => logEvent(record, "history")));
+    // Colour follows the terminal only when stdout is one, so piped logs stay plain.
+    const terminal = output.interactive;
+    const text = makeTextFormatter(selected, terminal ? process.stdout : {});
+    const emit = (record: StackLogRecord, source: LogSource) =>
+      output.format === "stream-json"
+        ? output.event(logEvent(record, source))
+        : output.raw(text(record));
+    yield* Effect.forEach(window.records, (record) => emit(record, "history"), { discard: true });
+    if (output.format === "text" && flags.tail > 0) {
+      const note = (message: string) =>
+        output.raw(`${dim(message, terminal ? process.stderr : {})}\n`, "stderr");
+      if (window.shown < window.total) yield* note(truncationFooter(window));
+      else if (window.total === 0 && !flags.follow)
+        yield* note("No retained log lines for the selected services.");
+    }
+    if (!flags.follow) return;
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const stack = yield* api
+          .open({ ...locations, id: stackId })
+          .pipe(Effect.mapError(logsError));
+        const handles = new Map(
+          (yield* stack.services.list.pipe(Effect.mapError(logsError))).map((handle) => [
+            handle.id,
+            handle,
+          ]),
+        );
+        const missing = selected
+          .filter(({ id }) => !handles.has(id))
+          .map(({ id, service }) => `${service} (${id})`);
+        if (missing.length === selected.length)
+          return yield* new StackCommandLogsError({
+            reason: "lifecycle",
+            message:
+              "The running stack serves none of the selected services, so there are no new lines to follow.",
+            suggestion: "Run supabase stack logs without --follow to read retained logs.",
+          });
+        if (missing.length > 0)
+          yield* output.warn(
+            `Not following ${missing.join(", ")}, which the running stack does not serve.`,
+          );
+        const streams = selected.flatMap(({ id, service }) => {
+          const handle = handles.get(id);
+          if (handle === undefined) return [];
+          const from = printed.get(id);
+          // Without history, the owner pins the start at its end under the writer's lock.
+          const start = flags.tail === 0 ? { tail: 0 } : from === undefined ? {} : { from };
+          return [
+            handle.readLogs({ follow: true, ...start, ...sinceTime }).pipe(
+              Stream.filter(
+                (record) => isAfter(record, from) && isFromLaunch(record, launches.get(id)),
+              ),
+              Stream.map((record): StackLogRecord => ({ ...record, service, instanceId: id })),
             ),
-          { concurrency: 2 },
-        ),
-      ),
-    );
-    yield* Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
-      Stream.mapError(logsError),
-      Stream.runForEach((entry) =>
-        Effect.gen(function* () {
-          const timestamp = DateTime.formatIso(yield* DateTime.now);
-          if (output.format === "stream-json")
-            yield* output.event({ type: "log-entry", timestamp, source: "live", ...entry });
-          else
-            yield* output.raw(
-              `${timestamp} ${entry.service}/${entry.instance_id}/${entry.stream}: ${stripControlSequences(entry.line)}\n`,
-            );
-        }),
-      ),
+          ];
+        });
+        yield* Stream.mergeAll(streams, { concurrency: "unbounded" }).pipe(
+          Stream.mapError(logsError),
+          Stream.runForEach((record) => emit(record, "live")),
+        );
+      }),
     );
   }).pipe(Effect.ensuring(telemetry.flush));
 });

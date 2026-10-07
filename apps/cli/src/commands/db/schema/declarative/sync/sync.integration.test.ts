@@ -114,7 +114,7 @@ function syncStackApi(workdir: string, port: number) {
     saveSnapshot: unusedSyncFn,
     restoreSnapshot: unusedSyncFn,
     resetData: unusedSync,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     followStatus: Stream.empty,
     status: Effect.succeed({
       id: "primary",
@@ -183,6 +183,7 @@ function syncStackApi(workdir: string, port: number) {
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

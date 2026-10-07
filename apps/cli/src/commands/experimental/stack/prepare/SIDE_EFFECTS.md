@@ -39,7 +39,7 @@ which selects the same runtime as `stack start` (Docker, then Podman, then nativ
 existing stacks reuse their persisted runtime without probing, and an explicit mismatch fails. With no
 `--capability`, every enabled creation from the effective project configuration is prepared.
 Repeated `--capability` includes each capability's configured companion services (Storage/Imgproxy,
-Studio/Pgmeta, Analytics/Vector); requesting a disabled service fails before instance preparation. The legacy `-o/--output` flag is rejected; use
+Studio/Pgmeta); requesting a disabled service fails before instance preparation. The legacy `-o/--output` flag is rejected; use
 `--output-format`.
 
 Text output lists the stack ID and each prepared service and version. JSON output returns the stack

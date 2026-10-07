@@ -80,7 +80,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     prepare: Effect.die("unused"),
     status: Effect.succeed(observation),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
     saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
@@ -179,6 +179,7 @@ const runStatusEnv = (input: {
       },
       discover: () => Effect.die("unused"),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     });
     // Only `--workdir` selects the project here; an absent flag falls back to the ambient cwd,
     // which is registered under its own distinguishable stack so a dropped `--workdir` fails

@@ -109,7 +109,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       wakeEnabled: false,
     }),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
     saveSnapshot: () => Effect.die("unused"),
     restoreSnapshot: () => Effect.die("unused"),
@@ -197,6 +197,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
         }),
       discover: () => Effect.succeed([]),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     }),
   );
   return {

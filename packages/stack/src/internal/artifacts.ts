@@ -8,6 +8,7 @@ export {
   prepareNativeArtifact,
   resolveArtifact,
   useNativeArtifact,
+  type ArtifactKind,
   type ArtifactPin,
   type NativePin,
   type ServiceKind,

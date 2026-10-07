@@ -83,6 +83,23 @@ export const resolveStackDataRoot = Effect.fn("Namespace.Paths.resolveStackDataR
   return yield* fs.realPath(dataRoot);
 });
 
+/**
+ * The data-root label its containers carry, derived without creating the directory, for a stack
+ * whose directory may be gone; it equals {@link resolveStackDataRoot} while the directory exists.
+ */
+export const stackDataRootLabel = Effect.fn("Namespace.Paths.stackDataRootLabel")(function* (
+  stateRoot: string,
+  stackId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return path.join(yield* fs.realPath(stateRoot), stackId, "data");
+});
+
+/** The directory that holds a stack's persisted service logs, beside its data root. */
+export const stackLogsRoot = (path: Path.Path, stateRoot: string, stackId: string): string =>
+  path.join(path.normalize(stateRoot), stackId, "logs");
+
 /** The container mount target for an instance-scoped directory owned on the host. */
 export const containerInstancePath = "/instance";
 

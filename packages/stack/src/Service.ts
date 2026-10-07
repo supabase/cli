@@ -59,7 +59,7 @@ export interface ServiceDefinition<Config> {
   readonly prepare?: (config: Config) => Effect.Effect<void, ServiceError>;
   /** Failures after resource acquisition carry the session for ordinary cleanup. */
   readonly launch: (
-    context: ServiceInstanceContext<Config>,
+    context: ServiceLaunchContext<Config>,
   ) => Effect.Effect<RuntimeSession, ServiceError | ServiceLaunchError>;
   readonly removeData: (
     context: ServiceInstanceContext<Config>,
@@ -71,6 +71,11 @@ export interface ServiceInstanceContext<Config> {
   readonly config: Config;
   /** Owns auxiliary session resources; runtime stop/remove retain cleanup authority. */
   readonly scope: Scope.Closeable;
+}
+
+/** One launch of an instance; every output chunk the launch publishes carries its `launchId`. */
+export interface ServiceLaunchContext<Config> extends ServiceInstanceContext<Config> {
+  readonly launchId: number;
 }
 
 /**
@@ -148,6 +153,8 @@ export const makeService = <Config>(
     readonly config: Config;
     /** Delivers an execution outcome to the lifecycle authority. */
     readonly report: (event: LifecycleEvent) => Effect.Effect<void>;
+    /** Launch ids continue after this one. */
+    readonly lastLaunchId?: number;
   },
 ): Effect.Effect<ServiceInstance<Config>, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -156,6 +163,7 @@ export const makeService = <Config>(
     // Serializes every step that touches runtime resources: a launch's acquisition, a stop, an
     // exit's cleanup, storage work and data removal.
     const execution = yield* Semaphore.make(1);
+    const launchCounter = yield* Ref.make(options.lastLaunchId ?? 0);
     const current = yield* Ref.make<SessionRecord | undefined>(undefined);
     const attempt = yield* Ref.make<Attempt | undefined>(undefined);
     // The highest generation already stopped: a launch for it, admitted late, must never run.
@@ -286,8 +294,9 @@ export const makeService = <Config>(
         } as const;
       yield* Ref.set(config, launchConfig);
       yield* update({ config: launchConfig, exit: undefined, currentOperation: "start" });
+      const launchId = yield* Ref.updateAndGet(launchCounter, (value) => value + 1);
       const launched = yield* Effect.exit(
-        definition.launch({ id, config: launchConfig, scope: handle }).pipe(
+        definition.launch({ id, config: launchConfig, scope: handle, launchId }).pipe(
           Effect.map((runtime) => ({ runtime, failure: undefined })),
           Effect.catchTag("ServiceLaunchError", ({ runtime, failure }) =>
             Effect.succeed({ runtime, failure }),

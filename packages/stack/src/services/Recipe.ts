@@ -1,7 +1,7 @@
 import { Data, Schema } from "effect";
-import type { Stream } from "effect";
-import type { Effect, Ref } from "effect";
+import type { Effect, PubSub, Ref, Scope } from "effect";
 import type { ServiceKind } from "../Artifacts.ts";
+import type { LaunchOutput } from "../runtime/Session.ts";
 import type { ServiceDefinition } from "../Service.ts";
 import type { EngineTarget, HostGateway } from "../runtime/Container.ts";
 import type { DockerHelperRegistry } from "../storage/DockerHelperRegistry.ts";
@@ -58,16 +58,14 @@ export interface CatalogOptions {
   readonly engineTarget?: EngineTarget;
 }
 
-export interface CatalogLog {
-  readonly stream: "stdout" | "stderr";
-  readonly bytes: Uint8Array;
-}
+/** Subscribes to a recipe's launch output; chunks published before the subscription are missed. */
+export type CatalogLogs = Effect.Effect<PubSub.Subscription<LaunchOutput>, never, Scope.Scope>;
 
 export interface CatalogRecipe<C> {
   readonly creation: C;
   readonly definition: ServiceDefinition<C>;
   readonly endpoint: (name: string) => Effect.Effect<ServiceEndpoint, CatalogError>;
-  readonly logs: Stream.Stream<CatalogLog, CatalogError>;
+  readonly logs: CatalogLogs;
 }
 
 export interface RecipeCreation<K extends ServiceKind, C> {
@@ -80,5 +78,5 @@ export interface RecipeCreation<K extends ServiceKind, C> {
 export interface ProcessRecipeResult<C> {
   readonly definition: ServiceDefinition<C>;
   readonly endpoints: Ref.Ref<ReadonlyMap<string, ServiceEndpoint>>;
-  readonly logs: Stream.Stream<CatalogLog, CatalogError>;
+  readonly logs: CatalogLogs;
 }

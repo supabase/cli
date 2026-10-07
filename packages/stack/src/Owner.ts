@@ -12,6 +12,7 @@ import {
   Scope,
   Semaphore,
   Stream,
+  SubscriptionRef,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -66,6 +67,9 @@ import { stackError, type OwnerRpc } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
+import * as LogForwarder from "./host/LogForwarder.ts";
+import * as LogflareStorage from "./host/LogflareStorage.ts";
+import * as LogStore from "./host/LogStore.ts";
 
 export interface OwnerOptions {
   readonly saved: SavedStack;
@@ -221,6 +225,35 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
   );
   const orchestrator = yield* Orchestrator.make<Entry>({ admit: () => rejectWhileDraining });
   const helpers = yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4);
+  const logStore = yield* LogStore.make({
+    root: StackNamespace.stackLogsRoot(path, options.state.root, options.saved.id),
+  }).pipe(Effect.provideContext(services));
+  /** The database Analytics stores events in, as the host reaches it. */
+  const analyticsDatabase = (analyticsId: string) =>
+    Effect.gen(function* () {
+      const creation = yield* Ref.get((yield* orchestrator.get(analyticsId)).creation);
+      const databaseUrl =
+        creation.service === "analytics" ? creation.config.databaseUrl : undefined;
+      if (databaseUrl === undefined)
+        return yield* new ServiceError({
+          operation: "analytics",
+          message: "Analytics has no database URL",
+        });
+      const dependency = (yield* orchestrator.composition).dependencies.find(
+        ({ to, bindings }) =>
+          to === analyticsId && bindings?.some(({ input }) => input === "databaseUrl") === true,
+      );
+      const bound =
+        dependency === undefined
+          ? undefined
+          : yield* (yield* orchestrator.get(dependency.from)).recipe.endpoint("sql");
+      return yield* LogflareStorage.analyticsDatabase(databaseUrl, bound);
+    });
+  const forwarder = yield* LogForwarder.make({
+    composition: orchestrator.composition,
+    logs: logStore,
+    storedEvents: (analytics) => LogflareStorage.make(analyticsDatabase(analytics.id)),
+  }).pipe(Effect.provideContext(services));
   const definitionGate = yield* Semaphore.make(1);
   const { id: stackId, runtime } = options.saved;
   const project = projectSegmentFor(options.saved.identity, path);
@@ -424,17 +457,30 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         message: `Duplicate instance ${id}`,
       });
     const initial = recipe.creation;
+    const resumeAfter = Option.getOrUndefined(
+      yield* logStore.latestLaunchId({ service: initial.service, instanceId: id }),
+    );
+    const launches = yield* SubscriptionRef.make<number | undefined>(undefined);
     const creation = yield* Ref.make(initial);
     const core = yield* makeService(
       {
         ...recipe.definition,
         launch: (context) =>
-          persistCreation({ id, creation }, context.config).pipe(
+          SubscriptionRef.set(launches, context.launchId).pipe(
+            Effect.andThen(
+              Scope.addFinalizer(context.scope, SubscriptionRef.set(launches, undefined)),
+            ),
+            Effect.andThen(persistCreation({ id, creation }, context.config)),
             Effect.mapError(serviceError("state")),
             Effect.andThen(recipe.definition.launch(context)),
           ),
       },
-      { id, config: initial, report: orchestrator.report },
+      {
+        id,
+        config: initial,
+        report: orchestrator.report,
+        ...(resumeAfter === undefined ? {} : { lastLaunchId: resumeAfter }),
+      },
     ).pipe(Effect.provideService(Scope.Scope, ownerScope));
     // Listeners stay open while the service runs or demand can still wake it.
     const enabled = orchestrator.status(id).pipe(
@@ -480,7 +526,23 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       recipe,
       creation,
       namespace,
-      confirmRemoved: removeInstanceRegistration(id).pipe(Effect.mapError(serviceError("state"))),
+      confirmRemoved: removeInstanceRegistration(id).pipe(
+        Effect.mapError(serviceError("state")),
+        // Shipping writes its cursor into the instance's logs, so it stops before they go.
+        Effect.andThen(forwarder.detach(id)),
+        Effect.andThen(
+          logStore
+            .remove({ service: initial.service, instanceId: id })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning(
+                  `${cause.message}; the next owner start or stack destroy retries`,
+                  cause,
+                ),
+              ),
+            ),
+        ),
+      ),
       release: namespace.release.pipe(Effect.mapError(serviceError("release"))),
       releasePorts: namespace.releasePorts.pipe(Effect.mapError(serviceError("release"))),
       launch: (generation, inputs, candidate) =>
@@ -502,11 +564,38 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     yield* orchestrator
       .register(entry)
       .pipe(Effect.catch((cause) => namespace.release.pipe(Effect.andThen(Effect.fail(cause)))));
+    yield* logStore.attach({
+      service: initial.service,
+      instanceId: id,
+      logs: recipe.logs,
+      launches: SubscriptionRef.changes(launches),
+    });
+    yield* forwarder.attach({
+      id,
+      service: initial.service,
+      endpoint: recipe.endpoint,
+      creation: Ref.get(creation),
+      serving: orchestrator.changes(id).pipe(
+        Stream.mapEffect((status) =>
+          SubscriptionRef.get(launches).pipe(
+            Effect.map((launchId) => ({
+              serving: status.lifecycle === "running" && status.health === "healthy",
+              launchId,
+            })),
+          ),
+        ),
+        Stream.catch(() => Stream.empty),
+      ),
+    });
   });
 
   for (const saved of options.saved.instances)
     yield* register(saved.id, yield* recipeFor(saved.creation, saved.id));
+  yield* logStore.removeOrphans.pipe(
+    Effect.catch((cause) => Effect.logWarning("Orphaned instance logs were not removed", cause)),
+  );
   yield* orchestrator.configure(options.saved.composition);
+  yield* forwarder.rebind;
 
   const removeSaved = (id: string) => updateState((current) => withoutInstance(current, id));
 
@@ -528,14 +617,16 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 
   const configure = (configuration: CompositionConfig) =>
     options.state.withLock(
-      orchestrator.configure(
-        configuration,
-        readSaved.pipe(
-          Effect.flatMap((current) =>
-            options.state.save({ ...current, composition: configuration }),
+      orchestrator
+        .configure(
+          configuration,
+          readSaved.pipe(
+            Effect.flatMap((current) =>
+              options.state.save({ ...current, composition: configuration }),
+            ),
           ),
-        ),
-      ),
+        )
+        .pipe(Effect.andThen(forwarder.rebind)),
     );
 
   // A failed cleanup must not replace the failure that triggered it.
@@ -709,11 +800,17 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
             ),
           ),
       ).pipe(Stream.mapError((cause) => stackError("followStatus", cause))),
-    logs: ({ id }) =>
-      Stream.unwrap(orchestrator.get(id).pipe(Effect.map((entry) => entry.recipe.logs))).pipe(
-        Stream.map(({ stream, bytes }) => ({ stream, bytes })),
-        Stream.mapError((cause) => stackError("logs", cause)),
-      ),
+    readLogs: ({ id, from, since, tail, follow }) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          return yield* logStore.read(id, {
+            from: from ?? "oldest",
+            follow,
+            ...(since === undefined ? {} : { since: yield* LogStore.sinceMillis(since) }),
+            ...(tail === undefined ? {} : { tail }),
+          });
+        }),
+      ).pipe(Stream.mapError((cause) => stackError("readLogs", cause))),
     credentials: ({ id, from }) =>
       orchestrator.get(id).pipe(
         Effect.flatMap((entry) =>
@@ -780,6 +877,7 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       destroy: orchestrator.destroyNamespace.pipe(
         Effect.andThen(sweep),
         Effect.andThen(removeDataRootEntries),
+        Effect.andThen(logStore.close),
         Effect.andThen(options.state.remove(stackId)),
         Effect.andThen(
           network.releaseStack.pipe(

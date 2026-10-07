@@ -127,16 +127,60 @@ const section = (document: Readonly<Record<string, unknown>> | undefined, name: 
   return isRecord(value) ? value : undefined;
 };
 
-/** The configured port when `path` is set in `config.toml` or by its `SUPABASE_<PATH>` env var, else undefined. */
-const portIfSet = (
+/** A setting's `config.toml` key and the `SUPABASE_*` env var that overrides it. */
+export interface StackEndpointSetting {
+  readonly configPath: string;
+  readonly envVar: string;
+}
+
+// Shared by `createCreations` and `stackEndpointSetting`; a new endpoint also needs an entry in
+// `endpointSettingsByServiceEndpoint`.
+const DB_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_DB_PORT",
+  configPath: "db.port",
+};
+const API_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_API_PORT",
+  configPath: "api.port",
+};
+const STUDIO_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_STUDIO_PORT",
+  configPath: "studio.port",
+};
+const DB_POOLER_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_DB_POOLER_PORT",
+  configPath: "db.pooler.port",
+};
+const LOCAL_SMTP_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_LOCAL_SMTP_PORT",
+  configPath: "local_smtp.port",
+};
+const LOCAL_SMTP_SMTP_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+  configPath: "local_smtp.smtp_port",
+};
+const LOCAL_SMTP_POP3_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_LOCAL_SMTP_POP3_PORT",
+  configPath: "local_smtp.pop3_port",
+};
+const ANALYTICS_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_ANALYTICS_PORT",
+  configPath: "analytics.port",
+};
+const EDGE_RUNTIME_INSPECTOR_PORT: StackEndpointSetting = {
+  envVar: "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+  configPath: "edge_runtime.inspector_port",
+};
+
+/** The configured port when the setting is present in `config.toml` or its env var, else undefined. */
+const resolvePort = (
+  setting: StackEndpointSetting,
   document: Readonly<Record<string, unknown>> | undefined,
-  env: Readonly<Record<string, string>>,
-  path: readonly [string, ...string[]],
   configured: number,
+  env: Readonly<Record<string, string>>,
 ): number | undefined => {
-  if (envOverride(["SUPABASE", ...path].join("_").toUpperCase(), undefined, env) !== undefined) {
-    return configured;
-  }
+  if (envOverride(setting.envVar, undefined, env) !== undefined) return configured;
+  const path = setting.configPath.split(".");
   const key = path[path.length - 1] ?? "";
   const parent = path
     .slice(0, -1)
@@ -145,6 +189,43 @@ const portIfSet = (
       document,
     );
   return typeof parent?.[key] === "number" ? configured : undefined;
+};
+
+/**
+ * Maps a saved stack endpoint (service + endpoint name) to the `StackEndpointSetting` that controls it.
+ * An endpoint missing here (e.g. `pooler.http`, `realtime.rpc`) is always automatic.
+ */
+const endpointSettingsByServiceEndpoint: Readonly<Record<string, StackEndpointSetting>> = {
+  "database.sql": DB_PORT,
+  "pooler.sql": DB_POOLER_PORT,
+  "analytics.http": ANALYTICS_PORT,
+  "studio.http": STUDIO_PORT,
+  "mail.http": LOCAL_SMTP_PORT,
+  "mail.smtp": LOCAL_SMTP_SMTP_PORT,
+  "mail.pop3": LOCAL_SMTP_POP3_PORT,
+  "functions.inspector": EDGE_RUNTIME_INSPECTOR_PORT,
+  "rest.http": API_PORT,
+  "auth.http": API_PORT,
+  "realtime.http": API_PORT,
+  "storage.http": API_PORT,
+  "functions.http": API_PORT,
+};
+
+/** The config.toml key and env var override for a service endpoint, when the CLI exposes one. */
+export const stackEndpointSetting = (
+  service: string,
+  endpoint: string,
+): StackEndpointSetting | undefined => endpointSettingsByServiceEndpoint[`${service}.${endpoint}`];
+
+/**
+ * `db.major_version`'s config key and `SUPABASE_DB_MAJOR_VERSION` override. Unlike the ports
+ * above, `envOverrideMajorVersion` (shared with `db-bootstrap` and the legacy local stack) hardcodes
+ * its own name/field, so there is no single call site to read this from without widening that
+ * shared helper's signature; the two literals here are kept in sync by hand.
+ */
+export const stackMajorVersionSetting: StackEndpointSetting = {
+  configPath: "db.major_version",
+  envVar: "SUPABASE_DB_MAJOR_VERSION",
 };
 
 const authProviderNames = [
@@ -508,17 +589,6 @@ const resolveEffectiveCliConfig = (
       env,
     ),
     port: resolvedPort("SUPABASE_ANALYTICS_PORT", analytics.port, "analytics.port", env),
-    ...(analytics.vector_port === undefined &&
-    envOverride("SUPABASE_ANALYTICS_VECTOR_PORT", undefined, env) === undefined
-      ? {}
-      : {
-          vector_port: resolvedPort(
-            "SUPABASE_ANALYTICS_VECTOR_PORT",
-            analytics.vector_port ?? 0,
-            "analytics.vector_port",
-            env,
-          ),
-        }),
     backend: envOverrideAnalyticsBackend(analytics.backend, env),
     gcp_project_id: envOverride("SUPABASE_ANALYTICS_GCP_PROJECT_ID", analytics.gcp_project_id, env),
     gcp_project_number: envOverride(
@@ -1055,53 +1125,53 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
         },
         catch: (cause) => new StackConfigError({ message: String(cause) }),
       });
-      const dbPort = portIfSet(
+      const dbPort = resolvePort(
+        DB_PORT,
         document,
-        context.projectEnvValues,
-        ["db", "port"],
         validatedConfig.db.port,
-      );
-      const apiPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["api", "port"],
+      );
+      const apiPort = resolvePort(
+        API_PORT,
+        document,
         validatedConfig.api.port,
-      );
-      const studioPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["studio", "port"],
+      );
+      const studioPort = resolvePort(
+        STUDIO_PORT,
+        document,
         validatedConfig.studio.port,
-      );
-      const poolerPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["db", "pooler", "port"],
+      );
+      const poolerPort = resolvePort(
+        DB_POOLER_PORT,
+        document,
         validatedConfig.db.pooler.port,
-      );
-      const mailPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["local_smtp", "port"],
+      );
+      const mailPort = resolvePort(
+        LOCAL_SMTP_PORT,
+        document,
         validatedConfig.local_smtp.port,
-      );
-      const mailSmtpPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["local_smtp", "smtp_port"],
+      );
+      const mailSmtpPort = resolvePort(
+        LOCAL_SMTP_SMTP_PORT,
+        document,
         validatedConfig.local_smtp.smtp_port ?? 0,
-      );
-      const mailPop3Port = portIfSet(
-        document,
         context.projectEnvValues,
-        ["local_smtp", "pop3_port"],
+      );
+      const mailPop3Port = resolvePort(
+        LOCAL_SMTP_POP3_PORT,
+        document,
         validatedConfig.local_smtp.pop3_port ?? 0,
-      );
-      const analyticsPort = portIfSet(
-        document,
         context.projectEnvValues,
-        ["analytics", "port"],
+      );
+      const analyticsPort = resolvePort(
+        ANALYTICS_PORT,
+        document,
         validatedConfig.analytics.port,
+        context.projectEnvValues,
       );
       const poolMode =
         validatedConfig.db.pooler.pool_mode === "session" ? ("session" as const) : "transaction";
@@ -1224,24 +1294,6 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                   } satisfies ServiceCreationType,
                 ]
               : []),
-            ...(validatedConfig.analytics.enabled
-              ? [
-                  {
-                    service: "vector" as const,
-                    config: { apiKey: "api-key" },
-                    endpoints: {
-                      http: endpoint(
-                        portIfSet(
-                          document,
-                          context.projectEnvValues,
-                          ["analytics", "vector_port"],
-                          validatedConfig.analytics.vector_port ?? 0,
-                        ),
-                      ),
-                    },
-                  } satisfies ServiceCreationType,
-                ]
-              : []),
             ...(validatedConfig.storage.image_transformation?.enabled === true
               ? [
                   {
@@ -1267,11 +1319,11 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
                     endpoints: {
                       http: endpoint(apiPort),
                       inspector: endpoint(
-                        portIfSet(
+                        resolvePort(
+                          EDGE_RUNTIME_INSPECTOR_PORT,
                           document,
-                          context.projectEnvValues,
-                          ["edge_runtime", "inspector_port"],
                           validatedConfig.edge_runtime.inspector_port,
+                          context.projectEnvValues,
                         ),
                       ),
                     },

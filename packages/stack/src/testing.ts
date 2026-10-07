@@ -20,6 +20,9 @@ import {
   ServiceCreationInput as CreationSchema,
 } from "./services/Catalog.ts";
 
+/** Exposed for test fakes that need to reproduce the package's own saved-stack comparison. */
+export { planSupabaseComposition } from "./composition/Supabase.ts";
+
 type Kind = StackEffect.ServiceCreationInput["service"];
 type Creation<K extends Kind> = Extract<StackEffect.ServiceCreationInput, { readonly service: K }>;
 

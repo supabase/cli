@@ -112,7 +112,7 @@ function generateStackApi(workdir: string) {
     saveSnapshot: unusedStackFn,
     restoreSnapshot: unusedStackFn,
     resetData: unusedStack,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     followStatus: Stream.empty,
     status: Effect.succeed({
       id: "primary",
@@ -181,6 +181,7 @@ function generateStackApi(workdir: string) {
           host: undefined,
         }),
       ),
+    findDeleted: () => Effect.die("unused"),
   });
 }
 

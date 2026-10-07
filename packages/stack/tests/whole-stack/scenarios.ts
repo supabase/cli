@@ -24,7 +24,7 @@ import {
   exerciseMetadataAndPooler,
   exerciseStorageAndFunctions,
 } from "./service-flows.ts";
-import { exerciseAnalytics, queryAnalyticsMarker } from "./analytics.ts";
+import { exerciseAnalytics, queryAnalyticsMarker, stackAnalyticsMarker } from "./analytics.ts";
 import { subscribeRealtime } from "./websocket.ts";
 import { watchRecoveryMail } from "./realtime-mail.ts";
 import { assertWorkloadsGone, captureWorkloads } from "./workloads.ts";
@@ -295,10 +295,8 @@ const exerciseStack = Effect.fn("WholeStack.exerciseStack")(
           }),
         );
         const analyticsUrl = (yield* service(fixture, "analytics").credentials()).url;
-        const vectorUrl = (yield* service(fixture, "vector").credentials()).url;
-        if (analyticsUrl === undefined || vectorUrl === undefined)
-          return yield* Effect.die("Analytics or Vector URL missing");
-        yield* exerciseAnalytics(analyticsUrl, vectorUrl, fixture.secret, fixture.stack.id, phase);
+        if (analyticsUrl === undefined) return yield* Effect.die("Analytics URL missing");
+        yield* exerciseAnalytics(analyticsUrl, fixture.secret, fixture.stack.id, phase);
         yield* assertLifecycle(fixture, "running");
         return {
           accessToken: loginBody.access_token,
@@ -450,12 +448,20 @@ export const parallel = (runtime: Runtime) =>
       if (leftAnalyticsUrl === undefined || rightAnalyticsUrl === undefined)
         return yield* Effect.die("Parallel Analytics URL missing");
       expect(
-        (yield* queryAnalyticsMarker(leftAnalyticsUrl, left.secret, `vector-${right.stack.id}`, 0))
-          .length,
+        (yield* queryAnalyticsMarker(
+          leftAnalyticsUrl,
+          left.secret,
+          stackAnalyticsMarker(right.stack.id),
+          0,
+        )).length,
       ).toBe(0);
       expect(
-        (yield* queryAnalyticsMarker(rightAnalyticsUrl, right.secret, `vector-${left.stack.id}`, 0))
-          .length,
+        (yield* queryAnalyticsMarker(
+          rightAnalyticsUrl,
+          right.secret,
+          stackAnalyticsMarker(left.stack.id),
+          0,
+        )).length,
       ).toBe(0);
       const rightRest = service(right, "rest");
       const rightRestUrl = (yield* rightRest.credentials()).url;

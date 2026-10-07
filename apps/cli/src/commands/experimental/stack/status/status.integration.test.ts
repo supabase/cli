@@ -133,7 +133,7 @@ const makeService = (input: {
       : Effect.succeed(input.observation);
   }),
   followStatus: Stream.empty,
-  logs: Stream.empty,
+  readLogs: () => Stream.empty,
   credentials: () =>
     input.rejectCredentials
       ? Effect.die("credentials must not run")
@@ -241,6 +241,7 @@ const runStatus = (input: {
       open: () => Effect.succeed(stack),
       discover: () => Effect.die("discover must not run"),
       find: () => Effect.die("find must not run"),
+      findDeleted: () => Effect.die("findDeleted must not run"),
     });
     const resolver = Layer.succeed(StackTargetResolver, {
       resolve: (target) =>

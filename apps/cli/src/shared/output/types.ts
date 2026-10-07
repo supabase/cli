@@ -17,6 +17,16 @@ export type StreamEvent =
       readonly source: "history" | "live";
     }
   | {
+      readonly type: "log-marker";
+      readonly instance_id: string;
+      readonly timestamp: string;
+      readonly service: string;
+      readonly kind: "launch" | "lost";
+      readonly stream?: "stdout" | "stderr";
+      readonly count?: number;
+      readonly source: "history" | "live";
+    }
+  | {
       readonly type: "result";
       readonly data: unknown;
       readonly timestamp: string;

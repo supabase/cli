@@ -6,7 +6,7 @@ files remain. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
-Select the current project/branch/name, `--stack <name>`, or `--stack-id <id>`.
+Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
 The selectors are mutually exclusive; a missing target fails. Explicit legacy
 `-o/--output` is rejected in favor of `--output-format`.
 
@@ -16,6 +16,25 @@ the command prints no question; stderr states which stack and data are destroyed
 and that Storage uploads are preserved. Rejection or cancellation does not open or
 destroy a stack. Discovery may create/chmod the registry directory to 0700 but
 does not launch an owner.
+
+A full `--stack-id` that is not registered under the state root makes destroy
+list stack-labelled containers on Docker and Podman before confirming; an engine
+that is not installed or not running is skipped. When containers labelled with
+that id and its data root there remain on either engine, for example because its
+directory was deleted, destroy selects them; when none do, the id is not found as
+usual, and the error detail names an engine that failed to list its containers.
+After the same confirmation (`the containers deleted stack <id> left behind`) it
+removes them and prints `Removed the containers stack <id> left behind.`, or,
+when the other engine failed to list its containers, fails naming that engine
+after removing them; a deleted directory took the stack's lease with it, so this
+includes the containers of an owner that still runs. When another process holds
+the stack's lease, destroy fails and asks to run it again; when the stack is
+registered again before an engine's cleanup starts, destroy fails and leaves
+that engine's containers to the new registration; a registration that lands
+later is not noticed, which is harmless because it cannot own containers while a
+cleanup holds the lease. The deleted stack's data in the state root's shared
+database volume stays, and containers of other state roots are never touched;
+for a deleted `SUPABASE_HOME`, run destroy with that `SUPABASE_HOME`.
 
 After confirmation the command opens the selected handle and destroys its entire
 namespace. Destruction may start an owner to clean up a stopped namespace.
@@ -61,7 +80,8 @@ remains the backstop when no owner is left alive to do so.
 
 ## Output, exit codes and telemetry
 
-Text prints `Stack <id> destroyed.`, or, when engine cleanup was skipped,
+Text prints `Stack <id> destroyed.` (`Removed the containers stack <id> left behind.`
+for a deleted stack's containers), or, when engine cleanup was skipped,
 `Stack <id> could not be fully destroyed because <Engine> is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
 JSON and stream-json success data contain `destroyed` (`false` when engine
 cleanup was skipped), `id`, and `runtime_cleanup` (`complete` or `skipped`); a

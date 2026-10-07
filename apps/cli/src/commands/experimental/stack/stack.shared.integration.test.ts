@@ -82,6 +82,53 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("rejects an id prefix that several readable or unreadable saved stacks share", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+      const twin = `${id.slice(0, 8)}${id.slice(8).replace(/./gu, (c) => (c === "0" ? "1" : "0"))}`;
+      const saved = yield* fs.readFileString(path.join(home, "stacks", id, "state.json"));
+      yield* fs.makeDirectory(path.join(home, "stacks", twin));
+      yield* fs.writeFileString(
+        path.join(home, "stacks", twin, "state.json"),
+        saved.replaceAll(id, twin),
+      );
+      const broken = `${id.slice(0, 8)}${"f".repeat(56)}`;
+      yield* fs.makeDirectory(path.join(home, "stacks", broken));
+      yield* fs.writeFileString(path.join(home, "stacks", broken, "state.json"), "{broken");
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 8),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain(`Stack id prefix ${id.slice(0, 8)} matches 3 stacks`);
+      expect(failure.message).toContain(id);
+      expect(failure.message).toContain(twin);
+      expect(failure.message).toContain(broken);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a stack id shorter than four characters", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 3),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain("prefix of at least 4 characters");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects an explicit id when its saved runtime differs", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
@@ -167,6 +214,25 @@ describe("stack target resolver", () => {
       expect(failure).toBeInstanceOf(StackTargetError);
       expect(failure.reason).toBe("invalid-config");
       expect(failure.message).toContain(id);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("surfaces an unreadable saved stack that an id prefix selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+      yield* fs.writeFileString(path.join(home, "stacks", id, "state.json"), "{broken");
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 8),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("invalid-config");
+      expect(failure.message).toContain(`Stack ${id} could not be read`);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

@@ -1,4 +1,4 @@
-import { defaultRuntime } from "@supabase/stack/internal/artifacts";
+import { defaultRuntime, postgresVersion } from "@supabase/stack/internal/artifacts";
 import {
   connectionEnv,
   renderStackSummary,
@@ -50,7 +50,13 @@ import {
   seedBucketsRun,
 } from "../../../../command-internal/seed-buckets.ts";
 import { loadLocalProjectContext } from "../../../../command-internal/local-project-context.ts";
-import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
+import {
+  loadStackConfig,
+  stackEndpointSetting,
+  stackMajorVersionSetting,
+  type StackEndpointSetting,
+} from "../../../../command-internal/stack-config.ts";
+import { envOverride } from "../../../../command-internal/local-config-values.ts";
 import {
   StackApi,
   stackCapabilityForService,
@@ -180,64 +186,147 @@ const studioNeedsRest = (requestedServices: ReadonlyArray<{ readonly service: st
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null;
 
-/** One changed path within an incompatible saved-stack member, as reported in `stack_changes`. */
-interface IncompatibleChange {
-  readonly service: string;
-  readonly path: string;
-  readonly saved: string;
-  readonly requested: string;
-}
-
-/** Reads the raw value a dotted planner path (e.g. `config.version`) points to on a creation. */
-const valueAt = (creation: unknown, path: string): unknown =>
-  path
-    .split(".")
-    .reduce<unknown>((value, segment) => (isRecord(value) ? value[segment] : undefined), creation);
-
-const describeValue = (value: unknown): string => {
-  if (value === undefined) return "unset";
-  if (value === "auto") return "automatic";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-    return String(value);
-  return JSON.stringify(value);
+const endpointPortLabel = (endpoints: unknown, name: string): string => {
+  const intent = isRecord(endpoints) ? endpoints[name] : undefined;
+  const port = isRecord(intent) ? intent.port : undefined;
+  return port === "auto" ? "automatic" : typeof port === "number" ? String(port) : "unset";
 };
 
-/** Every incompatible path across every rejected saved member, as one flat list. */
-const incompatibleChanges = (
+const databaseVersionOf = (
+  creation: ServiceCreation | ServiceCreationInput | undefined,
+): string | undefined => (creation?.service === "database" ? creation.config.version : undefined);
+
+const majorVersionOf = (version: string): string => version.split(".")[0] ?? version;
+
+/** Renders a dotted config key as its `config.toml` section/key pair, e.g. `[db] major_version`. */
+const formatConfigPath = (path: string): string => {
+  const segments = path.split(".");
+  const key = segments.pop();
+  return `[${segments.join(".")}] ${key}`;
+};
+
+/** The display key for a setting: its env var when that's what overrides it, else its config key. */
+const settingKeyLabel = (
+  setting: StackEndpointSetting,
+  projectEnvValues: Readonly<Record<string, string>>,
+): string =>
+  envOverride(setting.envVar, undefined, projectEnvValues) !== undefined
+    ? setting.envVar
+    : formatConfigPath(setting.configPath);
+
+/**
+ * One incompatible path, reported as the JSON/stream-json error envelope's `stack_changes`
+ * entries (contract documented in `SIDE_EFFECTS.md`). `editable` marks whether `key` is a
+ * `config.toml` key or env var the user can revert, or plain wording for a catalog-pinned
+ * artifact or Postgres build.
+ */
+interface StructuredSettingChange {
+  readonly service: string;
+  readonly path: string;
+  readonly key: string;
+  readonly saved: string;
+  readonly requested: string;
+  readonly editable: boolean;
+}
+
+const describeSettingChange = (
+  service: PlannedInstance["service"],
+  path: string,
+  savedCreation: ServiceCreation | undefined,
+  requestedCreation: ServiceCreationInput | undefined,
+  projectEnvValues: Readonly<Record<string, string>>,
+): StructuredSettingChange => {
+  if (service === "database" && path === "config.version") {
+    // `postgresVersion` resolves a bare major alias (e.g. "17") to the pinned build the
+    // composition plan actually compared, so the saved/requested pair reflects what changed.
+    const savedVersion = postgresVersion(databaseVersionOf(savedCreation) ?? "unknown");
+    const requestedVersion = postgresVersion(databaseVersionOf(requestedCreation) ?? "unknown");
+    const savedMajor = majorVersionOf(savedVersion);
+    const requestedMajor = majorVersionOf(requestedVersion);
+    // Same major but different pinned build: `major_version` doesn't control this, so reverting
+    // it wouldn't fix anything — name the actual (unpinnable) versions instead.
+    if (savedMajor === requestedMajor)
+      return {
+        service,
+        path,
+        key: "Postgres build",
+        saved: savedVersion,
+        requested: requestedVersion,
+        editable: false,
+      };
+    return {
+      service,
+      path,
+      key: settingKeyLabel(stackMajorVersionSetting, projectEnvValues),
+      saved: savedMajor,
+      requested: requestedMajor,
+      editable: true,
+    };
+  }
+  const endpointName = path.startsWith("endpoints.") ? path.split(".")[1] : undefined;
+  const setting =
+    endpointName === undefined ? undefined : stackEndpointSetting(service, endpointName);
+  if (endpointName !== undefined && setting !== undefined)
+    return {
+      service,
+      path,
+      key: settingKeyLabel(setting, projectEnvValues),
+      saved: endpointPortLabel(savedCreation?.endpoints, endpointName),
+      requested: endpointPortLabel(requestedCreation?.endpoints, endpointName),
+      editable: true,
+    };
+  // No config.toml key or env var covers this path (e.g. the catalog-pinned artifact `version`):
+  // name it plainly instead of implying a setting the user could edit.
+  return {
+    service,
+    path,
+    key: path === "version" ? `${service} artifact version` : `${service} ${path}`,
+    saved: path === "version" ? (savedCreation?.version ?? "unknown") : "changed",
+    requested: path === "version" ? (requestedCreation?.version ?? "unknown") : "changed",
+    editable: false,
+  };
+};
+
+/** Every incompatible path across every rejected saved member, as one structured list. */
+const incompatibleSettingChanges = (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
-): ReadonlyArray<IncompatibleChange> =>
+  projectEnvValues: Readonly<Record<string, string>>,
+): ReadonlyArray<StructuredSettingChange> =>
   planned
     .filter((entry) => entry.member && entry.change === "incompatible")
     .flatMap((entry) =>
       // Narrowed by the filter above; `Extract` isn't inferred through `.filter`.
       entry.change === "incompatible"
-        ? entry.paths.map((path): IncompatibleChange => {
-            const savedCreation = savedConfigById.get(entry.id);
-            const requestedCreation = requested.find(
-              (creation) => creation.service === entry.service,
-            );
-            return {
-              service: entry.service,
+        ? entry.paths.map((path) =>
+            describeSettingChange(
+              entry.service,
               path,
-              saved: describeValue(valueAt(savedCreation, path)),
-              requested: describeValue(valueAt(requestedCreation, path)),
-            };
-          })
+              savedConfigById.get(entry.id),
+              requested.find((creation) => creation.service === entry.service),
+              projectEnvValues,
+            ),
+          )
         : [],
     );
 
-const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
+/** One deduplicated text line per distinct setting change (shared API port lines collapse to one). */
+const settingChangeLines = (
+  changes: ReadonlyArray<StructuredSettingChange>,
+): ReadonlyArray<string> => {
+  const seen = new Set<string>();
+  const lines: Array<string> = [];
+  for (const change of changes) {
+    const line = `${change.key}: saved ${change.saved}, requested ${change.requested}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+};
 
-/** One deduplicated text line per distinct changed path (a shared API port collapses to one). */
-const changeLines = (changes: ReadonlyArray<IncompatibleChange>): ReadonlyArray<string> =>
-  dedupe(
-    changes.map(
-      (change) =>
-        `${change.service} ${change.path}: saved ${change.saved}, requested ${change.requested}`,
-    ),
-  );
+const dedupe = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)];
 
 /**
  * The exact `supabase stack destroy` invocation that recreates this stack. Always targets
@@ -247,30 +336,50 @@ const changeLines = (changes: ReadonlyArray<IncompatibleChange>): ReadonlyArray<
  */
 const destroyCommandFor = (id: string): string => `supabase stack destroy --stack-id ${id}`;
 
-/** Rejects every saved member whose composition the request would incompatibly change. */
+/** The revert clause for the editable keys among a rejection's changes, or `undefined` for none. */
+const revertAdvice = (editableKeys: ReadonlyArray<string>): string | undefined =>
+  editableKeys.length === 0
+    ? undefined
+    : editableKeys.length === 1
+      ? `Revert ${editableKeys[0]} to its saved value`
+      : "Revert the settings listed to their saved values";
+
+/** Rejects every saved member whose endpoints or artifact versions the request would change. */
 const incompatibleChange = (
   planned: ReadonlyArray<PlannedInstance>,
   savedConfigById: ReadonlyMap<string, ServiceCreation>,
   requested: ReadonlyArray<ServiceCreationInput>,
+  projectEnvValues: Readonly<Record<string, string>>,
   stackIdentity: { readonly id: string; readonly name?: string },
 ):
   | {
       readonly error: StackCommandStartError;
-      readonly changes: ReadonlyArray<IncompatibleChange>;
+      readonly changes: ReadonlyArray<StructuredSettingChange>;
       readonly command: string;
     }
   | undefined => {
-  const changes = incompatibleChanges(planned, savedConfigById, requested);
+  const changes = incompatibleSettingChanges(planned, savedConfigById, requested, projectEnvValues);
   if (changes.length === 0) return undefined;
+  const lines = settingChangeLines(changes);
   const command = destroyCommandFor(stackIdentity.id);
   const nameNote = stackIdentity.name === undefined ? "" : ` (stack ${stackIdentity.name})`;
+  const revert = revertAdvice(
+    dedupe(changes.filter((change) => change.editable).map(({ key }) => key)),
+  );
+  const nonEditable = dedupe(changes.filter((change) => !change.editable).map(({ key }) => key));
+  const destroyClause = `\`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`;
+  // A non-editable change blocks start whatever else changed, so destroy is the only way out.
+  const suggestion =
+    nonEditable.length > 0 || revert === undefined
+      ? `This CLI release starts a different ${nonEditable.join(" and ")} than the saved stack. Run ${destroyClause}`
+      : `${revert} to keep the stack and its data, or run ${destroyClause}`;
   return {
     changes,
     command,
     error: new StackCommandStartError({
       reason: "invalid-config",
-      message: `The saved stack cannot adopt these changes: ${changeLines(changes).join("; ")}`,
-      suggestion: `Run \`${command}\`${nameNote} to recreate the stack — this permanently deletes its local database data.`,
+      message: `The saved stack cannot adopt these changes: ${lines.join("; ")}`,
+      suggestion,
     }),
   };
 };
@@ -402,7 +511,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         explicitWorkdir: settings.explicitWorkdir,
         projectRoot: target.projectRoot,
         ...(Option.isSome(flags.stack) ? { stack: flags.stack.value } : {}),
-        ...(Option.isSome(flags.stackId) ? { stackId: flags.stackId.value } : {}),
+        ...(Option.isSome(flags.stackId) ? { stackId: stack.id } : {}),
       },
       currentShellPlatform(),
     );
@@ -613,7 +722,13 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       ...(target.name === undefined ? {} : { name: target.name }),
     };
     const savedConfigById = new Map(currentStatuses.map(({ id, config: saved }) => [id, saved]));
-    const rejected = incompatibleChange(planned, savedConfigById, requested, stackIdentity);
+    const rejected = incompatibleChange(
+      planned,
+      savedConfigById,
+      requested,
+      config.projectEnvValues,
+      stackIdentity,
+    );
     if (rejected !== undefined) {
       const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
       if (Option.isSome(machineErrorContext))

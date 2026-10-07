@@ -121,7 +121,7 @@ const instance = (
     prepare: Effect.void,
     status: Effect.sync(() => status(creation)),
     followStatus: Stream.empty,
-    logs: Stream.empty,
+    readLogs: () => Stream.empty,
     credentials: () => Effect.succeed({}),
   } satisfies Omit<ServiceInstance, "service">;
   switch (creation.service) {
@@ -198,8 +198,6 @@ const instance = (
     }
     case "analytics":
       return { ...base, service: "analytics" };
-    case "vector":
-      return { ...base, service: "vector" };
     case "pooler":
       return { ...base, service: "pooler" };
   }
@@ -439,6 +437,7 @@ const layers = (
     open: () => Effect.succeed(fixture.stack),
     discover: () => Effect.succeed([]),
     find: () => Effect.die("identity not used"),
+    findDeleted: () => Effect.die("identity not used"),
   });
   return Layer.mergeAll(
     BunServices.layer,
@@ -558,6 +557,7 @@ describe("experimental stack start", () => {
         open: () => Effect.succeed(fixture.stack),
         discover: () => Effect.succeed([]),
         find: () => Effect.die("identity not used"),
+        findDeleted: () => Effect.die("identity not used"),
       });
       const result = yield* stackStart(flags()).pipe(
         Effect.flip,
@@ -597,6 +597,7 @@ describe("experimental stack start", () => {
           open: () => Effect.succeed(fixture.stack),
           discover: () => Effect.succeed([]),
           find: () => Effect.die("identity not used"),
+          findDeleted: () => Effect.die("identity not used"),
         });
         const result = yield* stackStart(flags()).pipe(
           Effect.flip,
@@ -638,6 +639,7 @@ describe("experimental stack start", () => {
             open: () => Effect.succeed(fixture.stack),
             discover: () => Effect.succeed([]),
             find: () => Effect.die("identity not used"),
+            findDeleted: () => Effect.die("deleted stacks not used"),
           }),
           engines.layer,
         );
@@ -797,6 +799,16 @@ describe("experimental stack start", () => {
       expect(text.stdoutText).toContain(
         `Runtime: native\nRun supabase status --env --workdir ${workdir} --stack 'feature demo' to export these values as environment variables.\n`,
       );
+
+      yield* fixture.stack.composition.stop;
+      const byPrefix = mockOutput();
+      yield* stackStart({
+        ...flags(excluded),
+        stackId: Option.some(fixture.stack.id.slice(0, 8)),
+      }).pipe(Effect.provide(layers(root, fixture, byPrefix, true, true)));
+      expect(byPrefix.stdoutText).toContain(
+        `Run supabase status --env --workdir ${workdir} --stack-id ${fixture.stack.id} to export`,
+      );
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -871,7 +883,7 @@ describe("experimental stack start", () => {
             message: "Composition start had failures",
             outcomes: [
               { id: "database-member-1", succeeded: true },
-              { id: "vector-member-1", succeeded: false, error: "Service health timed out" },
+              { id: "analytics-member-1", succeeded: false, error: "Service health timed out" },
             ],
           }),
         ),
@@ -882,7 +894,7 @@ describe("experimental stack start", () => {
       expect(error).toBeInstanceOf(StackCommandStartError);
       expect(error).toMatchObject({
         message: "Composition start had failures",
-        detail: "vector (vector-member-1): Service health timed out",
+        detail: "analytics (analytics-member-1): Service health timed out",
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
@@ -1279,28 +1291,7 @@ describe("experimental stack start", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  // The planner normalizes an automatic shared API port to the saved fixed one.
-  it.live(
-    "accepts a shared API port going from fixed back to automatic, reusing the saved port",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-api-to-auto-" });
-        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-        yield* fs.writeFileString(
-          `${root}/supabase/config.toml`,
-          'project_id = "api-to-auto"\n[api]\nport = 54321\n',
-        );
-        const fixture = fakeStack();
-        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-
-        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "api-to-auto"\n');
-        yield* fixture.stack.composition.stop;
-        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live("names the changed key and the destroy command when a saved port changes", () =>
+  it.live("names the config key and both values when a saved port changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-port-config-" });
@@ -1324,28 +1315,25 @@ describe("experimental stack start", () => {
 
       expect(error).toMatchObject({
         reason: "invalid-config",
-        message: expect.stringContaining("saved 54321, requested 54999"),
-        suggestion: expect.stringContaining(
-          `supabase stack destroy --stack-id ${fixture.stack.id}`,
-        ),
+        message: expect.stringContaining("[api] port: saved 54321, requested 54999"),
       });
       // The rejection leaves the stopped composition untouched: no recompose was attempted.
       expect(fixture.composed).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("collects changes across multiple saved members into one message", () =>
+  it.live("names a dedicated (non-shared) port's own config key", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-multi-change-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-dedicated-port-" });
       yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
-      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "multi-change"\n');
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "dedicated-port"\n');
       const fixture = fakeStack();
       yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
 
       yield* fs.writeFileString(
         `${root}/supabase/config.toml`,
-        'project_id = "multi-change"\n[db]\nmajor_version = 15\n[studio]\nport = 12345\n',
+        'project_id = "dedicated-port"\n[studio]\nport = 12345\n',
       );
       yield* fixture.stack.composition.stop;
       const error = yield* stackStart(flags()).pipe(
@@ -1355,15 +1343,274 @@ describe("experimental stack start", () => {
 
       expect(error).toMatchObject({
         reason: "invalid-config",
-        message: expect.stringContaining("saved 17, requested 15"),
+        message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
       });
-      expect(error).toMatchObject({
-        message: expect.stringContaining("saved automatic, requested 12345"),
-      });
+      // A dedicated port only affects its own service, unlike the shared API port.
       expect(error).toBeInstanceOf(StackCommandStartError);
       if (error instanceof StackCommandStartError)
-        expect(error.suggestion).toContain(`supabase stack destroy --stack-id ${fixture.stack.id}`);
+        expect(error.message).not.toContain("[api] port");
     }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  // The production planner (`fixedApiPorts`/`withSharedApiPort`) normalizes a requested
+  // automatic shared-API port to the composition's already-fixed value whenever one exists, so a
+  // saved fixed port going back to automatic in `config.toml` reuses the saved port rather than
+  // failing. This locks down that non-obvious compatible case: it is not an incompatible path.
+  it.live(
+    "accepts a shared API port going from fixed back to automatic, reusing the saved port",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-api-to-auto-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "api-to-auto"\n[api]\nport = 54321\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "api-to-auto"\n');
+        yield* fixture.stack.composition.stop;
+        // Does not throw: the planner treats this as compatible (`change: "unchanged"`), not an
+        // incompatible path to report. Reusing the already-bound port for the resumed instance is
+        // `packages/stack`'s own concern, not asserted here.
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "collects simultaneous database-version and port changes into one error with plural revert wording",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-multi-change-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "multi-change"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "multi-change"\n[db]\nmajor_version = 15\n[studio]\nport = 12345\n',
+        );
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+        });
+        expect(error).toMatchObject({
+          message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
+        });
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError)
+          expect(error.suggestion).toContain(
+            "Revert the settings listed to their saved values to keep the stack and its data",
+          );
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("names the env var override when SUPABASE_*_PORT set the saved port", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-port-env-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "port-env"\n');
+      const fixture = fakeStack();
+      yield* withEnvVar(
+        "SUPABASE_API_PORT",
+        "54321",
+        stackStart(flags()).pipe(Effect.provide(layers(root, fixture))),
+      );
+
+      yield* fixture.stack.composition.stop;
+      const error = yield* withEnvVar(
+        "SUPABASE_API_PORT",
+        "54999",
+        stackStart(flags()).pipe(Effect.provide(layers(root, fixture)), Effect.flip),
+      );
+
+      expect(error).toMatchObject({
+        reason: "invalid-config",
+        message: expect.stringContaining("SUPABASE_API_PORT: saved 54321, requested 54999"),
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "names [db] major_version and the destroy command when the saved Postgres version changes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-major-version-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "major-version"\n');
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "major-version"\n[db]\nmajor_version = 15\n',
+        );
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+          suggestion: expect.stringContaining(
+            `Revert [db] major_version to its saved value to keep the stack and its data, or run \`supabase stack destroy --stack-id ${fixture.stack.id}\` to recreate the stack`,
+          ),
+        });
+        expect(error).toMatchObject({ suggestion: expect.stringContaining("database data") });
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "names the full Postgres build, not major_version, when only the pinned build differs",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-pg-build-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "pg-build"\n[db]\nmajor_version = 17\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const database = fixture.members.find(({ service }) => service === "database");
+        if (database?.service !== "database") return yield* Effect.die("Database missing");
+        const observed = yield* database.status;
+        if (observed.config.service !== "database")
+          return yield* Effect.die("Database config missing");
+        const pinnedVersion = postgresVersion("17");
+        // A saved build the current catalog no longer pins (`postgresVersion` only normalizes a
+        // recognized alias): same major as the requested `17`, different full build.
+        yield* database.restart({
+          config: { ...observed.config.config, version: "17.0.0-stale-build" },
+        });
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining(
+            `Postgres build: saved 17.0.0-stale-build, requested ${pinnedVersion}`,
+          ),
+        });
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.message).not.toContain("major_version");
+          expect(error.suggestion).not.toContain("Revert");
+          expect(error.suggestion).toContain(
+            "This CLI release starts a different Postgres build than the saved stack.",
+          );
+          expect(error.suggestion).toContain(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "drops the revert sentence for an artifact-version-only mismatch and explains the fix in plain language",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-artifact-version-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "artifact-version"\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
+        const restObserved = yield* rest.status;
+        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
+        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
+        yield* fixture.stack.composition.stop;
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          message: expect.stringContaining("rest artifact version"),
+        });
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.suggestion).not.toContain("Revert");
+          expect(error.suggestion).toContain(
+            "This CLI release starts a different rest artifact version than the saved stack.",
+          );
+          expect(error.suggestion).toContain(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "uses the destroy-only wording when a non-editable change accompanies an editable one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-mixed-editable-" });
+        yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "mixed-editable"\n',
+        );
+        const fixture = fakeStack();
+        yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+        const rest = fixture.members.find(({ service }) => service === "rest");
+        if (rest?.service !== "rest") return yield* Effect.die("REST missing");
+        const restObserved = yield* rest.status;
+        if (restObserved.config.service !== "rest") return yield* Effect.die("REST config missing");
+        yield* rest.restart({ ...restObserved.config, version: "rest-v1-stale" });
+        yield* fixture.stack.composition.stop;
+
+        yield* fs.writeFileString(
+          `${root}/supabase/config.toml`,
+          'project_id = "mixed-editable"\n[studio]\nport = 12345\n',
+        );
+        const error = yield* stackStart(flags()).pipe(
+          Effect.provide(layers(root, fixture)),
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          reason: "invalid-config",
+          // The editable change still appears in the message even though reverting it alone
+          // can't unblock start: the non-editable artifact-version change still would.
+          message: expect.stringContaining("[studio] port: saved automatic, requested 12345"),
+        });
+        expect(error).toBeInstanceOf(StackCommandStartError);
+        if (error instanceof StackCommandStartError) {
+          expect(error.suggestion).not.toContain("Revert");
+          expect(error.suggestion).toContain(
+            "This CLI release starts a different rest artifact version than the saved stack.",
+          );
+          expect(error.suggestion).toContain(
+            `supabase stack destroy --stack-id ${fixture.stack.id}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.live("emits structured stack_changes and recreate_command on the JSON error envelope", () =>
@@ -1388,19 +1635,100 @@ describe("experimental stack start", () => {
       expect(envelope._tag).toBe("Error");
       expect(envelope.error).toMatchObject({
         code: "ExperimentalStackStartError",
-        message: expect.stringContaining("saved 17, requested 15"),
+        message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
       });
       expect(envelope.stack_changes).toEqual([
         {
           service: "database",
           path: "config.version",
+          key: "[db] major_version",
           saved: "17",
           requested: "15",
+          editable: true,
         },
       ]);
       expect(envelope.recreate_command).toBe(
         `supabase stack destroy --stack-id ${fixture.stack.id}`,
       );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("emits the same structured error fields on the stream-json terminal event", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-stream-json-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "stream-json"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "stream-json"\n[db]\nmajor_version = 15\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const { layer, stdio } = jsonErrorLayers(root, fixture, "stream-json");
+      yield* stackStart(flags()).pipe(withJsonErrorHandling, Effect.provide(layer));
+
+      const event = yield* machineEnvelope(stdio.stdout.at(-1)!);
+      expect(event.type).toBe("error");
+      expect(event.error).toMatchObject({
+        code: "ExperimentalStackStartError",
+        message: expect.stringContaining("[db] major_version: saved 17, requested 15"),
+      });
+      expect(event.stack_changes).toEqual([
+        {
+          service: "database",
+          path: "config.version",
+          key: "[db] major_version",
+          saved: "17",
+          requested: "15",
+          editable: true,
+        },
+      ]);
+      expect(event.recreate_command).toBe(`supabase stack destroy --stack-id ${fixture.stack.id}`);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("always suggests --stack-id for a named stack, naming the stack as plain text", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-named-destroy-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "named-destroy"\n');
+      const fixture = fakeStack();
+      const target = Layer.succeed(StackTargetResolver, {
+        resolve: () =>
+          Effect.succeed({
+            projectRoot: root,
+            id: fixture.stack.id,
+            name: "feature-a",
+            runtime: "native" as const,
+            hostRunning: false,
+          }),
+      });
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.mergeAll(layers(root, fixture), target)),
+      );
+
+      yield* fs.writeFileString(
+        `${root}/supabase/config.toml`,
+        'project_id = "named-destroy"\n[db]\nmajor_version = 15\n',
+      );
+      yield* fixture.stack.composition.stop;
+      const error = yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.mergeAll(layers(root, fixture), target)),
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        suggestion: expect.stringContaining(
+          `supabase stack destroy --stack-id ${fixture.stack.id}\` (stack feature-a)`,
+        ),
+      });
+      expect(error).toBeInstanceOf(StackCommandStartError);
+      if (error instanceof StackCommandStartError)
+        expect(error.suggestion).not.toContain("--stack feature-a");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

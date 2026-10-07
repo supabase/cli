@@ -17,10 +17,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
 import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
-import { makeContainerRuntime } from "./runtime/Container.ts";
+import { makeContainerRuntime, type EngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { sweepOrphans } from "./Sweep.ts";
-import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { reclaimDeletedStack, sweepOrphans } from "./Sweep.ts";
+import { engineStub, makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { awaitContainerRemoved } from "../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
@@ -125,7 +125,7 @@ const saved = (
 });
 
 it.live.skipIf(process.platform === "win32")(
-  "removes a dead owner's containers and session stacks at the next owner start in its root",
+  "removes dead owners' and deleted stacks' containers and session stacks at the next owner start in its root",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -161,16 +161,23 @@ it.live.skipIf(process.platform === "win32")(
         yield* Effect.sync(() => process.kill(dead.pid, "SIGKILL"));
         yield* deadReleased;
         expect(yield* containers(deadId, dataA)).toEqual([orphan]);
+        // Created after the dead owner exits, so only the next owner's sweep can remove them.
+        const deletedId = `${suffix}${suffix}`;
+        const deletedData = path.join(rootA, deletedId, "data");
+        const deletedOtherData = path.join(path.dirname(path.dirname(dataB)), deletedId, "data");
+        const deleted = yield* createOwnedContainer(deletedId, deletedData);
+        const deletedOtherRoot = yield* createOwnedContainer(deletedId, deletedOtherData);
 
         const sessionId = `session-${suffix}`;
         yield* state.save(saved(sessionId, `${rootA}/session`, "native", "session"));
         const nextId = `next-${suffix}`;
-        yield* state.save(saved(nextId, `${rootA}/next`, "native", "detached"));
+        yield* state.save(saved(nextId, `${rootA}/next`, testEngine, "detached"));
 
         const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
         const swept = yield* Effect.all(
           [
             awaitContainerRemoved(orphan, since),
+            awaitContainerRemoved(deleted, since),
             awaitRemoval(path.join(rootA, sessionId), "state.json"),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],
@@ -199,6 +206,11 @@ it.live.skipIf(process.platform === "win32")(
         expect(yield* containers(deadId, dataB), "another root is never swept").toEqual([
           otherRoot,
         ]);
+        expect(yield* containers(deletedId, deletedData)).toEqual([]);
+        expect(
+          yield* containers(deletedId, deletedOtherData),
+          "another root's deleted stack is never swept",
+        ).toEqual([deletedOtherRoot]);
         expect(yield* state.read(deadId), "detached stacks keep their state").toBeDefined();
         expect(yield* state.read(sessionId)).toBeUndefined();
         expect(yield* state.leased(deadId), "the sweeper released the dead stack").toBe(false);
@@ -252,4 +264,121 @@ it.live(
         expect(yield* fs.exists(path.join(root, "old-kept", "data"))).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("sweeps deleted stacks of its own root only, on the engine its owner pinned", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs
+        .makeTempDirectoryScoped({ prefix: "stack-sweep-deleted-" })
+        .pipe(Effect.flatMap(fs.realPath));
+      const real = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      );
+      const swept: Array<string> = [];
+      const state: StackNamespace.Interface = {
+        ...real,
+        acquireLease: (id) =>
+          Effect.suspend(() => {
+            swept.push(id);
+            return real.acquireLease(id);
+          }),
+      };
+      const deletedId = "d".repeat(64);
+      const heldId = "a".repeat(64);
+      const foreignId = "f".repeat(64);
+      const deletedData = path.join(stateRoot, deletedId, "data");
+      const engine = engineStub([
+        { id: "owner", stackId: "owner", root: path.join(stateRoot, "owner", "data") },
+        { id: "deleted", stackId: deletedId, root: deletedData },
+        { id: "deleted-sibling", stackId: deletedId, root: deletedData },
+        { id: "held", stackId: heldId, root: path.join(stateRoot, heldId, "data") },
+        {
+          id: "foreign",
+          stackId: foreignId,
+          root: path.join(path.dirname(stateRoot), "other", foreignId, "data"),
+        },
+        { id: "escape", stackId: "../escape", root: path.join(stateRoot, "..", "escape", "data") },
+        "malformed",
+      ]);
+      const pinned: EngineTarget = {
+        engine: "docker",
+        argv: ["--context", "pinned"],
+        daemonId: "pinned-daemon",
+      };
+      const cacheRoot = path.join(stateRoot, "cache");
+      yield* Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      ).acquireLease(heldId);
+
+      yield* sweepOrphans({
+        state,
+        stateRoot,
+        cacheRoot,
+        ownerId: "owner",
+        engineTarget: pinned,
+      }).pipe(Effect.provide(engine.layer));
+
+      expect(swept, "only deleted stacks of this root are attempted").toEqual([deletedId, heldId]);
+      expect(
+        engine.remaining("docker").map(({ id }) => id),
+        "the held stack's containers stay",
+      ).toEqual(["owner", "held", "foreign", "escape"]);
+      expect(engine.commands).toContainEqual([
+        "docker",
+        ...pinned.argv,
+        "ps",
+        "--all",
+        "--quiet",
+        "--no-trunc",
+        "--filter",
+        `label=com.supabase.stack=${deletedId}`,
+        "--filter",
+        `label=com.supabase.stack-root=${deletedData}`,
+      ]);
+      expect(
+        engine.commands.filter(([command]) => command === "podman"),
+        "only the owner's engine is queried",
+      ).toEqual([]);
+      expect(
+        yield* fs.exists(path.join(stateRoot, deletedId)),
+        "the sweeper's lease leaves no directory behind",
+      ).toBe(false);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("does not reclaim a stack that is registered as a deleted one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs
+        .makeTempDirectoryScoped({ prefix: "stack-reclaim-registered-" })
+        .pipe(Effect.flatMap(fs.realPath));
+      const state = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      );
+      const id = "b".repeat(64);
+      const engine = engineStub([
+        { id: "live", stackId: id, root: path.join(stateRoot, id, "data") },
+      ]);
+      yield* state.save(saved(id, path.join(stateRoot, "project"), "docker", "detached"));
+
+      const outcome = yield* reclaimDeletedStack({
+        state,
+        stateRoot,
+        id,
+        engineTarget: { engine: "docker", argv: [], daemonId: "stub" },
+      }).pipe(Effect.provide(engine.layer));
+
+      expect(outcome).toBe("registered");
+      expect(engine.remaining("docker").map(({ id: removed }) => removed)).toEqual(["live"]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

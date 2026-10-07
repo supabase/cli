@@ -21,8 +21,8 @@ Entries contain `id`, `project_root`, `name`, `branch_context`, `runtime` (nativ
 docker, or podman), and `owner` (reachable or unavailable). Owner availability is
 not service lifecycle or health. Entries sort by project root, name, then ID.
 Text shows NAME, PROJECT, BRANCH, RUNTIME, OWNER, and a compact ID. An empty
-registry prints `No managed stacks found.` Use `--output-format json` to obtain
-the full ID required by `--stack-id`; the text column shows only a prefix.
+registry prints `No managed stacks found.` The text column shows an ID prefix that
+`--stack-id` accepts while it stays unique; `--output-format json` shows full IDs.
 
 JSON emits `{ "stacks": [...], "message": "" }`; stream-json wraps that data in
 one result event. State entries that cannot be read or decoded are skipped with a warning on

@@ -7,6 +7,7 @@ import { CommandInvocation } from "./Commands.ts";
 import { StackKeysInput } from "./StackNamespace.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import type { PortConflict } from "./Ports.ts";
+import { LogPosition, LogRecord } from "./host/LogRecord.ts";
 
 const Outcome = Schema.Struct({
   id: Schema.String,
@@ -135,11 +136,9 @@ export const Definition = Schema.Struct({ id: Schema.String, creation: ServiceCr
 export interface Definition extends Schema.Schema.Type<typeof Definition> {}
 
 const Instance = { id: Schema.String };
+/** How many of the latest log records a read starts with. */
+const LogTail = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const SnapshotScope = Schema.Literals(snapshotScopes);
-const Log = Schema.Struct({
-  stream: Schema.Literals(["stdout", "stderr"]),
-  bytes: Schema.Uint8ArrayFromBase64,
-});
 
 export const CommandEvent = Schema.TaggedUnion({
   Attached: { attachmentId: Schema.String },
@@ -176,7 +175,18 @@ export const OwnerRpc = RpcGroup.make(
     error: StackError,
     stream: true,
   }),
-  Rpc.make("logs", { payload: Instance, success: Log, error: StackError, stream: true }),
+  Rpc.make("readLogs", {
+    payload: {
+      ...Instance,
+      from: Schema.optionalKey(LogPosition),
+      since: Schema.optionalKey(Schema.String),
+      tail: Schema.optionalKey(LogTail),
+      follow: Schema.Boolean,
+    },
+    success: LogRecord,
+    error: StackError,
+    stream: true,
+  }),
   Rpc.make("credentials", {
     payload: { ...Instance, from: Schema.Literals(["host", "runtime"]) },
     success: Schema.Record(Schema.String, Schema.String),

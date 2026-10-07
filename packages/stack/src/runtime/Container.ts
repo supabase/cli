@@ -12,6 +12,7 @@ import {
   Fiber,
   Option,
   Path,
+  PlatformError,
   Ref,
   Schedule,
   Schema,
@@ -101,6 +102,25 @@ const errorFor = (operation: string, cause: unknown): ContainerError =>
 const testRunLabelArgs = readTestRunLabelArgs.pipe(
   Effect.mapError((cause) => errorFor("config", cause)),
 );
+
+/**
+ * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
+ * that rejects the caller (for example on permissions), so callers can leave work for a retry
+ * instead of surfacing a hard failure.
+ */
+export const engineUnreachable = (cause: unknown): boolean => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return (
+    (cause instanceof Object &&
+      "cause" in cause &&
+      cause.cause instanceof PlatformError.PlatformError &&
+      cause.cause.reason._tag === "NotFound" &&
+      cause.cause.reason.method === "spawn") ||
+    /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)|unable to connect to podman socket:[^\n]*the system cannot find the file specified/iu.test(
+      message,
+    )
+  );
+};
 
 const rateLimited = (error: ContainerError) =>
   /toomanyrequests|too many requests|rate limit|rate exceeded/iu.test(error.message);
@@ -1155,3 +1175,34 @@ export const removeStackContainers = Effect.fn("Container.removeStackContainers"
     return remaining;
   },
 );
+
+const decodeStackLabels = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
+);
+
+/**
+ * Lists the stack id and data-root labels of every stack-labelled container on the pinned
+ * engine, for finding stacks that no registration accounts for. A line that is not a label pair
+ * is skipped.
+ */
+export const listStackLabels = Effect.fn("Container.listStackLabels")(function* (
+  target: EngineTarget,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = yield* runRaw(spawner, target.engine, [
+    ...target.argv,
+    "ps",
+    "--all",
+    "--filter",
+    "label=com.supabase.stack",
+    "--format",
+    '[{{json (.Label "com.supabase.stack")}},{{json (.Label "com.supabase.stack-root")}}]',
+  ]);
+  const labels = yield* Effect.forEach(
+    output.split("\n").filter((line) => line.length > 0),
+    (line) => decodeStackLabels(line).pipe(Effect.option),
+  );
+  const containers = labels.flatMap(Option.toArray).map(([stackId, root]) => ({ stackId, root }));
+  yield* Effect.annotateCurrentSpan("container.count", containers.length);
+  return containers;
+});

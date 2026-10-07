@@ -3,6 +3,7 @@ import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
 import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
 import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
+import { stackLogsRoot } from "./Paths.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
@@ -181,6 +182,11 @@ export const make = (
     });
     const remove = Effect.fn("Namespace.Registry.remove")(function* (id: string) {
       yield* checkId(id);
+      // Logs go before the state file, so a stack whose logs remain stays listed for another removal.
+      yield* fs.remove(stackLogsRoot(path, root, id), { recursive: true, force: true }).pipe(
+        retryTransientRead(options.platform),
+        Effect.mapError((cause) => namespaceError("remove", cause)),
+      );
       for (const file of [
         statePath(id),
         path.join(stackRoot(id), OWNER_FILE),

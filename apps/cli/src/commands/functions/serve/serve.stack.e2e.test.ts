@@ -308,11 +308,7 @@ describe("functions serve (stack e2e)", () => {
             false,
           );
           const composition = yield* stack.composition.describe;
-          const database = services.find((instance) => instance.service === "database");
-          if (database === undefined) return yield* Effect.die("Database missing");
-          const hostDatabaseUrl = (yield* database.credentials()).databaseUrl;
-          if (hostDatabaseUrl === undefined) return yield* Effect.die("Database URL missing");
-          const startedAt = yield* postmasterStartTime(stack, hostDatabaseUrl);
+          const startedAt = yield* postmasterStartTime(stack, databaseUrl);
           const child = yield* serve(root, home);
           expect(yield* payload(apiUrl, true)).toEqual({
             value: null,
@@ -330,7 +326,7 @@ describe("functions serve (stack e2e)", () => {
           expect((yield* invoke(apiUrl, false)).status).toBe(404);
           const http = yield* HttpClient.HttpClient;
           expect((yield* http.get(`${apiUrl}/rest/v1/`)).status).toBe(200);
-          expect(yield* postmasterStartTime(stack, hostDatabaseUrl)).toBe(startedAt);
+          expect(yield* postmasterStartTime(stack, databaseUrl)).toBe(startedAt);
         }).pipe(Effect.provide(layer)),
       { timeout: 360_000 },
     );

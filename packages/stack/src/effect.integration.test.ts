@@ -18,6 +18,7 @@ import {
   create,
   discover,
   find,
+  findDeleted,
   open,
   type DatabaseInstance,
   type ServiceInstance,
@@ -31,8 +32,8 @@ import * as PromiseApi from "./index.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { assertOwnerExited, watchLeaseRelease } from "../tests/owner.ts";
 import { foreignRelease } from "../tests/release-owner-fixture.ts";
+import { engineStub } from "../tests/docker-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
-import { watchEntry } from "../tests/watch-entry.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
@@ -514,6 +515,33 @@ it.live("rejects an owner of another release while stop and destroy still reach 
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("discovers only the stacks whose id starts with the given prefix", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-api-prefix-" });
+    const stateRoot = `${root}/state`;
+    const locations = { projectRoot: root, stateRoot, cacheRoot: `${root}/cache` } as const;
+    const first = yield* create({ ...locations, name: "first", runtime: "native" });
+    const second = yield* create({ ...locations, name: "second", runtime: "native" });
+    const prefix = first.id.slice(0, 12);
+    expect(second.id.startsWith(prefix), "the prefix selects one of two stacks").toBe(false);
+    yield* fs.makeDirectory(`${stateRoot}/${prefix}-broken`);
+    yield* fs.writeFileString(`${stateRoot}/${prefix}-broken/state.json`, "{broken");
+    yield* fs.makeDirectory(`${stateRoot}/other-broken`);
+    yield* fs.writeFileString(`${stateRoot}/other-broken/state.json`, "{broken");
+
+    const reported: Array<string> = [];
+    const selected = yield* discover({
+      stateRoot,
+      idPrefix: prefix,
+      onInvalidState: (id) => Effect.sync(() => reported.push(id)),
+    });
+
+    expect(selected.map(({ definition }) => definition.id)).toEqual([first.id]);
+    expect(reported, "only a prefixed entry is reported as invalid").toEqual([`${prefix}-broken`]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.live(
   "treats a sweeper's hold as no owner, refuses to stop, and starts one once the sweep ends",
   () =>
@@ -590,6 +618,158 @@ it.live("reclaims a registered stack's leftovers when stopping without an owner"
 
     expect(yield* state.read(id)).toBeUndefined();
     expect(yield* fs.exists(leftover)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+const deletedId = "d".repeat(64);
+const strandedId = "e".repeat(64);
+const foreignId = "f".repeat(64);
+
+/** A state root with one registered stack, and the containers each stub engine starts with. */
+const deletedStackRoot = Effect.fn("StackTest.deletedStackRoot")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs
+    .makeTempDirectoryScoped({ prefix: "stack-find-deleted-" })
+    .pipe(Effect.flatMap(fs.realPath));
+  const locations = { stateRoot: `${root}/state`, cacheRoot: `${root}/cache` };
+  const registered = yield* create({ ...locations, projectRoot: root, runtime: "native" });
+  const containers = [
+    {
+      id: "registered",
+      stackId: registered.id,
+      root: `${locations.stateRoot}/${registered.id}/data`,
+    },
+    { id: "deleted", stackId: deletedId, root: `${locations.stateRoot}/${deletedId}/data` },
+    { id: "elsewhere", stackId: deletedId, root: `${root}/other/${deletedId}/data` },
+    { id: "stranded", stackId: strandedId, root: `${locations.stateRoot}/${strandedId}/data` },
+    { id: "foreign", stackId: foreignId, root: `${root}/other/${foreignId}/data` },
+  ];
+  return { fs, root, locations, registered, containers };
+});
+
+it.live("finds a deleted stack only by the containers left in its own state root", () =>
+  Effect.gen(function* () {
+    const { fs, root, locations, registered, containers } = yield* deletedStackRoot();
+    yield* fs.makeDirectory(`${locations.stateRoot}/${strandedId}/data`, { recursive: true });
+    const engine = engineStub(containers, {
+      podman: "Cannot connect to Podman: connection refused",
+    });
+    const found = (id: string, stateRoot = locations.stateRoot) =>
+      findDeleted({ ...locations, stateRoot, id }).pipe(Effect.provide(engine.layer));
+
+    expect(Option.isNone(yield* found(registered.id)), "a registered stack").toBe(true);
+    expect(Option.isNone(yield* found(foreignId)), "another root's stack").toBe(true);
+    expect(Option.isSome(yield* found(strandedId)), "a directory without its registration").toBe(
+      true,
+    );
+    const file = `${root}/file`;
+    yield* fs.writeFileString(file, "");
+    expect((yield* Effect.flip(found(deletedId, file))).operation, "an unusable state root").toBe(
+      "find",
+    );
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("removes nothing for a stack whose registration is unreadable", () =>
+  Effect.gen(function* () {
+    const { fs, locations, containers } = yield* deletedStackRoot();
+    yield* fs.makeDirectory(`${locations.stateRoot}/${deletedId}`);
+    yield* fs.writeFileString(`${locations.stateRoot}/${deletedId}/state.json`, "{broken");
+    const engine = engineStub(containers);
+
+    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engine.layer),
+      Effect.flip,
+    );
+
+    expect(failure.operation).toBe("find");
+    expect(engine.remaining("docker")).toEqual(containers);
+    expect(engine.remaining("podman")).toEqual(containers);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("reports an engine that cannot list or remove a deleted stack's containers", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const destroyOn = (engine: ReturnType<typeof engineStub>) =>
+      findDeleted({ ...locations, id: deletedId }).pipe(
+        Effect.provide(engine.layer),
+        Effect.flatMap((deleted) => Option.getOrThrow(deleted).destroy),
+        Effect.flip,
+      );
+    const denied = { docker: "permission denied while trying to connect" };
+
+    const unlisted = engineStub(containers, denied);
+    expect(
+      (yield* destroyOn(unlisted)).message,
+      "a failing engine is reported after the other is cleaned",
+    ).toMatch(/^Removed the Podman containers .* Unable to list Docker containers/);
+    expect(unlisted.remaining("podman").map(({ id }) => id)).not.toContain("deleted");
+    const failure = yield* findDeleted({ ...locations, id: deletedId }).pipe(
+      Effect.provide(engineStub([], denied).layer),
+      Effect.flip,
+    );
+    expect(failure.message, "with no match, a refusing engine is reported").toContain(
+      "Unable to list Docker containers",
+    );
+    const stuck = engineStub(containers, { "podman rm": "container is in use" });
+    expect((yield* destroyOn(stuck)).message, "a container that cannot be removed").toContain(
+      "container is in use",
+    );
+    expect(stuck.remaining("podman").map(({ id }) => id)).toContain("deleted");
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("removes a deleted stack's containers from both engines, not another root's", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const engine = engineStub(containers);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
+    );
+
+    expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
+    const kept = containers.filter(({ id }) => id !== "deleted");
+    expect(engine.remaining("docker")).toEqual(kept);
+    expect(engine.remaining("podman")).toEqual(kept);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("leaves a deleted stack's containers to a registration that returns during destroy", () =>
+  Effect.gen(function* () {
+    const { fs, locations, registered, containers } = yield* deletedStackRoot();
+    const statePath = `${locations.stateRoot}/${registered.id}/state.json`;
+    yield* fs.rename(statePath, `${statePath}.aside`);
+    const reregister = yield* Effect.cached(
+      fs.rename(`${statePath}.aside`, statePath).pipe(Effect.orDie),
+    );
+    const racing = engineStub(containers, {}, (command) =>
+      command[0] === "docker" && command.includes("--quiet") ? reregister : Effect.void,
+    );
+    const unregistered = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: registered.id }).pipe(Effect.provide(racing.layer)),
+    );
+
+    expect((yield* Effect.flip(unregistered.destroy)).message).toContain("was registered again");
+    expect(racing.remaining("podman"), "podman is left to the registration").toEqual(containers);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.live("leaves a deleted stack's containers alone while another process holds its lease", () =>
+  Effect.gen(function* () {
+    const { locations, containers } = yield* deletedStackRoot();
+    const state = yield* StackNamespace.Service.pipe(
+      Effect.provide(StackNamespace.layer({ root: locations.stateRoot })),
+    );
+    yield* state.acquireLease(deletedId);
+    const engine = engineStub(containers);
+    const deleted = Option.getOrThrow(
+      yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
+    );
+
+    expect((yield* Effect.flip(deleted.destroy)).message).toContain("holds this stack's lease");
+    expect(engine.remaining("docker")).toEqual(containers);
+    expect(engine.remaining("podman")).toEqual(containers);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -1152,133 +1332,4 @@ it.live("plans a project's own URL for an input whose supplying member is absent
       destroyTestStack(stack),
     );
   }).pipe(Effect.scoped, Effect.provide(layer)),
-);
-
-it.live(
-  "lets a dependent finish its final flush through the stack proxy while the stack stops",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-stop-order-" });
-        const options = {
-          projectRoot: root,
-          stateRoot: `${root}/state`,
-          cacheRoot: testArtifactCacheRoot,
-          runtime: "native",
-        } satisfies Parameters<typeof create>[0];
-        const secret = "stop-order-secret-with-at-least-thirty-two-characters";
-        const seenDirectory = `${root}/seen`;
-        yield* fs.makeDirectory(seenDirectory, { recursive: true });
-        // The analytics batch never fills or times out, so Vector's shutdown flush is the only
-        // request it sends; the file sink shows when Vector has an event to flush.
-        const vectorConfigPath = `${root}/vector.yaml`;
-        yield* fs.writeFileString(
-          vectorConfigPath,
-          [
-            "sources:",
-            "  demo:",
-            "    type: demo_logs",
-            "    format: json",
-            "    interval: 0.2",
-            "transforms:",
-            "  marked:",
-            "    type: remap",
-            "    inputs: [demo]",
-            "    source: '.event_message = \"stop-order\"'",
-            "sinks:",
-            "  seen:",
-            "    type: file",
-            "    inputs: [marked]",
-            `    path: "${seenDirectory}/events.log"`,
-            "    encoding:",
-            "      codec: json",
-            "  analytics:",
-            "    type: http",
-            "    inputs: [marked]",
-            '    uri: "${LOGFLARE_URL}/api/logs?source_name=postgres.logs"',
-            "    method: post",
-            "    encoding:",
-            "      codec: json",
-            "    request:",
-            "      headers:",
-            '        x-api-key: "${LOGFLARE_PRIVATE_ACCESS_TOKEN}"',
-            "    batch:",
-            "      max_events: 100000",
-            "      timeout_secs: 3600",
-            "    healthcheck: false",
-            "",
-          ].join("\n"),
-        );
-        const stack = yield* create(options);
-        yield* Effect.addFinalizer(() => destroyTestStack(stack));
-        const services = yield* stack.composition.supabase(
-          [
-            {
-              service: "database",
-              config: {
-                version: "17",
-                databasePassword: Redacted.make("stop-order-password"),
-                jwtSecret: Redacted.make(secret),
-                jwtExpiry: 3600,
-              },
-              endpoints: { sql: { port: "auto" } },
-            },
-            {
-              service: "analytics",
-              config: { backend: "postgres", apiKey: secret },
-              endpoints: { http: { port: "auto" } },
-            },
-            {
-              service: "vector",
-              config: { apiKey: secret, configPath: vectorConfigPath },
-              endpoints: { http: { port: "auto" } },
-            },
-          ],
-          { eager: true, keys: { gotrueJwtKeys: "[]", publicSigningKeys: "[]" } },
-        );
-        const vector = services.find((instance) => instance.service === "vector");
-        if (vector === undefined) return yield* Effect.die("vector service missing");
-
-        const shutDownGracefully = yield* vector.logs.pipe(
-          Stream.map(({ bytes }) => bytes),
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.filter((line) => line.includes("All components shut down gracefully")),
-          Stream.runHead,
-          // The log stream fails with the owner's exit, which a forced Vector kill delays.
-          Effect.orElseSucceed(() => Option.none<string>()),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        const analytics = services.find((instance) => instance.service === "analytics");
-        if (analytics === undefined) return yield* Effect.die("analytics service missing");
-        // Logflare logs this only once its SIGTERM wait ends, which a forced kill pre-empts.
-        const analyticsStopped = yield* analytics.logs.pipe(
-          Stream.map(({ bytes }) => bytes),
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.filter((line) => line.includes("grace period reached, stopping the app")),
-          Stream.runHead,
-          Effect.orElseSucceed(() => Option.none<string>()),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        const eventRead = yield* watchEntry(seenDirectory, "events.log", true);
-        yield* stack.composition.start;
-        yield* eventRead.pipe(Effect.timeout("60 seconds"));
-        yield* stack.stop.pipe(Effect.timeout("60 seconds"));
-
-        const shutdown = yield* Fiber.join(shutDownGracefully).pipe(Effect.timeout("10 seconds"));
-        expect(Option.isSome(shutdown), "vector finished its flush instead of being killed").toBe(
-          true,
-        );
-        const analyticsShutdown = yield* Fiber.join(analyticsStopped).pipe(
-          Effect.timeout("10 seconds"),
-        );
-        expect(
-          Option.isSome(analyticsShutdown),
-          "analytics stopped on its own instead of being killed",
-        ).toBe(true);
-      }),
-    ).pipe(Effect.provide(layer)),
-  { timeout: 300_000 },
 );

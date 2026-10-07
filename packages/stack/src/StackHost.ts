@@ -18,7 +18,6 @@ import {
   Fiber,
   Layer,
   Option,
-  PlatformError,
   Queue,
   Ref,
   Scope,
@@ -44,7 +43,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
-import { makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
+import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
@@ -83,25 +82,6 @@ const hostError = (operation: string, cause: unknown, reason?: "runtime-unavaila
     cause,
     ...(reason === undefined ? {} : { reason }),
   });
-
-/**
- * Matches an engine CLI that is missing or reports a daemon that is not listening, never one
- * that rejects the caller (for example on permissions), so `destroy`/`shutdown` (`effect.ts`)
- * know to leave a stack registered for retry instead of surfacing a hard failure.
- */
-const engineUnreachableAtStartup = (cause: unknown): boolean => {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return (
-    (cause instanceof Object &&
-      "cause" in cause &&
-      cause.cause instanceof PlatformError.PlatformError &&
-      cause.cause.reason._tag === "NotFound" &&
-      cause.cause.reason.method === "spawn") ||
-    /cannot connect to the docker daemon|connection refused|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)|unable to connect to podman socket:[^\n]*the system cannot find the file specified/iu.test(
-      message,
-    )
-  );
-};
 
 /** Binds the owner's loopback control listener on an OS-assigned port. */
 export const bindControl = Effect.fn("StackHost.bindControl")(function* () {
@@ -515,7 +495,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
                     hostError(
                       "startup-cleanup",
                       cause,
-                      engineUnreachableAtStartup(cause) ? "runtime-unavailable" : undefined,
+                      engineUnreachable(cause) ? "runtime-unavailable" : undefined,
                     ),
                   ),
                 );
@@ -524,7 +504,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
               hostError(
                 "startup-cleanup",
                 cause,
-                engineUnreachableAtStartup(cause) ? "runtime-unavailable" : undefined,
+                engineUnreachable(cause) ? "runtime-unavailable" : undefined,
               ),
             ),
           );
@@ -598,6 +578,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
               stateRoot: options.stateRoot,
               cacheRoot: options.cacheRoot,
               ownerId: id,
+              engineTarget,
             }),
           );
           return runtime;

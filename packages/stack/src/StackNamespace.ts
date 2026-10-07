@@ -6,7 +6,8 @@ import { restrictDirectoryToOwner } from "./runtime/postgres-user.ts";
 
 export { NamespaceError } from "./namespace/Capabilities.ts";
 export { LeaseHeldError, LeaseHolder } from "./namespace/Lease.ts";
-export { resolveStackDataRoot } from "./namespace/Paths.ts";
+export { resolveStackDataRoot, stackDataRootLabel, stackLogsRoot } from "./namespace/Paths.ts";
+export { publish } from "./namespace/Publication.ts";
 export {
   SavedStack,
   StackCredentials,

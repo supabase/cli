@@ -661,7 +661,9 @@ it.live(
         const idleSocket = yield* Effect.acquireRelease(openIdleSocket(endpoint.port), (socket) =>
           Effect.sync(() => socket.destroy()),
         );
-        const logs = yield* Effect.forkScoped(client.logs({ id: mail.id }).pipe(Stream.runDrain));
+        const logs = yield* Effect.forkScoped(
+          client.readLogs({ id: mail.id, follow: true }).pipe(Stream.runDrain),
+        );
         const ready = yield* Deferred.make<void>();
         const drainingTool = yield* Effect.forkScoped(
           client

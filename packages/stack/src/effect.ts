@@ -12,6 +12,7 @@ import {
   Path,
   Predicate,
   Ref,
+  Result,
   Scope,
   Schema,
   Semaphore,
@@ -41,9 +42,12 @@ import {
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as StackNamespace from "./StackNamespace.ts";
+import { engineUnreachable, resolveEngineTarget } from "./runtime/Container.ts";
+import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
-import { reclaimStack } from "./Sweep.ts";
+import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
+import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
   type ServiceCreation,
@@ -75,6 +79,7 @@ export { StackIdSchema as StackId } from "./identity/StackId.ts";
 export type { SavedStack } from "./StackNamespace.ts";
 export type { StackCredentials, StackKeysInput };
 export type { Observation } from "./Rpc.ts";
+export type { LogPosition, LogRecord, StackLogRecord };
 export type {
   Command,
   InitializationCommand,
@@ -151,13 +156,22 @@ export interface ServiceInstance<K extends Kind = Kind> {
   readonly prepare: Effect.Effect<void, StackError>;
   readonly status: Effect.Effect<Observation, StackError>;
   readonly followStatus: Stream.Stream<Observation, StackError>;
-  readonly logs: Stream.Stream<
-    { readonly stream: "stdout" | "stderr"; readonly bytes: Uint8Array },
-    StackError
-  >;
+  /** Streams the instance's persisted records through its live owner, which it never launches. */
+  readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
   readonly credentials: (options?: {
     readonly from?: "host" | "runtime";
   }) => Effect.Effect<Readonly<Record<string, string>>, StackError>;
+}
+/** Selects the records {@link ServiceInstance.readLogs} streams. */
+export interface ReadLogsOptions {
+  /** Starts at this record instead of the oldest retained one; the read fails with `tail`. */
+  readonly from?: LogPosition;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+  /** Starts with only this many of the latest records; the read fails with `from`. */
+  readonly tail?: number;
+  /** Keeps streaming new records until interrupted; `false` by default. */
+  readonly follow?: boolean;
 }
 /** Snapshot placement; `cache` is the default. */
 export interface DatabaseSnapshotOptions {
@@ -588,7 +602,16 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
-    logs: stream("logs", (rpc) => rpc.logs({ id })),
+    readLogs: (options) =>
+      stream("readLogs", (rpc) =>
+        rpc.readLogs({
+          id,
+          follow: options?.follow ?? false,
+          ...(options?.from === undefined ? {} : { from: options.from }),
+          ...(options?.since === undefined ? {} : { since: options.since }),
+          ...(options?.tail === undefined ? {} : { tail: options.tail }),
+        }),
+      ),
     credentials: (options) =>
       call("credentials", (rpc) => rpc.credentials({ id, from: options?.from ?? "host" })),
   });
@@ -630,8 +653,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
         return common(id, "mail");
       case "analytics":
         return common(id, "analytics");
-      case "vector":
-        return common(id, "vector");
       case "pooler":
         return common(id, "pooler");
     }
@@ -911,22 +932,35 @@ export const open = Effect.fn("Stack.open")(
   Effect.mapError((cause) => failure("open", cause)),
 );
 
-/** Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries. */
+/**
+ * Lists readable saved stacks with their live owners; `onInvalidState` observes skipped entries.
+ * `idPrefix` limits both, and the owner probes, to stacks whose id starts with it.
+ */
 export const discover = Effect.fn("Stack.discover")(
   function* (
     options: Pick<StackLocations, "stateRoot"> & {
+      readonly idPrefix?: string;
       readonly onInvalidState?: (
         id: string,
         error: StackNamespace.NamespaceError,
       ) => Effect.Effect<void>;
     },
   ) {
+    const selected = (id: string) =>
+      options.idPrefix === undefined || id.startsWith(options.idPrefix);
+    const onInvalidState = options.onInvalidState;
     const state = yield* StackNamespace.Service.pipe(
       Effect.provide(
-        StackNamespace.layer({ root: options.stateRoot, onInvalidState: options.onInvalidState }),
+        StackNamespace.layer({
+          root: options.stateRoot,
+          onInvalidState:
+            onInvalidState === undefined
+              ? undefined
+              : (id, error) => (selected(id) ? onInvalidState(id, error) : Effect.void),
+        }),
       ),
     );
-    const saved = yield* state.list;
+    const saved = (yield* state.list).filter(({ id }) => selected(id));
     return yield* Effect.forEach(
       saved,
       (definition) =>
@@ -959,3 +993,114 @@ export const find = Effect.fn("Stack.find")(
   },
   Effect.mapError((cause) => failure("find", cause)),
 );
+
+/** A stack with no registration that left containers behind; destroying it removes them. */
+export type DeletedStack = Pick<Stack, "id" | "destroy">;
+
+const engineLabel = (engine: "docker" | "podman") => (engine === "docker" ? "Docker" : "Podman");
+
+/**
+ * Selects a stack that is no longer registered while containers labelled with its data root in
+ * `stateRoot` remain on Docker or Podman. Destroying it removes only those containers, never the
+ * stack's data in the shared database volume.
+ */
+export const findDeleted = Effect.fn("Stack.findDeleted")(
+  function* (options: StackLocations & { readonly id: string }) {
+    const services = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    >();
+    const spawner = Context.get(services, ChildProcessSpawner.ChildProcessSpawner);
+    const state = yield* stateFor(options.stateRoot);
+    if ((yield* state.read(options.id)) !== undefined) return Option.none<DeletedStack>();
+    const probes = yield* Effect.forEach(
+      ["docker", "podman"] as const,
+      (engine) =>
+        resolveEngineTarget(spawner, engine).pipe(
+          Effect.flatMap((target) =>
+            leftBehindStackIds(options.stateRoot, target).pipe(
+              Effect.map((ids) => Option.some({ target, found: ids.has(options.id) })),
+            ),
+          ),
+          Effect.catchIf(engineUnreachable, () => Effect.succeedNone),
+          Effect.result,
+          Effect.map((outcome) => ({ engine, outcome })),
+        ),
+      { concurrency: "unbounded" },
+    );
+    const matched = probes.flatMap(({ engine, outcome }) =>
+      Result.isSuccess(outcome) && Option.isSome(outcome.success) && outcome.success.value.found
+        ? [{ engine, target: outcome.success.value.target }]
+        : [],
+    );
+    const [unlisted] = probes.flatMap(({ engine, outcome }) =>
+      Result.isFailure(outcome)
+        ? [
+            `Unable to list ${engineLabel(engine)} containers while looking for stack ${options.id}'s leftovers: ${failureMessage(outcome.failure)}`,
+          ]
+        : [],
+    );
+    if (matched.length === 0) {
+      if (unlisted === undefined) return Option.none<DeletedStack>();
+      return yield* failure("find", unlisted);
+    }
+    const destroy = Effect.gen(function* () {
+      for (const { target } of matched) {
+        const refusal = Match.value(
+          yield* reclaimDeletedStack({
+            state,
+            stateRoot: options.stateRoot,
+            id: options.id,
+            engineTarget: target,
+          }),
+        ).pipe(
+          Match.when("reclaimed", () => undefined),
+          Match.when("held", () => "Another process holds this stack's lease; run destroy again"),
+          Match.when("registered", () => `Stack ${options.id} was registered again during destroy`),
+          Match.exhaustive,
+        );
+        if (refusal !== undefined) return yield* failure("destroy", refusal);
+      }
+      if (unlisted !== undefined)
+        return yield* failure(
+          "destroy",
+          `Removed the ${matched.map(({ target }) => engineLabel(target.engine)).join(" and ")} containers stack ${options.id} left behind. ${unlisted}`,
+        );
+      return { runtimeCleanup: "complete" } as const;
+    }).pipe(
+      Effect.mapError((cause) => failure("destroy", cause)),
+      Effect.provideContext(services),
+    );
+    return Option.some<DeletedStack>({ id: options.id, destroy });
+  },
+  Effect.mapError((cause) => failure("find", cause)),
+);
+
+/** Selects the persisted logs of a stack; its owner does not need to run. */
+export interface StreamStackLogsOptions extends Pick<StackLocations, "stateRoot"> {
+  readonly stackId: string;
+  /** Instance ids to read; every instance with persisted logs by default. */
+  readonly instances?: ReadonlyArray<string>;
+  /** An ISO-8601 timestamp; older records are skipped. */
+  readonly since?: string;
+}
+
+/** Streams a stack's persisted records one instance after another, each in file order. */
+export const streamStackLogs = (
+  options: StreamStackLogsOptions,
+): Stream.Stream<StackLogRecord, StackError, FileSystem.FileSystem | Path.Path> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      if (!Schema.is(StackNamespace.SavedStack.fields.id)(options.stackId))
+        return yield* new StackNamespace.NamespaceError({
+          operation: "identity",
+          message: `Invalid state id: ${options.stackId}`,
+        });
+      const root = StackNamespace.stackLogsRoot(path, options.stateRoot, options.stackId);
+      return streamPersistedLogs({
+        root,
+        ...(options.instances === undefined ? {} : { instances: options.instances }),
+        ...(options.since === undefined ? {} : { since: yield* sinceMillis(options.since) }),
+      });
+    }),
+  ).pipe(Stream.mapError((cause) => failure("streamStackLogs", cause)));

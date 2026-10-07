@@ -85,30 +85,35 @@ export const make = (
     /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
     const isMoved = (error: NamespaceError) =>
       errcode(error.cause, 6922) || errcode(error.cause, 1802);
-    /** Deletes the lease file of an unregistered stack; `false` means it is still in place. */
-    const removeLeaseFile = (id: string) =>
-      options.isRegistered(id).pipe(
-        Effect.flatMap((registered) =>
-          registered ? Effect.void : fs.remove(leasePath(id), { force: true }),
-        ),
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
     const fileIdentity = (file: string) =>
       fs.stat(file).pipe(
         Effect.map((info) => `${info.dev}:${Option.getOrElse(info.ino, () => "")}`),
         Effect.option,
+      );
+    /**
+     * Deletes an unregistered stack's lease file while it is still the file locked as `identity`;
+     * `false` means it is still in place.
+     */
+    const removeLeaseFile = (id: string, identity: string) =>
+      Effect.all([options.isRegistered(id), fileIdentity(leasePath(id))]).pipe(
+        Effect.flatMap(([registered, current]) =>
+          registered || !Option.contains(current, identity)
+            ? Effect.void
+            : fs.remove(leasePath(id), { force: true }),
+        ),
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
       );
 
     const acquireLease = Effect.fn("Namespace.Lease.acquire")(function* (id: string) {
       yield* checkId(id);
       const target = leasePath(id);
       const scope = yield* Scope.Scope;
-      let held = false;
+      let held: string | undefined;
       let unlinked = false;
       yield* Effect.addFinalizer(() =>
-        held
-          ? (unlinked ? Effect.void : removeLeaseFile(id)).pipe(
+        held !== undefined
+          ? (unlinked ? Effect.void : removeLeaseFile(id, held)).pipe(
               Effect.andThen(removeEmptyDirectory(stackRoot(id))),
               Effect.ignore,
             )
@@ -165,10 +170,12 @@ export const make = (
             );
             const after = locked ? yield* fileIdentity(target) : Option.none();
             if (Option.isSome(before) && Option.isSome(after) && before.value === after.value) {
-              held = true;
+              held = after.value;
               yield* Scope.addFinalizer(
                 attemptScope,
-                removeLeaseFile(id).pipe(Effect.map((removed) => (unlinked = removed))),
+                removeLeaseFile(id, after.value).pipe(
+                  Effect.map((removed) => (unlinked = removed)),
+                ),
               );
               return { ownerLog: ownerLog(id) };
             }

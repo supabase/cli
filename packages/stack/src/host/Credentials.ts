@@ -184,7 +184,6 @@ const credentialInputs: {
   pgmeta: {},
   mail: {},
   analytics: {},
-  vector: {},
 };
 
 /** Names the config inputs the owner fills from the stack credential record. */

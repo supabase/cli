@@ -346,6 +346,7 @@ describe("stack start (compiled e2e)", () => {
                       [
                         "stack",
                         "logs",
+                        "--follow",
                         "--stack-id",
                         idText,
                         "--service",
@@ -376,6 +377,12 @@ describe("stack start (compiled e2e)", () => {
                       ),
                     ),
                   ),
+              );
+              // History precedes the follow, whose start is the last printed record.
+              yield* waitForOutput(
+                followed,
+                /"type":"log-entry".*"source":"history"/u,
+                START_TIMEOUT_MS,
               );
               const restarted = yield* runSupabaseEffect(
                 ["stack", "restart", "--stack-id", idText],
@@ -526,28 +533,49 @@ describe("stack start (compiled e2e)", () => {
 
           yield* access(join(databasePath, "data", "PG_VERSION"));
 
-          const stoppedLogs = yield* runSupabaseEffect(
-            [
-              "stack",
-              "logs",
-              "--stack-id",
-              idText,
-              "--service",
-              "database",
-              "--output-format",
-              "stream-json",
-            ],
-            {
-              cwd: projectRoot,
-              home: homeDir.dir,
-              env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
-              exitTimeoutMs: CLEANUP_TIMEOUT_MS,
-            },
+          const stoppedLogsArgs = [
+            "stack",
+            "logs",
+            "--stack-id",
+            idText,
+            "--service",
+            "database",
+            "--output-format",
+            "stream-json",
+          ];
+          const stoppedOptions = {
+            cwd: projectRoot,
+            home: homeDir.dir,
+            env: { SUPABASE_EXPERIMENTAL_STACK: "1" },
+            exitTimeoutMs: CLEANUP_TIMEOUT_MS,
+          };
+          const stoppedHistory = yield* runSupabaseEffect(stoppedLogsArgs, stoppedOptions);
+          expect(
+            stoppedHistory.exitCode,
+            `stdout:\n${stoppedHistory.stdout}\nstderr:\n${stoppedHistory.stderr}`,
+          ).toBe(0);
+          const historyEvents = yield* Effect.forEach(
+            stoppedHistory.stdout
+              .trim()
+              .split("\n")
+              .filter((line) => line.length > 0),
+            (line) => Schema.decodeEffect(Schema.fromJsonString(FollowEventSchema))(line),
           );
-          expect(stoppedLogs.exitCode).not.toBe(0);
-          expect(`${stoppedLogs.stdout}\n${stoppedLogs.stderr}`).toMatch(
-            /unavailable|not running|must be running/iu,
+          expect(
+            historyEvents.some(
+              (event) =>
+                event.type === "log-entry" &&
+                event.source === "history" &&
+                event.service === "database",
+            ),
+          ).toBe(true);
+          const stoppedFollow = yield* runSupabaseEffect(
+            [...stoppedLogsArgs, "--follow"],
+            stoppedOptions,
           );
+          expect(stoppedFollow.exitCode).not.toBe(0);
+          expect(stoppedFollow.stdout).not.toContain("log-entry");
+          expect(`${stoppedFollow.stdout}\n${stoppedFollow.stderr}`).toMatch(/not running/iu);
 
           yield* destroyStack(homeDir.dir, idText);
           stackDestroyed = true;

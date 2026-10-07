@@ -23,6 +23,7 @@ import { create, discover } from "../effect.ts";
 import { destroyTestStack } from "../../tests/stack-cleanup.ts";
 import { errorCode } from "./Capabilities.ts";
 import * as StackNamespace from "../StackNamespace.ts";
+import * as Paths from "./Paths.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -342,6 +343,93 @@ describe("durable registry", () => {
     ),
   );
 
+  it.live("removes persisted logs with the stack, retrying a Windows sharing violation", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-remove-logs-" });
+        const held = yield* Ref.make(2);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (
+                target.endsWith(`${path.sep}logs`) &&
+                (yield* Ref.getAndUpdate(held, (n) => n - 1)) > 0
+              )
+                return yield* PlatformError.systemError({
+                  _tag: "Busy",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                  cause: Object.assign(new Error("open by a reader"), { code: "EBUSY" }),
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          StackNamespace.layer({ root, platform: "win32" }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        const logs = Paths.stackLogsRoot(path, root, initial.id);
+        const segment = path.join(logs, "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        yield* store.remove(initial.id);
+
+        expect(yield* fs.exists(logs)).toBe(false);
+        expect(yield* store.read(initial.id)).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("keeps a stack listed when its logs cannot be removed, so a second removal retries", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-remove-failed-" });
+        const denied = yield* Ref.make(true);
+        const injectedFs = Layer.succeed(FileSystem.FileSystem, {
+          ...fs,
+          remove: (target: string, options?: Parameters<typeof fs.remove>[1]) =>
+            Effect.gen(function* () {
+              if (target.endsWith(`${path.sep}logs`) && (yield* Ref.get(denied)))
+                return yield* PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                });
+              return yield* fs.remove(target, options);
+            }),
+        });
+        const store = yield* Layer.build(
+          StackNamespace.layer({ root }).pipe(Layer.provide(injectedFs)),
+        ).pipe(Effect.map((context) => Context.get(context, StackNamespace.Service)));
+        yield* store.save(initial);
+        const logs = Paths.stackLogsRoot(path, root, initial.id);
+        const segment = path.join(logs, "auth", "instance", "0000000001.log");
+        yield* fs.makeDirectory(path.dirname(segment), { recursive: true });
+        yield* fs.writeFileString(segment, "record\n");
+
+        const failed = yield* store.remove(initial.id).pipe(Effect.exit);
+        const listed = (yield* store.list).map(({ id }) => id);
+        const logsKept = yield* fs.exists(segment);
+        yield* Ref.set(denied, false);
+        yield* store.remove(initial.id);
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(listed).toEqual([initial.id]);
+        expect(logsKept).toBe(true);
+        expect(yield* store.read(initial.id)).toBeUndefined();
+        expect(yield* fs.exists(logs)).toBe(false);
+      }),
+    ),
+  );
+
   it.live.skipIf(process.platform === "win32")(
     "restricts the state root to its owner while keeping a traverse-only grant",
     () =>
@@ -582,6 +670,30 @@ describe("stack owner lease", () => {
         yield* Scope.close(holderScope, Exit.void);
       }),
     ),
+  );
+
+  // Windows refuses to delete a stack directory while its lease file is open.
+  it.live.skipIf(process.platform === "win32")(
+    "keeps a successor's lease file when a holder of a removed stack releases",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-successor-" });
+          const state = yield* makeTestState(root);
+          const first = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(first, Exit.void));
+          yield* state.acquireLease("gone").pipe(Scope.provide(first));
+          yield* fs.remove(`${root}/gone`, { recursive: true });
+
+          const successor = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(successor, Exit.void));
+          yield* state.acquireLease("gone").pipe(Scope.provide(successor));
+          yield* Scope.close(first, Exit.void);
+
+          expect(yield* state.leased("gone")).toBe(true);
+        }),
+      ),
   );
 
   it.live("reports a free lease without creating a lease file", () =>

@@ -1,33 +1,29 @@
 # Default all repository changes to the CLI team.
 * @supabase/cli
 
-# Dependabot-only dependency surfaces. These ownerless rules override the
-# catch-all above so CI-green Dependabot PRs can be auto-approved and merged.
-/.github/workflows/*.yml
-**/package.json
-**/go.mod
-**/go.sum
-/apps/cli/src/shared/services/Dockerfile
-/pnpm-lock.yaml
-/pnpm-workspace.yaml
+# Files that bots update. Either owner satisfies code-owner review; `supabase-oss` approves only
+# bot-opened PRs, through bot-pr-auto-merge.yml.
+/.github/workflows/*.yml @supabase/cli @supabase-oss
+/package.json @supabase/cli @supabase-oss
+/apps/*/package.json @supabase/cli @supabase-oss
+/packages/*/package.json @supabase/cli @supabase-oss
+/tools/*/package.json @supabase/cli @supabase-oss
+/pnpm-lock.yaml @supabase/cli @supabase-oss
+/pnpm-workspace.yaml @supabase/cli @supabase-oss
+/apps/cli-go/go.mod @supabase/cli @supabase-oss
+/apps/cli-go/go.sum @supabase/cli @supabase-oss
+/apps/cli-go/pkg/go.mod @supabase/cli @supabase-oss
+/apps/cli-go/pkg/go.sum @supabase/cli @supabase-oss
+/apps/cli/src/shared/services/Dockerfile @supabase/cli @supabase-oss
+/apps/cli-go/pkg/config/templates/Dockerfile @supabase/cli @supabase-oss
+/packages/stack/src/Artifacts.ts @supabase/cli @supabase-oss
+/apps/cli-go/api/v1-openapi.yaml @supabase/cli @supabase-oss
+/apps/cli-go/pkg/api/*.gen.go @supabase/cli @supabase-oss
+/packages/api/src/generated/ @supabase/cli @supabase-oss
+/packages/api/scripts/openapi-source.json @supabase/cli @supabase-oss
 
-# The AI review pipeline (workflow, supporting scripts, and prompts/schemas)
-# executes trusted checkout code with API keys and can react to arbitrary
-# comments/PRs; github-scripts-ci.yml tests and type-checks that same code —
-# keep all of it under maintainer review rather than the ownerless Dependabot
-# workflow-files rule above (which would otherwise un-own the two *.yml
-# files here). Last matching pattern wins, so these restore/reassert
-# ownership explicitly, even where the catch-all above already covers a path.
+# These run trusted checkout code with secrets or deploy with admin credentials, so bot PRs
+# touching them still need a maintainer. Last matching pattern wins.
 /.github/workflows/ai-review.yml @supabase/cli
 /.github/workflows/github-scripts-ci.yml @supabase/cli
-/.github/scripts/ai-review/** @supabase/cli
-/.github/ai-review/** @supabase/cli
-
-# The cli-artifacts infra workflow deploys with account-admin credentials from develop;
-# keep it under maintainer review rather than the ownerless workflow-files rule above.
 /.github/workflows/cli-artifacts-infra.yml @supabase/cli
-
-# Generated code. These ownerless rules override the catch-all above so
-# CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
-/apps/cli-go/pkg/api/*.gen.go
-/packages/api/src/generated/
