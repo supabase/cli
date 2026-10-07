@@ -94,27 +94,29 @@ const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   );
 };
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
 /**
- * Names the config setting behind a contested public port. A conflicting endpoint key ends in its
- * endpoint name (the shared API listener is keyed `api`); only a name that maps to one setting
- * across the requested services gets a suggestion.
+ * Names the config setting behind a contested public port: the one configured endpoint pinned to
+ * that port number. An automatic port, or a port shared by several settings, gets no suggestion.
  */
 const portConflictSuggestion = (
   conflict: StackError["conflict"],
-  services: ReadonlyArray<{ readonly service: string }>,
+  requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }>,
 ): string | undefined => {
   if (conflict === undefined) return undefined;
-  const settings =
-    conflict.endpoint === "api"
-      ? [stackEndpointSetting("rest", "http")]
-      : services.map(({ service }) =>
-          stackEndpointSetting(
-            service,
-            conflict.endpoint.slice(conflict.endpoint.indexOf(":") + 1),
-          ),
-        );
-  const [setting, ...rest] = settings.filter((candidate) => candidate !== undefined);
-  return setting === undefined || rest.some(({ envVar }) => envVar !== setting.envVar)
+  const settings = new Map<string, StackEndpointSetting>();
+  for (const { service, endpoints } of requested) {
+    if (!isRecord(endpoints)) continue;
+    for (const [name, intent] of Object.entries(endpoints)) {
+      const setting = stackEndpointSetting(service, name);
+      if (setting !== undefined && isRecord(intent) && intent.port === conflict.port)
+        settings.set(setting.envVar, setting);
+    }
+  }
+  const [setting, ...rest] = settings.values();
+  return setting === undefined || rest.length > 0
     ? undefined
     : `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
 };
@@ -122,12 +124,13 @@ const portConflictSuggestion = (
 const stackError = (
   cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
   members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
+  requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
-  const suggestion = portConflictSuggestion(cause.conflict, members);
+  const suggestion = portConflictSuggestion(cause.conflict, requested);
   return new StackCommandStartError({
     reason: "unknown",
     message: cause.message,
@@ -209,9 +212,6 @@ const sameKinds = (
 const studioNeedsRest = (requestedServices: ReadonlyArray<{ readonly service: string }>): boolean =>
   requestedServices.some(({ service }) => service === "studio") &&
   !requestedServices.some(({ service }) => service === "rest");
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null;
 
 const endpointPortLabel = (endpoints: unknown, name: string): string => {
   const intent = isRecord(endpoints) ? endpoints[name] : undefined;
@@ -812,7 +812,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError((error) => stackError(error, requested)),
+        Effect.mapError((error) => stackError(error, requested, requested)),
       );
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
@@ -936,7 +936,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.mapError((error) => stackError(error, members)),
+      Effect.mapError((error) => stackError(error, members, requested)),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);
