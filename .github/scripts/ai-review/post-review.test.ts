@@ -1000,7 +1000,6 @@ describe("post flow via injected ReviewIo", () => {
 
   function makeReviewIo(
     opts: {
-      diff?: string;
       reviews?: MarkedEntry[];
       comments?: MarkedEntry[];
       postReviewStatuses?: number[];
@@ -1023,7 +1022,6 @@ describe("post flow via injected ReviewIo", () => {
     let postReviewCalls = 0;
 
     const io: ReviewIo = {
-      fetchPrDiff: () => Promise.resolve(opts.diff ?? ""),
       listReviews: () => {
         calls.push("listReviews");
         if (opts.failSupersede) {
@@ -1092,7 +1090,6 @@ describe("post flow via injected ReviewIo", () => {
     };
 
     const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       reviews: [priorMarkerReview, humanReview],
       comments: [
         priorMarkerComment,
@@ -1103,7 +1100,7 @@ describe("post flow via injected ReviewIo", () => {
     });
 
     const review = makeMergedReview({ findings: [] });
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(updatedReviews).toEqual([{ reviewId: 1, body: supersededBody(priorMarkerReview.body) }]);
     expect(updatedComments).toEqual([
@@ -1116,11 +1113,9 @@ describe("post flow via injected ReviewIo", () => {
 
   test("the freshly posted review is never swept into its own supersede pass", async () => {
     const review = makeMergedReview({ findings: [] });
-    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
-    });
+    const { io, updatedReviews, updatedComments, postedReviews, calls } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(1);
     expect(updatedReviews).toEqual([]);
@@ -1130,17 +1125,19 @@ describe("post flow via injected ReviewIo", () => {
 
   test("a review still posts even when the best-effort supersede fails", async () => {
     const review = makeMergedReview({ findings: [] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF, failSupersede: true });
-    await expect(postConsolidatedReview(io, 42, review, footer)).resolves.toBeUndefined();
+    const { io, postedReviews } = makeReviewIo({ failSupersede: true });
+    await expect(
+      postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer),
+    ).resolves.toBeUndefined();
     expect(postedReviews).toHaveLength(1);
   });
 
   test("posts exactly one review when the first POST succeeds", async () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });
+    const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(1);
   });
@@ -1149,11 +1146,10 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 200],
     });
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(2);
     expect(postedReviews[0]?.comments).toHaveLength(1);
@@ -1165,11 +1161,10 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 999 }); // not anchorable -> body-only
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422],
     });
 
-    await expect(postConsolidatedReview(io, 42, review, footer)).rejects.toThrow(
+    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
       /Review POST failed \(status 422\)/,
     );
     expect(postedReviews).toHaveLength(1);
@@ -1179,12 +1174,11 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 10 });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 422],
       postReviewBodies: [undefined, '{"message":"still invalid"}'],
     });
 
-    await expect(postConsolidatedReview(io, 42, review, footer)).rejects.toThrow(
+    await expect(postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer)).rejects.toThrow(
       /status 422.*still invalid/s,
     );
     expect(postedReviews).toHaveLength(2);
@@ -1195,11 +1189,10 @@ describe("post flow via injected ReviewIo", () => {
     const finding = makeFinding({ file: "file.ts", line: 10, claim: hugeClaim });
     const review = makeMergedReview({ findings: [finding] });
     const { io, postedReviews } = makeReviewIo({
-      diff: SINGLE_HUNK_DIFF,
       postReviewStatuses: [422, 200],
     });
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     const foldedBody = postedReviews[1]?.body ?? "";
     expect(foldedBody.length).toBeLessThanOrEqual(65536);
@@ -1210,9 +1203,9 @@ describe("post flow via injected ReviewIo", () => {
   test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", async () => {
     const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
     const review = makeMergedReview({ findings: [finding] });
-    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });
+    const { io, postedReviews } = makeReviewIo();
 
-    await postConsolidatedReview(io, 42, review, footer);
+    await postConsolidatedReview(io, 42, review, SINGLE_HUNK_DIFF, footer);
 
     expect(postedReviews).toHaveLength(1);
     expect(postedReviews[0]?.body.length).toBeLessThanOrEqual(65536);

@@ -782,7 +782,6 @@ export interface MarkedEntry {
 }
 
 export interface ReviewIo {
-  fetchPrDiff: (prNumber: number) => Promise<string>;
   listReviews: (prNumber: number) => Promise<MarkedEntry[]>;
   listIssueComments: (prNumber: number) => Promise<MarkedEntry[]>;
   updateReviewBody: (prNumber: number, reviewId: number, body: string) => Promise<void>;
@@ -858,9 +857,9 @@ export async function postConsolidatedReview(
   io: ReviewIo,
   prNumber: number,
   review: MergedReview,
+  diff: string,
   footer: ReviewFooterInfo,
 ): Promise<void> {
-  const diff = await io.fetchPrDiff(prNumber);
   const anchors = parseDiffAnchors(diff);
   const payload = buildReviewPayload(review, anchors, footer);
 
@@ -978,16 +977,6 @@ function assertRestIssueComments(value: unknown): asserts value is RestIssueComm
   }
 }
 
-async function fetchPrDiff(token: string, base: string, prNumber: number): Promise<string> {
-  const response = await githubFetch(
-    `${base}/pulls/${prNumber}`,
-    token,
-    {},
-    "application/vnd.github.v3.diff",
-  );
-  return response.text();
-}
-
 async function listAllPages<T>(
   token: string,
   url: string,
@@ -1083,7 +1072,6 @@ async function postReview(
 
 function makeGithubReviewIo(token: string, base: string): ReviewIo {
   return {
-    fetchPrDiff: (prNumber) => fetchPrDiff(token, base, prNumber),
     listReviews: (prNumber) => listReviews(token, base, prNumber),
     listIssueComments: (prNumber) => listIssueComments(token, base, prNumber),
     updateReviewBody: (prNumber, reviewId, body) =>
@@ -1112,13 +1100,15 @@ async function runPost(): Promise<void> {
   const trigger = parseTrigger(requireEnv("TRIGGER"));
   const runUrl = requireEnv("RUN_URL");
   const mergedReviewPath = requireEnv("MERGED_REVIEW_PATH");
+  const prDiffPath = requireEnv("PR_DIFF_PATH");
   const claudeModel = requireEnv("CLAUDE_MODEL");
   const codexModel = requireEnv("CODEX_MODEL");
 
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
 
-  await postConsolidatedReview(io, prNumber, raw, {
+  const diff = await Bun.file(prDiffPath).text();
+  await postConsolidatedReview(io, prNumber, raw, diff, {
     trigger,
     runUrl,
     modelsFooter: `\`${claudeModel}\` + \`${codexModel}\``,
