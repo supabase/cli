@@ -22,11 +22,11 @@ const nginxTime = (millis: number) => {
   return `${two(parts.day)}/${monthNames[parts.month - 1]}/${parts.year}:${two(parts.hour)}:${two(parts.minute)}:${two(parts.second)}.${String(parts.millisecond).padStart(3, "0")} +0000`;
 };
 
-/** Escapes quotes, backslashes and control characters like nginx's default log escaping. */
+/** Escapes quotes, backslashes and C0 and C1 control characters like nginx's log escaping. */
 const escapeLogValue = (value: string) =>
   value.replace(
     // oxlint-disable-next-line no-control-regex -- control characters are what this escapes.
-    /["\\\u0000-\u001f\u007f]/gu,
+    /["\\\u0000-\u001f\u007f-\u009f]/gu,
     (character) => `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`,
   );
 
@@ -67,7 +67,10 @@ export const make = Effect.gen(function* () {
     begin: (launchId) =>
       launchOutputPublisher(output, launchId).pipe(
         Effect.flatMap(({ part }) => part),
-        Effect.flatMap((publish) => Ref.set(publisher, publish)),
+        Effect.tap((publish) => Ref.set(publisher, publish)),
+        // An empty chunk persists the launch marker before the first request, so `--since start`
+        // never falls back to the previous owner run.
+        Effect.flatMap((publish) => publish("stdout", new Uint8Array())),
         Effect.andThen(Deferred.succeed(launch, launchId)),
         Effect.asVoid,
       ),

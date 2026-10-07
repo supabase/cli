@@ -49,12 +49,16 @@ const credentialParameters = [
 // The lookbehind starts a scheme only where a letter run begins, which keeps matching linear.
 const authority = String.raw`(?<![a-z\d+.-])(?:[a-z][a-z\d+.-]*:)?\/\/`;
 
+// Secret keys and JWTs (legacy API keys, access tokens) under any parameter name; the lookbehind
+// starts a JWT only where a word run begins, which keeps matching linear.
+const credentialValues = String.raw`sb_secret_|(?<![\w-])eyJ[\w-]+\.[\w-]+\.`;
+
 /**
- * A decoded parameter that is a credential pair, nests one (a `redirect_to` URL carrying a
- * token), or nests a URL with userinfo.
+ * A decoded parameter that is a credential pair, holds a secret key or JWT, nests a credential
+ * pair (a `redirect_to` URL carrying a token), or nests a URL with userinfo.
  */
 const sensitive = new RegExp(
-  String.raw`(?:^|[?&#=;])(?:${credentialParameters.join("|")})=|${authority}[^/?#]*@`,
+  String.raw`(?:^|[?&#=;])(?:${credentialParameters.join("|")})=|${credentialValues}|${authority}[^/?#]*@`,
   "iu",
 );
 const userinfo = new RegExp(String.raw`^(${authority})[^/?#]*@`, "iu");

@@ -52,8 +52,9 @@ millisecond timestamp and a trailing duration:
 Credential query and fragment values (`apikey`, `jwt`, `token`, `token_hash`, `code`, access,
 refresh, ID, and provider tokens, and the `X-Amz-Signature`, `X-Amz-Credential`, and
 `X-Amz-Security-Token` of S3 presigned URLs), in the request target and the Referer, are written
-as `redacted`, whatever their parameter is used for, as are values that themselves carry such a
-pair (a `redirect_to` URL with a token) and URL userinfo.
+as `redacted`, whatever their parameter is used for, as are values under any name that hold a
+secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair (a `redirect_to`
+URL with a token), and URL userinfo.
 When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
 members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
 under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A

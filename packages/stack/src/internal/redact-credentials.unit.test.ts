@@ -97,6 +97,16 @@ describe("redactCredentials", () => {
       redacted: "/x?foo=redacted&amp;token=redacted",
     },
     {
+      case: "redacts secret keys and JWTs under any parameter name",
+      url: "/functions/v1/hook?key=sb_secret_abc&authorization=Bearer%20eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoiYW5vbiJ9.c2ln&id=7",
+      redacted: "/functions/v1/hook?key=redacted&authorization=redacted&id=7",
+    },
+    {
+      case: "keeps a publishable key and a value that only starts like a JWT",
+      url: "/x?client=sb_publishable_abc&note=eyJ.only",
+      redacted: "/x?client=sb_publishable_abc&note=eyJ.only",
+    },
+    {
       case: "redacts a value that embeds a credential pair",
       url: "/api?data=a=token=b",
       redacted: "/api?data=redacted",

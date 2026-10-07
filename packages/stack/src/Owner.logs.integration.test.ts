@@ -246,6 +246,12 @@ describe("owner persisted logs", () => {
         const history = Array.from(
           yield* second.rpc.readLogs({ id: "gateway", follow: false }).pipe(Stream.runCollect),
         );
+        const begun = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter(({ kind, launchId }) => kind === "launch" && launchId === 2),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeout("5 seconds"),
+        );
         yield* second.rpc.startComposition();
         const reopened = (yield* state.read(first.stack.id))?.ports.find(
           ({ key }) => key === "api",
@@ -260,6 +266,7 @@ describe("owner persisted logs", () => {
         yield* client.get(`http://127.0.0.1:${reopened.port}/again`);
 
         expect(history).toContainEqual(recorded);
+        expect(begun).toHaveLength(1);
         expect(Array.from(yield* Fiber.join(again))).toMatchObject([{ launchId: 2 }]);
         yield* second.namespace.destroy;
         expect(yield* fs.exists(first.logsRoot)).toBe(false);

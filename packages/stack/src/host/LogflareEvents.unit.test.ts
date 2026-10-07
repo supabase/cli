@@ -145,12 +145,12 @@ it("ships a gateway access line as an API Gateway request stamped with its reque
     protocol: "HTTP/1.1",
     status: 200,
     bytes: 126,
-    userAgent: "curl/8.7.1",
+    userAgent: "curl/8.7.1\u009b",
     durationMillis: 12,
   });
 
   expect(line).toBe(
-    '127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=*&q=\\x22x\\x22 HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms',
+    '127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=*&q=\\x22x\\x22 HTTP/1.1" 200 126 "-" "curl/8.7.1\\x9b" 12ms',
   );
   expect(logflareEvent("gateway", received, line)).toEqual({
     project: "default",
@@ -163,7 +163,7 @@ it("ships a gateway access line as an API Gateway request stamped with its reque
         path: "/rest/v1/todos",
         search: '?select=*&q="x"',
         protocol: "HTTP/1.1",
-        headers: { cf_connecting_ip: "127.0.0.1", user_agent: "curl/8.7.1" },
+        headers: { cf_connecting_ip: "127.0.0.1", user_agent: "curl/8.7.1\u009b" },
       },
       response: { status_code: 200 },
     },
