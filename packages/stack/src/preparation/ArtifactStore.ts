@@ -590,6 +590,14 @@ const reapStaleStaging = (
     ),
   );
 
+/** A symlink is never a cache entry: the cache neither walks nor writes through one. */
+const isSymlink = (fs: FileSystem.FileSystem, target: string): Effect.Effect<boolean> =>
+  // readLink succeeds only on a symlink.
+  fs.readLink(target).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+
 interface CacheWalk {
   readonly generations: ReadonlyArray<{ readonly keyRoot: string; readonly digest: string }>;
   readonly stagingRoots: ReadonlyArray<string>;
@@ -613,14 +621,7 @@ const walkCache = (
     const generations: Array<CacheWalk["generations"][number]> = [];
     const stagingRoots: Array<string> = [];
     for (const name of names) {
-      // readLink succeeds only on a symlink; a link is never a cache entry, so it is left alone.
-      if (
-        yield* fs.readLink(path.join(root, name)).pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        )
-      )
-        continue;
+      if (yield* isSymlink(fs, path.join(root, name))) continue;
       if (name === STAGING_DIR_NAME) {
         stagingRoots.push(path.join(root, name));
         continue;
@@ -664,6 +665,7 @@ const retireGeneration = Effect.fn("ArtifactStore.retireGeneration")(function* (
           const now = yield* Clock.currentTimeMillis;
           if (mtime === undefined || now - mtime.getTime() <= RETIREMENT_AGE_MILLIS)
             return undefined;
+          if (yield* isSymlink(fs, stagingRoot)) return undefined;
           yield* fs.makeDirectory(stagingRoot, { recursive: true, mode: 0o700 });
           const token = yield* crypto.randomUUIDv4;
           const slotLockPath = stagingLockFor(path, stagingRoot, token);

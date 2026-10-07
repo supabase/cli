@@ -773,7 +773,12 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         rpcError("restartService"),
       ),
     destroyService: ({ id }) =>
-      definitionChange(orchestrator.destroy(id)).pipe(rpcError("destroyService")),
+      definitionChange(
+        confirmStackDataRoot(options.state.root, stackId).pipe(
+          Effect.provideContext(services),
+          Effect.andThen(orchestrator.destroy(id)),
+        ),
+      ).pipe(rpcError("destroyService")),
     prepareService: ({ id }) =>
       orchestrator.get(id).pipe(
         Effect.flatMap((entry) =>

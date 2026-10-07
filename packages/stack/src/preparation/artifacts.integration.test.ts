@@ -744,6 +744,35 @@ describe("lock-guarded staging", () => {
     20_000,
   );
 
+  it.live.skipIf(process.platform === "win32")(
+    "retires nothing through a symlinked staging root under an aged unpinned generation",
+    () =>
+      withPlatform(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-retire-link-",
+          });
+          const outside = yield* fs.makeTempDirectoryScoped({
+            prefix: "supabase-stack-artifact-retire-outside-",
+          });
+          const key = "database/postgres-retire-link";
+          const store = yield* makeArtifactStore({ cacheRoot: root, source: sourceWriting() });
+          const prepared = yield* store.prepare({ ...request, key });
+          yield* fs.writeFileString(`${outside}/precious`, "keep");
+          yield* fs.remove(`${root}/${key}/.staging`, { recursive: true, force: true });
+          yield* fs.symlink(outside, `${root}/${key}/.staging`);
+          yield* ageLockFile(fs, prepared.lockPath);
+
+          yield* triggerSweep(root);
+
+          expect(yield* fs.readDirectory(outside)).toEqual(["precious"]);
+          expect(yield* fs.exists(prepared.path)).toBe(true);
+        }),
+      ),
+    20_000,
+  );
+
   it.live(
     "leaves a staging lock file that has no directory yet for the preparer that is about to take it",
     () =>

@@ -893,6 +893,45 @@ it.live("destroying a stack leaves its data root empty after an owner was killed
   ),
 );
 
+it.live("refuses to destroy one service after its data directory became a symlink", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-service-symlink-" });
+      const stack = initial(`owner-service-symlink-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.makeDirectory(data, { recursive: true });
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+      yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+      const service = yield* owner.rpc.createService({
+        service: "mail",
+        config: {},
+        endpoints: { http: { port: "auto" }, smtp: { port: "auto" }, pop3: { port: "auto" } },
+      });
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(`${outside}/${service.id}`, { recursive: true });
+      yield* fs.writeFileString(`${outside}/${service.id}/precious.txt`, "keep");
+      yield* fs.remove(data, { recursive: true });
+      yield* fs.symlink(outside, data);
+
+      const failure = yield* owner.rpc.destroyService({ id: service.id }).pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/${service.id}/precious.txt`)).toBe("keep");
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
 it.live("refuses to destroy a stack whose data directory is a symlink and keeps its target", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -163,9 +163,9 @@ export const destroyOwnedRoot = Effect.fn("Namespace.Paths.destroyOwnedRoot")(
 );
 
 /**
- * Refuses a stack's `data` directory when it is a symlink or resolves outside the stack
- * directory, so a destroy never empties a target the stack does not own. A missing directory
- * passes: only launch creates it.
+ * Refuses a stack's `data` directory when it is a symlink (dangling or not), not a directory, or
+ * resolves outside the stack directory, so nothing is created in or removed from a target the stack
+ * does not own. A missing directory passes: only launch creates it.
  */
 export const confirmStackDataRoot = Effect.fn("Namespace.Paths.confirmStackDataRoot")(function* (
   stateRoot: string,
@@ -175,10 +175,11 @@ export const confirmStackDataRoot = Effect.fn("Namespace.Paths.confirmStackDataR
   const path = yield* Path.Path;
   const stackRoot = path.join(stateRoot, stackId);
   const dataRoot = path.join(stackRoot, "data");
-  const present = yield* fs
-    .exists(dataRoot)
-    .pipe(Effect.mapError((cause) => namespaceError("destroy", cause)));
-  if (present) yield* confirmRealOwnedDirectory(fs, path, dataRoot, stackRoot, namespaceError);
+  const info = yield* lstatPath(dataRoot).pipe(
+    Effect.mapError((cause) => namespaceError("destroy", cause)),
+  );
+  if (info !== undefined)
+    yield* confirmRealOwnedDirectory(fs, path, dataRoot, stackRoot, namespaceError);
 });
 
 /**
@@ -194,7 +195,7 @@ export const resolveStackDataRoot = Effect.fn("Namespace.Paths.resolveStackDataR
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dataRoot = path.join(stateRoot, stackId, "data");
-  yield* fs.makeDirectory(dataRoot, { recursive: true });
   yield* confirmStackDataRoot(stateRoot, stackId);
+  yield* fs.makeDirectory(dataRoot, { recursive: true });
   return yield* fs.realPath(dataRoot);
 });

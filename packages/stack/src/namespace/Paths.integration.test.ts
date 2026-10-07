@@ -242,4 +242,22 @@ describe("the stack data root", () => {
       }),
     ),
   );
+
+  it.live("is refused at launch when it is a dangling symlink", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-data-root-dangling-" });
+        yield* fs.makeDirectory(path.join(root, "state", "stack"), { recursive: true });
+        yield* fs.symlink(path.join(root, "missing"), path.join(root, "state", "stack", "data"));
+
+        const failure = yield* resolveStackDataRoot(path.join(root, "state"), "stack").pipe(
+          Effect.flip,
+        );
+
+        expect(failure.message).toContain("symlink");
+      }),
+    ),
+  );
 });
