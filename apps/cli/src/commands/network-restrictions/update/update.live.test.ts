@@ -170,6 +170,14 @@ test(
             );
           }
           const updated = stalled ? yield* update() : first;
+          if (stalled && updated.exitCode !== 0) {
+            return yield* new LivePostureError({
+              message:
+                "network-restrictions update failed twice" +
+                describeAttempt(1, first) +
+                describeAttempt(2, updated),
+            });
+          }
           requireLiveSuccess(updated, "network-restrictions update");
           expect(
             requireLiveJson(updated, "network-restrictions update"),
