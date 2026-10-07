@@ -4,6 +4,7 @@ import { expect, it } from "@effect/vitest";
 import {
   Context,
   Crypto,
+  Data,
   DateTime,
   Effect,
   Fiber,
@@ -26,6 +27,8 @@ import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+
+class NotStoredError extends Data.TaggedError("NotStoredError")<{ readonly message: string }> {}
 
 const query = <A extends object>(url: string, statement: string) =>
   Effect.scoped(
@@ -352,9 +355,15 @@ it.live(
             return rows.map(({ id }) => id);
           });
         // Logflare ingests asynchronously and exposes no completion signal; polling is the guard.
-        const awaitStored = (id: string, attempts: number) =>
+        const awaitStored = (label: string, id: string, attempts: number) =>
           storedIds([id]).pipe(
-            Effect.filterOrFail((rows) => rows.length > 0),
+            Effect.filterOrFail(
+              (rows) => rows.length > 0,
+              () =>
+                new NotStoredError({
+                  message: `the ${label} event ${id} was not stored after ${attempts + 1} polls`,
+                }),
+            ),
             Effect.retry({ schedule: Schedule.spaced("500 millis"), times: attempts }),
           );
 
@@ -362,14 +371,14 @@ it.live(
         yield* Effect.forkScoped(keepAwake);
         const first = yield* event("stored first");
         yield* post([first]);
-        yield* awaitStored(first.id, 240);
+        yield* awaitStored("first", first.id, 240);
         const added = [yield* event("added 1"), yield* event("added 2")];
         yield* post([{ ...first, event_message: "stored again" }, ...added]);
         // A stored sentinel shows Logflare processed the batch before it; a sentinel inserted with
         // that batch is dropped too, so fresh ones follow until one is stored.
         yield* event("sentinel").pipe(
           Effect.tap((sentinel) => post([sentinel])),
-          Effect.flatMap(({ id }) => awaitStored(id, 10)),
+          Effect.flatMap(({ id }) => awaitStored("sentinel", id, 10)),
           Effect.retry({ times: 24 }),
         );
 
