@@ -432,7 +432,15 @@ const nativeTrustStore = Effect.gen(function* () {
     const value = yield* Config.option(Config.nonEmptyString(name)).pipe(
       Effect.orElseSucceed(() => Option.none()),
     );
-    if (Option.isSome(value)) env[name] = path.resolve(value.value);
+    // OpenSSL splits SSL_CERT_DIR on ":" on macOS and Linux, the native targets, and skips blanks.
+    if (Option.isSome(value))
+      env[name] =
+        name === "SSL_CERT_DIR"
+          ? value.value
+              .split(":")
+              .map((entry) => (entry === "" ? entry : path.resolve(entry)))
+              .join(":")
+          : path.resolve(value.value);
   }
   if (env.SSL_CERT_FILE !== undefined) return env;
   for (const bundle of hostCaBundles)

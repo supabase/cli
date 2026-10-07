@@ -301,6 +301,56 @@ describe("database component", { timeout: 180_000 }, () => {
   );
 
   it.live(
+    "native PostgreSQL defaults SSL_CERT_FILE to a host CA bundle and resolves each SSL_CERT_DIR entry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-trust-env-" });
+          const database = yield* makeDatabase({
+            stackId: "stack-database-trust-env",
+            instanceId: "trust-env",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const service = yield* makeService(database.definition, {
+            id: "database:trust-env",
+            config,
+          });
+          yield* service.start.pipe(
+            Effect.provide(
+              ConfigProvider.layerAdd(
+                ConfigProvider.fromEnvRecord(
+                  { SSL_CERT_FILE: "", SSL_CERT_DIR: "certs-a:certs-b" },
+                  { preserveEmptyStrings: true },
+                ),
+                { asPrimary: true },
+              ),
+            ),
+          );
+          yield* service.ready;
+          const endpoint = yield* database.endpoint;
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+          );
+          const [serverEnv] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
+          )(yield* query(endpoint, config.databasePassword, "SELECT file, dir FROM server_env"));
+          expect({ ...serverEnv, exists: yield* fs.exists(serverEnv.file) }).toEqual({
+            file: expect.stringMatching(/^\//u),
+            exists: true,
+            dir: `${path.resolve("certs-a")}:${path.resolve("certs-b")}`,
+          });
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live(
     "persists SQL data across exact-session stop and reopen, isolates instances, and validates restart before stopping",
     () =>
       Effect.scoped(
