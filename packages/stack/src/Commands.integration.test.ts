@@ -15,7 +15,6 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { postgres } from "./Commands.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
@@ -27,8 +26,9 @@ import { makeStandaloneService } from "../tests/standalone-service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 
 class PgProveTestError extends Data.TaggedError("PgProveTestError")<{
   readonly message: string;

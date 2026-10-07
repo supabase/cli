@@ -3,9 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { create as createStack, discover as discoverStacks } from "@supabase/stack/effect";
-import { tmpdir } from "node:os";
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const TEST_TIMEOUT_MS = COMMAND_TIMEOUT_MS * 4 + 2 * 60_000;
@@ -91,10 +91,9 @@ describe("supabase db diff (stack shadow baseline cache)", () => {
           const home = yield* fs.makeTempDirectoryScoped({
             prefix: `db-diff-cache-home-${runtime}-`,
           });
-          const sharedArtifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-          yield* fs.makeDirectory(sharedArtifacts, { recursive: true });
+          yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-          yield* fs.symlink(sharedArtifacts, path.join(home, "cache", "stack"));
+          yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
 
           const supabase = path.join(project, "supabase");
           const migrations = path.join(supabase, "migrations");

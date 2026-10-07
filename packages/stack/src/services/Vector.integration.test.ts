@@ -1,6 +1,5 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { tmpdir } from "node:os";
 import { Effect, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
@@ -8,12 +7,13 @@ import { makeServiceRecipe } from "./Catalog.ts";
 import type { ContainerEngine } from "../runtime/Container.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const options = (root: string, runtime: ContainerEngine | "native") => ({
   stackId: "catalog-test",
   instanceId: "vector",
   root,
-  cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+  cacheRoot: testArtifactCacheRoot,
   runtime,
   ...(runtime !== "native" ? { engineTarget } : {}),
 });

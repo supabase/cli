@@ -13,7 +13,7 @@ import {
   Stream,
 } from "effect";
 import { postgres } from "../../src/Commands.ts";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { create, type Stack } from "../../src/effect.ts";
 import type { ContainerEngine } from "../../src/runtime/Container.ts";
@@ -22,6 +22,7 @@ import { vectorAnalyticsConfig } from "./analytics.ts";
 import { cleanupDockerRoot } from "../docker-cleanup.ts";
 import { destroyTestStack } from "../stack-cleanup.ts";
 import { testEngine } from "../test-engine.ts";
+import { testArtifactCacheRoot } from "../artifact-cache.ts";
 
 type AnyService = Effect.Success<Stack["services"]["list"]>[number];
 
@@ -138,7 +139,7 @@ export const wholeStack = Effect.fn("WholeStack.fixture")((runtime: Runtime) =>
     const secret = `whole-stack-${yield* crypto.randomUUIDv4}-secret`;
     const locations = {
       stateRoot: `${root}/state`,
-      cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+      cacheRoot: testArtifactCacheRoot,
     };
     const stack = yield* create({
       projectRoot: root,

@@ -4,7 +4,6 @@ import { Context, Effect, FileSystem, Layer, Path, Redacted, Ref } from "effect"
 import { PgClient } from "@effect/sql-pg";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
-import { tmpdir } from "node:os";
 import * as Network from "../Network.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
@@ -13,6 +12,7 @@ import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const makeTestState = (root: string) =>
   Layer.build(StackNamespace.layer({ root })).pipe(
@@ -218,7 +218,7 @@ describe("service catalog", () => {
               jwtExpiry: 3600,
             },
           },
-          { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
+          { ...options(root), stackId, cacheRoot: testArtifactCacheRoot },
         );
         const database = yield* makeStandaloneService(databaseRecipe.definition, {
           id: "database",
@@ -261,7 +261,7 @@ describe("service catalog", () => {
               anonRole: "anon",
             },
           },
-          { ...options(root), stackId, cacheRoot: `${tmpdir()}/supabase-stack-artifacts` },
+          { ...options(root), stackId, cacheRoot: testArtifactCacheRoot },
         );
         const rest = yield* makeStandaloneService(restRecipe.definition, {
           id: "rest",

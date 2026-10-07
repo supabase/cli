@@ -117,6 +117,8 @@ const runtimeOverride = Config.option(
   Config.literals(["native", "docker", "podman"], "SUPABASE_STACK_TEST_RUNTIME"),
 );
 
+const cacheHome = Config.option(Config.nonEmptyString("XDG_CACHE_HOME"));
+
 const testFailure = (operation: string) => (cause: unknown) => stackError(operation, cause);
 
 /** Local-development configuration for each kind, with every endpoint on an automatic port. */
@@ -167,7 +169,12 @@ const make = Effect.fn("TestStack.make")(
     // Shared roots are created owner-only, so each OS user needs its own.
     const user = process.getuid?.() ?? userInfo().username;
     const stateRoot = options.stateRoot ?? path.join(tmpdir(), `supabase-stack-tests-${user}`);
-    const cacheRoot = options.cacheRoot ?? path.join(tmpdir(), `supabase-stack-artifacts-${user}`);
+    const cacheRoot =
+      options.cacheRoot ??
+      path.join(
+        Option.getOrElse(yield* cacheHome, () => path.join(homedir(), ".cache")),
+        "supabase-stack-artifacts",
+      );
     // Native Edge Runtime on Linux cannot read project files below /tmp.
     const temporaryRoot = fs.makeTempDirectoryScoped({
       prefix: "supabase-test-stack-",

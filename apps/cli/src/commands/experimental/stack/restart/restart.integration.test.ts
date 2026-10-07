@@ -1,4 +1,3 @@
-import { tmpdir } from "node:os";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
@@ -11,6 +10,7 @@ import {
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
@@ -20,7 +20,7 @@ const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
   const api = yield* StackApi;
   const locations = {
     stateRoot: path.join(root, "stacks"),
-    cacheRoot: path.join(tmpdir(), "supabase-stack-artifacts"),
+    cacheRoot: stackArtifactCacheRoot,
   };
   const stack = yield* api.create({ ...locations, projectRoot: root, runtime: "native" });
   const output = mockOutput();

@@ -14,11 +14,12 @@ import {
   Stream,
 } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -66,9 +67,8 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
   );
   yield* fs.writeFileString(path.join(root, "override.env"), "CUSTOM_VALUE=overridden\n");
   yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-  const artifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-  yield* fs.makeDirectory(artifacts, { recursive: true });
-  yield* fs.symlink(artifacts, path.join(home, "cache", "stack"));
+  yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
+  yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
   const stack = yield* createStack({
     projectRoot: root,
     stateRoot: path.join(home, "stacks"),

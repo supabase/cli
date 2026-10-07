@@ -1,8 +1,8 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
-import { tmpdir } from "node:os";
 import { create, open } from "./effect.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
@@ -14,7 +14,7 @@ it.live("persists effective credentials across service creation, reopen, and res
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } as const;
       const stack = yield* create(options);
@@ -53,7 +53,7 @@ it.live("resolves composition credentials before creating services", () =>
       const stack = yield* create({
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       });
       yield* Effect.addFinalizer(() => stack.destroy.pipe(Effect.orDie));

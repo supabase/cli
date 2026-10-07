@@ -2,7 +2,6 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Data, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { create, open } from "./effect.ts";
 import { launchHost, ownerClient, ownerExitProbe, waitForOwnerExit } from "./HostProcess.ts";
@@ -14,13 +13,14 @@ import {
   watchLeaseRelease,
 } from "../tests/owner.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 class LifetimeTestError extends Data.TaggedError("LifetimeTestError")<{
   readonly message: string;
 }> {}
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 const sessionFixture = fileURLToPath(
   new URL("../tests/session-client-fixture.ts", import.meta.url),
 );

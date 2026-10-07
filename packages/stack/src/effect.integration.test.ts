@@ -14,7 +14,6 @@ import {
 } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- the test binds a dead owner's exact port.
 import * as Net from "node:net";
-import { tmpdir } from "node:os";
 import {
   create,
   discover,
@@ -35,6 +34,7 @@ import { foreignRelease } from "../tests/release-owner-fixture.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
 import { watchEntry } from "../tests/watch-entry.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 // Below every OS ephemeral range, so another test's outbound socket cannot already hold it.
@@ -225,7 +225,7 @@ it.live(
         const options = {
           projectRoot: root,
           stateRoot: `${root}/state`,
-          cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+          cacheRoot: testArtifactCacheRoot,
           runtime: "native",
         } satisfies Parameters<typeof create>[0];
         const stack = yield* create(options);
@@ -273,7 +273,7 @@ const resetDataStory = (runtime: "native" | ContainerEngine) =>
     const options = {
       projectRoot: root,
       stateRoot: `${root}/state`,
-      cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+      cacheRoot: testArtifactCacheRoot,
       runtime,
     } satisfies Parameters<typeof create>[0];
     const stack = yield* create(options);
@@ -749,7 +749,7 @@ it.live(
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } satisfies Parameters<typeof create>[0];
       const handleScope = yield* Scope.make();
@@ -866,7 +866,7 @@ it.live(
       const options = {
         projectRoot: root,
         stateRoot: `${root}/state`,
-        cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
@@ -1164,7 +1164,7 @@ it.live(
         const options = {
           projectRoot: root,
           stateRoot: `${root}/state`,
-          cacheRoot: `${tmpdir()}/supabase-stack-artifacts`,
+          cacheRoot: testArtifactCacheRoot,
           runtime: "native",
         } satisfies Parameters<typeof create>[0];
         const secret = "stop-order-secret-with-at-least-thirty-two-characters";

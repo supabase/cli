@@ -36,6 +36,7 @@ import { bindControl, makeRuntime } from "./StackHost.ts";
 import { shutdownOwner } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -147,7 +148,7 @@ const inProcessRuntime = (
       CommandRunner.layer({
         stackId: "stack",
         root,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
         runtime: "native",
       }),
     );
@@ -235,7 +236,7 @@ it.live("preserves composition outcomes over RPC", () =>
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const { runtime } = yield* inProcessRuntime(owner, state, root);
       const client = yield* ownerClient(runtime.access);
@@ -290,7 +291,7 @@ it.live("stops serving after a failed shutdown and keeps reporting that failure"
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const failedOwner = {
         ...owner,
@@ -339,7 +340,7 @@ it.live(
           saved,
           state,
           root: `${root}/data`,
-          cacheRoot: "/tmp/supabase-stack-artifacts",
+          cacheRoot: testArtifactCacheRoot,
         });
         const stopGate = yield* Deferred.make<void>();
         const destroyEntered = yield* Deferred.make<void>();
@@ -397,7 +398,7 @@ it.live("reports a destroy failure and the owner exits", () =>
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const failedOwner = {
         ...owner,
@@ -460,7 +461,7 @@ it.live("rejects destroy while stop is in flight", () =>
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const entered = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -505,7 +506,7 @@ it.live("exits after a namespace shutdown defect without rerunning cleanup", () 
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const failStop = yield* Ref.make(true);
       const failedOwner = {
@@ -547,7 +548,7 @@ it.live(
         });
         const access = yield* launchHost(state, {
           stateRoot: `${root}/state`,
-          cacheRoot: "/tmp/supabase-stack-artifacts",
+          cacheRoot: testArtifactCacheRoot,
           stackId: "stack",
         });
         const { endpoint } = access;
@@ -754,7 +755,7 @@ it.live("finishes detached shutdown after the caller disconnects", () =>
         },
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const entered = yield* Deferred.make<void>();
       const allow = yield* Deferred.make<void>();
@@ -798,7 +799,7 @@ it.live("withdraws a command waiting for its prerequisite", () =>
         saved,
         state,
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const entered = yield* Deferred.make<void>();
       const cancelled = yield* Deferred.make<void>();
@@ -880,7 +881,7 @@ it.live("finishes a service creation after its caller disconnects", () =>
               ),
         },
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const interrupted = yield* Deferred.make<void>();
       const { runtime } = yield* inProcessRuntime(
@@ -942,7 +943,7 @@ it.live("persists a composition change after its caller disconnects", () =>
             ).pipe(Effect.andThen(state.save(next))),
         },
         root: `${root}/data`,
-        cacheRoot: "/tmp/supabase-stack-artifacts",
+        cacheRoot: testArtifactCacheRoot,
       });
       const interrupted = yield* Deferred.make<void>();
       const { runtime } = yield* inProcessRuntime(
@@ -1008,7 +1009,7 @@ const abandonedComposition = (prefix: string, destroy: boolean) =>
             ),
       },
       root: `${root}/data`,
-      cacheRoot: "/tmp/supabase-stack-artifacts",
+      cacheRoot: testArtifactCacheRoot,
     });
     const interrupted = yield* Deferred.make<void>();
     const { runtime } = yield* inProcessRuntime(

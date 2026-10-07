@@ -2,7 +2,6 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { tmpdir } from "node:os";
 import {
   DEFAULT_LOCAL_S3_ACCESS_KEY_ID,
   DEFAULT_LOCAL_S3_REGION,
@@ -13,8 +12,9 @@ import type { SavedStack } from "../StackNamespace.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 const jwtSecret = "storage-gateway-secret-with-at-least-32-chars";
 const s3Credentials = {
   accessKeyId: DEFAULT_LOCAL_S3_ACCESS_KEY_ID,

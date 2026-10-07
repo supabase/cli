@@ -422,9 +422,10 @@ const inspectRequiredPaths = (
           ),
         );
       if (!exists)
-        return yield* metadataError("Cached artifact is missing a required runtime path", {
-          path: relative,
-        });
+        return yield* metadataError(
+          `Cached artifact is missing ${candidate}; remove ${root} to reinstall it`,
+          { path: relative },
+        );
       const inspected = yield* inspectFreshPath(fs, path, candidate, realRoot);
       entries.push([relative, inspected]);
     }
@@ -458,6 +459,7 @@ const ensureExecutableFile = (
 /** A published generation is never chmodded again, so a cache hit must check the bit directly. */
 const ensureExecutableMode = (
   fs: FileSystem.FileSystem,
+  generation: string,
   executable: string,
 ): Effect.Effect<void, ArtifactIntegrityError> =>
   fs.stat(executable).pipe(
@@ -471,9 +473,10 @@ const ensureExecutableMode = (
       (info.mode & 0o100) !== 0
         ? Effect.void
         : Effect.fail(
-            metadataError("Cached artifact executable is missing its executable bit", {
-              path: executable,
-            }),
+            metadataError(
+              `Cached artifact executable ${executable} is missing its executable bit; remove ${generation} to reinstall it`,
+              { path: executable },
+            ),
           ),
     ),
   );
@@ -735,7 +738,7 @@ const checkHit = Effect.fn("ArtifactStore.checkHit")(function* (
         path: request.executablePath,
       });
     yield* ensureExecutableFile(fs, executable.realPath);
-    yield* ensureExecutableMode(fs, executable.realPath);
+    yield* ensureExecutableMode(fs, resolved.generationPath, executable.realPath);
   }
   return Option.some({
     key: request.key,

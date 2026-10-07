@@ -5,7 +5,6 @@ import { Context, Effect, FileSystem, Layer, Redacted, Ref, Schema, Stream } fro
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { RpcTest } from "effect/unstable/rpc";
 import * as Owner from "./Owner.ts";
 import { OwnerRpc } from "./Rpc.ts";
@@ -17,6 +16,7 @@ import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
@@ -24,7 +24,7 @@ const stateFor = (root: string) =>
     return Context.get(context, StackNamespace.Service);
   });
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 
 const initial = (id: string): SavedStack => ({
   id,

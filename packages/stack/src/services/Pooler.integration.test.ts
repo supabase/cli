@@ -8,12 +8,13 @@ import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-pooler",
   instanceId: "instance",
   root,
-  cacheRoot: "/tmp/supabase-stack-artifacts",
+  cacheRoot: testArtifactCacheRoot,
   runtime: "native" as const,
 });
 

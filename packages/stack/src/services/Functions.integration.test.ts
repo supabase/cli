@@ -24,6 +24,7 @@ import * as Functions from "./Functions.ts";
 import { makeProcessRecipe } from "./ProcessRecipe.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-functions",
@@ -260,7 +261,7 @@ describe("service catalog", () => {
                 ...options(stackRoot),
                 stackId: "d".repeat(64),
                 instanceId: "ancestor",
-                cacheRoot: "/tmp/supabase-stack-artifacts",
+                cacheRoot: testArtifactCacheRoot,
               },
             );
             const logs = yield* Ref.make("");
@@ -333,7 +334,7 @@ describe("service catalog", () => {
               ...options(stackRoot),
               stackId: "e".repeat(64),
               instanceId: "deno-config",
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");
@@ -407,7 +408,7 @@ describe("service catalog", () => {
               ...options(stackRoot),
               stackId: "f".repeat(64),
               instanceId: "plain-deno-config",
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");
@@ -522,7 +523,7 @@ for (const runtime of ["native", testEngine] as const) {
               instanceId: "configured",
               runtime,
               ...(runtime !== "native" ? { engineTarget } : {}),
-              cacheRoot: "/tmp/supabase-stack-artifacts",
+              cacheRoot: testArtifactCacheRoot,
             },
           );
           const logs = yield* Ref.make("");

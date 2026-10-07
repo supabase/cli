@@ -15,13 +15,13 @@ import {
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { DEFAULT_POSTGRES_ROOT_KEY } from "../Defaults.ts";
 import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeDatabase, type BackendEndpoint, type DatabaseConfig } from "./Database.ts";
 import { makeDockerDatabaseRoot, runEngine } from "../../tests/docker-fixture.ts";
 import { observeContainerStop, cleanStopEvents } from "../../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
 const config: DatabaseConfig = {
   version: "17",
@@ -31,7 +31,7 @@ const config: DatabaseConfig = {
   rootKey: Redacted.make("a".repeat(64)),
 };
 
-const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const artifactCacheRoot = testArtifactCacheRoot;
 
 const query = (
   endpoint: BackendEndpoint,
