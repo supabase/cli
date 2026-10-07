@@ -26,29 +26,23 @@ describe("CLI agent output", () => {
     expect(parseJsonLines(stderr)).toEqual([expect.objectContaining({ _tag: "Help" })]);
   });
 
-  test.each([
-    { stack: "1", envelope: { type: "error" } },
-    { stack: "0", envelope: { _tag: "Error" } },
-  ])(
-    "formats functions serve parse errors for the selected backend (stack=$stack)",
-    async ({ stack, envelope }) => {
-      const { exitCode, stdout, stderr } = await runSupabase(["functions", "serve", "--bogus"], {
-        env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: stack },
-      });
+  test("formats Stack functions serve parse errors as stream-json for detected coding agents", async () => {
+    const { exitCode, stdout, stderr } = await runSupabase(["functions", "serve", "--bogus"], {
+      env: { CODEX_SANDBOX: "1", SUPABASE_EXPERIMENTAL_STACK: "1" },
+    });
 
-      expect(exitCode).toBe(1);
-      expect(parseJsonLines(stdout)).toEqual([
-        expect.objectContaining({
-          ...envelope,
-          error: expect.objectContaining({
-            code: "UnrecognizedOption",
-            message: expect.stringContaining("--bogus"),
-          }),
+    expect(exitCode).toBe(1);
+    expect(parseJsonLines(stdout)).toEqual([
+      expect.objectContaining({
+        type: "error",
+        error: expect.objectContaining({
+          code: "UnrecognizedOption",
+          message: expect.stringContaining("--bogus"),
         }),
-      ]);
-      expect(parseJsonLines(stderr)).toEqual([expect.objectContaining({ _tag: "Help" })]);
-    },
-  );
+      }),
+    ]);
+    expect(parseJsonLines(stderr)).toEqual([expect.objectContaining({ _tag: "Help" })]);
+  });
 
   test("keeps legacy functions serve handler errors in JSON for detected coding agents", async () => {
     const { exitCode, stdout, stderr } = await runSupabase(

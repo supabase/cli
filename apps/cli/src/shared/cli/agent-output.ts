@@ -213,16 +213,6 @@ export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFor
   );
 }
 
-/** Selects the agent default accepted by the resolved command implementation. */
-export function agentDefaultOutputFormatForCommand(
-  commandPath: ReadonlyArray<string>,
-  stackFunctionsServeEnabled: boolean,
-): OutputFormat {
-  return stackFunctionsServeEnabled && commandPath[0] === "functions" && commandPath[1] === "serve"
-    ? "stream-json"
-    : "json";
-}
-
 export function resolveAgentOutputFormatFromArgs(
   args: ReadonlyArray<string>,
   detectedAgentName: Option.Option<string>,

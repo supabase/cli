@@ -28,10 +28,11 @@ const selectionExit = await Effect.runPromiseExit(
     return { stackBackend, computeEnabled };
   }).pipe(Effect.provide(BunServices.layer)),
 );
-const { rootCommand: selectedRoot, stackFunctionsServeEnabled } = cliEntrypointForFeatures(
+const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
   Exit.isSuccess(selectionExit)
     ? selectionExit.value
     : { stackBackend: "legacy", computeEnabled: false },
+  args,
 );
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
 
@@ -43,7 +44,7 @@ if (
   await Effect.runPromise(
     runCli(selectedRoot, {
       analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-      stackFunctionsServeEnabled,
+      agentDefaultOutputFormat,
       afterSuccess: upgradeNoticeHook,
       ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
     }),
