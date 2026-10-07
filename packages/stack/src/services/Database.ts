@@ -1,6 +1,7 @@
 import { withAttemptCount } from "../internal/attempts.ts";
 import { PgClient } from "@effect/sql-pg";
 import {
+  Config,
   Context,
   Crypto,
   Data,
@@ -9,6 +10,7 @@ import {
   Fiber,
   FileSystem,
   Layer,
+  Option,
   Path,
   PubSub,
   Redacted,
@@ -410,6 +412,43 @@ const removeOwnedRoot = (
     keep,
   );
 
+const hostCaBundles = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+  "/etc/ssl/ca-bundle.pem",
+  "/etc/ssl/cert.pem",
+];
+
+/**
+ * Forwards the host's SSL_CERT_FILE and SSL_CERT_DIR, defaulting SSL_CERT_FILE to its first CA
+ * bundle present, because the bundled OpenSSL behind http and pg_net defaults to a trust store under
+ * /nix on macOS. Exported values are resolved here because PostgreSQL runs from its data directory.
+ */
+const nativeTrustStore = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const env: Record<string, string> = {};
+  for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR"]) {
+    const value = yield* Config.option(Config.nonEmptyString(name)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    // OpenSSL splits SSL_CERT_DIR on ":" on macOS and Linux, the native targets, and skips blanks.
+    if (Option.isSome(value))
+      env[name] =
+        name === "SSL_CERT_DIR"
+          ? value.value
+              .split(":")
+              .map((entry) => (entry === "" ? entry : path.resolve(entry)))
+              .join(":")
+          : path.resolve(value.value);
+  }
+  if (env.SSL_CERT_FILE !== undefined) return env;
+  for (const bundle of hostCaBundles)
+    if (yield* fs.exists(bundle).pipe(Effect.orElseSucceed(() => false)))
+      return { ...env, SSL_CERT_FILE: bundle };
+  return env;
+});
+
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
   config: DatabaseConfig,
@@ -425,6 +464,7 @@ const nativeProcess = (
   instanceId: string,
   spawner: ChildProcessSpawnerService["Service"],
   user: PasswdEntry | undefined,
+  trustStore: Readonly<Record<string, string>>,
 ): Effect.Effect<NativeProcess, ServiceError> =>
   spawnNativeProcess(
     {
@@ -444,6 +484,7 @@ const nativeProcess = (
         ...settings,
       ],
       env: {
+        ...trustStore,
         ...(user === undefined ? {} : { HOME: user.home }),
         PGDATA: paths.dataPath,
         PGSODIUM_KEY_FILE: paths.rootKeyPath,
@@ -857,6 +898,10 @@ export const makeDatabase = (
               options.instanceId,
               spawner,
               stepDownUser,
+              yield* nativeTrustStore.pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+              ),
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",
