@@ -781,15 +781,16 @@ const applyEvent = (
         cause,
         commands,
       );
+      const crash =
+        service.phase._tag === "Stopping"
+          ? service.phase.crash
+          : failure === undefined
+            ? undefined
+            : { cause: failure };
       return [
         setService(dependentsFailed, id, (s) => ({
           ...failAllWaiters(s, id, message, cause, commands),
-          phase: Phase.Stopping({
-            generation,
-            ...(service.phase._tag === "Stopping" && service.phase.crash !== undefined
-              ? { crash: service.phase.crash }
-              : {}),
-          }),
+          phase: Phase.Stopping({ generation, ...(crash === undefined ? {} : { crash }) }),
           breaker:
             failure === undefined ||
             service.phase._tag === "Stopping" ||
@@ -1197,7 +1198,11 @@ const settle = (
           // arm/clear decision must never be stranded by a readiness loss that follows it, or the
           // service could never become idle-eligible again once readiness recovers.
           next = setService(next, id, (s) => ({ ...s, idleArmedEpoch: undefined }));
-        } else if (!demand && settled.phase.ready && settled.idleArmedEpoch === undefined) {
+        } else if (
+          !demand &&
+          (settled.phase.ready || settled.readinessFailure !== undefined) &&
+          settled.idleArmedEpoch === undefined
+        ) {
           const epoch = settled.idleEpoch + 1;
           emitted.push(
             LifecycleCommand.ArmIdleTimer({

@@ -779,6 +779,44 @@ describe("Lifecycle reducer", () => {
       });
     });
 
+    it("ends Failed without relaunching an eager service whose launch cleanup was retained and retried by traffic", () => {
+      let state = initialState(
+        makeGraph([{ id: "database", activation: "eager", prerequisites: [] }]),
+      );
+      ({ state } = run(state, [
+        { event: LifecycleEvent.StartRequested({ id: "database" }), now: 0 },
+        {
+          event: LifecycleEvent.LaunchFailed({ id: "database", generation: 1, cause: "boom" }),
+          now: 1,
+        },
+        {
+          event: LifecycleEvent.StopFailed({
+            id: "database",
+            generation: 1,
+            cause: "busy",
+            failure: "boom",
+          }),
+          now: 2,
+        },
+      ]));
+
+      let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+      ({ state, commandsByStep } = run(state, [
+        { event: open("database", 1), now: 3 },
+        { event: LifecycleEvent.WaiterCancelled({ id: "database", waiterId: 1 }), now: 4 },
+        {
+          event: LifecycleEvent.Exited({ id: "database", generation: 1, requested: true }),
+          now: 5,
+        },
+      ]));
+      expect(tagsOf(commandsByStep[0])).toContain("Stop");
+      expect(commandsByStep[2]).toEqual([]);
+      expect(state.services.get("database")?.phase).toMatchObject({
+        _tag: "Failed",
+        cause: "boom",
+      });
+    });
+
     it("ends Stopped when an explicit stop arrives during the crash's cleanup", () => {
       let state = initialState(makeGraph([lazy("api")]));
       ({ state } = run(state, [
@@ -1332,6 +1370,35 @@ describe("Lifecycle reducer", () => {
       { event: LifecycleEvent.ReadinessRecovered({ id: "api", generation: 1 }), now: 61 },
     ]));
     expect(state.services.get("api")?.idleArmedEpoch).toBe(2);
+  });
+
+  it("idles an unhealthy lazy service without demand and releases its prerequisites", () => {
+    let state = initialState(
+      makeGraph([lazy("database"), lazy("api", { prerequisites: ["database"] })]),
+    );
+    let commandsByStep: ReadonlyArray<ReadonlyArray<Command>>;
+    ({ state } = run(state, [{ event: open("api", 1), now: 0 }]));
+    ({ state } = run(state, [
+      { event: LifecycleEvent.LaunchSucceeded({ id: "database", generation: 1 }), now: 1 },
+      { event: LifecycleEvent.LaunchSucceeded({ id: "api", generation: 1 }), now: 2 },
+      { event: LifecycleEvent.ReadinessLost({ id: "api", generation: 1, cause: "503" }), now: 3 },
+    ]));
+    expect(state.services.get("api")?.idleArmedEpoch).toBeUndefined();
+
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.ConnectionClosed({ id: "api" }), now: 4 },
+    ]));
+    expect(tagsOf(commandsByStep[0])).toContain("ArmIdleTimer");
+    const epoch = state.services.get("api")?.idleArmedEpoch ?? -1;
+
+    ({ state, commandsByStep } = run(state, [
+      { event: LifecycleEvent.IdleElapsed({ id: "api", generation: 1, epoch }), now: 1_004 },
+      { event: LifecycleEvent.Exited({ id: "api", generation: 1, requested: true }), now: 1_005 },
+    ]));
+    expect(tagsOf(commandsByStep[0])).toEqual(["Stop"]);
+    expect(state.services.get("api")?.phase).toEqual({ _tag: "Stopped" });
+    expect(tagsOf(commandsByStep[1])).toEqual(["ArmIdleTimer"]);
+    expect(state.services.get("database")?.idleArmedEpoch).toBe(1);
   });
 
   it("fails only the waiters awaiting a failed readiness check, keeping the session and inspector waiters", () => {
