@@ -264,6 +264,16 @@ it.live(
             timestamp: expect.any(String),
           },
         ]);
+        expect(
+          yield* awaitStored(
+            "cloudflare.logs.prod",
+            `body->'metadata'->'request'->>'path' LIKE '%${restPath}' AND body->'metadata'->'response'->>'status_code' = '404'`,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining(`${restPath} HTTP/1.1" 404 `),
+          }),
+        ]);
 
         yield* Fiber.interrupt(keeper);
         const noise = yield* Effect.forkScoped(

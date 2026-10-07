@@ -243,13 +243,14 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` prints the retained stdout/stderr of composition members and
-exits; `-f/--follow` then streams new lines until interrupted. Select `--stack <name>`
-or `--stack-id <id>`; the repeatable `--service <kind-or-instance-id>` can include
-standalone services too. History is read from the persisted log files, so it works
-while the stack is stopped; `--follow` requires a running owner and fails before
-printing anything without one. Neither mode starts an owner or service, and Ctrl-C
-leaves services running.
+`supabase stack logs` prints the retained stdout/stderr of composition members, plus
+the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
+streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+repeatable `--service <kind-or-instance-id>` can include standalone services too, and
+`--service gateway` reads only the request lines. History is read from the persisted
+log files, so it works while the stack is stopped; `--follow` requires a running owner
+and fails before printing anything without one. Neither mode starts an owner or
+service, and Ctrl-C leaves services running.
 
 `--tail N` (default 200) keeps the newest lines across the selected services and
 `--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
