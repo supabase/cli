@@ -533,7 +533,7 @@ describe("planSlimUpdates", () => {
       {
         kind: "add",
         line: "17.11.0.002-orioledb",
-        branch: "slim-bump/postgres-17.11.0.002-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
         title: "chore(stack): add postgres 17.11.0.002-orioledb-r1",
         toUpstream: "17.11.0.002-orioledb",
         toRelease: "17.11.0.002-orioledb-r1",
@@ -574,7 +574,7 @@ describe("planSlimUpdates", () => {
       {
         kind: "add",
         line: "17.12.0.001-orioledb",
-        branch: "slim-bump/postgres-17.12.0.001-orioledb",
+        branch: "slim-bump/postgres-17-orioledb",
         title: "chore(stack): add postgres 17.12.0.001-orioledb-r0",
         toUpstream: "17.12.0.001-orioledb",
         toRelease: "17.12.0.001-orioledb-r0",

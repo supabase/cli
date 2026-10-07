@@ -773,6 +773,7 @@ function buildUpdate(
   pinned: { readonly upstream: string; readonly revision: number } | undefined,
   toUpstream: string,
   toRevision: number,
+  branchLine = line,
 ): SlimUpdate {
   if (!SERVICE_NAME_PATTERN.test(service)) {
     throw new InvalidPayloadError(`invalid service: ${JSON.stringify(service)}`);
@@ -784,7 +785,7 @@ function buildUpdate(
   if (!RELEASE_VERSION_PATTERN.test(toRelease)) {
     throw new InvalidPayloadError(`invalid release version: ${JSON.stringify(toRelease)}`);
   }
-  const suffix = hasLines ? `-${line}` : "";
+  const suffix = hasLines ? `-${branchLine}` : "";
   const branch =
     kind === "hotfix" ? `slim-hotfix/${service}${suffix}` : `slim-bump/${service}${suffix}`;
   const title =
@@ -970,6 +971,7 @@ export function planSlimUpdates(
         variantFamily(line) === family && (compareOnLine(pinned.upstream, best.upstream) ?? 0) >= 0,
     );
     if (superseded) continue;
+    // One add branch per family, so a newer build rewrites a still-pending add PR.
     updates.push(
       buildUpdate(
         "add",
@@ -979,6 +981,7 @@ export function planSlimUpdates(
         undefined,
         best.upstream,
         best.revision,
+        family,
       ),
     );
   }

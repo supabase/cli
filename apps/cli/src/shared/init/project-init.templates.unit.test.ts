@@ -2,7 +2,8 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
-import { orioledbVersions } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -105,10 +106,14 @@ describe("project init templates", () => {
     ]);
   });
 
-  it("pins init's OrioleDB version to one the artifact catalog publishes", () => {
+  it("pins init's OrioleDB version to the newest OrioleDB 17 build the catalog publishes", () => {
+    const pinned = orioledbVersions().filter((version) => postgresMajor(version) === "17");
     for (const experimentalStack of [false, true]) {
       const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
-      expect(orioledbVersions()).toContain(/^orioledb_version = "(.+)"$/m.exec(rendered)?.[1]);
+      const version = /^orioledb_version = "(.+)"$/m.exec(rendered)?.[1] ?? "";
+      expect(pinned).toContain(version);
+      for (const other of pinned)
+        expect(postgresVersionCompare(version, other)).toBeGreaterThanOrEqual(0);
     }
   });
 
