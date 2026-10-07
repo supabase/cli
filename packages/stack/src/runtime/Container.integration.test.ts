@@ -1523,7 +1523,10 @@ describe("container process adapter", { timeout: 120_000 }, () => {
           if (unpinned[0] === "version") return Effect.succeed(handle(0, "27.0.0|27.0.0"));
           if (unpinned[0] === "inspect")
             return Effect.succeed(handle(0, '{"Ports":{},"Status":"running","ExitCode":0}'));
-          if (unpinned[0] === "run") return Effect.succeed(handle(0, "abcdef012345"));
+          if (unpinned[0] === "run")
+            return Effect.succeed(
+              handle(0, unpinned.includes("-i") ? "supabase-helper-ready\n" : "abcdef012345"),
+            );
           // Two call sites share "ps": the launched container's own `--rm` removal poll (filtered
           // by name, always confirmed gone) and the label-based orphan discovery below.
           if (unpinned[0] === "ps" && unpinned.some((arg) => arg.includes("com.supabase.stack="))) {

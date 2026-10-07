@@ -553,8 +553,9 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
         const child = yield* options.spawner
           .spawn(
             ChildProcess.make(
-              options.runtime,
+              options.target.engine,
               [
+                ...options.target.argv,
                 "run",
                 "--rm",
                 "-i",
