@@ -113,7 +113,7 @@ const startHost = (stateRoot: string, cacheRoot: string, stackId: string, projec
   });
 
 it.live.skipIf(process.platform === "win32")(
-  "stops, destroys, and abandons only containers owned by the same stack id and data root",
+  "stops, destroys, and releases only containers owned by the same stack id and data root",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -248,8 +248,8 @@ it.live.skipIf(process.platform === "win32")(
         expect(yield* containers(stackId, dataB), "destroy removes B containers").toEqual([]);
         expect(yield* (yield* stateFor(rootB)).read(stackId)).toBeUndefined();
 
-        // Abandonment phase: two fresh owners share this id again, each under its own root.
-        // Abandoning A must only ever reach containers carrying A's own `stack-root` label.
+        // Registration-loss phase: two fresh owners share this id again, each under its own root.
+        // Ending A's ownership must only ever reach containers carrying A's own `stack-root` label.
         const stateA3 = yield* stateFor(rootA);
         const stateB3 = yield* stateFor(rootB);
         yield* stateA3.save({
@@ -323,13 +323,13 @@ it.live.skipIf(process.platform === "win32")(
 
         expect(
           yield* containers(stackId, dataA),
-          "abandoning A removes only A's containers",
+          "ending A's ownership stops only A's containers",
         ).toEqual([]);
         expect(
           yield* containers(stackId, dataB),
-          "abandoning A leaves B's containers running",
+          "ending A's ownership leaves B's containers running",
         ).toEqual(idsB3);
-        // B's own container still answers a real readiness probe, proving abandonment never
+        // B's own container still answers a real readiness probe, proving A's owner never
         // touched it.
         yield* clientB3.readyService({ id: mailB3.id });
 
@@ -346,18 +346,19 @@ it.live.skipIf(process.platform === "win32")(
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "removes its containers and exits when its registration is confirmed gone",
+  "stops its containers, keeps its data and exits when its registration is confirmed gone",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-" });
-        const stackId = `abandon-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-docker-data-", stackId).pipe(
-          Effect.flatMap(fs.realPath),
-        );
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-registration-lost-" });
+        const stackId = `registration-lost-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot(
+          "stack-registration-lost-data-",
+          stackId,
+        ).pipe(Effect.flatMap(fs.realPath));
         const stateRoot = path.dirname(path.dirname(dataRoot));
         const cacheRoot = `${base}/cache`;
         const state = yield* stateFor(stateRoot);
@@ -366,7 +367,7 @@ it.live.skipIf(process.platform === "win32")(
           runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
-            branchContext: "abandon-docker-test",
+            branchContext: "registration-lost-test",
             stackName: stackId,
           },
           instances: [],
@@ -387,8 +388,8 @@ it.live.skipIf(process.platform === "win32")(
           service: "database",
           config: {
             version: "17",
-            databasePassword: Redacted.make("abandon-docker-password"),
-            jwtSecret: Redacted.make("abandon-docker-jwt-secret-at-least-thirty-two-characters"),
+            databasePassword: Redacted.make("registration-lost-password"),
+            jwtSecret: Redacted.make("registration-lost-jwt-secret-at-least-thirty-two-characters"),
             jwtExpiry: 3600,
           },
           endpoints: { sql: { port: "auto" } },
@@ -414,15 +415,17 @@ it.live.skipIf(process.platform === "win32")(
           Effect.timeout("30 seconds"),
         );
 
-        expect(yield* containers(stackId, dataRoot), "abandonment removes containers").toEqual([]);
+        expect(yield* containers(stackId, dataRoot), "the owner stopped its containers").toEqual(
+          [],
+        );
         expect(
           yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
           "no registration is republished",
         ).toBe(false);
         expect(
           yield* fs.exists(containerEnvRoot),
-          "abandonment removes the shared container-env scratch directory",
-        ).toBe(false);
+          "the data root is left in place for a successor or `destroy`",
+        ).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   { timeout: 180_000 },
@@ -480,17 +483,18 @@ const triggerStop = (trigger: StopTrigger, access: HostAccess) =>
     ? Effect.sync(() => process.kill(access.endpoint.pid, "SIGTERM"))
     : Effect.forkScoped(shutdownOwner(access, false).pipe(Effect.ignore));
 
-const abandonsWhileStopRuns = (trigger: StopTrigger) =>
+const losesRegistrationWhileStopRuns = (trigger: StopTrigger) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const crypto = yield* Crypto.Crypto;
-      const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-gated-" });
-      const stackId = `abandon-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-      const dataRoot = yield* makeDockerDatabaseRoot("stack-abandon-gated-data-", stackId).pipe(
-        Effect.flatMap(fs.realPath),
-      );
+      const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-registration-lost-gated-" });
+      const stackId = `registration-lost-gated-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+      const dataRoot = yield* makeDockerDatabaseRoot(
+        "stack-registration-lost-gated-data-",
+        stackId,
+      ).pipe(Effect.flatMap(fs.realPath));
       const stateRoot = path.dirname(path.dirname(dataRoot));
       const cacheRoot = `${base}/cache`;
       const gateDir = `${base}/gate`;
@@ -501,7 +505,7 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
         runtime: testEngine,
         identity: {
           projectRoot: `${base}/project`,
-          branchContext: "abandon-gated-test",
+          branchContext: "registration-lost-gated-test",
           stackName: stackId,
         },
         instances: [],
@@ -533,8 +537,10 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
         service: "database",
         config: {
           version: "17",
-          databasePassword: Redacted.make("abandon-gated-password"),
-          jwtSecret: Redacted.make("abandon-gated-jwt-secret-at-least-thirty-two-characters"),
+          databasePassword: Redacted.make("registration-lost-gated-password"),
+          jwtSecret: Redacted.make(
+            "registration-lost-gated-jwt-secret-at-least-thirty-two-characters",
+          ),
           jwtExpiry: 3600,
         },
         endpoints: { sql: { port: "auto" } },
@@ -571,115 +577,37 @@ const abandonsWhileStopRuns = (trigger: StopTrigger) =>
       ).toBe(false);
       expect(
         yield* fs.exists(containerEnvRoot),
-        "the registration lost during the gated stop still reaches abandonment's cleanup",
-      ).toBe(false);
-      expect(yield* containers(stackId, dataRoot), "no containers are left behind").toEqual([]);
+        "the stop that was running when the registration disappeared leaves the data root in place",
+      ).toBe(true);
+      expect(yield* containers(stackId, dataRoot), "the held stop still completed").toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)));
 
 it.live.skipIf(process.platform === "win32")(
-  "abandons a stack whose registration disappears while a signal-driven stop is still running",
-  () => abandonsWhileStopRuns("signal"),
+  "finishes a signal-driven stop and exits when the registration disappears mid-stop",
+  () => losesRegistrationWhileStopRuns("signal"),
   { timeout: 180_000 },
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "abandons a stack whose registration disappears while an HTTP-driven stop is still running",
-  () => abandonsWhileStopRuns("http"),
+  "finishes an HTTP-driven stop and exits when the registration disappears mid-stop",
+  () => losesRegistrationWhileStopRuns("http"),
   { timeout: 180_000 },
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "removes an orphaned container by label alone, independent of any instance's own cleanup",
+  "stops its containers and exits when its whole state root is confirmed gone",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-label-" });
-        const stackId = `abandon-label-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot(
-          "stack-abandon-docker-label-data-",
-          stackId,
-        ).pipe(Effect.flatMap(fs.realPath));
-        const stateRoot = path.dirname(path.dirname(dataRoot));
-        const cacheRoot = `${base}/cache`;
-        const state = yield* stateFor(stateRoot);
-        yield* state.save({
-          id: stackId,
-          runtime: testEngine,
-          identity: {
-            projectRoot: `${base}/project`,
-            branchContext: "abandon-docker-label-test",
-            stackName: stackId,
-          },
-          instances: [],
-          lifetime: "detached" as const,
-          composition: { members: [], dependencies: [] },
-        });
-        yield* Effect.addFinalizer(() => removeContainers(stackId, dataRoot).pipe(Effect.ignore));
-        const access = yield* launchHost(state, {
-          stateRoot,
-          cacheRoot,
-          stackId,
-          entrypoint: shortRegistrationPollFixture,
-        });
-        // No registered service at all, so the per-instance cleanup loop has nothing to do: this
-        // container carries only the stack's identity label, simulating a leaked storage helper
-        // no claim or helper-registry bookkeeping ever reaches. Only the
-        // registration-independent label sweep can remove it.
-        yield* engine([
-          "run",
-          "-d",
-          "--name",
-          `supabase-orphan-${stackId}`,
-          "--label",
-          `com.supabase.stack=${stackId}`,
-          "--label",
-          `com.supabase.stack-root=${dataRoot}`,
-          "--label",
-          "com.supabase.stack-managed=true",
-          helperImage,
-          "/bin/sh",
-          "-c",
-          "trap : TERM INT; while :; do sleep 3600; done",
-        ]);
-        expect(
-          (yield* containers(stackId, dataRoot)).length,
-          "the orphan container exists before abandonment",
-        ).toBeGreaterThan(0);
-
-        const leaseReleased = yield* watchLeaseRelease(stateRoot, stackId);
-        yield* fs.remove(`${stateRoot}/${stackId}/state.json`);
-        yield* leaseReleased;
-        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
-          Effect.timeout("30 seconds"),
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-root-lost-" });
+        const stackId = `state-root-lost-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const dataRoot = yield* makeDockerDatabaseRoot("stack-state-root-lost-data-", stackId).pipe(
+          Effect.flatMap(fs.realPath),
         );
-
-        expect(
-          yield* containers(stackId, dataRoot),
-          "abandonment removes the orphan container by label alone",
-        ).toEqual([]);
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-  { timeout: 180_000 },
-);
-
-it.live.skipIf(process.platform === "win32")(
-  "removes its containers and exits when its whole state root is confirmed gone",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-docker-root-" });
-        const stackId = `abandon-root-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
-        const dataRoot = yield* makeDockerDatabaseRoot(
-          "stack-abandon-docker-root-data-",
-          stackId,
-        ).pipe(Effect.flatMap(fs.realPath));
         const stateRoot = path.dirname(path.dirname(dataRoot));
         const cacheRoot = `${base}/cache`;
         const state = yield* stateFor(stateRoot);
@@ -688,7 +616,7 @@ it.live.skipIf(process.platform === "win32")(
           runtime: testEngine,
           identity: {
             projectRoot: `${base}/project`,
-            branchContext: "abandon-docker-root-test",
+            branchContext: "state-root-lost-test",
             stackName: stackId,
           },
           instances: [],
@@ -721,28 +649,9 @@ it.live.skipIf(process.platform === "win32")(
         const status = yield* client.status({ id: mail.id });
         const port = status.endpoints.find((endpoint) => endpoint.name === "http")?.port;
         if (port === undefined) return yield* Effect.die("Missing mail http endpoint");
-        // Reachable only by the final label sweep, which runs only if confirming the absent
-        // registration does not fail on the vanished registry lock.
-        yield* engine([
-          "run",
-          "-d",
-          "--name",
-          `supabase-orphan-${stackId}`,
-          "--label",
-          `com.supabase.stack=${stackId}`,
-          "--label",
-          `com.supabase.stack-root=${dataRoot}`,
-          "--label",
-          "com.supabase.stack-managed=true",
-          helperImage,
-          "/bin/sh",
-          "-c",
-          "trap : TERM INT; while :; do sleep 3600; done",
-        ]);
-
         // Deletes the actual `<stateRoot>` itself, not just the entries inside
         // `<stateRoot>/<stackId>`: its sibling `.registry-lock.sqlite` (`Ports.ts`'s per-root
-        // reservation registry) is gone too, so cleanup can only come from the owner's in-memory
+        // reservation registry) is gone too, so the stop can only come from the owner's in-memory
         // resources, and must never open that registry at all. The lease file goes with it, so
         // this relies on budgeted polling rather than a lease-release subscription.
         yield* fs.remove(stateRoot, { recursive: true, force: true });
@@ -757,18 +666,18 @@ it.live.skipIf(process.platform === "win32")(
 
         expect(
           yield* containers(stackId, dataRoot),
-          "abandonment removes the orphan and the service containers with the registry gone",
+          "the owner stops its service containers with the registry gone",
         ).toEqual([]);
 
         // The vanished registry cannot release the port reservation: a fresh stack can still
         // claim the exact same port, through `Ports.ts`'s own lazy reclamation once the former
         // holder's registration is confirmed gone.
         const reclaimedBase = yield* fs.makeTempDirectoryScoped({
-          prefix: "stack-abandon-docker-root-reclaim-",
+          prefix: "stack-state-root-lost-reclaim-",
         });
-        const reclaimedStackId = `abandon-root-reclaim-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
+        const reclaimedStackId = `state-root-lost-reclaim-${(yield* crypto.randomUUIDv4).replaceAll("-", "")}`;
         const reclaimedDataRoot = yield* makeDockerDatabaseRoot(
-          "stack-abandon-docker-root-reclaim-data-",
+          "stack-state-root-lost-reclaim-data-",
           reclaimedStackId,
         ).pipe(Effect.flatMap(fs.realPath));
         const reclaimedStateRoot = path.dirname(path.dirname(reclaimedDataRoot));

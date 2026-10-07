@@ -204,14 +204,14 @@ it.live("lets only the creating handle start a session stack's owner", () =>
 );
 
 it.live.skipIf(process.platform === "win32")(
-  "exits, stops its native workload and releases its port when its registration is confirmed gone",
+  "exits and stops its native workload, freeing its port, when its registration is confirmed gone",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-abandon-native-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-registration-lost-native-" });
       const stateRoot = `${root}/state`;
       const state = yield* stateFor(stateRoot);
-      const stackId = "abandon-native";
+      const stackId = "registration-lost-native";
       yield* state.save({
         id: stackId,
         runtime: "native",
@@ -253,19 +253,19 @@ it.live.skipIf(process.platform === "win32")(
       // this final, now-fast confirmation.
       yield* waitForOwnerExit(ownerPid, ownerExitProbe(fs)).pipe(Effect.timeout("10 seconds"));
 
-      expect(owned.filter(alive), "native processes die with their abandoned owner").toEqual([]);
+      expect(owned.filter(alive), "native processes die with their owner").toEqual([]);
       expect(
         yield* fs.exists(`${stateRoot}/${stackId}/state.json`),
         "no registration is republished",
       ).toBe(false);
 
-      // The port reservation is released: a fresh stack can claim the exact same port.
+      // The stopped workload frees its port: a fresh stack can claim the exact same port.
       const reclaimedRoot = yield* fs.makeTempDirectoryScoped({
-        prefix: "stack-abandon-native-reclaim-",
+        prefix: "stack-registration-lost-native-reclaim-",
       });
       const reclaimedStateRoot = `${reclaimedRoot}/state`;
       const reclaimedState = yield* stateFor(reclaimedStateRoot);
-      const reclaimedId = "abandon-native-reclaim";
+      const reclaimedId = "registration-lost-native-reclaim";
       yield* reclaimedState.save({
         id: reclaimedId,
         runtime: "native",
