@@ -614,10 +614,8 @@ function makeStackObservation(
     lifecycle: opts.lifecycle ?? "stopped",
     health: opts.health,
     error: opts.error,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
     wakeEnabled: opts.wakeEnabled ?? false,
   };
 }

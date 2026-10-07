@@ -102,10 +102,8 @@ const makeObservation = (
   lifecycle: "stopped",
   health: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
   wakeEnabled: true,
   ...input,
 });

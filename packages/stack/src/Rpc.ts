@@ -123,12 +123,10 @@ export const Observation = Schema.Struct({
   lifecycle: Schema.Literals(["stopped", "starting", "running", "stopping"]),
   health: Schema.UndefinedOr(Schema.Literals(["starting", "healthy", "unhealthy"])),
   error: Schema.UndefinedOr(ServiceErrorSchema),
-  cleanupError: Schema.UndefinedOr(ServiceErrorSchema),
   exit: Schema.UndefinedOr(Schema.Exit(Schema.Void, ServiceErrorSchema, Schema.Defect())),
   currentOperation: Schema.UndefinedOr(
     Schema.Literals(["start", "stop", "restart", "storage", "destroy", "sleep"]),
   ),
-  launchId: Schema.UndefinedOr(Schema.Int),
   wakeEnabled: Schema.Boolean,
 });
 export interface Observation extends Schema.Schema.Type<typeof Observation> {}

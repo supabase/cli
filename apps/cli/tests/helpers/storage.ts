@@ -156,10 +156,8 @@ const observation = (
   health,
   error:
     error === undefined ? undefined : { _tag: "ServiceError", operation: "status", message: error },
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
   wakeEnabled,
 });
 

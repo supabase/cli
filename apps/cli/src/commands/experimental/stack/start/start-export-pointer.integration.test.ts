@@ -65,10 +65,8 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     lifecycle: "running",
     health: "healthy",
     error: undefined,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
     wakeEnabled: false,
   };
   const databaseInstance = {

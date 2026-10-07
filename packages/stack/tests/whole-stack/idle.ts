@@ -235,8 +235,7 @@ export const restartIdleWake = (runtime: Runtime) =>
 
       const rewarm = yield* requestWithHeaders(restUrl, headers);
       expect(rewarm.status, rewarm.body).toBe(200);
-      const awake = yield* rest.status;
-      expect(awake.lifecycle).toBe("running");
+      expect((yield* rest.status).lifecycle).toBe("running");
 
       yield* killWorkload(runtime, fixture, rest.id);
       const crashed = yield* rest.followStatus.pipe(
@@ -249,9 +248,7 @@ export const restartIdleWake = (runtime: Runtime) =>
 
       const rewake = yield* requestWithHeaders(restUrl, headers);
       expect(rewake.status, rewake.body).toBe(200);
-      const woken = yield* rest.status;
-      expect(woken.lifecycle).toBe("running");
-      expect(woken.launchId).toBeGreaterThan(awake.launchId ?? Number.POSITIVE_INFINITY);
+      expect((yield* rest.status).lifecycle).toBe("running");
     }),
   );
 

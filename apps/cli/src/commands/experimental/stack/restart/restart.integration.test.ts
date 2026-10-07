@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Ref, Stream } from "effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -71,17 +71,43 @@ describe("stack restart", () => {
               yield* standalone.start;
               yield* standalone.ready;
               const before = yield* member.status;
-              const standaloneBefore = yield* standalone.status;
+
+              // Both follows are subscribed once their first status arrives, before the restart.
+              const memberFollowing = yield* Deferred.make<void>();
+              const relaunched = yield* member.followStatus.pipe(
+                Stream.tap(() => Deferred.succeed(memberFollowing, undefined)),
+                Stream.dropWhile((value) => value.lifecycle === "running"),
+                Stream.filter(
+                  (value) => value.lifecycle === "running" && value.health === "healthy",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+              const standaloneFollowing = yield* Deferred.make<void>();
+              const standaloneLifecycles = yield* Ref.make<ReadonlyArray<string>>([]);
+              yield* standalone.followStatus.pipe(
+                Stream.tap((value) =>
+                  Ref.update(standaloneLifecycles, (seen) => [...seen, value.lifecycle]).pipe(
+                    Effect.andThen(Deferred.succeed(standaloneFollowing, undefined)),
+                  ),
+                ),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+              yield* Deferred.await(memberFollowing);
+              yield* Deferred.await(standaloneFollowing);
+
               const result = yield* stackRestart(f.flags).pipe(Effect.provide(f.layer));
+              yield* Fiber.join(relaunched);
               const after = yield* member.status;
               const standaloneAfter = yield* standalone.status;
               expect(result.map(({ id }) => id)).toEqual([member.id]);
               expect(after.lifecycle).toBe("running");
               expect(after.health).toBe("healthy");
-              expect(after.launchId).not.toBe(before.launchId);
               expect(after.endpoints).toEqual(before.endpoints);
               expect(standaloneAfter.lifecycle).toBe("running");
-              expect(standaloneAfter.launchId).toBe(standaloneBefore.launchId);
+              expect(new Set(yield* Ref.get(standaloneLifecycles))).toEqual(new Set(["running"]));
               expect(f.output.stdoutText).toContain("using its saved configuration");
               expect(f.telemetry.flushed).toBe(true);
               yield* stack.stop;

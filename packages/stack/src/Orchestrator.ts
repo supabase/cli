@@ -140,13 +140,8 @@ const waiterBudgetMillis = 120_000;
 export interface Status<Config = unknown> extends ServiceObservation<Config> {
   readonly lifecycle: "stopped" | "starting" | "running" | "stopping";
   readonly health: "starting" | "healthy" | "unhealthy" | undefined;
-  readonly cleanupError: ServiceError | undefined;
-  /** The live generation, if any. */
-  readonly launchId: number | undefined;
   /** Whether demand (traffic, a dependent or eager intent) relaunches the service. */
   readonly wakeEnabled: boolean;
-  /** Whether a destroy is waiting for the service to stop and its storage to be free, or removing it. */
-  readonly destroyPending: boolean;
 }
 
 /**
@@ -355,16 +350,7 @@ const statusOf = <Config>(
     ...execution,
     lifecycle: lifecycleOf(state, id),
     health,
-    cleanupError:
-      service?.cleanupFailure === undefined
-        ? undefined
-        : cleanupError(id, service.cleanupFailure.cause),
-    launchId:
-      phase === undefined || phase._tag === "Stopped" || phase._tag === "Failed"
-        ? undefined
-        : phase.generation,
     wakeEnabled: wakeEnabledOf(state, id),
-    destroyPending: service?.destroy !== undefined,
   };
 };
 

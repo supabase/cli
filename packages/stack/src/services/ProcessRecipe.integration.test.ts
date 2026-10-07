@@ -200,8 +200,10 @@ describe("ProcessRecipe launch cleanup", () => {
           });
 
           expect(Exit.isFailure(yield* service.start.pipe(Effect.exit))).toBe(true);
-          expect((yield* service.get).lifecycle).toBe("stopping");
-          expect((yield* service.get).cleanupError?.operation).toBe("stop");
+          expect(yield* service.get).toMatchObject({
+            lifecycle: "stopping",
+            error: { operation: "launch" },
+          });
           expect(yield* Ref.get(startupLaunches)).toBe(1);
           expect(yield* Ref.get(serviceLaunches)).toBe(0);
           expect(yield* Ref.get(active)).toBe(1);
@@ -289,14 +291,15 @@ describe("ProcessRecipe launch cleanup", () => {
 
         const failure = yield* service.start.pipe(Effect.exit);
         expect(Exit.isFailure(failure)).toBe(true);
-        expect((yield* service.get).lifecycle).toBe("stopping");
-        expect((yield* service.get).cleanupError?.operation).toBe("stop");
+        expect(yield* service.get).toMatchObject({
+          lifecycle: "stopping",
+          error: { operation: "launch" },
+        });
         expect(startupWrapped).toBe(true);
 
         yield* Ref.set(cleanupFailure, false);
         yield* service.stop;
         expect((yield* service.get).lifecycle).toBe("stopped");
-        expect((yield* service.get).cleanupError).toBeUndefined();
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
     ),
   );

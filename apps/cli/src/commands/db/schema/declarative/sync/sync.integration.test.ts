@@ -132,10 +132,8 @@ function syncStackApi(workdir: string, port: number) {
       health: "healthy",
       wakeEnabled: true,
       currentOperation: undefined,
-      launchId: undefined,
       exit: undefined,
       error: undefined,
-      cleanupError: undefined,
     }),
   };
   const composition = {

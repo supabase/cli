@@ -1,7 +1,18 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { create as createStack } from "@supabase/stack/effect";
-import { Data, Effect, FileSystem, Layer, Path, Redacted, Schema } from "effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  Path,
+  Redacted,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { homedir, tmpdir } from "node:os";
 
@@ -177,6 +188,25 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
 
 const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 
+/** Records every lifecycle the service reports once its follow is subscribed. */
+const trackLifecycles = Effect.fn("FunctionsServeE2e.trackLifecycles")(function* (instance: {
+  readonly followStatus: Stream.Stream<{ readonly lifecycle: string }, unknown>;
+}) {
+  const seen = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const subscribed = yield* Deferred.make<void>();
+  yield* instance.followStatus.pipe(
+    Stream.tap((value) =>
+      Ref.update(seen, (lifecycles) => new Set([...lifecycles, value.lifecycle])).pipe(
+        Effect.andThen(Deferred.succeed(subscribed, undefined)),
+      ),
+    ),
+    Stream.runDrain,
+    Effect.forkScoped,
+  );
+  yield* Deferred.await(subscribed);
+  return seen;
+});
+
 describe("functions serve (stack e2e)", () => {
   for (const runtime of ["native", "docker"] as const) {
     if (runtime === "native" && !nativeSupported) continue;
@@ -195,7 +225,7 @@ describe("functions serve (stack e2e)", () => {
           expect(saved.wakeEnabled).toBe(true);
           const composition = yield* stack.composition.describe;
           const plain = yield* serve(root, home);
-          const active = yield* functions.status;
+          const lifecycles = yield* trackLifecycles(functions);
           expect(yield* payload(apiUrl, true)).toEqual({
             value: "original",
             anon: true,
@@ -212,7 +242,7 @@ describe("functions serve (stack e2e)", () => {
           expect((yield* payload(apiUrl, true)).value).toBeNull();
           yield* fs.writeFileString(sourcePath, source);
           yield* interrupt(plain);
-          expect((yield* functions.status).launchId).toBe(active.launchId);
+          expect(yield* Ref.get(lifecycles)).toEqual(new Set(["running"]));
           expect((yield* invoke(apiUrl, false)).status).toBe(401);
 
           const overridden = yield* serve(root, home, [
@@ -246,7 +276,7 @@ describe("functions serve (stack e2e)", () => {
           const composition = yield* stack.composition.describe;
           const database = services.find((instance) => instance.service === "database");
           if (database === undefined) return yield* Effect.die("Database missing");
-          const databaseLaunch = (yield* database.status).launchId;
+          const databaseLifecycles = yield* trackLifecycles(database);
           const child = yield* serve(root, home);
           expect(yield* payload(apiUrl, true)).toEqual({
             value: null,
@@ -261,7 +291,7 @@ describe("functions serve (stack e2e)", () => {
             services.map(({ id }) => id).sort(),
           );
           expect(yield* stack.composition.describe).toEqual(composition);
-          expect((yield* database.status).launchId).toBe(databaseLaunch);
+          expect(yield* Ref.get(databaseLifecycles)).toEqual(new Set(["running"]));
           expect((yield* invoke(apiUrl, false)).status).toBe(404);
           const http = yield* HttpClient.HttpClient;
           expect((yield* http.get(`${apiUrl}/rest/v1/`)).status).toBe(200);

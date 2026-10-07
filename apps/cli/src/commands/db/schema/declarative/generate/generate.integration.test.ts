@@ -130,10 +130,8 @@ function generateStackApi(workdir: string) {
       health: "healthy",
       wakeEnabled: true,
       currentOperation: undefined,
-      launchId: undefined,
       exit: undefined,
       error: undefined,
-      cleanupError: undefined,
     }),
   };
   const composition = {

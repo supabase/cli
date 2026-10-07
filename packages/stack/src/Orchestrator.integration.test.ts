@@ -21,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/unstable/http";
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real backend behind the listener.
 import { captureLogs } from "../tests/logs.ts";
+import type { LifecycleEvent } from "./Lifecycle.ts";
 import * as Network from "./Network.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { RegisteredInstance } from "./Orchestrator.ts";
@@ -49,6 +50,8 @@ const makeInstance = (
     /** Every launch's runtime exit, for workloads that crash on demand. */
     readonly crash?: Effect.Effect<Exit.Exit<void, ServiceError>>;
     readonly events?: Ref.Ref<ReadonlyArray<string>>;
+    /** Runs after the lifecycle has applied each event the service reports. */
+    readonly onReport?: (event: LifecycleEvent) => Effect.Effect<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -86,7 +89,14 @@ const makeInstance = (
           }),
         removeData: () => event("destroy").pipe(Effect.andThen(options.removeData ?? Effect.void)),
       },
-      { id, config: {}, report: orchestrator.report },
+      {
+        id,
+        config: {},
+        report: (reported) =>
+          orchestrator
+            .report(reported)
+            .pipe(Effect.andThen(options.onReport?.(reported) ?? Effect.void)),
+      },
     );
     const configFor = (inputs: Record<string, string>, candidate: unknown) =>
       candidate === undefined
@@ -727,7 +737,6 @@ describe("service composition", () => {
         });
         yield* orchestrator.startComposition;
         yield* Effect.scoped(orchestrator.acquire("rest"));
-        const firstLaunch = (yield* rest.status).launchId;
 
         yield* Deferred.succeed(
           crashed,
@@ -748,9 +757,7 @@ describe("service composition", () => {
         yield* Deferred.succeed(cleanupGate, undefined);
         yield* Fiber.join(waking);
         expect(yield* Ref.get(rest.starts)).toHaveLength(2);
-        const status = yield* rest.status;
-        expect(status.lifecycle).toBe("running");
-        expect(status.launchId).not.toBe(firstLaunch);
+        expect((yield* rest.status).lifecycle).toBe("running");
         yield* orchestrator.stopNamespace;
       }),
     ).pipe(Effect.provide(TestClock.layer())),
@@ -1503,7 +1510,7 @@ describe("idle races through a real listener", () => {
             .pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(stack.holdEntered);
           yield* TestClock.adjust("10 seconds");
-          expect(yield* stack.status).toMatchObject({ lifecycle: "running", launchId: 1 });
+          expect((yield* stack.status).lifecycle).toBe("running");
 
           yield* stack.releaseHeld;
           expect(yield* Fiber.join(request)).toEqual({ status: 200, body: "generation:1" });
@@ -1537,7 +1544,7 @@ describe("idle races through a real listener", () => {
           yield* Deferred.succeed(gate.release, undefined);
 
           expect(yield* Fiber.join(request)).toEqual({ status: 200, body: "generation:2" });
-          expect(yield* stack.status).toMatchObject({ lifecycle: "running", launchId: 2 });
+          expect((yield* stack.status).lifecycle).toBe("running");
           yield* stack.orchestrator.stopNamespace;
         }),
       ).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
@@ -1731,7 +1738,10 @@ describe("failed and crashed services", () => {
         const orchestrator = yield* makeTestOrchestrator();
         const crashes = yield* Queue.unbounded<Exit.Exit<void, ServiceError>>();
         const stops = yield* Ref.make(0);
+        const cleanupFailures = yield* Queue.unbounded<void>();
         const api = yield* makeInstance(orchestrator, "api", {
+          onReport: (event) =>
+            event._tag === "StopFailed" ? Queue.offer(cleanupFailures, undefined) : Effect.void,
           crash: Queue.take(crashes),
           // Every generation's first cleanup attempt fails; the retry succeeds.
           stop: Ref.updateAndGet(stops, (count) => count + 1).pipe(
@@ -1747,19 +1757,9 @@ describe("failed and crashed services", () => {
         yield* orchestrator.startComposition;
         const serveThenCrash = Effect.gen(function* () {
           yield* Effect.scoped(orchestrator.acquire("api"));
-          const cleanupPending = yield* api.observation.pipe(
-            Stream.filter(
-              (state) =>
-                state.lifecycle === "stopping" &&
-                state.currentOperation === undefined &&
-                state.cleanupError !== undefined,
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkChild({ startImmediately: true }),
-          );
           yield* Queue.offer(crashes, Exit.fail(failure("segfault")));
-          yield* Fiber.join(cleanupPending);
+          yield* Queue.take(cleanupFailures);
+          expect((yield* api.status).lifecycle).toBe("stopping");
         });
 
         yield* serveThenCrash;
@@ -1777,7 +1777,12 @@ describe("failed and crashed services", () => {
       Effect.gen(function* () {
         const orchestrator = yield* makeTestOrchestrator();
         const crash = yield* Deferred.make<Exit.Exit<void, ServiceError>>();
-        const database = yield* makeInstance(orchestrator, "database", { exit: crash });
+        const launched = yield* Queue.unbounded<void>();
+        const database = yield* makeInstance(orchestrator, "database", {
+          exit: crash,
+          onReport: (event) =>
+            event._tag === "LaunchSucceeded" ? Queue.offer(launched, undefined) : Effect.void,
+        });
         const rest = yield* makeInstance(orchestrator, "rest");
         yield* orchestrator.configure({
           members: [
@@ -1788,17 +1793,13 @@ describe("failed and crashed services", () => {
         });
         yield* orchestrator.startComposition;
         yield* Effect.scoped(orchestrator.acquire("rest"));
+        yield* Queue.take(launched);
 
-        const relaunched = yield* database.observation.pipe(
-          Stream.filter((state) => state.launchId === 2 && state.health === "healthy"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild({ startImmediately: true }),
-        );
         yield* Deferred.succeed(crash, Exit.fail(failure("segfault")));
-        yield* Fiber.join(relaunched);
+        yield* Queue.take(launched);
 
-        expect(yield* rest.status).toMatchObject({ lifecycle: "running", launchId: 1 });
+        expect((yield* rest.status).lifecycle).toBe("running");
+        expect(yield* Ref.get(database.starts)).toHaveLength(2);
         expect(yield* Ref.get(rest.starts)).toHaveLength(1);
         yield* Effect.scoped(orchestrator.acquire("rest"));
         yield* orchestrator.stopNamespace;

@@ -90,9 +90,7 @@ const observation = (
   health: "healthy",
   currentOperation: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
-  launchId: 1,
   wakeEnabled: false,
   ...overrides,
 });

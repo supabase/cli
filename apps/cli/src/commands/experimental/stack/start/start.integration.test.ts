@@ -107,10 +107,8 @@ const instance = (
     lifecycle: view().lifecycle,
     health: view().health,
     error: undefined,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
     wakeEnabled: view().wakeEnabled,
   });
   const base = {
