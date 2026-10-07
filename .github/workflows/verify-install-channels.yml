@@ -18,11 +18,11 @@ on:
         required: true
         type: string
       brew_name:
-        description: Homebrew formula name (e.g. supabase or supabase-beta)
+        description: Homebrew formula name (e.g. supabase, supabase-beta, or supabase@2)
         required: true
         type: string
       scoop_name:
-        description: Scoop manifest name (e.g. supabase or supabase-beta)
+        description: Scoop manifest name (e.g. supabase, supabase-beta, or supabase-v2-stable)
         required: true
         type: string
   workflow_dispatch:
@@ -32,12 +32,12 @@ on:
         required: true
         type: string
       brew_name:
-        description: Homebrew formula name (e.g. supabase or supabase-beta)
+        description: Homebrew formula name (e.g. supabase, supabase-beta, or supabase@2)
         required: false
         type: string
         default: supabase
       scoop_name:
-        description: Scoop manifest name (e.g. supabase or supabase-beta)
+        description: Scoop manifest name (e.g. supabase, supabase-beta, or supabase-v2-stable)
         required: false
         type: string
         default: supabase

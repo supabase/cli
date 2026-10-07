@@ -134,6 +134,8 @@ export function rootDescription(version: string): string {
       return "Supabase CLI.";
     case "beta":
       return "Supabase CLI (beta channel).";
+    case "next":
+      return "Supabase CLI (next channel).";
     case "preview":
       return "Supabase CLI (preview build).";
     case "development":

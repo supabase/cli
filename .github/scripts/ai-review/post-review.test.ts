@@ -4,6 +4,7 @@ import {
   assertFindings,
   assertMergedReview,
   buildReviewPayload,
+  clampNextImpactSeverity,
   foldInlineCommentsIntoBody,
   isSuperseded,
   type MarkedEntry,
@@ -823,6 +824,56 @@ describe("buildReviewPayload", () => {
     expect(payload.body.length).toBeLessThanOrEqual(65536);
     expect(payload.body).toContain("truncated");
     expect(payload.body).toContain(footer.runUrl);
+  });
+});
+
+describe("next-impact findings", () => {
+  const footer: ReviewFooterInfo = {
+    trigger: "auto",
+    runUrl: "https://example.com/run/2",
+    modelsFooter: "`claude-fable-5` + `gpt-5.6-sol`",
+  };
+  const anchors = parseDiffAnchors(SINGLE_HUNK_DIFF);
+
+  test("clamps critical and major to minor and leaves minor and nit alone", () => {
+    const severities = (["critical", "major", "minor", "nit"] as const).map(
+      (severity) => clampNextImpactSeverity(makeFinding({ severity })).severity,
+    );
+    expect(severities).toEqual(["minor", "minor", "minor", "nit"]);
+  });
+
+  test("renders an advisory section with the clamped severity and no inline comment", () => {
+    const finding = makeFinding({
+      file: "file.ts",
+      line: 10,
+      severity: "critical",
+      category: "next-impact",
+      claim: "Adds Go delegation that next removes.",
+    });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.event).toBe("COMMENT");
+    expect(payload.comments).toEqual([]);
+    expect(payload.body).toContain("### Next impact (advisory)");
+    expect(payload.body).toContain("Adds Go delegation that next removes.");
+    expect(payload.body).toContain("🟡 MINOR");
+    expect(payload.body).not.toContain("🔴 CRITICAL");
+    expect(payload.body).toContain("No issues found.");
+  });
+
+  test("omits the section when there are no next-impact findings", () => {
+    const finding = makeFinding({ file: "file.ts", line: 10 });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.body).not.toContain("Next impact");
+  });
+
+  test("a refuted next-impact finding stays in the refuted details", () => {
+    const finding = makeFinding({
+      category: "next-impact",
+      adjudication: { verdict: "refuted", reason: "next keeps this code." },
+    });
+    const payload = buildReviewPayload(makeMergedReview({ findings: [finding] }), anchors, footer);
+    expect(payload.body).not.toContain("### Next impact (advisory)");
+    expect(payload.body).toContain("Refuted findings");
   });
 });
 

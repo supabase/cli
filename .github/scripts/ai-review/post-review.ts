@@ -564,6 +564,21 @@ function severityRank(severity: Severity): number {
   return SEVERITY_ORDER.indexOf(severity);
 }
 
+const NEXT_IMPACT_CATEGORY = "next-impact";
+const NEXT_IMPACT_MAX_SEVERITY: Severity = "minor";
+
+/** Next-impact findings are advisory: they render in their own section, never inline or in the findings table. */
+function isAdvisoryNextImpact(finding: MergedFinding): boolean {
+  return finding.category === NEXT_IMPACT_CATEGORY && finding.adjudication.verdict !== "refuted";
+}
+
+/** Caps a next-impact finding's severity at minor, whatever the models reported. */
+export function clampNextImpactSeverity(finding: MergedFinding): MergedFinding {
+  return severityRank(finding.severity) < severityRank(NEXT_IMPACT_MAX_SEVERITY)
+    ? { ...finding, severity: NEXT_IMPACT_MAX_SEVERITY }
+    : finding;
+}
+
 /** Renders the body of a single inline review comment for one finding. */
 export function renderInlineComment(finding: MergedFinding): string {
   const lines = [
@@ -631,6 +646,23 @@ export function renderReviewBody(
         `- **${SEVERITY_BADGES[finding.severity]}** \`${sanitizeFilePath(finding.file)}:${finding.line}\` — ${sanitizeModelText(finding.claim)}`,
     );
     sections.push(["### Findings outside the diff", "", ...items].join("\n"));
+  }
+
+  const nextImpact = review.findings.filter(isAdvisoryNextImpact).map(clampNextImpactSeverity);
+  if (nextImpact.length > 0) {
+    const items = nextImpact.map(
+      (finding) =>
+        `- **${SEVERITY_BADGES[finding.severity]}** \`${sanitizeFilePath(finding.file)}:${finding.line}\` — ${sanitizeModelText(finding.claim)}`,
+    );
+    sections.push(
+      [
+        "### Next impact (advisory)",
+        "",
+        "Possible conflicts with work on the `next` branch. Informational only; this does not affect merging.",
+        "",
+        ...items,
+      ].join("\n"),
+    );
   }
 
   if (partitioned.refuted.length > 0) {
@@ -723,7 +755,10 @@ export function buildReviewPayload(
   anchors: Map<string, Set<number>>,
   footer: ReviewFooterInfo,
 ): ReviewPayload {
-  const partitioned = partitionFindings(review.findings, anchors);
+  const partitioned = partitionFindings(
+    review.findings.filter((finding) => !isAdvisoryNextImpact(finding)),
+    anchors,
+  );
   const comments = partitioned.anchorable.map((finding) => buildInlineComment(finding, anchors));
   const body = renderReviewBody(review, partitioned, footer);
   // A body-only review has no 422 fold-retry to truncate it later, so
