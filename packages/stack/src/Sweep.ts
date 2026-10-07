@@ -64,7 +64,7 @@ export const reclaimStack = Effect.fn("Sweep.reclaimStack")(function* (options: 
       if (!(yield* holdLease(state, id))) return false;
       const saved = yield* state.read(id);
       if (saved === undefined) return true;
-      const dataRoot = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, id);
+      const dataRoot = yield* StackNamespace.stackDataRootLabel(options.stateRoot, id);
       if (saved.lifetime === "session")
         yield* destroyStack(state, saved, dataRoot, options.cacheRoot);
       else {

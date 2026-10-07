@@ -696,6 +696,39 @@ describe("stack owner lease", () => {
       ),
   );
 
+  // Windows refuses to delete a stack directory while its lease file is open.
+  it.live.skipIf(process.platform === "win32")(
+    "keeps a successor's discovery record when the holder of a removed stack retracts its own",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-lease-record-" });
+          const state = yield* makeTestState(root);
+          const record = (pid: number): StackNamespace.LeaseHolder => ({
+            role: "sweeper",
+            pid,
+            startedAt: "2026-01-01T00:00:00.000Z",
+          });
+          const first = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(first, Exit.void));
+          const removed = yield* state.acquireLease("gone").pipe(Scope.provide(first));
+          yield* removed.publishHolder(record(1));
+          yield* fs.remove(`${root}/gone`, { recursive: true });
+
+          const successor = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(successor, Exit.void));
+          const current = yield* state.acquireLease("gone").pipe(Scope.provide(successor));
+          yield* current.publishHolder(record(2));
+          yield* removed.retractHolder;
+
+          expect(yield* state.readHolder("gone")).toEqual(record(2));
+          yield* current.retractHolder;
+          expect(yield* state.readHolder("gone")).toBeUndefined();
+        }),
+      ),
+  );
+
   it.live("reports a free lease without creating a lease file", () =>
     run(
       Effect.gen(function* () {

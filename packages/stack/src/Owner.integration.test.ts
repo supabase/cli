@@ -893,6 +893,38 @@ it.live("destroying a stack leaves its data root empty after an owner was killed
   ),
 );
 
+it.live("refuses to destroy a stack whose data directory is a symlink and keeps its target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-owner-symlinked-data-" });
+      const stack = initial(`owner-symlinked-data-${randomUUID().slice(0, 8)}`);
+      const state = yield* stateFor(`${root}/state`);
+      yield* state.save(stack);
+      const outside = `${root}/outside`;
+      yield* fs.makeDirectory(outside);
+      yield* fs.writeFileString(`${outside}/precious.txt`, "keep");
+      const data = `${root}/state/${stack.id}/data`;
+      yield* fs.symlink(outside, data);
+      const owner = yield* ownerFor({ saved: stack, state, root: data, cacheRoot });
+
+      const failure = yield* owner.namespace.destroy.pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(`${outside}/precious.txt`)).toBe("keep");
+      expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
+    }),
+  ).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeHttpClient.layerNodeHttp,
+        PortReservations.layer.pipe(Layer.provide(NodeServices.layer)),
+      ),
+    ),
+  ),
+);
+
 it.effect("refuses to generate credentials for a stack whose saved instances consume them", () =>
   Effect.scoped(
     Effect.gen(function* () {

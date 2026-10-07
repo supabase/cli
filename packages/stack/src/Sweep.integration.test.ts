@@ -19,7 +19,7 @@ import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
 import { makeContainerRuntime, type EngineTarget } from "./runtime/Container.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { reclaimDeletedStack, sweepOrphans } from "./Sweep.ts";
+import { reclaimDeletedStack, reclaimStack, sweepOrphans } from "./Sweep.ts";
 import { engineStub, makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { awaitContainerRemoved } from "../tests/engine-events.ts";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
@@ -264,6 +264,38 @@ it.live(
         expect(yield* fs.exists(path.join(root, "old-kept", "data"))).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("reclaiming a session stack refuses a symlinked data directory and keeps its target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-symlinked-data-" });
+      const stateRoot = path.join(root, "state");
+      const state = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      );
+      const stack = saved("symlinked-data", root, "native", "session");
+      yield* state.save(stack);
+      const outside = path.join(root, "outside");
+      yield* fs.makeDirectory(outside);
+      yield* fs.writeFileString(path.join(outside, "precious.txt"), "keep");
+      yield* fs.symlink(outside, path.join(stateRoot, stack.id, "data"));
+
+      const failure = yield* reclaimStack({
+        state,
+        stateRoot,
+        cacheRoot: path.join(root, "cache"),
+        id: stack.id,
+      }).pipe(Effect.flip);
+
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(path.join(outside, "precious.txt"))).toBe("keep");
+      expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live("sweeps deleted stacks of its own root only, on the engine its owner pinned", () =>

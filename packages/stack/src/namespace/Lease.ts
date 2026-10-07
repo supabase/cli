@@ -40,7 +40,10 @@ interface LeaseHandle {
   readonly stackId: string;
   readonly ownerLog: string;
   readonly publishHolder: (record: LeaseHolder) => Effect.Effect<void, NamespaceError>;
+  /** Removes the holder record while the lease path still names the file this lease locked. */
   readonly retractHolder: Effect.Effect<void, NamespaceError>;
+  /** False once the lease path no longer names the file this lease locked (confirmed missing or replaced). */
+  readonly pathHeld: Effect.Effect<boolean, NamespaceError>;
 }
 
 export interface Interface {
@@ -85,11 +88,10 @@ export const make = (
     /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
     const isMoved = (error: NamespaceError) =>
       errcode(error.cause, 6922) || errcode(error.cause, 1802);
+    const identityOf = (info: FileSystem.File.Info) =>
+      `${info.dev}:${Option.getOrElse(info.ino, () => "")}`;
     const fileIdentity = (file: string) =>
-      fs.stat(file).pipe(
-        Effect.map((info) => `${info.dev}:${Option.getOrElse(info.ino, () => "")}`),
-        Effect.option,
-      );
+      fs.stat(file).pipe(Effect.map(identityOf), Effect.option);
     /**
      * Deletes an unregistered stack's lease file while it is still the file locked as `identity`;
      * `false` means it is still in place.
@@ -198,9 +200,18 @@ export const make = (
             }),
         ),
       );
+      const pathHeld = fs.stat(target).pipe(
+        Effect.map((info) => identityOf(info) === held),
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(false),
+        ),
+        Effect.mapError((cause) => namespaceError("lease", cause)),
+      );
       return {
         stackId: id,
         ownerLog: outcome.ownerLog,
+        pathHeld,
         publishHolder: Effect.fn("Namespace.Lease.publishHolder")(function* (record: LeaseHolder) {
           const serialized = yield* Schema.encodeEffect(Schema.fromJsonString(LeaseHolder))(
             record,
@@ -214,8 +225,14 @@ export const make = (
             platform: options.platform,
           });
         }),
-        retractHolder: fs.remove(ownerPath(id), { force: true }).pipe(
-          Effect.mapError((cause) => namespaceError("remove", cause)),
+        retractHolder: pathHeld.pipe(
+          Effect.flatMap((held) =>
+            held
+              ? fs
+                  .remove(ownerPath(id), { force: true })
+                  .pipe(Effect.mapError((cause) => namespaceError("remove", cause)))
+              : Effect.void,
+          ),
           Effect.withSpan("Namespace.Lease.retractHolder"),
         ),
       } satisfies LeaseHandle;

@@ -64,6 +64,7 @@ import type { CatalogError } from "./services/Recipe.ts";
 import * as Container from "./runtime/Container.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import { stackError, type OwnerRpc } from "./Rpc.ts";
+import { confirmStackDataRoot } from "./namespace/Paths.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
@@ -142,6 +143,12 @@ export interface Interface {
      * containers, native socket directories and saved state.
      */
     readonly destroy: Effect.Effect<void, NamespaceError>;
+    /**
+     * Stops what this owner launched once in-flight definition changes settle, for an owner whose
+     * claim on the stack ended: containers, data, ports and saved state may now belong to a
+     * successor and stay untouched.
+     */
+    readonly release: Effect.Effect<void, NamespaceError>;
   };
 }
 
@@ -874,7 +881,9 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
       ),
       // Instance teardown retains port rows until the registration is gone; the release after
       // that is best-effort because `isGone` reclaims a gone stack's rows lazily.
-      destroy: orchestrator.destroyNamespace.pipe(
+      destroy: confirmStackDataRoot(options.state.root, stackId).pipe(
+        Effect.provideContext(services),
+        Effect.andThen(orchestrator.destroyNamespace),
         Effect.andThen(sweep),
         Effect.andThen(removeDataRootEntries),
         Effect.andThen(logStore.close),
@@ -888,6 +897,10 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         ),
         definitionGate.withPermits(1),
         Effect.withSpan("Owner.destroyNamespace"),
+      ),
+      release: orchestrator.stopNamespace.pipe(
+        definitionGate.withPermits(1),
+        Effect.withSpan("Owner.releaseNamespace"),
       ),
     },
   } satisfies Interface;

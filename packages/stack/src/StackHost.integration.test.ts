@@ -20,6 +20,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- integration observes exact listener closure.
 import * as Net from "node:net";
+import { fileURLToPath } from "node:url";
 import {
   launchHost,
   ownerAuthorization,
@@ -33,10 +34,14 @@ import { OrchestratorError } from "./Orchestrator.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { bindControl, makeRuntime } from "./StackHost.ts";
-import { shutdownOwner } from "../tests/owner.ts";
+import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 import { postgres } from "./Commands.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
+
+const shortRegistrationPollFixture = fileURLToPath(
+  new URL("../tests/short-registration-poll-fixture.ts", import.meta.url),
+);
 
 class HostTestError extends Data.TaggedError("HostTestError")<{ readonly message: string }> {}
 
@@ -311,72 +316,6 @@ it.live("stops serving after a failed shutdown and keeps reporting that failure"
       expect(again.message).toContain("Shutdown mode is already selected");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
-);
-
-it.live(
-  "closes admission and confirms cleanup when abandonment claims ownership after a failing stop settles",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const root = yield* fs.makeTempDirectoryScoped({
-          prefix: "stack-host-abandon-after-stop-",
-        });
-        const state = yield* stateFor(`${root}/state`);
-        const saved = {
-          id: "stack",
-          runtime: "native" as const,
-          identity: {
-            projectRoot: root,
-            branchContext: "main",
-            stackName: "host-abandon-after-stop",
-          },
-          instances: [],
-          lifetime: "detached" as const,
-          composition: { members: [], dependencies: [] },
-        };
-        yield* state.save(saved);
-        const owner = yield* ownerFor({
-          saved,
-          state,
-          root: `${root}/data`,
-          cacheRoot: testArtifactCacheRoot,
-        });
-        const stopGate = yield* Deferred.make<void>();
-        const destroyEntered = yield* Deferred.make<void>();
-        const destroyGate = yield* Deferred.make<void>();
-        const failedOwner = {
-          ...owner,
-          namespace: {
-            ...owner.namespace,
-            stop: Deferred.await(stopGate).pipe(
-              Effect.andThen(
-                Effect.fail(new OrchestratorError({ operation: "stop", message: "stop failed" })),
-              ),
-            ),
-            destroy: Deferred.succeed(destroyEntered, undefined).pipe(
-              Effect.andThen(Deferred.await(destroyGate)),
-              Effect.andThen(owner.namespace.destroy),
-            ),
-          },
-        };
-        const { runtime } = yield* inProcessRuntime(failedOwner, state, root);
-        const stopFiber = yield* Effect.forkScoped(runtime.shutdown(false));
-        // Abandon is requested while the stop is still in flight, never after it has settled:
-        // the one shutdown pipeline waits for it, instead of racing its own cleanup.
-        const abandonFiber = yield* Effect.forkScoped(runtime.abandon);
-        yield* Deferred.succeed(stopGate, undefined);
-        expect(Exit.isFailure(yield* Fiber.join(stopFiber).pipe(Effect.exit))).toBe(true);
-        yield* Deferred.await(destroyEntered).pipe(Effect.timeout("2 seconds"));
-        expect(
-          yield* Deferred.isDone(owner.draining),
-          "admission stays closed while abandonment cleans up",
-        ).toBe(true);
-        yield* Deferred.succeed(destroyGate, undefined);
-        yield* Fiber.join(abandonFiber).pipe(Effect.timeout("2 seconds"));
-        yield* Deferred.await(runtime.exit).pipe(Effect.timeout("2 seconds"));
-      }),
-    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live("reports a destroy failure and the owner exits", () =>
@@ -1083,4 +1022,98 @@ it.live("destroys a stack only after an abandoned composition settles", () =>
       expect((yield* fs.exists(data)) ? yield* fs.readDirectory(data) : []).toEqual([]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+const endedOwnership = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix });
+    const stateRoot = `${root}/state`;
+    const state = yield* stateFor(stateRoot);
+    const saved = {
+      id: "stack",
+      runtime: "native" as const,
+      identity: { projectRoot: root, branchContext: "main", stackName: "host-ownership" },
+      instances: [],
+      lifetime: "detached" as const,
+      composition: { members: [], dependencies: [] },
+    };
+    yield* state.save(saved);
+    // The shortened poll interval comes only from this dedicated test entrypoint.
+    const launch = launchHost(state, {
+      stateRoot,
+      cacheRoot: testArtifactCacheRoot,
+      stackId: saved.id,
+      entrypoint: shortRegistrationPollFixture,
+    });
+    const access = yield* launch;
+    yield* Effect.addFinalizer(() =>
+      shutdownOwner(access, true).pipe(
+        Effect.ignore,
+        Effect.andThen(
+          waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(Effect.ignore),
+        ),
+      ),
+    );
+    return { fs, stateRoot, state, saved, launch, access };
+  });
+
+it.live.skipIf(process.platform === "win32")(
+  "exits when its stack directory is deleted and leaves a restarted stack's owner discoverable",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, stateRoot, state, saved, launch, access } =
+          yield* endedOwnership("stack-host-dir-deleted-");
+        const exited = yield* watchLeaseRelease(stateRoot, saved.id);
+        yield* fs.remove(`${stateRoot}/${saved.id}`, { recursive: true });
+        yield* state.save(saved);
+        const successor = yield* launch;
+        yield* Effect.addFinalizer(() =>
+          shutdownOwner(successor, true).pipe(
+            Effect.ignore,
+            Effect.andThen(
+              waitForOwnerExit(successor.endpoint.pid, ownerExitProbe(fs)).pipe(Effect.ignore),
+            ),
+          ),
+        );
+        yield* exited;
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("10 seconds"),
+        );
+
+        expect(successor.endpoint.pid, "the restart started its own owner").not.toBe(
+          access.endpoint.pid,
+        );
+        expect((yield* state.readHolder(saved.id))?.role === "owner").toBe(true);
+        expect((yield* launch).endpoint.pid, "the successor is still discoverable").toBe(
+          successor.endpoint.pid,
+        );
+        yield* shutdownOwner(successor, false);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 60_000 },
+);
+
+it.live.skipIf(process.platform === "win32")(
+  "exits without deleting data when only its registration is deleted",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { fs, stateRoot, saved, access } = yield* endedOwnership(
+          "stack-host-registration-deleted-",
+        );
+        const kept = `${stateRoot}/${saved.id}/data/kept.txt`;
+        yield* fs.writeFileString(kept, "data");
+        const exited = yield* watchLeaseRelease(stateRoot, saved.id);
+        yield* fs.remove(`${stateRoot}/${saved.id}/state.json`);
+        yield* exited;
+        yield* waitForOwnerExit(access.endpoint.pid, ownerExitProbe(fs)).pipe(
+          Effect.timeout("10 seconds"),
+        );
+
+        expect(yield* fs.readFileString(kept)).toBe("data");
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  { timeout: 60_000 },
 );

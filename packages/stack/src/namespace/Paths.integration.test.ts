@@ -1,7 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, FileSystem, Path } from "effect";
-import { borrow, destroyOwnedRoot } from "./Paths.ts";
+import { borrow, destroyOwnedRoot, resolveStackDataRoot } from "./Paths.ts";
 
 class TestPathsError extends Data.TaggedError("TestPathsError")<{
   readonly operation: string;
@@ -217,6 +217,28 @@ describe("ownership is by location", () => {
         ).pipe(Effect.flip);
         expect(failure.operation).toBe("destroy");
         expect(yield* fs.exists(sentinel)).toBe(true);
+      }),
+    ),
+  );
+});
+
+describe("the stack data root", () => {
+  it.live("is refused at launch when it is a symlink", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-data-root-symlink-" });
+        const outside = path.join(root, "outside");
+        yield* fs.makeDirectory(outside);
+        yield* fs.makeDirectory(path.join(root, "state", "stack"), { recursive: true });
+        yield* fs.symlink(outside, path.join(root, "state", "stack", "data"));
+
+        const failure = yield* resolveStackDataRoot(path.join(root, "state"), "stack").pipe(
+          Effect.flip,
+        );
+
+        expect(failure.message).toContain("symlink");
       }),
     ),
   );

@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Path } from "effect";
+import { namespaceError } from "./Capabilities.ts";
 import { lstatPath } from "./drivers/FileSystem.ts";
 
 const BorrowedPathBrand: unique symbol = Symbol("Namespace.BorrowedPath");
@@ -65,23 +66,6 @@ export const borrow = Effect.fn("Namespace.Paths.borrow")(
       return { path: candidate, [BorrowedPathBrand]: true };
     }),
 );
-
-/**
- * The canonical data root of a stack: its `data` directory under `stateRoot`, created if missing
- * and resolved through symlinks. Launch and every cleanup path derive container labels and native
- * socket directories from this one value, so each reaches the same resources however the state
- * root is spelled.
- */
-export const resolveStackDataRoot = Effect.fn("Namespace.Paths.resolveStackDataRoot")(function* (
-  stateRoot: string,
-  stackId: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const dataRoot = path.join(stateRoot, stackId, "data");
-  yield* fs.makeDirectory(dataRoot, { recursive: true });
-  return yield* fs.realPath(dataRoot);
-});
 
 /**
  * The data-root label its containers carry, derived without creating the directory, for a stack
@@ -177,3 +161,40 @@ export const destroyOwnedRoot = Effect.fn("Namespace.Paths.destroyOwnedRoot")(
             .pipe(Effect.mapError((cause) => onError("destroy", cause)));
     }),
 );
+
+/**
+ * Refuses a stack's `data` directory when it is a symlink or resolves outside the stack
+ * directory, so a destroy never empties a target the stack does not own. A missing directory
+ * passes: only launch creates it.
+ */
+export const confirmStackDataRoot = Effect.fn("Namespace.Paths.confirmStackDataRoot")(function* (
+  stateRoot: string,
+  stackId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const stackRoot = path.join(stateRoot, stackId);
+  const dataRoot = path.join(stackRoot, "data");
+  const present = yield* fs
+    .exists(dataRoot)
+    .pipe(Effect.mapError((cause) => namespaceError("destroy", cause)));
+  if (present) yield* confirmRealOwnedDirectory(fs, path, dataRoot, stackRoot, namespaceError);
+});
+
+/**
+ * The canonical data root of a stack: its `data` directory under `stateRoot`, created if missing
+ * and resolved through symlinks. Launch and every cleanup path derive container labels and native
+ * socket directories from this one value, so each reaches the same resources however the state
+ * root is spelled. A `data` directory that is itself a symlink is refused.
+ */
+export const resolveStackDataRoot = Effect.fn("Namespace.Paths.resolveStackDataRoot")(function* (
+  stateRoot: string,
+  stackId: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dataRoot = path.join(stateRoot, stackId, "data");
+  yield* fs.makeDirectory(dataRoot, { recursive: true });
+  yield* confirmStackDataRoot(stateRoot, stackId);
+  return yield* fs.realPath(dataRoot);
+});

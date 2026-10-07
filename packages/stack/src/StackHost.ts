@@ -173,10 +173,11 @@ export interface StackHostRuntime {
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
   ) => Effect.Effect<void, StackError>;
   /**
-   * Ends ownership after a confirmed-gone registration with one best-effort destroy: it joins a
-   * running destroy and runs after a running stop settles. Failures are logged, never raised.
+   * Ends ownership that was lost to a deleted registration or a replaced lease file: stops only
+   * what this owner launched and leaves data, ports, registration and any successor's containers
+   * alone. It joins a shutdown already running. Failures are logged, never raised.
    */
-  readonly abandon: Effect.Effect<void>;
+  readonly release: Effect.Effect<void>;
   readonly exit: Deferred.Deferred<void>;
 }
 
@@ -222,7 +223,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const exit = yield* Deferred.make<void>();
       const gate = yield* Semaphore.make(1);
-      type ShutdownMode = "stop" | "destroy";
+      type ShutdownMode = "stop" | "destroy" | "release";
       const current = yield* Ref.make<
         { readonly mode: ShutdownMode; readonly fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
@@ -235,9 +236,9 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           scope,
         );
       // Admits `mode`'s cleanup when nothing else is in flight: begins draining, forks the cleanup
-      // and tracks it as `current`. Draining never reverses: a failed stop or destroy leaves its
-      // failed fiber in `current` (repeat calls rejoin the same failure), and the owner exits
-      // once the response has been delivered; only abandonment may replace a settled stop.
+      // and tracks it as `current`. Draining never reverses: a failed shutdown leaves its failed
+      // fiber in `current` (repeat calls rejoin the same failure), and the owner exits once the
+      // response has been delivered.
       const begin = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -266,7 +267,7 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           const body = Effect.gen(function* () {
             yield* attachments.stopAll;
             yield* runner.cleanup;
-            yield* mode === "stop" ? owner.namespace.stop : owner.namespace.destroy;
+            yield* owner.namespace[mode];
           }).pipe(
             Effect.onError(() => finish),
             Effect.andThen(finish),
@@ -277,47 +278,29 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           return fiber;
         });
 
-      // The one shutdown pipeline: `stop` and `destroy` are claimed through the same gate and
-      // `current` record. A repeat request rejoins the shutdown in flight (a stop after a
-      // destroy, or the same mode again), and a destroy after a stop is rejected, except for
-      // `afterStop`: abandonment waits for the stop to settle, whatever its outcome, then claims
-      // its destroy fresh.
+      // The one shutdown pipeline: every mode is claimed through the same gate and `current`
+      // record. A repeat request rejoins the shutdown in flight (a stop after a destroy, or the
+      // same mode again), and a destroy after a stop is rejected.
       const claim = (
         mode: ShutdownMode,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
-        afterStop = false,
       ): Effect.Effect<void, StackError> =>
-        Effect.gen(function* () {
-          while (true) {
-            const decision = yield* gate.withPermits(1)(
-              Effect.uninterruptibleMask(() =>
-                Effect.gen(function* () {
-                  const existing = yield* Ref.get(current);
-                  if (existing === undefined) {
-                    const fiber = yield* begin(mode, response);
-                    return { _tag: "run", fiber } as const;
-                  }
-                  if (existing.mode === "stop" && mode === "destroy") {
-                    if (afterStop) return { _tag: "await", fiber: existing.fiber } as const;
-                    return yield* new StackError({
-                      operation: "shutdown",
-                      message: "Shutdown mode is already selected",
-                    });
-                  }
-                  return { _tag: "run", fiber: existing.fiber } as const;
-                }),
-              ),
-            );
-            if (decision._tag === "run") {
-              yield* Fiber.join(decision.fiber);
-              return;
-            }
-            yield* Fiber.await(decision.fiber);
-            yield* gate.withPermits(1)(
-              Ref.update(current, (value) => (value?.fiber === decision.fiber ? undefined : value)),
-            );
-          }
-        });
+        gate
+          .withPermits(1)(
+            Effect.uninterruptibleMask(() =>
+              Effect.gen(function* () {
+                const existing = yield* Ref.get(current);
+                if (existing === undefined) return yield* begin(mode, response);
+                if (existing.mode === "stop" && mode === "destroy")
+                  return yield* new StackError({
+                    operation: "shutdown",
+                    message: "Shutdown mode is already selected",
+                  });
+                return existing.fiber;
+              }),
+            ),
+          )
+          .pipe(Effect.flatMap(Fiber.join));
       const shutdown = (
         destroy: boolean,
         response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -325,9 +308,9 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         claim(destroy ? "destroy" : "stop", response).pipe(
           Effect.mapError((cause) => stackError("shutdown", cause)),
         );
-      // A registration-loss poll drives this, never an RPC caller, so there is no response to watch.
-      const abandon = claim("destroy", undefined, true).pipe(
-        Effect.tapCause((cause) => Effect.logError("Abandoned stack destroy failed", cause)),
+      // The ownership poll drives this, never an RPC caller, so there is no response to watch.
+      const release = claim("release").pipe(
+        Effect.tapCause((cause) => Effect.logError("Releasing the stack failed", cause)),
         Effect.ignore,
       );
       const handlers = StackRpc.of({
@@ -384,49 +367,46 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
         access,
         serve,
         shutdown,
-        abandon,
+        release,
         closeConnections,
         exit,
       };
     }),
 );
 
-type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone" | "registration-gone";
+type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone" | "ownership-ended";
 
 /**
- * True only on a confirmed ENOENT (`state.read` returning `undefined`); any other error
- * (permissions, an unmounted root mid-read) keeps the owner running, so it reads as "not
- * confirmed gone" rather than abandonment.
+ * Ownership holds while the stack is registered and the lease path still names the file this
+ * owner locked. Only a confirmed ENOENT registration or a confirmed missing or replaced lease
+ * file ends it; any other error (permissions, an unmounted root mid-read) keeps the owner running.
  */
-const registrationConfirmedGone = Effect.fn("StackHost.registrationConfirmedGone")(function* (
+const ownershipEnded = Effect.fn("StackHost.ownershipEnded")(function* (
   state: StackNamespace.Interface,
   id: string,
+  pathHeld: Effect.Effect<boolean, StackNamespace.NamespaceError>,
 ) {
-  const saved = yield* state.read(id).pipe(
+  return yield* Effect.all([state.read(id), pathHeld]).pipe(
+    Effect.map(([saved, held]) => saved === undefined || !held),
     Effect.tapError((cause) =>
-      Effect.logWarning(
-        "Could not confirm the stack registration; keeping the owner running",
-        cause,
-      ),
+      Effect.logWarning("Could not confirm the stack ownership; keeping the owner running", cause),
     ),
-    Effect.option,
+    Effect.orElseSucceed(() => false),
   );
-  return Option.isSome(saved) && saved.value === undefined;
 });
 
-/**
- * Polls for a confirmed-gone registration and offers `registration-gone` once.
- */
-const pollRegistration = Effect.fn("StackHost.pollRegistration")(function* (
+/** Polls ownership and offers `ownership-ended` once it ends. */
+const pollOwnership = Effect.fn("StackHost.pollOwnership")(function* (
   state: StackNamespace.Interface,
   id: string,
+  pathHeld: Effect.Effect<boolean, StackNamespace.NamespaceError>,
   events: Queue.Queue<HostEvent>,
 ) {
   const interval = yield* RegistrationCheckInterval;
   while (true) {
     yield* Effect.sleep(interval);
-    if (yield* registrationConfirmedGone(state, id)) {
-      yield* Queue.offer(events, "registration-gone");
+    if (yield* ownershipEnded(state, id, pathHeld)) {
+      yield* Queue.offer(events, "ownership-ended");
       return;
     }
   }
@@ -570,7 +550,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             yield* Effect.forkScoped(
               creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
             );
-          yield* Effect.forkScoped(pollRegistration(state, id, events));
+          yield* Effect.forkScoped(pollOwnership(state, id, lease.pathHeld, events));
           yield* options.onReady?.(access) ?? Effect.void;
           yield* Effect.forkScoped(
             sweepOrphans({
@@ -611,8 +591,8 @@ export const runStackHost = Effect.fn("StackHost.run")(
           );
           return;
         }
-        if (event === "registration-gone") {
-          yield* started.abandon;
+        if (event === "ownership-ended") {
+          yield* started.release;
           return;
         }
         if (event !== "done")
@@ -620,10 +600,6 @@ export const runStackHost = Effect.fn("StackHost.run")(
             Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
             Effect.ignore,
           );
-        // A registration deletion that arrives while a data-preserving stop is already running
-        // only reaches `events` as a queued, now-unread `registration-gone`: a direct re-read
-        // through the same state API the poll uses catches it before the owner exits.
-        if (yield* registrationConfirmedGone(state, id)) yield* started.abandon;
       }),
     ).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
