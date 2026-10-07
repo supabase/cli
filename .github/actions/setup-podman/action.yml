@@ -1,0 +1,23 @@
+name: Setup Podman
+description: Install rootless Podman and prepare its per-user runtime directory
+
+runs:
+  using: composite
+  steps:
+    # Rootless Podman needs subordinate id ranges and a per-user runtime directory; the user
+    # service is started explicitly so /run/user/<uid> exists before the first podman call.
+    - name: Prepare rootless Podman
+      shell: bash
+      run: |
+        if ! command -v podman >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y podman
+        fi
+        user="$(id -un)"
+        grep -q "^${user}:" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${user}"
+        sudo loginctl enable-linger "${user}"
+        sudo systemctl start "user@$(id -u).service"
+        echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+        XDG_RUNTIME_DIR="/run/user/$(id -u)" podman system migrate
+        podman version
+        podman info

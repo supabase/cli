@@ -869,6 +869,71 @@ it.live("gives up after a single retry when the upstream keeps dropping connecti
   );
 });
 
+it.live(
+  "re-resolves the backend on retry instead of reaching a listener that reused the invalidated address",
+  () => {
+    const logs: Array<string> = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const recovered = createServer((_request, response) => response.end("recovered"));
+        const recoveredAddress = yield* listen(recovered);
+
+        let foreignConnections = 0;
+        let resolveInvalidated: (() => void) | undefined;
+        // One address plays the real backend for the connection that is retried, then the
+        // address's next owner for any later one, without an OS-level close/rebind race.
+        let role: "backend" | "foreign" = "backend";
+        const shared = createTcpServer((socket) => {
+          if (role === "backend") {
+            role = "foreign";
+            socket.destroy();
+            resolveInvalidated?.();
+          } else {
+            foreignConnections += 1;
+            socket.destroy();
+          }
+        });
+        const sharedAddress = yield* listen(shared);
+
+        const invalidated = yield* Deferred.make<void>();
+        yield* Effect.callback<void, never>((resume) => {
+          resolveInvalidated = () => resume(Effect.void);
+          return Effect.void;
+        }).pipe(Effect.andThen(Deferred.succeed(invalidated, undefined)), Effect.forkScoped);
+
+        let attempts = 0;
+        const proxy = yield* makeHttpProxy({ host: "127.0.0.1", port: 0 });
+        yield* proxy.setRoutes([
+          {
+            id: "retry-target",
+            prefix: "/",
+            target: Effect.gen(function* () {
+              attempts += 1;
+              if (attempts === 1) return sharedAddress;
+              yield* Deferred.await(invalidated);
+              return recoveredAddress;
+            }),
+          },
+        ]);
+
+        const client = yield* HttpClient.HttpClient;
+        const response = yield* client.get(`http://127.0.0.1:${proxy.port}/hello`);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe("recovered");
+        expect(foreignConnections).toBe(0);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]).toContain(
+          "Route retry-target GET upstream failed before responding, retrying",
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(NodeHttpClient.layerNodeHttp, NodeServices.layer, captureWarnings(logs)),
+      ),
+    );
+  },
+);
+
 it.live("closes an upgrade naming the route and cause when a target cannot wake", () => {
   const logs: Array<string> = [];
   return Effect.scoped(

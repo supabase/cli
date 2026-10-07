@@ -77,7 +77,8 @@ export interface AttachedInstance {
   readonly service: string;
   readonly instanceId: string;
   readonly logs: CatalogLogs;
-  readonly observation: Stream.Stream<{ readonly launchId: number | undefined }>;
+  /** The launch the instance is in, or `undefined` once that launch has ended. */
+  readonly launches: Stream.Stream<number | undefined>;
 }
 
 export interface Interface {
@@ -259,31 +260,40 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.mapError(storeError("read")),
     );
 
-  /**
-   * Reads only the last chunk of each segment, newest first, until one holds a complete record;
-   * a crash right after rotation can leave the newest segment empty or cut.
-   */
+  /** Highest launch id in the last chunk of one segment, skipping its first, possibly cut, line. */
+  const segmentLaunchId = (directory: string, generation: number) => {
+    const file = path.join(directory, segmentName(generation));
+    return fs.stat(file).pipe(
+      Effect.mapError(storeError("read")),
+      Effect.flatMap((info) => {
+        const offset = Math.max(0, Number(info.size) - readChunkBytes);
+        return readChunk(file, offset).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => Option.none<number>(),
+              onSome: (bytes) => {
+                let latest: number | undefined;
+                for (const line of decoder
+                  .decode(bytes)
+                  .split("\n")
+                  .slice(offset > 0 ? 1 : 0, -1)) {
+                  const launchId = parseRecord(line, { generation, byteOffset: 0 })?.launchId;
+                  if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
+                }
+                return Option.fromNullishOr(latest);
+              },
+            }),
+          ),
+        );
+      }),
+    );
+  };
+
+  /** Newest launch id on disk; a crash can leave the newest segment empty, so older ones are walked. */
   const latestLaunchId = Effect.fnUntraced(function* (directory: string) {
     for (const generation of (yield* generations(directory)).toReversed()) {
-      const file = path.join(directory, segmentName(generation));
-      const size = yield* fs.stat(file).pipe(
-        Effect.map((info) => Option.some(Number(info.size))),
-        Effect.catchIf(isNotFound, () => Effect.succeed(Option.none<number>())),
-        Effect.mapError(storeError("read")),
-      );
-      if (Option.isNone(size)) continue;
-      const offset = Math.max(0, size.value - readChunkBytes);
-      const bytes = yield* readChunk(file, offset);
-      if (Option.isNone(bytes)) continue;
-      let latest: number | undefined;
-      for (const line of decoder
-        .decode(bytes.value)
-        .split("\n")
-        .slice(offset > 0 ? 1 : 0, -1)) {
-        const launchId = parseRecord(line, { generation, byteOffset: 0 })?.launchId;
-        if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
-      }
-      if (latest !== undefined) return Option.some(latest);
+      const launchId = yield* segmentLaunchId(directory, generation);
+      if (Option.isSome(launchId)) return launchId;
     }
     return Option.none<number>();
   });
@@ -960,8 +970,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
 
     const flushLaunches = Effect.gen(function* () {
       const previous = yield* Ref.make<number | undefined>(undefined);
-      yield* instance.observation.pipe(
-        Stream.map(({ launchId }) => launchId),
+      yield* instance.launches.pipe(
         Stream.changes,
         Stream.runForEach((launchId) =>
           Ref.getAndSet(previous, launchId).pipe(

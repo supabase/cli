@@ -15,7 +15,6 @@ import {
   Stream,
 } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
 import { create, StackError, type Stack } from "@supabase/stack/effect";
 import { postgres } from "@supabase/stack/commands";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
@@ -26,8 +25,9 @@ import { DbConnection, type DbSession } from "./db-connection.service.ts";
 import { dbConnectionLayer } from "./db-connection.sql-pg.layer.ts";
 import { stackCatalogSetupLayer, StackCatalogSetup } from "./stack-catalog-setup.ts";
 import { destroyTestStack } from "../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../tests/helpers/stack-artifacts.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = stackArtifactCacheRoot;
 const jwtSecret = "stack-catalog-setup-integration-secret";
 
 describe("stack catalog setup", { timeout: 180_000 }, () => {

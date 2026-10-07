@@ -3,12 +3,12 @@ import { expect, expectTypeOf, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Redacted, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
-import { tmpdir } from "node:os";
 import { discover, open } from "./effect.ts";
 import { postgres } from "./Commands.ts";
 import * as PromiseStack from "./index.ts";
 import { assertOwnerExited, captureOwnerPid } from "../tests/owner.ts";
 import { destroyTestStack } from "../tests/stack-cleanup.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
 for (const runtime of ["node", "bun"] as const) {
   it.live(
@@ -22,7 +22,7 @@ for (const runtime of ["node", "bun"] as const) {
           [
             new URL("../tests/owner-exit-client.ts", import.meta.url).pathname,
             root,
-            `${tmpdir()}/supabase-stack-artifacts`,
+            testArtifactCacheRoot,
           ],
           { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
         );
@@ -51,7 +51,7 @@ it.live(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-public-e2e-" });
-      const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+      const cacheRoot = testArtifactCacheRoot;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
         ChildProcess.make(
@@ -370,7 +370,7 @@ it.live(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-public-observation-" });
-      const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+      const cacheRoot = testArtifactCacheRoot;
       const locations = { stateRoot: `${root}/state`, cacheRoot };
       const stack = yield* Effect.tryPromise(() =>
         PromiseStack.create({ ...locations, projectRoot: root, runtime: "native" }),

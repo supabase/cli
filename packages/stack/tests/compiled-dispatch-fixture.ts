@@ -13,7 +13,7 @@ import {
   type HostEndpoint,
 } from "../src/HostProcess.ts";
 import { spawnNativeProcess } from "../src/runtime/NativeProcess.ts";
-import * as State from "../src/State.ts";
+import * as StackNamespace from "../src/StackNamespace.ts";
 
 const argv = process.argv.slice(2);
 class FixtureError extends Data.TaggedError("FixtureError")<{ readonly message: string }> {}
@@ -27,7 +27,7 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
       throw new Error("Owner fixture arguments missing");
     const program = Effect.scoped(
       Effect.gen(function* () {
-        const state = yield* State.Service;
+        const state = yield* StackNamespace.Service;
         const access = yield* mode === "owner"
           ? launchHost(state, { stateRoot, cacheRoot: cacheRoot ?? stateRoot, stackId })
           : connectHost(state, stackId);
@@ -47,7 +47,7 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
         Layer.mergeAll(
           NodeServices.layer,
           NodeHttpClient.layerNodeHttp,
-          State.layer({ root: stateRoot }).pipe(Layer.provide(NodeServices.layer)),
+          StackNamespace.layer({ root: stateRoot }).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     );
@@ -65,6 +65,19 @@ if (!(await runHostProcessIfDispatched(argv)) && !(await runNativeProcessIfDispa
             "sh",
             pidMarker,
           ],
+          environment: {
+            values: {
+              HOME: "/tmp",
+              TMPDIR: "/tmp",
+              TMP: "/tmp",
+              TEMP: "/tmp",
+              XDG_CACHE_HOME: "/tmp",
+              XDG_CONFIG_HOME: "/tmp",
+              XDG_DATA_HOME: "/tmp",
+              XDG_STATE_HOME: "/tmp",
+              DENO_DIR: "/tmp",
+            },
+          },
           gracefulStopSignal: "SIGTERM",
           gracefulStopTimeout: "2 seconds",
         });

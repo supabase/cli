@@ -1,9 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { tmpdir } from "node:os";
-
 import { runSupabaseEffect } from "../../../../tests/helpers/cli.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const COMMAND_TIMEOUT_MS = 8 * 60_000;
 const AUX_TIMEOUT_MS = 3 * 60_000;
@@ -27,9 +26,8 @@ describe("supabase db start (e2e, role alignment)", () => {
           const migrations = path.join(root, "supabase", "migrations");
           yield* fs.makeDirectory(migrations, { recursive: true });
           yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-          const artifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-          yield* fs.makeDirectory(artifacts, { recursive: true });
-          yield* fs.symlink(artifacts, path.join(home, "cache", "stack"));
+          yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
+          yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
           yield* fs.writeFileString(
             configPath,
             `project_id = "db-start-roles-e2e"

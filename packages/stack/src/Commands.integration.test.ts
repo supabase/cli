@@ -15,18 +15,20 @@ import {
   Schedule,
   Stream,
 } from "effect";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { postgres } from "./Commands.ts";
+import type { ContainerEngine } from "./runtime/Container.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
 import { CommandError } from "./host/CommandRunner.ts";
 import type { PgProveOptions, PostgresCommand } from "./Commands.ts";
 import { makeDatabase } from "./services/Database.ts";
-import { makeService } from "./Service.ts";
+import { makeStandaloneService } from "../tests/standalone-service.ts";
 import { bindTcp, serveTcp } from "./Proxy.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 
 class PgProveTestError extends Data.TaggedError("PgProveTestError")<{
   readonly message: string;
@@ -36,11 +38,14 @@ const makeTestCommandRunner = (options: {
   readonly stackId: string;
   readonly root: string;
   readonly cacheRoot: string;
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: "native" | ContainerEngine;
 }) =>
-  Layer.build(CommandRunner.layer(options)).pipe(
-    Effect.map((context) => Context.get(context, CommandRunner.Service)),
-  );
+  Layer.build(
+    CommandRunner.layer({
+      ...options,
+      ...(options.runtime !== "native" ? { engineTarget } : {}),
+    }),
+  ).pipe(Effect.map((context) => Context.get(context, CommandRunner.Service)));
 
 const runPostgres = (
   runner: CommandRunner.Interface,
@@ -73,14 +78,14 @@ const runPostgres = (
   });
 
 describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
-  for (const runtime of ["native", "docker"] as const) {
+  for (const runtime of ["native", testEngine] as const) {
     it.live(`${runtime} runs SQL from stdin, streams a dump, and returns client failure`, () =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const stackId = `tools-integration-${randomUUID()}`;
           const root =
-            runtime === "docker"
+            runtime !== "native"
               ? yield* makeDockerDatabaseRoot("stack-tools-", stackId)
               : yield* fs.makeTempDirectoryScoped({ prefix: "stack-tools-" });
           const database = yield* makeDatabase({
@@ -89,8 +94,9 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
             stackId,
             instanceId: "database",
             runtime,
+            ...(runtime !== "native" ? { engineTarget } : {}),
           });
-          const service = yield* makeService(database.definition, {
+          const service = yield* makeStandaloneService(database.definition, {
             id: "database",
             config: {
               version: "17",
@@ -223,14 +229,14 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
   }
 
   for (const major of [15, 17] as const) {
-    for (const runtime of ["native", "docker"] as const) {
+    for (const runtime of ["native", testEngine] as const) {
       it.live(`${runtime} runs bundled pg_prove for PostgreSQL ${major}`, () =>
         Effect.scoped(
           Effect.gen(function* () {
             const fs = yield* FileSystem.FileSystem;
             const stackId = `tools-pgprove-${runtime}-${major}-${randomUUID()}`;
             const root =
-              runtime === "docker"
+              runtime !== "native"
                 ? yield* makeDockerDatabaseRoot(`stack-pgprove-${major}-`, stackId)
                 : yield* fs.makeTempDirectoryScoped({ prefix: `stack-pgprove-${major}-` });
             const database = yield* makeDatabase({
@@ -239,8 +245,9 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               stackId,
               instanceId: "database",
               runtime,
+              ...(runtime !== "native" ? { engineTarget } : {}),
             });
-            const service = yield* makeService(database.definition, {
+            const service = yield* makeStandaloneService(database.definition, {
               id: "database",
               config: {
                 version: String(major),
@@ -270,8 +277,12 @@ describe("finite PostgreSQL commands", { timeout: 180_000 }, () => {
               PGPASSWORD: `pgprove-${runtime}-${major}-password`,
               PGDATABASE: "postgres",
             };
-            const tests = `${root}/tests`;
-            yield* fs.makeDirectory(tests, { recursive: true });
+            // Ownership is by location: pg_prove's mount source is a caller path and must
+            // live outside the stack's data root, not merely outside the database's own
+            // instance root.
+            const tests = yield* fs.makeTempDirectoryScoped({
+              prefix: `stack-pgprove-${major}-tests-`,
+            });
             yield* fs.writeFileString(`${tests}/main.sql`, "\\ir included.sql\n");
             yield* fs.writeFileString(`${tests}/included.sql`, "\\i nested.sql\n");
             yield* fs.writeFileString(

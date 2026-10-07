@@ -9,17 +9,20 @@ import {
   Fiber,
   FileSystem,
   Layer,
-  Option,
   Path,
-  Schema,
+  Queue,
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- test-only native watcher for synchronous attachment, no Effect wrapper gives this guarantee.
+import { watch as nodeWatch } from "node:fs";
 import { launchHost } from "./HostProcess.ts";
-import { makeContainerRuntime } from "./runtime/Container.ts";
-import * as State from "./State.ts";
-import { reclaimStack, sweepOrphans } from "./Sweep.ts";
+import { makeContainerRuntime, type EngineTarget } from "./runtime/Container.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import { reclaimDeletedStack, reclaimStack, sweepOrphans } from "./Sweep.ts";
 import { engineStub, makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
+import { awaitContainerRemoved } from "../tests/engine-events.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { shutdownOwner, watchLeaseRelease } from "../tests/owner.ts";
 
 class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly message: string }> {}
@@ -27,12 +30,16 @@ class SweepTestError extends Data.TaggedError("SweepTestError")<{ readonly messa
 const helperImage =
   "public.ecr.aws/docker/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 
-const docker = Effect.fn("SweepTest.docker")((args: ReadonlyArray<string>) =>
+const engine = Effect.fn("SweepTest.engine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdin: "ignore", stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, [...engineTarget.argv, ...args], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -43,7 +50,7 @@ const docker = Effect.fn("SweepTest.docker")((args: ReadonlyArray<string>) =>
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* Effect.die(`docker ${args.join(" ")} failed: ${stderr}`);
+        return yield* Effect.die(`${testEngine} ${args.join(" ")} failed: ${stderr}`);
       return stdout.trim();
     }),
   ),
@@ -55,7 +62,7 @@ const labels = (stackId: string, dataRoot: string) => [
 ];
 
 const containers = (stackId: string, dataRoot: string) =>
-  docker([
+  engine([
     "ps",
     "--all",
     "--quiet",
@@ -65,73 +72,56 @@ const containers = (stackId: string, dataRoot: string) =>
 
 const createOwnedContainer = (stackId: string, dataRoot: string) =>
   Effect.acquireRelease(
-    docker([
+    engine([
       "create",
       ...labels(stackId, dataRoot).flatMap((label) => ["--label", label.slice("label=".length)]),
       helperImage,
     ]),
-    (id) => docker(["rm", "--force", id]).pipe(Effect.ignore),
+    (id) => engine(["rm", "--force", id]).pipe(Effect.ignore),
   );
 
-/** Completes when Docker reports the container destroyed, including events before subscription. */
-const awaitDestroyed = (id: string, since: number) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const events = yield* spawner.spawn(
-        ChildProcess.make(
-          "docker",
-          [
-            "events",
-            "--since",
-            String(since),
-            "--filter",
-            `container=${id}`,
-            "--filter",
-            "event=destroy",
-            "--format",
-            "{{.Actor.ID}}",
-          ],
-          { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
-        ),
-      );
-      const destroyed = yield* events.stdout.pipe(
-        Stream.decodeText,
-        Stream.splitLines,
-        Stream.filter((line) => line.trim() === id),
-        Stream.runHead,
-      );
-      if (Option.isNone(destroyed))
-        return yield* new SweepTestError({ message: "Docker event stream ended" });
-    }),
+/**
+ * Watches `directory` and waits for `entry`'s removal, scoped to the caller's own fork so the
+ * watcher closes as soon as it returns. `node:fs.watch` itself is synchronous, so acquiring it
+ * directly (rather than through `Stream`, which forks registration through `Stream.callback`,
+ * `Channel.callbackArray`, and `asyncQueue` before it actually attaches) guarantees the watcher is
+ * live before this returns: no canary handshake needed. Node reports non-recursive watch events by
+ * bare filename and sometimes coalesces them, so any event re-checks the real directory instead of
+ * trusting which path it names. The watcher's native resource is torn down whether or not removal
+ * ever arrives, so this never succeeds by a wait simply running out.
+ */
+const awaitRemoval = Effect.fn("SweepTest.awaitRemoval")(function* (
+  directory: string,
+  entry: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = path.join(directory, entry);
+  const queue = yield* Queue.unbounded<string>();
+  yield* Effect.acquireRelease(
+    Effect.sync(() =>
+      nodeWatch(directory, (_event, filename) => {
+        if (filename) Queue.offerUnsafe(queue, filename);
+      }),
+    ),
+    (watcher) => Effect.sync(() => watcher.close()),
   );
 
-const awaitRemoval = (directory: string, entry: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const target = path.join(directory, entry);
-    yield* fs.watch(directory).pipe(
-      Stream.filter((event) => event.path === entry || event.path === target),
-      Stream.mapEffect(() => fs.exists(target)),
-      Stream.takeUntil((exists) => !exists),
-      Stream.runDrain,
-    );
-  });
+  while (yield* fs.exists(target)) yield* Queue.take(queue);
+});
 
 const saved = (
   id: string,
   projectRoot: string,
-  runtime: State.SavedStack["runtime"],
-  lifetime: State.StackLifetime,
-): State.SavedStack => ({
+  runtime: StackNamespace.SavedStack["runtime"],
+  lifetime: StackNamespace.StackLifetime,
+): StackNamespace.SavedStack => ({
   id,
   runtime,
   lifetime,
   identity: { projectRoot, branchContext: "sweep-test", stackName: id },
   instances: [],
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live.skipIf(process.platform === "win32")(
@@ -152,11 +142,17 @@ it.live.skipIf(process.platform === "win32")(
         );
         const rootA = path.dirname(path.dirname(dataA));
         const cacheRoot = `${path.dirname(rootA)}/cache`;
-        const helper = yield* makeContainerRuntime({ engine: "docker", root: dataA });
+        const helper = yield* makeContainerRuntime({
+          target: engineTarget,
+          root: dataA,
+        });
         yield* helper.prepare(helperImage);
-        const state = Context.get(yield* Layer.build(State.layer({ root: rootA })), State.Service);
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: rootA })),
+          StackNamespace.Service,
+        );
 
-        yield* state.save(saved(deadId, `${rootA}/dead`, "docker", "detached"));
+        yield* state.save(saved(deadId, `${rootA}/dead`, testEngine, "detached"));
         const dead = (yield* launchHost(state, { stateRoot: rootA, cacheRoot, stackId: deadId }))
           .endpoint;
         const orphan = yield* createOwnedContainer(deadId, dataA);
@@ -175,15 +171,14 @@ it.live.skipIf(process.platform === "win32")(
         const sessionId = `session-${suffix}`;
         yield* state.save(saved(sessionId, `${rootA}/session`, "native", "session"));
         const nextId = `next-${suffix}`;
-        yield* state.save(saved(nextId, `${rootA}/next`, "native", "detached"));
+        yield* state.save(saved(nextId, `${rootA}/next`, testEngine, "detached"));
 
         const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
         const swept = yield* Effect.all(
           [
-            awaitDestroyed(orphan, since),
-            awaitDestroyed(deleted, since),
+            awaitContainerRemoved(orphan, since),
+            awaitContainerRemoved(deleted, since),
             awaitRemoval(rootA, sessionId),
-            awaitRemoval(rootA, deletedId),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],
           { concurrency: "unbounded" },
@@ -224,43 +219,86 @@ it.live.skipIf(process.platform === "win32")(
   { timeout: 180_000 },
 );
 
-it.live("destroys a dead session stack whose saved Vector instance fails to migrate", () =>
+it.live(
+  "an orphan sweep removes destroyed stack directories once they are older than the restart window",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-prune-" });
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root })),
+          StackNamespace.Service,
+        );
+        const elevenMinutesAgo = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 11 * 60;
+        const arrange = Effect.fn("SweepTest.arrange")(function* (
+          id: string,
+          options: { readonly old: boolean; readonly file?: string; readonly dataFile?: string },
+        ) {
+          const directory = path.join(root, id);
+          yield* fs.makeDirectory(path.join(directory, "data"), { recursive: true });
+          if (options.file !== undefined)
+            yield* fs.writeFileString(path.join(directory, options.file), "x");
+          if (options.dataFile !== undefined)
+            yield* fs.writeFileString(path.join(directory, "data", options.dataFile), "x");
+          if (options.old) yield* fs.utimes(directory, elevenMinutesAgo, elevenMinutesAgo);
+        });
+        yield* arrange("old-empty", { old: true });
+        yield* arrange("fresh-empty", { old: false });
+        yield* arrange("old-with-data", { old: true, dataFile: "PG_VERSION" });
+        yield* arrange("old-with-lock", { old: true, file: "owner.lock" });
+        yield* arrange("old-kept", { old: true });
+
+        yield* sweepOrphans({
+          state,
+          stateRoot: root,
+          cacheRoot: path.join(root, "cache"),
+          ownerId: "old-kept",
+        });
+
+        expect(yield* fs.exists(path.join(root, "old-empty"))).toBe(false);
+        expect(yield* fs.exists(path.join(root, "fresh-empty", "data"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-with-data", "data", "PG_VERSION"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-with-lock", "owner.lock"))).toBe(true);
+        expect(yield* fs.exists(path.join(root, "old-kept", "data"))).toBe(true);
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("reclaiming a session stack refuses a symlinked data directory and keeps its target", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const stateRoot = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-migrate-" });
-      const real = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
-      const state: State.Interface = {
-        ...real,
-        migrate: () =>
-          Effect.fail(new State.StateError({ operation: "lock", message: "registry is busy" })),
-      };
-      const id = "session-vector";
-      yield* fs.makeDirectory(path.join(stateRoot, id), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(stateRoot, id, "state.json"),
-        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
-          ...saved(id, path.join(stateRoot, "project"), "native", "session"),
-          instances: [{ id: "vector", creation: { service: "vector", config: {} } }],
-          composition: { members: [{ id: "vector", activation: "eager" }], dependencies: [] },
-        }),
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-sweep-symlinked-data-" });
+      const stateRoot = path.join(root, "state");
+      const state = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
       );
+      const stack = saved("symlinked-data", root, "native", "session");
+      yield* state.save(stack);
+      const outside = path.join(root, "outside");
+      yield* fs.makeDirectory(outside);
+      yield* fs.writeFileString(path.join(outside, "precious.txt"), "keep");
+      yield* fs.symlink(outside, path.join(stateRoot, stack.id, "data"));
 
-      const reclaimed = yield* reclaimStack({
+      const failure = yield* reclaimStack({
         state,
         stateRoot,
-        cacheRoot: path.join(stateRoot, "cache"),
-        id,
-      });
+        cacheRoot: path.join(root, "cache"),
+        id: stack.id,
+      }).pipe(Effect.flip);
 
-      expect(reclaimed).toBe("reclaimed");
-      expect(yield* real.read(id)).toBeUndefined();
+      expect(failure.message).toContain("symlink");
+      expect(yield* fs.readFileString(path.join(outside, "precious.txt"))).toBe("keep");
+      expect(yield* state.read(stack.id), "the registration stays for a retry").toBeDefined();
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("sweeps deleted stacks of its own root only, on the engines its stacks use", () =>
+it.live("sweeps deleted stacks of its own root only, on the engine its owner pinned", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -268,23 +306,28 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
       const stateRoot = yield* fs
         .makeTempDirectoryScoped({ prefix: "stack-sweep-deleted-" })
         .pipe(Effect.flatMap(fs.realPath));
-      const real = Context.get(yield* Layer.build(State.layer({ root: stateRoot })), State.Service);
-      const leased: Array<string> = [];
-      const state: State.Interface = {
+      const real = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      );
+      const swept: Array<string> = [];
+      const state: StackNamespace.Interface = {
         ...real,
-        lease: (id) =>
+        acquireLease: (id) =>
           Effect.suspend(() => {
-            leased.push(id);
-            return real.lease(id);
+            swept.push(id);
+            return real.acquireLease(id);
           }),
       };
       const deletedId = "d".repeat(64);
+      const heldId = "a".repeat(64);
       const foreignId = "f".repeat(64);
       const deletedData = path.join(stateRoot, deletedId, "data");
       const engine = engineStub([
         { id: "owner", stackId: "owner", root: path.join(stateRoot, "owner", "data") },
         { id: "deleted", stackId: deletedId, root: deletedData },
         { id: "deleted-sibling", stackId: deletedId, root: deletedData },
+        { id: "held", stackId: heldId, root: path.join(stateRoot, heldId, "data") },
         {
           id: "foreign",
           stackId: foreignId,
@@ -293,26 +336,33 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
         { id: "escape", stackId: "../escape", root: path.join(stateRoot, "..", "escape", "data") },
         "malformed",
       ]);
-      const sweep = sweepOrphans({
+      const pinned: EngineTarget = {
+        engine: "docker",
+        argv: ["--context", "pinned"],
+        daemonId: "pinned-daemon",
+      };
+      const cacheRoot = path.join(stateRoot, "cache");
+      yield* Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      ).acquireLease(heldId);
+
+      yield* sweepOrphans({
         state,
         stateRoot,
-        cacheRoot: path.join(stateRoot, "cache"),
+        cacheRoot,
         ownerId: "owner",
+        engineTarget: pinned,
       }).pipe(Effect.provide(engine.layer));
 
-      yield* state.save(
-        saved("owner", path.join(stateRoot, "owner-project"), "native", "detached"),
-      );
-      yield* sweep;
-      expect(engine.commands, "a root of native stacks queries no engine").toEqual([]);
-
-      yield* state.save(
-        saved("stopped", path.join(stateRoot, "stopped-project"), "docker", "detached"),
-      );
-      yield* sweep;
-      expect(leased).toEqual(["stopped", deletedId]);
+      expect(swept, "only deleted stacks of this root are attempted").toEqual([deletedId, heldId]);
+      expect(
+        engine.remaining("docker").map(({ id }) => id),
+        "the held stack's containers stay",
+      ).toEqual(["owner", "held", "foreign", "escape"]);
       expect(engine.commands).toContainEqual([
         "docker",
+        ...pinned.argv,
         "ps",
         "--all",
         "--quiet",
@@ -322,23 +372,45 @@ it.live("sweeps deleted stacks of its own root only, on the engines its stacks u
         "--filter",
         `label=com.supabase.stack-root=${deletedData}`,
       ]);
-      expect(engine.remaining("docker").map(({ id }) => id)).toEqual([
-        "owner",
-        "foreign",
-        "escape",
-      ]);
+      expect(
+        engine.commands.filter(([command]) => command === "podman"),
+        "only the owner's engine is queried",
+      ).toEqual([]);
       expect(
         yield* fs.exists(path.join(stateRoot, deletedId)),
         "the sweeper's lease leaves no directory behind",
       ).toBe(false);
-      const outcome = yield* reclaimStack({
+    }),
+  ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live("does not reclaim a stack that is registered as a deleted one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateRoot = yield* fs
+        .makeTempDirectoryScoped({ prefix: "stack-reclaim-registered-" })
+        .pipe(Effect.flatMap(fs.realPath));
+      const state = Context.get(
+        yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+        StackNamespace.Service,
+      );
+      const id = "b".repeat(64);
+      const engine = engineStub([
+        { id: "live", stackId: id, root: path.join(stateRoot, id, "data") },
+      ]);
+      yield* state.save(saved(id, path.join(stateRoot, "project"), "docker", "detached"));
+
+      const outcome = yield* reclaimDeletedStack({
         state,
         stateRoot,
-        cacheRoot: path.join(stateRoot, "cache"),
-        id: "stopped",
-        engine: "docker",
+        id,
+        engineTarget: { engine: "docker", argv: [], daemonId: "stub" },
       }).pipe(Effect.provide(engine.layer));
-      expect(outcome, "a stack registered again is not reclaimed as deleted").toBe("registered");
+
+      expect(outcome).toBe("registered");
+      expect(engine.remaining("docker").map(({ id: removed }) => removed)).toEqual(["live"]);
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );

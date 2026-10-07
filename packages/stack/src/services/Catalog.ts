@@ -2,9 +2,7 @@ import { Crypto, Effect, FileSystem, Path, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { makeContainerRuntime } from "../runtime/Container.ts";
-import { randomPortSpanStart, reserveNativePort } from "../Ports.ts";
 import { ServiceError, type ServiceDefinition } from "../Service.ts";
-import type * as State from "../State.ts";
 import {
   makeDatabase,
   DatabaseConfig,
@@ -29,8 +27,10 @@ import {
   type CatalogOptions,
   type CatalogRecipe as RecipeCatalogRecipe,
   type ProcessRecipeResult,
+  type ServiceEndpoint,
 } from "./Recipe.ts";
 import { makeProcessRecipe, type ProcessDependencies } from "./ProcessRecipe.ts";
+import { borrow } from "../namespace/Paths.ts";
 import { missingInput } from "./ServiceConfig.ts";
 import type { SnapshotScope } from "./DatabaseSnapshot.ts";
 import { slimImageMirrors, type ServiceKind } from "../Artifacts.ts";
@@ -268,6 +268,13 @@ const databaseRecipe = (
   endpoint: (name) =>
     name === "sql"
       ? component.endpoint.pipe(
+          // node-postgres appends the `.s.PGSQL.<port>` suffix itself, so the database keeps the
+          // directory and port private; the catalog's endpoint carries the full socket filename.
+          Effect.map((value): ServiceEndpoint =>
+            value.kind === "unix"
+              ? { ...value, path: `${value.path}/.s.PGSQL.${value.port}` }
+              : value,
+          ),
           Effect.mapError(
             (cause) =>
               new CatalogError({
@@ -289,11 +296,7 @@ const databaseRecipe = (
 });
 
 export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
-  (
-    input: unknown,
-    options: CatalogOptions,
-    readPortClaims: Effect.Effect<ReadonlyArray<State.StackClaims>, State.StateError>,
-  ) =>
+  (input: unknown, options: CatalogOptions) =>
     Effect.gen(function* () {
       const endpointError = validateEndpointNames(input);
       if (endpointError !== undefined) return yield* endpointError;
@@ -324,6 +327,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
           runtime: options.runtime,
           ...(options.helpers === undefined ? {} : { helpers: options.helpers }),
           ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
+          ...(options.engineTarget === undefined ? {} : { engineTarget: options.engineTarget }),
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -338,14 +342,19 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         return databaseRecipe(creation, component);
       }
       const container =
-        options.runtime === "native"
+        options.engineTarget === undefined
           ? undefined
           : yield* makeContainerRuntime({
-              engine: options.runtime,
+              target: options.engineTarget,
               root: options.root,
               imageMirrors: slimImageMirrors,
               ...(options.hostGateway === undefined ? {} : { hostGateway: options.hostGateway }),
             });
+      const borrowCallerPath = (candidate: string) =>
+        borrow(fs, path, candidate, options.root, (operation, cause) => {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          return new ServiceError({ operation, message, cause });
+        });
       const deps: ProcessDependencies = {
         fs,
         path,
@@ -353,9 +362,7 @@ export const makeServiceRecipe = Effect.fn("Catalog.makeServiceRecipe")(
         client,
         spawner,
         container,
-        readPortClaims,
-        reserveNativePort: (key, claims, excluded) =>
-          reserveNativePort(claims, key, randomPortSpanStart(crypto), excluded),
+        borrowCallerPath,
       };
       switch (creation.service) {
         case "rest":

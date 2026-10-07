@@ -615,13 +615,9 @@ function makeStackObservation(
     lifecycle: opts.lifecycle ?? "stopped",
     health: opts.health,
     error: opts.error,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
-    intentRevision: 0,
     wakeEnabled: opts.wakeEnabled ?? false,
-    registered: true,
   };
 }
 
@@ -829,7 +825,6 @@ function mockResetStackApi(opts: {
               })),
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
-              ports: [],
             },
             host: undefined,
           }),

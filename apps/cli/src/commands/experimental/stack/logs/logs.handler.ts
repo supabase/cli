@@ -1,6 +1,7 @@
 import { Clock, Effect, Option, Path, Stream } from "effect";
 import {
   gatewayLog,
+  sharesApiEndpoint,
   streamStackLogs,
   type SavedStack,
   type StackLogRecord,
@@ -43,24 +44,24 @@ type SavedInstance = SavedStack["instances"][number];
 interface Selected {
   readonly id: string;
   readonly service: string;
-  readonly launchId: number | undefined;
 }
 
 const select = (
   definition: SavedStack,
   requested: ReadonlyArray<string>,
 ): Effect.Effect<ReadonlyArray<Selected>, StackCommandLogsError> => {
-  const subject = ({ id, creation, launchId }: SavedInstance): Selected => ({
+  const subject = ({ id, creation }: SavedInstance): Selected => ({
     id,
     service: creation.service,
-    launchId,
   });
-  // The owner records the shared API listener's requests once the stack has claimed its port.
-  const gateway: ReadonlyArray<Selected> = definition.ports.some(({ key }) => key === "api")
-    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service, launchId: undefined }]
+  const members = new Set(definition.composition.members.map(({ id }) => id));
+  // The owner records the shared API listener's requests when a member is served on it.
+  const gateway: ReadonlyArray<Selected> = definition.instances.some(
+    ({ id, creation }) => members.has(id) && sharesApiEndpoint(creation),
+  )
+    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service }]
     : [];
   if (requested.length === 0) {
-    const members = new Set(definition.composition.members.map(({ id }) => id));
     const selected = [
       ...definition.instances.filter(({ id }) => members.has(id)).map(subject),
       ...gateway,
@@ -151,16 +152,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
     const sinceTime = since?.kind === "time" ? { since: since.iso } : {};
-    const collector = makeHistoryCollector(
-      flags.tail,
-      since?.kind === "start"
-        ? new Map(
-            selected.flatMap(({ id, launchId }) =>
-              launchId === undefined ? [] : [[id, launchId] as const],
-            ),
-          )
-        : undefined,
-    );
+    const collector = makeHistoryCollector(flags.tail, since?.kind === "start");
     if (flags.tail > 0)
       yield* streamStackLogs({
         stateRoot: locations.stateRoot,

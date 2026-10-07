@@ -131,14 +131,10 @@ function syncStackApi(workdir: string, port: number) {
       endpoints: [{ name: "sql", protocol: "tcp", host: "127.0.0.1", port }],
       lifecycle: "running",
       health: "healthy",
-      registered: true,
       wakeEnabled: true,
-      intentRevision: 0,
       currentOperation: undefined,
-      launchId: undefined,
       exit: undefined,
       error: undefined,
-      cleanupError: undefined,
     }),
   };
   const composition = {
@@ -185,7 +181,6 @@ function syncStackApi(workdir: string, port: number) {
             instances: [],
             composition,
             lifetime: "detached" as const,
-            ports: [],
           },
           host: undefined,
         }),

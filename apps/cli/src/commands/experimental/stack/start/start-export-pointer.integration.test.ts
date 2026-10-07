@@ -66,13 +66,9 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     lifecycle: "running",
     health: "healthy",
     error: undefined,
-    cleanupError: undefined,
     exit: undefined,
     currentOperation: undefined,
-    launchId: undefined,
-    intentRevision: 1,
     wakeEnabled: false,
-    registered: true,
   };
   const databaseInstance = {
     id: "database-id",
@@ -125,7 +121,6 @@ const definitionFor = (id: string, projectRoot: string, creation: ServiceCreatio
   runtime: "native",
   instances: [{ id: "database-id", creation }],
   composition: { members: [{ id: "database-id", activation: "eager" }], dependencies: [] },
-  ports: [],
 });
 
 interface TargetSpec {

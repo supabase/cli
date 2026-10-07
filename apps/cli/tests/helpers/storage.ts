@@ -157,13 +157,9 @@ const observation = (
   health,
   error:
     error === undefined ? undefined : { _tag: "ServiceError", operation: "status", message: error },
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
-  intentRevision: 1,
   wakeEnabled,
-  registered: true,
 });
 
 const instance = <K extends ServiceCreation["service"]>(
@@ -277,7 +273,6 @@ export function buildStorageStackApi(
     ],
     composition: { members, dependencies: [] },
     lifetime: "detached" as const,
-    ports: [],
   };
   const findStackCalls: Array<{ readonly projectRoot: string }> = [];
   const layer =

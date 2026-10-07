@@ -24,21 +24,30 @@ import { stackDestroyCommand } from "./destroy.command.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
-const refuseDestroy = (api: StackApi["Service"], id: string) =>
+const refuseDestroy = (
+  api: StackApi["Service"],
+  ids: ReadonlyArray<string>,
+  unreachable: ReadonlyArray<string> = [],
+) =>
   Layer.succeed(StackApi, {
     ...api,
     open: (options) =>
       api.open(options).pipe(
-        Effect.map((stack) =>
-          stack.id === id
+        Effect.map((stack) => {
+          const reason = unreachable.includes(stack.id) ? "runtime-unavailable" : undefined;
+          return ids.includes(stack.id)
             ? {
                 ...stack,
                 destroy: Effect.fail(
-                  new StackError({ operation: "destroy", message: "engine refused" }),
+                  new StackError({
+                    operation: "destroy",
+                    message: "engine refused",
+                    ...(reason === undefined ? {} : { reason }),
+                  }),
                 ),
               }
-            : stack,
-        ),
+            : stack;
+        }),
       ),
   });
 const runDestroy = <A, E, R>(layer: Layer.Layer<A, E, R>, argv: ReadonlyArray<string>) =>
@@ -161,6 +170,25 @@ describe("stack destroy", () => {
     }).pipe(Effect.provide(live)),
   );
 
+  it.live("refuses a stack with an unknown service kind and names its directory", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const statePath = f.path.join(f.locations.stateRoot, f.stack.id, "state.json");
+      const saved = yield* f.fs.readFileString(statePath);
+      yield* f.fs.writeFileString(
+        statePath,
+        saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
+      );
+
+      const error = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
+
+      expect(error.message).toContain(
+        `Remove its directory ${f.path.join(f.locations.stateRoot, f.stack.id)}`,
+      );
+      expect(yield* f.fs.exists(statePath)).toBe(true);
+    }).pipe(Effect.provide(live)),
+  );
+
   it.live("destroys only the stack addressed by the short ID that stack list shows", () =>
     Effect.gen(function* () {
       const f = yield* fixture(true);
@@ -196,7 +224,6 @@ describe("stack destroy", () => {
                   id,
                   destroy: Effect.sync(() => {
                     destroyed += 1;
-                    return { runtimeCleanup: "complete" } as const;
                   }),
                 })
               : Option.none(),
@@ -315,10 +342,7 @@ describe("stack destroy", () => {
           type: "success",
           data: {
             destroyed: true,
-            stacks: [
-              { id: f.stack.id, runtimeCleanup: "complete" },
-              { id: second.id, runtimeCleanup: "complete" },
-            ],
+            stacks: [{ id: f.stack.id }, { id: second.id }],
           },
         }),
       );
@@ -340,7 +364,7 @@ describe("stack destroy", () => {
       expect(output.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
-          data: { destroyed: true, stacks: [{ id: f.stack.id, runtimeCleanup: "complete" }] },
+          data: { destroyed: true, stacks: [{ id: f.stack.id }] },
         }),
       );
     }).pipe(Effect.provide(live)),
@@ -419,7 +443,7 @@ describe("stack destroy", () => {
       const f = yield* fixture(true);
 
       const error = yield* stackDestroy(f.flags).pipe(
-        Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, f.stack.id))),
+        Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, [f.stack.id]))),
         Effect.flip,
       );
 
@@ -427,6 +451,37 @@ describe("stack destroy", () => {
       expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
         f.stack.id,
       ]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("points a batch at the engine only when it was unreachable for every stack", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const second = yield* f.api.create({
+        ...f.locations,
+        projectRoot: f.root,
+        name: "second",
+        runtime: "native",
+      });
+      const ids = [f.stack.id, second.id];
+      const retry = `"supabase stack destroy --stack-id ${f.stack.id} --stack-id ${second.id} --yes"`;
+      const destroyWith = (unreachable: ReadonlyArray<string>) =>
+        stackDestroy({ ...f.flags, stackId: ids }).pipe(
+          Effect.provide(Layer.merge(f.layer, refuseDestroy(f.api, ids, unreachable))),
+          Effect.flip,
+        );
+
+      expect(yield* destroyWith([f.stack.id])).toMatchObject({
+        reason: "unknown",
+        suggestion: `Resolve each error, then run ${retry} to retry the stacks that failed.`,
+      });
+      expect(yield* destroyWith(ids)).toMatchObject({
+        reason: "runtime",
+        suggestion: `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`,
+      });
+      expect(
+        (yield* f.api.discover(f.locations)).map(({ definition }) => definition.id).toSorted(),
+      ).toEqual(ids.toSorted());
     }).pipe(Effect.provide(live)),
   );
 
@@ -444,7 +499,6 @@ describe("stack destroy", () => {
                   id,
                   destroy: Effect.sync(() => {
                     removed += 1;
-                    return { runtimeCleanup: "complete" } as const;
                   }),
                 })
               : Option.none(),
@@ -496,7 +550,7 @@ describe("stack destroy", () => {
         Layer.merge(
           f.layer,
           Layer.mergeAll(
-            refuseDestroy(f.api, f.stack.id),
+            refuseDestroy(f.api, [f.stack.id]),
             jsonOutputLayer.pipe(Layer.provide(stdio)),
             processControl.layer,
           ),
@@ -510,12 +564,13 @@ describe("stack destroy", () => {
       expect(
         yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(stdout.join("")),
       ).toEqual({
-        destroyed_stacks: [{ id: second.id, runtimeCleanup: "complete" }],
+        destroyed_stacks: [{ id: second.id }],
         _tag: "Error",
         error: {
           code: "ExperimentalStackDestroyError",
           message: "Failed to destroy 1 managed stack(s).",
           detail: `${f.stack.id}: engine refused`,
+          suggestion: `Resolve each error, then run "supabase stack destroy --stack-id ${f.stack.id} --yes" to retry the stacks that failed.`,
         },
       });
       expect(processControl.exitCode).toBe(1);

@@ -36,12 +36,12 @@ export const formatAccess = (access: HttpAccess) =>
 
 const encoder = new TextEncoder();
 
-/** The gateway stream's output, its access sink, and an observation of one launch per owner run. */
+/** The gateway stream's output, its access sink, and the launches of one owner run. */
 export interface GatewayLog {
   readonly logs: CatalogLogs;
   /** Records an access once the owner run's launch began; earlier ones have no reader yet. */
   readonly record: HttpAccessSink;
-  readonly observation: Stream.Stream<{ readonly launchId: number }>;
+  readonly launches: Stream.Stream<number | undefined>;
   /** Begins this owner run's launch, numbered after the retained ones. */
   readonly begin: (launchId: number) => Effect.Effect<void>;
 }
@@ -60,10 +60,7 @@ export const make = Effect.gen(function* () {
             : publish("stdout", encoder.encode(`${formatAccess(access)}\n`)),
         ),
       ),
-    observation: Stream.fromEffect(Deferred.await(launch)).pipe(
-      Stream.map((launchId) => ({ launchId })),
-      Stream.concat(Stream.never),
-    ),
+    launches: Stream.fromEffect(Deferred.await(launch)).pipe(Stream.concat(Stream.never)),
     begin: (launchId) =>
       launchOutputPublisher(output, launchId).pipe(
         Effect.flatMap(({ part }) => part),

@@ -37,10 +37,12 @@ const run = Effect.gen(function* () {
       }),
       { mode: 0o600 },
     );
-  const container = yield* makeContainerRuntime({ engine: "docker", root });
+  const target = { engine: "docker" as const, argv: [], daemonId: "test-daemon-id" };
+  const container = yield* makeContainerRuntime({ target, root });
   const helpers = shared ? yield* makeDockerHelperRegistry(yield* crypto.randomUUIDv4) : undefined;
   const storage = yield* makeDockerDatabaseStorage({
     runtime: "docker",
+    target,
     stackId,
     instanceId: "database",
     instanceRoot,

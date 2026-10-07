@@ -1,17 +1,40 @@
-import { Cause, Crypto, Data, Effect, Exit, Hash, Option, Scope } from "effect";
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Hash,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Scope,
+} from "effect";
 import * as Net from "node:net";
-import type * as State from "./State.ts";
+import type * as StackNamespace from "./StackNamespace.ts";
+import * as Lease from "./namespace/Lease.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import type { Holder } from "./namespace/PortReservations.ts";
 
-export const portBase = 20000;
+const portBase = 20000;
 /** Stays below the Linux ephemeral range, per the [architecture ADR](../../../docs/adr/0017-simplified-managed-stack-architecture.md). */
-export const portSpan = 12768;
+const portSpan = 12768;
 /** Co-prime with the span, so the scan visits every port once and steps past reserved ranges. */
 const portStride = 257;
+
+/** Why a port could not be used: another stack's live reservation, or a process outside the registry. */
+export interface PortConflict {
+  readonly port: number;
+  readonly endpoint: string;
+  readonly holder: Holder | "foreign";
+}
 
 export class PortError extends Data.TaggedError("PortError")<{
   readonly key: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly conflict?: PortConflict;
 }> {}
 
 export interface PortRequest {
@@ -22,7 +45,7 @@ export interface PortRequest {
 }
 
 /** Spreads the scan across the span so separate checkouts, stacks, and keys start apart. */
-const scanStart = (stack: State.SavedStack, key: string) =>
+const scanStart = (stack: StackNamespace.SavedStack, key: string) =>
   Math.abs(Hash.string(`${stack.identity.projectRoot}:${stack.id}:${key}`)) % portSpan;
 
 /** A wildcard listener is reachable through loopback, where a same-port loopback listener answers too. */
@@ -47,46 +70,78 @@ export const accepts = (host: string, port: number) =>
 /** Linux rejects a bind that overlaps a same-family listener on the port; macOS, BSD, and Windows accept it. */
 const bindsCanOverlap = (platform: NodeJS.Platform) => platform !== "linux";
 
-const loopbackOccupied = (port: number) =>
-  Effect.forEach(["127.0.0.1", "::1"], (host) => accepts(host, port), {
+const isRefused = (cause: unknown) =>
+  Predicate.hasProperty(cause, "code") && cause.code === "ECONNREFUSED";
+
+/** A refused loopback connect can take seconds on Windows; darwin and linux answer almost immediately. */
+const refusalTimeout = (platform: NodeJS.Platform) =>
+  platform === "win32" ? "3 seconds" : "250 millis";
+
+/**
+ * Resolves `true` only on a definite `ECONNREFUSED`, which is the one outcome that proves nothing
+ * answers `host:port`. An accepted connection, a timeout, or any other error (for example
+ * `ECONNRESET`) all count as occupied: this is the vacancy probe's own, stricter semantics, kept
+ * separate from {@link accepts}'s generous "did anything answer" check that `ProcessRecipe` uses
+ * for readiness.
+ */
+const refused = (platform: NodeJS.Platform) => (host: string, port: number) =>
+  Effect.callback<boolean>((resume) => {
+    const socket = Net.connect({ host: probeHost(host), port });
+    const settle = (value: boolean) => {
+      socket.destroy();
+      resume(Effect.succeed(value));
+    };
+    socket.once("connect", () => settle(false));
+    socket.on("error", (cause: unknown) => settle(isRefused(cause)));
+    return Effect.sync(() => {
+      socket.destroy();
+    });
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: refusalTimeout(platform),
+      orElse: () => Effect.succeed(false),
+    }),
+  );
+
+const loopbackVacant = (platform: NodeJS.Platform) => (port: number) =>
+  Effect.forEach(["127.0.0.1", "::1"], (host) => refused(platform)(host, port), {
     concurrency: "unbounded",
-  }).pipe(Effect.map((answers) => answers.some(Boolean)));
+  }).pipe(Effect.map((refusals) => refusals.every(Boolean)));
 
-const claimantOf = (stacks: ReadonlyArray<State.StackClaims>, stackId: string, port: number) =>
-  stacks.find((other) => other.id !== stackId && other.ports.some((claim) => claim.port === port))
-    ?.id;
+/** The OS error `bindTcp`/`makeHttpProxy` surface when another process already owns the port. */
+const isAddressInUse = (cause: unknown) =>
+  Predicate.hasProperty(cause, "code") && cause.code === "EADDRINUSE";
 
-const resolveRequest = (
-  stack: State.SavedStack,
-  request: PortRequest,
-): Effect.Effect<
-  { readonly saved: State.PortClaim | undefined; readonly requested: number | "auto" },
-  PortError
-> => {
-  const saved = stack.ports.find((entry) => entry.key === request.key);
-  if (
-    saved !== undefined &&
-    (saved.host !== request.host || (request.port !== "auto" && saved.port !== request.port))
-  )
-    return Effect.fail(
-      new PortError({
-        key: request.key,
-        message: "The requested listener differs from its saved assignment",
-      }),
-    );
-  const requested = saved?.port ?? request.port;
-  if (requested === "auto") return Effect.succeed({ saved, requested });
-  if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
-    return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
-  if (stack.ports.some((claim) => claim.key !== request.key && claim.port === requested))
-    return Effect.fail(
-      new PortError({
-        key: request.key,
-        message: `Public port ${requested} is claimed by another listener of this stack`,
-      }),
-    );
-  return Effect.succeed({ saved, requested });
-};
+/**
+ * Guards a brand-new physical listener only; reusing an existing one never probes. On platforms
+ * where overlapping binds silently succeed, only `ECONNREFUSED` on both loopback families proves
+ * the port vacant, so anything else (an answer, a timeout, another error) counts as occupied. This
+ * narrows, but cannot close, the race between the probe and the real bind that follows it: the OS
+ * still allows a foreign process to bind in between on these platforms.
+ */
+export const probeVacant =
+  (platform: NodeJS.Platform) =>
+  (key: string, host: string, port: number): Effect.Effect<void, PortError> =>
+    Effect.gen(function* () {
+      if (!bindsCanOverlap(platform)) return;
+      if (yield* loopbackVacant(platform)(port)) return;
+      return yield* new PortError({
+        key,
+        message: `Port ${port} for ${key} at ${host}:${port} is in use by another process; free it or configure a different port for ${key}`,
+        conflict: { port, endpoint: key, holder: "foreign" },
+      });
+    });
+
+/**
+ * Disjoint from the public auto range (`portBase`..`portBase + portSpan`) and contiguous below it,
+ * and a pinned public port inside it is rejected, so a native backend's direct bind can never land
+ * on a port the per-user registry is reserving for a public listener. Both ranges stay below the
+ * OS ephemeral range (ADR 0017).
+ */
+export const nativePortBase = 10000;
+export const nativePortSpan = portBase - nativePortBase;
+/** Co-prime with the span, matching the public scan's stride. */
+const nativePortStride = 257;
 
 export interface NativePortReservation {
   readonly port: number;
@@ -130,36 +185,35 @@ const bindNativePort = (
     });
   });
 
-const emptyPortSet: ReadonlySet<number> = new Set();
-
-/** Random, so a reopened stack doesn't retry a backend port still in server-side `TIME_WAIT`. */
-export const randomPortSpanStart = (crypto: Crypto.Crypto): Effect.Effect<number> =>
-  crypto.randomIntBetween(0, portSpan, { halfOpen: true });
-
 /**
- * Scans the below-ephemeral span for a backend port, skipping claimed and excluded ports; reuses
- * `loopbackOccupied` so a wildcard listener a loopback-only bind would miss on macOS, BSD or
- * Windows still rules out the candidate. Never persists one of its own.
+ * Reserves a native backend's private port, hash-seeding the scan from `key` so a reopened
+ * instance starts from the same candidate while separate keys spread out (mirrors the public auto
+ * scan's hash seed). Probes with {@link probeVacant} before the real bind, since a loopback-only
+ * bind can silently coexist with a wildcard listener on macOS, BSD, and Windows. A port a prior
+ * attempt in this batch lost is passed in `excluded` so a retry advances instead of repeating it.
+ * Never saved: backend ports are private and are not stable across restarts.
  */
 export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
   (
-    claims: ReadonlyArray<State.StackClaims>,
     key: string,
-    randomStart: Effect.Effect<number>,
-    excluded: ReadonlySet<number> = emptyPortSet,
+    excluded: ReadonlySet<number>,
+    platform: NodeJS.Platform = process.platform,
   ): Effect.Effect<NativePortReservation, PortError, Scope.Scope> =>
     Effect.acquireRelease(
       Effect.gen(function* () {
-        const claimed = new Set(claims.flatMap((stack) => stack.ports.map((claim) => claim.port)));
-        const start = yield* randomStart;
+        const probe = probeVacant(platform);
+        const start = Math.abs(Hash.string(key)) % nativePortSpan;
         let failures = 0;
         let lastFailure: PortError | undefined;
-        for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
-          const port = portBase + ((start + attempt * portStride) % portSpan);
-          if (claimed.has(port) || excluded.has(port)) continue;
-          if (yield* loopbackOccupied(port)) {
+        for (let attempt = 0; attempt < nativePortSpan && failures < 64; attempt++) {
+          const port = nativePortBase + ((start + attempt * nativePortStride) % nativePortSpan);
+          if (excluded.has(port)) continue;
+          const probed = yield* Effect.exit(probe(key, "127.0.0.1", port));
+          if (Exit.isFailure(probed)) {
+            const probeError = Cause.findErrorOption(probed.cause);
+            if (Option.isNone(probeError)) return yield* Effect.failCause(probed.cause);
             failures++;
-            lastFailure = new PortError({ key, message: `Port ${port} is already in use` });
+            lastFailure = probeError.value;
             continue;
           }
           const result = yield* Effect.exit(bindNativePort(key, port));
@@ -182,133 +236,213 @@ export const reserveNativePort = Effect.fn("Ports.reserveNativePort")(
     ),
 );
 
-/** Claims steer auto allocation away from saved stacks; live listeners and binds decide conflicts for fixed ports. */
-export const makePorts = (state: State.Interface, platform: NodeJS.Platform = process.platform) =>
-  Effect.sync(() => {
-    const describe = (id: string) =>
-      state.read(id).pipe(
-        Effect.map((saved) =>
-          saved === undefined
-            ? id
-            : `"${saved.identity.stackName}" on ${saved.identity.branchContext} in ${saved.identity.projectRoot}`,
-        ),
-        Effect.orElseSucceed(() => id),
-      );
-
-    const claimedBy = (stacks: ReadonlyArray<State.StackClaims>, stackId: string, port: number) => {
-      const claimant = claimantOf(stacks, stackId, port);
-      return claimant === undefined
-        ? Effect.succeed("")
-        : describe(claimant).pipe(Effect.map((stack) => `; stack ${stack} claims this port`));
-    };
-
-    // A caller may serve several claims of one stack from a listener it acquired here, so that
-    // listener is not a foreign occupant.
-    const held = new Map<string, number>();
-    const hold = (scope: Scope.Scope, stackId: string, port: number) => {
-      const key = `${stackId}:${port}`;
-      return Effect.sync(() => held.set(key, (held.get(key) ?? 0) + 1)).pipe(
-        Effect.andThen(
-          Scope.addFinalizer(
-            scope,
-            Effect.sync(() => {
-              const remaining = (held.get(key) ?? 1) - 1;
-              if (remaining > 0) held.set(key, remaining);
-              else held.delete(key);
-            }),
-          ),
-        ),
-      );
-    };
-
-    /** Advisory and outside the registry lock; the bind under the lock still decides. */
-    const rejectOccupied = Effect.fn("Ports.rejectOccupied")(function* (request: PortRequest) {
-      const preview = yield* state.read(request.stackId);
-      if (preview === undefined) return;
-      const { requested } = yield* resolveRequest(preview, request);
-      if (
-        requested === "auto" ||
-        !bindsCanOverlap(platform) ||
-        held.has(`${request.stackId}:${requested}`) ||
-        !(yield* loopbackOccupied(requested))
-      )
-        return;
-      return yield* new PortError({
+const resolveRequest = (
+  request: PortRequest,
+  owned: number | undefined,
+): Effect.Effect<number | "auto", PortError> => {
+  if (request.port !== "auto" && owned !== undefined && owned !== request.port)
+    return Effect.fail(
+      new PortError({
         key: request.key,
-        message: `Public port ${requested} for ${request.key} at ${request.host}:${requested} is already in use${yield* claimedBy(yield* state.claims, request.stackId, requested)}`,
+        message: "The requested listener differs from its reserved assignment",
+      }),
+    );
+  const requested = owned ?? request.port;
+  if (requested === "auto") return Effect.succeed(requested);
+  if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
+    return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
+  if (requested >= nativePortBase && requested < portBase)
+    return Effect.fail(
+      new PortError({
+        key: request.key,
+        message: `Public port ${requested} for ${request.key} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service backends; configure a port outside that range`,
+      }),
+    );
+  return Effect.succeed(requested);
+};
+
+const RegisteredProject = Schema.fromJsonString(
+  Schema.Struct({ identity: Schema.Struct({ projectRoot: Schema.String }) }),
+);
+
+/**
+ * One stack's public ports, reserved through the per-user registry before any physical listener
+ * exists: a reservation is committed first, then the listener is created. An auto port stays
+ * reserved while its stack is stopped; a pinned port is reserved only while its listener is open.
+ */
+export const makePorts = (state: StackNamespace.Interface) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const portReservations = yield* PortReservations.Service;
+    // The registry's state_root is the realpath, so a symlinked or relative root still matches
+    // the identity another process derives from the same stack.
+    const stateRoot = yield* fs.realPath(state.root);
+    const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+
+    /** The holder's project directory, read from its own registration; undefined when unreadable. */
+    const projectOf = (holder: Holder) =>
+      fs.readFileString(path.join(holder.stateRoot, holder.stackId, "state.json")).pipe(
+        Effect.flatMap(Schema.decodeEffect(RegisteredProject)),
+        Effect.map((saved) => saved.identity.projectRoot),
+        Effect.orElseSucceed(() => undefined),
+      );
+
+    /** Only a confirmed `ENOENT` on the holder's own registration makes its reservation stale. */
+    const isGone = (holder: Holder) =>
+      fs.stat(path.join(holder.stateRoot, holder.stackId, "state.json")).pipe(
+        Effect.as(false),
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(true),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+
+    /**
+     * Whether a process holds the holder stack's owner lease; an unreadable lease counts as held.
+     * A sweeper holding it does not count, since a sweeper never uses the stack's public ports.
+     */
+    const isLeased = (holder: Holder) =>
+      Lease.make({ root: holder.stateRoot, isRegistered: () => Effect.succeed(true) }).pipe(
+        Effect.flatMap((lease) =>
+          lease
+            .leased(holder.stackId)
+            .pipe(
+              Effect.flatMap((leased) =>
+                leased
+                  ? lease.readHolder(holder.stackId).pipe(Effect.map((h) => h?.role !== "sweeper"))
+                  : Effect.succeed(false),
+              ),
+            ),
+        ),
+        Effect.provideContext(services),
+        Effect.orElseSucceed(() => true),
+      );
+
+    /**
+     * Reserves `port` for `(stackId, key)`, running the lazy-reclamation check against a
+     * conflict's own registration before giving up on it. A pinned request also reclaims a
+     * holder with no live owner, since the owner that died never closed its listener. Resolves
+     * to the still-live holder on conflict, or `undefined` once the row is ours. Untraced: an
+     * auto scan calls this per candidate port, and the enclosing `Ports.acquire` span already
+     * records the attempt count.
+     */
+    const reserveCandidate = Effect.fnUntraced(function* (
+      stackId: string,
+      key: string,
+      port: number,
+      pinned: boolean,
+    ) {
+      const holder = yield* portReservations.reserve(stateRoot, stackId, key, port);
+      if (holder === undefined) return undefined;
+      if (!(yield* isGone(holder)) && !(pinned && !(yield* isLeased(holder)))) return holder;
+      const reclaimed = yield* portReservations.reclaim(port, holder, {
+        stateRoot,
+        stackId,
+        endpoint: key,
       });
+      return reclaimed ? undefined : holder;
+    });
+
+    const holderMessage = Effect.fnUntraced(function* (
+      key: string,
+      port: number,
+      stackId: string,
+      holder: Holder,
+    ) {
+      if (holder.stackId === stackId)
+        return `Public port ${port} for ${key} is claimed by another listener of this stack`;
+      const project = yield* projectOf(holder);
+      const where =
+        project === undefined
+          ? `stack ${holder.stackId}`
+          : `the stack of project ${project} (stack ${holder.stackId})`;
+      return `Public port ${port} for ${key} is in use by ${where}; run \`supabase stack stop\` in that project, or configure a different port for ${key}`;
     });
 
     const acquire = Effect.fn("Ports.acquire")(function* <A, R>(
       request: PortRequest,
       bind: (host: string, port: number) => Effect.Effect<A, PortError, R | Scope.Scope>,
     ) {
-      yield* rejectOccupied(request);
       return yield* state.withLock(
         Effect.gen(function* () {
           const stack = yield* state.read(request.stackId);
           if (stack === undefined)
             return yield* new PortError({ key: request.key, message: "Stack is not registered" });
-          const { saved, requested } = yield* resolveRequest(stack, request);
-          const others = yield* state.claims;
-          const claimed = new Set([
-            ...stack.ports.filter((claim) => claim.key !== request.key).map((claim) => claim.port),
-            ...others
-              .filter((other) => other.id !== request.stackId)
-              .flatMap((other) => other.ports.map((claim) => claim.port)),
-          ]);
-
+          const owned = yield* portReservations.find(stateRoot, request.stackId, request.key);
+          const requested = yield* resolveRequest(request, owned);
           const owner = yield* Scope.Scope;
-          const start = scanStart(stack, request.key);
-          let failures = 0;
-          let lastFailure: PortError | undefined;
-          for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
-            const port =
-              requested === "auto"
-                ? portBase + ((start + attempt * portStride) % portSpan)
-                : requested;
-            if (requested === "auto" && claimed.has(port)) continue;
-            if (requested === "auto" && (yield* loopbackOccupied(port))) {
-              failures++;
-              lastFailure = new PortError({
-                key: request.key,
-                message: `Port ${port} is already in use`,
-              });
-              continue;
-            }
-            const result = yield* Effect.uninterruptibleMask((restore) =>
-              Effect.gen(function* () {
-                const scope = yield* Scope.fork(owner, "sequential");
-                return yield* restore(
-                  Effect.gen(function* () {
-                    const listener = yield* bind(request.host, port).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new PortError({
-                            key: request.key,
-                            message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
-                            cause,
-                          }),
-                      ),
-                      Effect.provideService(Scope.Scope, scope),
-                    );
-                    if (saved === undefined)
-                      yield* state.save({
-                        ...stack,
-                        ports: [...stack.ports, { key: request.key, host: request.host, port }],
-                      });
-                    return { port, listener };
+          yield* Effect.annotateCurrentSpan({
+            "stack.endpoint": request.key,
+            "stack.port.mode":
+              requested !== "auto" ? (owned !== undefined ? "owned" : "fixed") : "auto",
+          });
+
+          /** Binds `port` against whatever scope the caller provides. */
+          const bindListener = (port: number) =>
+            bind(request.host, port).pipe(
+              Effect.map((listener) => ({ port, listener })),
+              Effect.mapError(
+                (cause) =>
+                  new PortError({
+                    key: request.key,
+                    message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
+                    cause: cause.cause,
+                    conflict:
+                      cause.conflict ??
+                      (isAddressInUse(cause.cause)
+                        ? { port, endpoint: request.key, holder: "foreign" as const }
+                        : undefined),
                   }),
+              ),
+            );
+
+          /**
+           * One bind attempt at `port` in its own forked scope; a failure closes the scope, a
+           * success keeps it open. A pinned request's row lives exactly as long as that scope, so a
+           * stopped stack holds none; an auto assignment's row outlives it and is kept across stops.
+           */
+          const attemptBind = (port: number) =>
+            Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                if (owned === undefined) {
+                  const holder = yield* reserveCandidate(
+                    request.stackId,
+                    request.key,
+                    port,
+                    request.port !== "auto",
+                  );
+                  if (holder !== undefined)
+                    return Exit.fail(
+                      new PortError({
+                        key: request.key,
+                        message: yield* holderMessage(request.key, port, request.stackId, holder),
+                        conflict: { port, endpoint: request.key, holder },
+                      }),
+                    );
+                }
+                const scope = yield* Scope.fork(owner, "sequential");
+                if (request.port !== "auto")
+                  yield* Scope.addFinalizer(
+                    scope,
+                    portReservations
+                      .release(stateRoot, request.stackId, request.key)
+                      .pipe(Effect.orDie),
+                  );
+                return yield* restore(
+                  bindListener(port).pipe(Effect.provideService(Scope.Scope, scope)),
                 ).pipe(
                   Effect.onExit((exit) =>
-                    Exit.isFailure(exit)
-                      ? Scope.close(scope, exit)
-                      : hold(scope, request.stackId, port),
+                    Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void,
                   ),
                   Effect.exit,
                 );
               }),
             );
+
+          if (requested !== "auto") {
+            const result = yield* attemptBind(requested);
             if (Exit.isSuccess(result)) return result.value;
             const error = Cause.findErrorOption(result.cause);
             if (
@@ -318,15 +452,61 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
               !(error.value instanceof PortError)
             )
               return yield* Effect.failCause(result.cause);
-            if (requested !== "auto")
-              return yield* new PortError({
-                key: request.key,
-                message: `${error.value.message}${yield* claimedBy(others, request.stackId, requested)}`,
-                cause: error.value.cause,
-              });
+            return yield* error.value;
+          }
+
+          // A freshly auto-reserved port that fails to bind (including by interruption mid-probe)
+          // has no restart stickiness to protect, so it must release the row again. Reserving,
+          // forking the listener's scope, attempting the bind, and rolling both back on failure all
+          // happen in one uninterruptible mask, with only the bind attempt itself restored to
+          // interruptible, mirroring `attemptBind` exactly: a pending interrupt delivered during the
+          // probe surfaces inside that single mask, where rollback can never be skipped.
+          const attemptCandidate = (port: number) =>
+            Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const holder = yield* reserveCandidate(request.stackId, request.key, port, false);
+                if (holder !== undefined) return undefined;
+                const scope = yield* Scope.fork(owner, "sequential");
+                return yield* restore(
+                  bindListener(port).pipe(Effect.provideService(Scope.Scope, scope)),
+                ).pipe(
+                  Effect.onExit((exit) =>
+                    Exit.isFailure(exit)
+                      ? Scope.close(scope, exit).pipe(
+                          Effect.andThen(
+                            portReservations.release(stateRoot, request.stackId, request.key),
+                          ),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.exit,
+                );
+              }),
+            );
+
+          const start = scanStart(stack, request.key);
+          let failures = 0;
+          let lastFailure: PortError | undefined;
+          for (let attempt = 0; attempt < portSpan && failures < 64; attempt++) {
+            const port = portBase + ((start + attempt * portStride) % portSpan);
+            const result = yield* attemptCandidate(port);
+            if (result === undefined) continue;
+            if (Exit.isSuccess(result)) {
+              yield* Effect.annotateCurrentSpan({ "stack.port.attempts": attempt + 1 });
+              return result.value;
+            }
+            const error = Cause.findErrorOption(result.cause);
+            if (
+              Exit.hasInterrupts(result) ||
+              Exit.hasDies(result) ||
+              Option.isNone(error) ||
+              !(error.value instanceof PortError)
+            )
+              return yield* Effect.failCause(result.cause);
             failures++;
             lastFailure = error.value;
           }
+          yield* Effect.annotateCurrentSpan({ "stack.port.failures": failures });
           return yield* new PortError({
             key: request.key,
             message:
@@ -339,18 +519,19 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
       );
     });
 
+    /** The port this stack's reservation holds for `key`, or `undefined` when it holds none. */
+    const assigned = Effect.fn("Ports.assigned")((stackId: string, key: string) =>
+      portReservations.find(stateRoot, stackId, key),
+    );
+
     const release = Effect.fn("Ports.release")(function* (stackId: string, key: string) {
-      yield* state.withLock(
-        Effect.gen(function* () {
-          const stack = yield* state.read(stackId);
-          if (stack !== undefined)
-            yield* state.save({
-              ...stack,
-              ports: stack.ports.filter((entry) => entry.key !== key),
-            });
-        }),
-      );
+      yield* state.withLock(portReservations.release(stateRoot, stackId, key));
     });
 
-    return { acquire, release };
+    /** Releases every reservation a stack holds, regardless of endpoint; used at destroy's success boundary. */
+    const releaseStack = Effect.fn("Ports.releaseStack")(function* (stackId: string) {
+      yield* portReservations.releaseStack(stateRoot, stackId);
+    });
+
+    return { acquire, assigned, release, releaseStack };
   });

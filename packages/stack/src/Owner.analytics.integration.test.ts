@@ -20,11 +20,12 @@ import {
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import { logflareEvent, logflareSources } from "./host/LogflareEvents.ts";
-import * as State from "./State.ts";
-import type { SavedStack } from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import type { SavedStack } from "./StackNamespace.ts";
 import type { ServiceCreationInput } from "./services/Catalog.ts";
 import { makeDockerDatabaseRoot } from "../tests/docker-fixture.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
+import { engineTarget, testEngine } from "../tests/engine-target.ts";
 
 const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
@@ -100,18 +101,18 @@ const startStack = (
     const saved: SavedStack = {
       id: stackId,
       identity: { projectRoot: "/tmp/project", branchContext: name, stackName: stackId },
-      runtime: "docker",
+      runtime: testEngine,
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     };
+    const stateRoot = path.dirname(path.dirname(root));
     const state = Context.get(
-      yield* Layer.build(State.layer({ root: path.dirname(path.dirname(root)) })),
-      State.Service,
+      yield* Layer.build(StackNamespace.layer({ root: stateRoot })),
+      StackNamespace.Service,
     );
     yield* state.save(saved);
-    const owner = yield* ownerFor({ saved, state, root, cacheRoot });
+    const owner = yield* ownerFor({ saved, state, root, cacheRoot, engineTarget });
     yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
 
     const composed = yield* owner.rpc.supabaseComposition({ services });
@@ -146,7 +147,7 @@ const startStack = (
         .pipe(Stream.filter(predicate), Stream.take(1), Stream.runDrain);
     return {
       owner,
-      state,
+      logsRoot: StackNamespace.stackLogsRoot(path, stateRoot, stackId),
       stackId,
       idOf,
       analyticsUrl,
@@ -175,7 +176,7 @@ it.live(
         const path = yield* Path.Path;
         const client = yield* HttpClient.HttpClient;
         // A short idle timer lets the test observe Analytics sleeping while services keep logging.
-        const { owner, state, stackId, idOf, awaitAnalytics, wakeAnalytics, keepAwake } =
+        const { owner, logsRoot, stackId, idOf, awaitAnalytics, wakeAnalytics, keepAwake } =
           yield* startStack(
             "owner-logs",
             [
@@ -244,7 +245,7 @@ it.live(
             (generation === awakeRecord.position.generation &&
               byteOffset >= awakeRecord.position.byteOffset));
         const confirmed = yield* fs
-          .readFileString(path.join(state.logsRoot(stackId), "database", databaseId, "cursor.json"))
+          .readFileString(path.join(logsRoot, "database", databaseId, "cursor.json"))
           .pipe(
             Effect.flatMap(decodeConfirmed),
             Effect.filterOrFail(passedAwake),
