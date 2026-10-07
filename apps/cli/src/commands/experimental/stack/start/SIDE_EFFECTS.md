@@ -45,11 +45,14 @@ PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string 
 persisted and shipped to Analytics.
 
 Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
-which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's ports stay
-reserved across every other stack's starts, including in a different state root, and starting it
-again reuses the same ports. A saved or explicitly requested port already held by another stack, or
-occupied by a process outside the registry, fails start naming the conflict instead of picking a
-different port; only automatic allocation tries another candidate. On macOS a process can still win
+which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's automatic
+ports stay reserved across every other stack's starts, including in a different state root, and
+starting it again reuses the same ports. A configured port is reserved only while its listener is
+open, so a stopped stack never blocks another project's configured port; a configured port takes
+over a reservation whose stack has no running owner (after a crash or reboot), and that stack gets a
+new automatic port on its next start. A saved or configured port held by another running stack, or
+occupied by a process outside the registry, fails start naming the port and, for a stack, its
+project, instead of picking a different port; only automatic allocation tries another candidate. On macOS a process can still win
 a narrow race against the pre-bind probe before a brand-new listener exists.
 Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
 auto range and below the OS ephemeral range on every supported platform; this range is not

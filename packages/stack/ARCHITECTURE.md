@@ -358,7 +358,7 @@ flowchart TB
     Stopped -->|explicit start| Start["Orchestrator starts selected services<br/>Reuses saved public ports"]
 ```
 
-Sleep retains the public listener needed to wake. Whole-stack stop closes listeners while preserving the registry's reservations; the next start rebinds the same ports. Destroying an individual instance deletes only the registry rows it owns, not unrelated services' shared listeners or rows; a stack-wide destroy deletes its rows only after the registration is removed, so a failed destroy keeps them and a failed release leaves them for lazy reclamation.
+Sleep retains the public listener needed to wake. Whole-stack stop closes listeners and releases pinned reservations while preserving automatic ones; the next start rebinds the same ports. Destroying an individual instance deletes only the registry rows it owns, not unrelated services' shared listeners or rows; a stack-wide destroy deletes its rows only after the registration is removed, so a failed destroy keeps them and a failed release leaves them for lazy reclamation.
 
 Composition validation permits lazy activation only for instances with a configured public wake endpoint. A route-less prerequisite, such as pg-meta without its own public endpoint, is eager; it is not implicitly armed through a dependent. This avoids a second wake-permission mechanism. Internal sleep is available only for lazy instances with a supported public wake route and an enabled idle policy. The default composition gives every lazy service one, Functions included; the database is eager. Functions inspector access remains possible while health is starting; ordinary application traffic waits for healthy.
 
@@ -491,24 +491,11 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. A container-runtime owner also visits stacks that have no registration but left containers labelled with this state root on its pinned engine, such as when their directory was deleted, under the same lease and unregistered check, and removes only those containers; the stack's data in the shared database volume stays. `findDeleted` selects such a stack by its full id, so a client can destroy those containers on demand. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first. The sweep also removes the empty `<id>/` and `data/` directories a destroy leaves behind, once they are over ten minutes old and hold nothing else.
 
-**Abandoned registration.** The orphan sweep above covers a dead owner whose registration survives;
-the opposite case is a live owner whose registration disappears out from under it (the state root
-is deleted, moved or unmounted). Every owner polls its own `<stateRoot>/<id>/state.json` on an
-interval (30 seconds by default) and treats only a confirmed ENOENT as gone; any other read error,
-such as a permission failure or a transient I/O error on an unmounted root, keeps the owner
-running and logs a warning instead. On a confirmed-gone registration the owner treats its
-ownership as ended: after any stop already running settles, it runs the ordinary destroy once
-(ordered stop, instance data removal, label sweep, port release) and exits. The destroy is best
-effort and its failure is logged, not retried. Registration and state root need not exist for it
-to complete: confirming the absent registration skips the registry lock, so the label sweep still
-runs when the whole state root is gone. A transient engine failure during that single cleanup
-leaves labelled containers behind; the next startup, stop or destroy of a stack with the same id
-and data root sweeps them by label. Deletion, a move and an unmount are treated identically,
-because a stack whose root is unreachable cannot operate regardless of which of the three caused it.
+**Lost ownership.** The orphan sweep above covers a dead owner whose registration survives; the opposite case is a live owner whose registration disappears out from under it (the stack directory or state root is deleted, moved or unmounted, possibly followed by a new start of the same stack). Every owner polls on an interval (30 seconds by default) and treats its ownership as ended when `<stateRoot>/<id>/state.json` is confirmed missing (ENOENT) or `owner.lock` at its path is no longer the file its lease locked. Any other read error keeps the owner running and logs a warning. When ownership ends, the owner stops what it launched once any stop already running settles, closes its listeners and exits. It does not destroy instance data, sweep labels, release port reservations or write the registry, and it retracts `owner.json` only while the lock file at its path is still its own, so a successor owner is never disturbed. Leftovers of a stack whose directory is gone are reclaimed by the existing paths: the next container owner's sweep of unregistered labelled stacks, lazy reclamation of reservations whose registration is gone, and `destroy --stack-id`. Docker database data in the shared volume of such a stack is not reclaimed.
 
-**Engine targets.** A container stack pins the engine target it first resolves, so every command it runs reaches the same engine. Docker pins `DOCKER_HOST` as `--host`, else the current context. Podman pins `CONTAINER_HOST` as `--url`, else `CONTAINER_CONNECTION` as `--connection`; with neither set, a bare `podman info` decides whether the engine is local or remote. A remote engine (macOS `podman machine`) pins the default system connection by name, and a local one adds no flags. On rootless Podman, containers that run as the caller's uid with writable borrowed bind mounts get `--userns=keep-id` so files stay owned by the caller. Containers reach host listeners through the engine's host alias, `host.docker.internal` or `host.containers.internal`.
+**Engine targets.** A container stack's owner pins the engine target it resolves at startup, so every command it runs reaches the same engine. The target is not saved with the stack: an owner started after the Docker context or `DOCKER_HOST` changed resolves the new target, and containers left on the previous engine are not reached from there; switch back to clean them up. Docker pins `DOCKER_HOST` as `--host`, else the current context. Podman pins `CONTAINER_HOST` as `--url`, else `CONTAINER_CONNECTION` as `--connection`; with neither set, a bare `podman info` decides whether the engine is local or remote. A remote engine (macOS `podman machine`) pins the default system connection by name, and a local one adds no flags. On rootless Podman, containers that run as the caller's uid with writable borrowed bind mounts get `--userns=keep-id` so files stay owned by the caller. Containers reach host listeners through the engine's host alias, `host.docker.internal` or `host.containers.internal`.
 
-**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon or service not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it only confirms that no owner holds the stack's lease, leaves the registration, port reservations and host data untouched, and returns `{ runtimeCleanup: "skipped", engine }`; run it again once the engine is reachable. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon or service not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then fails with that reason, leaving the registration, port reservations and host data untouched; run it again once the engine is reachable. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
@@ -599,13 +586,13 @@ Do not persist health, runtime lifecycle projections, transition progress, comma
 
 Some foundations are not optional, but they do not need to dominate the service model:
 
-| Foundation | Keep                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity   | Stack and instance IDs; deterministic names and paths for their resources                                                                   |
-| Ownership  | One detached StackHost and exclusive lease; client handles do not own service lifetime                                                      |
-| Ports      | Persist public port assignments across stop/start; reuse the same ports, including initially automatic assignments; never silently relocate |
-| Data       | Stop retains data; destroy removes only proven owned data                                                                                   |
-| Snapshots  | DB-specific keyed save, compatible empty-target restore, complete entry publication and credential reconciliation                           |
+| Foundation | Keep                                                                                                                          |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Identity   | Stack and instance IDs; deterministic names and paths for their resources                                                     |
+| Ownership  | One detached StackHost and exclusive lease; client handles do not own service lifetime                                        |
+| Ports      | Persist automatic port assignments across stop/start; a pinned port is reserved only while listening; never silently relocate |
+| Data       | Stop retains data; destroy removes only proven owned data                                                                     |
+| Snapshots  | DB-specific keyed save, compatible empty-target restore, complete entry publication and credential reconciliation             |
 
 ### Port allocation and endpoint ownership
 
@@ -627,7 +614,7 @@ A shared listener is a networking resource, not a capability or service group. C
 
 A lazy database already has a bound SQL proxy listener and a concrete connection URL; lazy REST already has its path on the bound shared API listener. Their backend processes may still be absent. The first request launches the needed backends, waits for readiness and forwards through the already published endpoint. Backend address allocation can wait until that launch; public port assignment cannot. If a required listener cannot bind, startup returns an error with partial outcomes rather than reporting successful startup with unusable URLs.
 
-A host-wide allocation registry coordinates claims across parallel stacks, including stopped instances and stacks. Before first listener activation, obtain an assignment and bind it. Automatic allocation excludes managed claims and tries to bind an available candidate. Reserve the assignment in the registry before advertising it and retain that socket; do not probe then release it. Later activations bind the saved port. Fixed requests obey the same ownership and binding checks.
+A host-wide allocation registry coordinates claims across parallel stacks. Before first listener activation, obtain an assignment and bind it. Automatic allocation excludes managed claims and tries to bind an available candidate. Reserve the assignment in the registry before advertising it and retain that socket; do not probe then release it. Later activations bind the saved port. An automatic assignment stays reserved while its stack is stopped. A configured (pinned) port is reserved only while its listener is open, so a stopped stack blocks no other project; the endpoint's address always comes from the configured number, never from the registry. A pinned port inside the native backend range is rejected. A conflict names the port and, for a registry holder, its project and the commands that free it.
 
 ```mermaid
 flowchart LR
@@ -638,18 +625,18 @@ flowchart LR
     Runtime["Native or container runtime"] -.-> Backend
 ```
 
-| Operation              | Dedicated instance listener                                     | Route on a shared listener                                 |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| Start                  | Bind saved port and connect backend                             | Enable this route and bind the saved shared port if needed |
-| Restart                | Retain assignment and update target                             | Retain shared assignment and update this route's target    |
-| Sleep                  | Keep listener for wake                                          | Keep route armed for wake                                  |
-| Stop                   | Close listener; retain claim                                    | Disable this route; leave other routes alone               |
-| Instance destroy       | Remove endpoint and release its claim                           | Remove this route; retain the stack-owned listener claim   |
-| Namespace stop/destroy | Close all listeners; stop retains claims, destroy releases them | Same rule                                                  |
+| Operation              | Dedicated instance listener                                               | Route on a shared listener                                 |
+| ---------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Start                  | Bind saved port and connect backend                                       | Enable this route and bind the saved shared port if needed |
+| Restart                | Retain assignment and update target                                       | Retain shared assignment and update this route's target    |
+| Sleep                  | Keep listener for wake                                                    | Keep route armed for wake                                  |
+| Stop                   | Close listener; retain an automatic claim                                 | Disable this route; leave other routes alone               |
+| Instance destroy       | Remove endpoint and release its claim                                     | Remove this route; retain the stack-owned listener claim   |
+| Namespace stop/destroy | Close all listeners; stop retains automatic claims, destroy releases them | Same rule                                                  |
 
-A shared listener stays bound while any route is running or armed. When no route needs it, its socket may close while its stack-owned claim remains. Removing the final route does not release that claim; namespace destruction or explicit listener reconfiguration does. Sleeping routes still need the listener.
+A shared listener stays bound while any route is running or armed. When no route needs it, its socket closes; an automatic claim remains, a pinned one is released with the socket. Removing the final route does not release an automatic claim; namespace destruction or explicit listener reconfiguration does. Sleeping routes still need the listener.
 
-**Public port stickiness is a retained contract.** Sleep/wake, stop/start, restart and host reopening preserve every established assignment, including the shared API port. Other managed stacks cannot take retained claims. An unrelated process may occupy a saved port while its socket is closed; the next activation reports a conflict and preserves the assignment, never silently relocating it. A destroyed and recreated instance has a new identity and receives a new dedicated allocation.
+**Public port stickiness is a retained contract for automatic assignments.** Sleep/wake, stop/start, restart and host reopening preserve every established automatic assignment, including the shared API port. Automatic allocation never takes another stack's retained claim. A pinned port is the configuration's own number, so it needs no retention; its registry row exists only while the listener is open, and a pinned request reclaims a row whose stack has no live owner (a free owner lease), such as after a crash or reboot. If that row was a stopped stack's automatic assignment, that stack receives a new automatic port on its next start. An unrelated process may occupy a saved port while its socket is closed; the next activation reports a conflict and preserves the assignment, never silently relocating it. A destroyed and recreated instance has a new identity and receives a new dedicated allocation.
 
 Standalone and composed instances use the same allocator. Two shadow databases have separate IDs, data and dedicated listeners. Composition membership does not change listener ownership. The runtime reports the backend address; the proxy updates its target without altering the public assignment.
 
