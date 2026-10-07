@@ -1,4 +1,4 @@
-# 0028. Native Postgres privilege step-down
+# 0029. Native Postgres privilege step-down
 
 **Status**: proposed
 **Date**: 2026-10-07

@@ -129,6 +129,15 @@ internal metrics (percentages, ratios, or relative changes are fine), vendor/leg
 details, and competitor names; protocol identifiers such as user-agent strings are fine. Keep
 internal context in Linear.
 
+## Branches and releases
+
+Non-breaking PRs target `develop`. Breaking PRs target `next` with a `type(scope)!:` title; the PR
+title lint rejects `!` titles on any other base. `v*.x` maintenance branches take only security
+fixes and fixes for fundamentally broken behaviour, through `hotfix/*` or `backport/*` PRs. If a
+change touches release infrastructure and a `v*.x` branch exists, flag that it needs a cherry-pick
+to each active `v*.x`; the paths are listed in the runbook. For any release, major cut, or
+maintenance task, follow [the release process](apps/cli/docs/release-process.md).
+
 ## Refactoring
 
 Internal unreleased APIs may be simplified or reshaped; move responsibility to the correct owner

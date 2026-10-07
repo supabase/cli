@@ -5,13 +5,14 @@ on:
     branches:
       - develop
       - main
-  pull_request_review:
-    types: [submitted]
+      - next
   # workflow_dispatch is the manual re-cut path. Use it when:
   #   - a previous release published stale bytes under a version that
   #     semantic-release keeps re-computing (cut a fresh version forward), or
   #   - a downstream step (GH release, brew, scoop) failed after npm published
   #     and you need to rerun the whole pipeline against an explicit version.
+  # An empty version lets semantic-release compute it from the dispatched ref. `maintenance`
+  # releases a v<N>.x line and must be dispatched on that ref.
   workflow_dispatch:
     inputs:
       channel:
@@ -21,10 +22,13 @@ on:
         options:
           - beta
           - stable
+          - next
+          - maintenance
       version:
-        description: npm package version to publish (must be unique on npm; pick the next unused version)
-        required: true
+        description: npm package version to publish (must be unique on npm). Leave empty to let semantic-release compute it from the dispatched ref.
+        required: false
         type: string
+        default: ""
       # Defaults to `true` so a stray "Run workflow" click can't accidentally publish; operators
       # must consciously untick this when dispatching.
       dry_run:
@@ -43,60 +47,24 @@ permissions:
   contents: read
 
 jobs:
-  fast-forward:
-    name: Fast-forward develop to main
-    if: |
-      github.event_name == 'pull_request_review' &&
-      github.event.pull_request.head.ref == 'develop' &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.review.state == 'approved'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  test-next:
+    name: Test next
+    if: github.event_name == 'push' && github.ref_name == 'next'
     permissions:
-      contents: write
-    steps:
-      # Any GitHub user can submit an approving review on a public repo.
-      - id: reviewer
-        name: Check reviewer permission
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVIEWER: ${{ github.event.review.user.login }}
-        run: |
-          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${REVIEWER}/permission" --jq '.permission')
-          case "${role}" in
-            admin | write)
-              echo "allowed=true" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "allowed=false" >> "$GITHUB_OUTPUT"
-              echo "::notice::Skipping fast-forward: ${REVIEWER} lacks write access (${role})"
-              ;;
-          esac
-      - id: app-token
-        if: steps.reviewer.outputs.allowed == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          permission-contents: write
-      - if: steps.reviewer.outputs.allowed == 'true'
-        uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
-        with:
-          persist-credentials: true
-          fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-      - name: Fast-forward main
-        if: steps.reviewer.outputs.allowed == 'true'
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git checkout main
-          git merge --ff-only "${HEAD_SHA}"
-          git push origin main
+      contents: read
+      actions: read
+    uses: ./.github/workflows/test.yml
+    with:
+      force: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   plan:
     name: Plan release
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: test-next
+    # A skipped test-next (every non-next trigger) makes the implicit success() false, so the
+    # result is checked explicitly.
+    if: ${{ !cancelled() && contains(fromJSON('["success","skipped"]'), needs.test-next.result) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -114,7 +82,7 @@ jobs:
       # `dry_run: true` mode, so the token needs push access to the protected develop/main
       # branches — the default GITHUB_TOKEN doesn't have it.
       - id: app-token
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.version == ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.GH_APP_CLIENT_ID }}
@@ -128,7 +96,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: semantic-release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.version == ''
         uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
         with:
           working_directory: apps/cli
@@ -146,10 +114,63 @@ jobs:
           SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
         run: |
           set -euo pipefail
+          maint_re='^v([0-9]+)\.x$'
+          version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+          plain_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+          next_re='^[0-9]+\.[0-9]+\.[0-9]+-next\.[0-9]+$'
+          beta_re='^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'
+          natural=""
+          case "$REF_NAME" in
+            develop) natural=beta ;;
+            main) natural=stable ;;
+            next) natural=next ;;
+            *) [[ "$REF_NAME" =~ $maint_re ]] && natural=maintenance ;;
+          esac
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             channel="$DISPATCH_CHANNEL"
-            version="$DISPATCH_VERSION"
             dry_run="$DISPATCH_DRY_RUN"
+            if [[ "$natural" == maintenance && "$channel" != maintenance ]] || [[ "$natural" != maintenance && "$channel" == maintenance ]]; then
+              echo "::error::channel=maintenance is only valid on v<N>.x refs, and v<N>.x refs only release the maintenance channel"
+              exit 1
+            fi
+            if [[ "$channel" == next && "$REF_NAME" != next ]]; then
+              echo "::error::channel=next must be dispatched on the next branch"
+              exit 1
+            fi
+            if [[ "$natural" == next && "$channel" != next ]]; then
+              echo "::error::${REF_NAME} only releases the next channel"
+              exit 1
+            fi
+            if [[ "$channel" == stable && "$dry_run" != true && "$REF_NAME" != main && "$REF_NAME" != hotfix/* ]]; then
+              echo "::error::A stable release must be dispatched on main or a hotfix/* branch"
+              exit 1
+            fi
+            if [[ -n "$DISPATCH_VERSION" ]]; then
+              if [[ ! "$DISPATCH_VERSION" =~ $version_re ]]; then
+                echo "::error::version ${DISPATCH_VERSION} is not a semver version"
+                exit 1
+              fi
+              case "$channel" in
+                next) channel_re="$next_re"; shape="X.Y.Z-next.N" ;;
+                beta) channel_re="$beta_re"; shape="X.Y.Z-beta.N" ;;
+                *) channel_re="$plain_re"; shape="X.Y.Z" ;;
+              esac
+              if [[ ! "$DISPATCH_VERSION" =~ $channel_re ]]; then
+                echo "::error::version ${DISPATCH_VERSION} does not match channel ${channel} (expected ${shape})"
+                exit 1
+              fi
+              version="$DISPATCH_VERSION"
+            else
+              if [[ "$channel" != "$natural" ]]; then
+                echo "::error::An empty version uses semantic-release, so channel must match ${REF_NAME} (${natural:-unconfigured})"
+                exit 1
+              fi
+              if [[ "$SR_PUBLISHED" != "true" ]]; then
+                echo "::error::semantic-release computed no release for ${REF_NAME}"
+                exit 1
+              fi
+              version="$SR_VERSION"
+            fi
             should_release=true
           else
             dry_run=false
@@ -158,12 +179,8 @@ jobs:
               exit 0
             fi
             version="$SR_VERSION"
+            channel="$natural"
             should_release=true
-            if [[ "$REF_NAME" == "develop" ]]; then
-              channel="beta"
-            else
-              channel="stable"
-            fi
           fi
           case "$channel" in
             beta)
@@ -178,6 +195,26 @@ jobs:
               prerelease=false
               brew_name=supabase
               scoop_name=supabase
+              publish_brew_scoop=true
+              ;;
+            next)
+              npm_tag=next
+              prerelease=true
+              brew_name=""
+              scoop_name=""
+              publish_brew_scoop=false
+              ;;
+            maintenance)
+              [[ "$REF_NAME" =~ $maint_re ]]
+              major="${BASH_REMATCH[1]}"
+              if [[ "${version%%.*}" != "$major" ]]; then
+                echo "::error::version ${version} is not on the v${major} line"
+                exit 1
+              fi
+              npm_tag="v${major}.stable"
+              prerelease=false
+              brew_name="supabase@${major}"
+              scoop_name="supabase-v${major}-stable"
               publish_brew_scoop=true
               ;;
             *)
@@ -200,7 +237,7 @@ jobs:
   release:
     name: Release
     needs: plan
-    if: needs.plan.outputs.should_release == 'true'
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.should_release == 'true' }}
     # pull-requests: write is required by the nested propose-release-notes workflow
     # (release-shared.yml -> propose-release-notes.yml): a called job's permissions can't exceed
     # those granted to the calling job, so this must be declared here too.
@@ -231,12 +268,12 @@ jobs:
       SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
 
   # Republishes the supabase.com CLI reference. Stable only: the reference documents the CLI
-  # users actually install, so pre-releases are skipped. Nothing depends on this job, so a
+  # users actually install, so pre-releases and maintenance lines are skipped. Nothing depends on this job, so a
   # docs-site failure cannot affect the already-completed release.
   docs:
     name: Publish reference docs
     needs: [plan, release]
-    if: needs.plan.outputs.channel == 'stable'
+    if: ${{ !cancelled() && needs.release.result == 'success' && needs.plan.outputs.channel == 'stable' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -281,16 +318,16 @@ jobs:
           bun scripts/generate-docs-spec.ts "$VERSION" \
             | bun scripts/publish-docs-spec.ts --version "$VERSION" "${args[@]}"
 
-  # Listing `release` in `needs` without a status function in `if:` keeps the implicit success()
-  # gate, so this only runs when both plan and release succeeded; the `if:` then filters to real
-  # (non-dry-run) stable cuts. Nothing depends on this job, so a Slack failure can't affect the
-  # already-completed release.
+  # Notifies real (non-dry-run) stable and maintenance cuts. Nothing depends on this job, so a
+  # Slack failure can't affect the already-completed release.
   notify-slack:
     name: Notify Slack
     needs: [plan, release]
     if: >-
+      ${{ !cancelled() &&
+      needs.release.result == 'success' &&
       needs.plan.outputs.dry_run != 'true' &&
-      needs.plan.outputs.channel == 'stable'
+      (needs.plan.outputs.channel == 'stable' || needs.plan.outputs.channel == 'maintenance') }}
     uses: ./.github/workflows/slack-notify.yml
     with:
       package: Supabase CLI
@@ -301,19 +338,19 @@ jobs:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 
   # Reports a broken release on every channel. `failure()` evaluates against the full `needs`
-  # chain, so this fires whenever `plan` or `release` (including the reusable release-shared
-  # workflow) fails. Skipped jobs — e.g. the fast-forward path, or a release that never started —
-  # don't count as failures. Dry runs are excluded via the dispatch input directly, so even a
-  # plan job that dies before recording its `dry_run` output stays quiet.
+  # chain, so this fires whenever `test-next`, `plan` or `release` (including the reusable
+  # release-shared workflow) fails. Skipped jobs don't count as failures. Dry runs are excluded
+  # via the dispatch input directly, so even a plan job that dies before recording its `dry_run`
+  # output stays quiet. A failed `test-next` skips `plan`, so the channel falls back to the ref.
   notify-slack-failure:
     name: Notify Slack (failure)
-    needs: [plan, release]
+    needs: [test-next, plan, release]
     if: ${{ failure() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     uses: ./.github/workflows/slack-notify.yml
     with:
       package: Supabase CLI
       status: failure
       version: ${{ needs.plan.outputs.version }}
-      channel: ${{ needs.plan.outputs.channel }}
+      channel: ${{ needs.plan.outputs.channel || (github.ref_name == 'next' && 'next') || '' }}
     secrets:
       SLACK_RELEASE_WEBHOOK: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
