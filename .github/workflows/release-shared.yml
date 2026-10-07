@@ -8,11 +8,11 @@ on:
         required: true
         type: string
       npm_tag:
-        description: npm dist-tag to publish under
+        description: npm dist-tag to publish under (latest | beta | next | v<N>.stable)
         required: true
         type: string
       channel:
-        description: semantic-release channel name (beta | stable)
+        description: semantic-release channel name (beta | stable | next | maintenance)
         required: true
         type: string
       prerelease:
@@ -29,12 +29,12 @@ on:
         type: boolean
         default: false
       brew_name:
-        description: Homebrew formula name (e.g. supabase or supabase-beta)
+        description: Homebrew formula name (e.g. supabase, supabase-beta or supabase@<N>)
         required: false
         type: string
         default: supabase
       scoop_name:
-        description: Scoop manifest name (e.g. supabase or supabase-beta)
+        description: Scoop manifest name (e.g. supabase, supabase-beta or supabase-v<N>-stable)
         required: false
         type: string
         default: supabase
@@ -256,10 +256,11 @@ jobs:
 
   live-e2e-gate:
     name: Verify live e2e before stable publication
-    if: ${{ inputs.channel == 'stable' && !inputs.dry_run }}
+    if: ${{ (inputs.channel == 'stable' || inputs.channel == 'maintenance') && !inputs.dry_run }}
     uses: ./.github/workflows/live-e2e-gate.yml
     with:
       sha: ${{ github.sha }}
+      branch: ${{ inputs.channel == 'maintenance' && github.ref_name || 'develop' }}
     secrets:
       SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
 
@@ -269,7 +270,7 @@ jobs:
       - smoke-test
       - smoke-test-macos
       - live-e2e-gate
-    if: ${{ !cancelled() && !inputs.dry_run && needs.build-github.result == 'success' && needs.smoke-test.result == 'success' && needs.smoke-test-macos.result == 'success' && (inputs.channel != 'stable' || needs.live-e2e-gate.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.dry_run && needs.build-github.result == 'success' && needs.smoke-test.result == 'success' && needs.smoke-test-macos.result == 'success' && ((inputs.channel != 'stable' && inputs.channel != 'maintenance') || needs.live-e2e-gate.result == 'success') }}
     # npm provenance verification rejects non-GitHub-hosted runners with E422; Blacksmith runners
     # count as self-hosted from sigstore's POV, so this job must stay on a github-hosted runner
     # (it's short and not compute-bound, so the cost is negligible).
@@ -399,7 +400,12 @@ jobs:
       - name: Publish GitHub Release (immutable)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "v${VERSION}" --draft=false
+        run: |
+          args=(--draft=false)
+          if [[ "$CHANNEL" == maintenance ]]; then
+            args+=(--latest=false)
+          fi
+          gh release edit "v${VERSION}" "${args[@]}"
 
       - name: Sync stable release to Linear
         if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
@@ -437,13 +443,13 @@ jobs:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   # Once the raw semantic-release block is in the release body, asks Claude to rewrite it into
-  # user-centric notes and open a PR for human approval. Stable only — prereleases keep the raw
-  # body. Non-blocking so an LLM hiccup never gates a published release; reviewers can propose
+  # user-centric notes and open a PR for human approval. Stable only — prereleases and
+  # maintenance lines keep the raw body. Non-blocking so an LLM hiccup never gates a published release; reviewers can propose
   # beta notes manually via workflow_dispatch.
   propose-release-notes:
     uses: ./.github/workflows/propose-release-notes.yml
     needs: backfill-release-notes
-    if: ${{ !inputs.dry_run && !inputs.prerelease && needs.backfill-release-notes.result == 'success' }}
+    if: ${{ !inputs.dry_run && !inputs.prerelease && inputs.channel != 'maintenance' && needs.backfill-release-notes.result == 'success' }}
     with:
       tag: v${{ inputs.version }}
       non_blocking: true

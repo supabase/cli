@@ -8,6 +8,7 @@ describe("rootDescription", () => {
 
   it.each([
     ["3.0.0-beta.12", "Supabase CLI (beta channel)."],
+    ["3.0.0-next.4", "Supabase CLI (next channel)."],
     ["0.0.0-pr.1234", "Supabase CLI (preview build)."],
     ["0.0.0-dev", "Supabase CLI (development build)."],
     ["0.0.0-automated", "Supabase CLI (development build)."],

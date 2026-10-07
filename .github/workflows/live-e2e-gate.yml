@@ -7,6 +7,11 @@ on:
         description: Exact commit to verify
         required: true
         type: string
+      branch:
+        description: Branch whose live-e2e.yml runs may be reused
+        required: false
+        type: string
+        default: develop
     secrets:
       SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN:
         required: true
@@ -29,12 +34,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           SHA: ${{ inputs.sha }}
+          BRANCH: ${{ inputs.branch }}
         run: |
           set -euo pipefail
-          response="$(gh api --paginate "/repos/${REPOSITORY}/actions/workflows/live-e2e.yml/runs?branch=develop&head_sha=${SHA}&per_page=100")"
+          response="$(gh api --paginate -X GET "/repos/${REPOSITORY}/actions/workflows/live-e2e.yml/runs" -f branch="$BRANCH" -f head_sha="$SHA" -F per_page=100)"
           latest="$(jq -s -c 'map(.workflow_runs[]) | sort_by(.run_number) | reverse | .[0] // empty' <<< "$response")"
           if [[ -z "$latest" ]]; then
-            echo "No live run exists for ${SHA}; the stable gate will run the suite."
+            echo "No live run exists for ${SHA} on ${BRANCH}; the stable gate will run the suite."
             echo "reuse=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
