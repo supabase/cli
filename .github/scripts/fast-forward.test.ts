@@ -794,4 +794,53 @@ describe("runFastForward sync", () => {
     expect(repo.remoteTip("develop")).toBe(movedDevelop);
     expect(comments[0]).toContain("- `shared.txt`");
   });
+
+  test("lands the approved head merged with a non-conflicting source move", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    git(repo.seed, "switch", "main");
+    const movedMain = repo.commit(repo.seed, "late-main.txt", "late\n", "fix(cli): late main");
+    git(repo.seed, "push", "origin", "main");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head });
+
+    const landed = repo.remoteTip("develop");
+    expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
+    expect(landed).not.toBe(head);
+    expect(repo.isAncestor(head, landed)).toBe(true);
+    expect(repo.isAncestor(movedMain, landed)).toBe(true);
+    expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("`main` moved since approval");
+  });
+
+  test("refuses and leaves the branch alone when a moved source conflicts", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    const developBefore = repo.remoteTip("develop");
+    git(repo.seed, "switch", "main");
+    repo.commit(repo.seed, "shared.txt", "conflicting main\n", "fix(cli): conflicting main");
+    git(repo.seed, "push", "origin", "main");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head });
+
+    expect(outcome.status).toBe("refused");
+    expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
+    expect(repo.remoteTip("develop")).toBe(developBefore);
+    expect(comments[0]).toContain("`main` moved since approval");
+    expect(comments[0]).toContain("- `shared.txt`");
+  });
+
+  test("dry run pushes nothing when the source moved cleanly", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    const developBefore = repo.remoteTip("develop");
+    git(repo.seed, "switch", "main");
+    repo.commit(repo.seed, "late-main.txt", "late\n", "fix(cli): late main");
+    git(repo.seed, "push", "origin", "main");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head, dryRun: true });
+
+    expect(outcome.status).toBe("dry-run");
+    expect(repo.remoteTip("develop")).toBe(developBefore);
+    expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
+    expect(comments).toEqual([]);
+  });
 });

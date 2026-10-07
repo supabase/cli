@@ -10,6 +10,7 @@ export interface GenerateNextContextOptions {
 
 const MAX_COMMIT_LINES = 200;
 const MAX_STAT_LINES = 100;
+const MAX_SUBJECT_LENGTH = 120;
 const BREAKING_TITLE = /^- [a-z]+(\([^)]*\))?!:/;
 
 function git(repositoryPath: string, args: string[]): { ok: boolean; stdout: string } {
@@ -19,6 +20,13 @@ function git(repositoryPath: string, args: string[]): { ok: boolean; stdout: str
 
 function capped(lines: string[], max: number): string[] {
   return lines.length <= max ? lines : [...lines.slice(0, max), `… ${lines.length - max} more`];
+}
+
+function sanitizeSubject(line: string): string {
+  const subject = line.replaceAll("`", "'");
+  return subject.length <= MAX_SUBJECT_LENGTH
+    ? subject
+    : `${subject.slice(0, MAX_SUBJECT_LENGTH)}…`;
 }
 
 /**
@@ -52,7 +60,11 @@ export function generateNextContext(options: GenerateNextContextOptions): boolea
   const stat = git(repositoryPath, ["diff", "--stat", "refs/ai-review/base...refs/ai-review/next"]);
   if (!commits.ok || !stat.ok) return false;
 
-  const commitLines = commits.stdout.split("\n").filter((line) => line.length > 0);
+  const commitLines = commits.stdout
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map(sanitizeSubject);
+  if (commitLines.length === 0) return false;
   const ordered = [
     ...commitLines.filter((line) => BREAKING_TITLE.test(line)),
     ...commitLines.filter((line) => !BREAKING_TITLE.test(line)),
@@ -67,7 +79,9 @@ export function generateNextContext(options: GenerateNextContextOptions): boolea
       "",
       "Commits on `next` that are not on `develop` (breaking `!` titles first):",
       "",
+      "```",
       ...capped(ordered, MAX_COMMIT_LINES),
+      "```",
       "",
       "Files changed on `next` since it diverged from `develop`:",
       "",

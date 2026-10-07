@@ -116,6 +116,9 @@ jobs:
           set -euo pipefail
           maint_re='^v([0-9]+)\.x$'
           version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+          plain_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+          next_re='^[0-9]+\.[0-9]+\.[0-9]+-next\.[0-9]+$'
+          beta_re='^[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'
           natural=""
           case "$REF_NAME" in
             develop) natural=beta ;;
@@ -145,6 +148,15 @@ jobs:
             if [[ -n "$DISPATCH_VERSION" ]]; then
               if [[ ! "$DISPATCH_VERSION" =~ $version_re ]]; then
                 echo "::error::version ${DISPATCH_VERSION} is not a semver version"
+                exit 1
+              fi
+              case "$channel" in
+                next) channel_re="$next_re"; shape="X.Y.Z-next.N" ;;
+                beta) channel_re="$beta_re"; shape="X.Y.Z-beta.N" ;;
+                *) channel_re="$plain_re"; shape="X.Y.Z" ;;
+              esac
+              if [[ ! "$DISPATCH_VERSION" =~ $channel_re ]]; then
+                echo "::error::version ${DISPATCH_VERSION} does not match channel ${channel} (expected ${shape})"
                 exit 1
               fi
               version="$DISPATCH_VERSION"

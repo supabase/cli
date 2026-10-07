@@ -135,8 +135,8 @@ Full procedures live in the
 `sync/<source>-into-<target>` (for example `sync/develop-into-next`). Further
 syncs for that pair skip while it is open. Merge the target into the sync
 branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
-target and deletes the branch. Never use the merge button. If the target moved,
-the bot merges the latest target and source into the approved head and lands
+target and deletes the branch. Never use the merge button. If the target or the
+source moved, the bot merges the latest target and source into the approved head and lands
 it directly if the merge is clean, as for a clean sync (the merge commit is
 untested); only a new conflict, or a target that keeps moving, sends the PR
 back for a new approval. Only two sync pairs
@@ -183,7 +183,7 @@ must be cherry-picked to every active `v*.x` (see
 **Manual setup (rulesets and labels).**
 
 - Create the `next` branch from `develop`, and the `release-major` label.
-- Add `Require fast-forward` (from `branch-policy.yml`) as a required check on
+- Add `Require fast-forward` (from `branch-policy.yml`, which runs on `pull_request_target`) as a required check on
   `develop` and `next`. `next` also needs the merge queue, the four checks
   required on `develop` (`Check code quality`, `Run unit and integration tests`,
   `Run end-to-end tests`, `Lint Pull Request`), and release App bypass.

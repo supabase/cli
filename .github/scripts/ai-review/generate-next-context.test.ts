@@ -22,7 +22,10 @@ function commitFile(seed: string, file: string, message: string): void {
   git(seed, "commit", "-m", message);
 }
 
-function setupRepository(options: { withNext: boolean }): { checkout: string; output: string } {
+function setupRepository(options: { withNext: boolean; nextSubjects?: string[] }): {
+  checkout: string;
+  output: string;
+} {
   const root = mkdtempSync(join(tmpdir(), "ai-review-next-"));
   temporaryDirectories.push(root);
   const remote = join(root, "remote.git");
@@ -38,8 +41,14 @@ function setupRepository(options: { withNext: boolean }): { checkout: string; ou
   git(seed, "push", "-u", "origin", "develop");
   if (options.withNext) {
     git(seed, "switch", "-c", "next");
-    commitFile(seed, "go.txt", "chore: tidy");
-    commitFile(seed, "sidecar.txt", "feat(cli)!: remove the Go sidecar");
+    if (options.nextSubjects) {
+      options.nextSubjects.forEach((subject, index) =>
+        commitFile(seed, `file-${index}.txt`, subject),
+      );
+    } else {
+      commitFile(seed, "go.txt", "chore: tidy");
+      commitFile(seed, "sidecar.txt", "feat(cli)!: remove the Go sidecar");
+    }
     git(seed, "push", "origin", "next");
   }
   git(root, "clone", "--branch", "develop", remote, checkout);
@@ -68,6 +77,46 @@ describe("generateNextContext", () => {
     );
     expect(context).toContain("sidecar.txt");
     expect(context).not.toContain("common base");
+  });
+
+  test("fences the commit list so a subject cannot break out of it", () => {
+    const { checkout, output } = setupRepository({
+      withNext: true,
+      nextSubjects: ["chore: ```evil``` end ``` more"],
+    });
+
+    expect(
+      generateNextContext({ repositoryPath: checkout, baseRef: "develop", outputPath: output }),
+    ).toBe(true);
+
+    const lines = readFileSync(output, "utf8").split("\n");
+    expect(lines.filter((line) => line.includes("`") && line.startsWith("```"))).toHaveLength(4);
+    expect(lines.filter((line) => line.startsWith("- ") && line.includes("`"))).toEqual([]);
+    expect(lines).toContain("- chore: '''evil''' end ''' more");
+  });
+
+  test("caps each commit subject length", () => {
+    const { checkout, output } = setupRepository({
+      withNext: true,
+      nextSubjects: [`chore: ${"x".repeat(500)}`],
+    });
+
+    generateNextContext({ repositoryPath: checkout, baseRef: "develop", outputPath: output });
+
+    const subject = readFileSync(output, "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("- chore:"));
+    expect(subject).toHaveLength(120 + 1);
+    expect(subject?.endsWith("…")).toBe(true);
+  });
+
+  test("writes nothing when next has no commits ahead of develop", () => {
+    const { checkout, output } = setupRepository({ withNext: true, nextSubjects: [] });
+
+    expect(
+      generateNextContext({ repositoryPath: checkout, baseRef: "develop", outputPath: output }),
+    ).toBe(false);
+    expect(existsSync(output)).toBe(false);
   });
 
   test("writes nothing when next does not exist", () => {

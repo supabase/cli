@@ -288,7 +288,7 @@ The plan job refuses a dispatch when:
 - `channel=next` is not on the `next` ref, or `channel=maintenance` is not on a `v<N>.x` ref;
 - `next` or a `v<N>.x` ref is dispatched with `beta` or `stable` (those refs release only their own channel);
 - `channel=stable` is not a dry run and the ref is neither `main` nor `hotfix/*` (the `hotfix/*` dry run in [Hotfix release flow](#hotfix-release-flow) is unaffected);
-- a non-empty `version` is not `X.Y.Z` or `X.Y.Z-<prerelease>` (no `v` prefix, no build metadata).
+- a non-empty `version` is not semver (no `v` prefix, no build metadata) or does not match the channel: `next` needs `X.Y.Z-next.N`, `beta` needs `X.Y.Z-beta.N`, and `stable` and `maintenance` need plain `X.Y.Z`.
 
 ### Hotfix release flow
 
@@ -374,7 +374,7 @@ Before pushing, the job checks, in order:
 2. **Approved commit is the head.** The approval's commit must equal the current PR head, and the PR must be open and not a draft. A stale approval is rejected with a comment; re-approve the new head.
 3. **Required checks are green on the head.** `Check code quality`, `Run unit and integration tests`, `Run end-to-end tests`, and `Lint Pull Request` must all have succeeded. They are read from the PR's own check rollup (GraphQL), counting only GitHub Actions runs attached to this PR, so runs of another PR on the same commit cannot satisfy or mask a check. Deploy PRs and hotfix PRs into `main` run the full suite (`test.yml` also triggers on PRs into `main`), so these checks exist on the deploy PR head.
 4. **Major guard (any promotion into `main`).** If the commits since the last stable tag include a breaking `!` title, the PR needs the `release-major` label. Without it the job comments and fails.
-5. **Target has not moved.** The push is a plain, non-force push of the approved commit, so the server refuses anything that is not a fast-forward. For deploy and cut PRs the job comments and fails; update the PR and re-approve. For sync PRs the bot merges the latest target and source into the approved head and, when that merge is clean, pushes it straight to the target and comments, as for a clean sync (the merge commit is untested). A new conflict, or a target that keeps moving, sends the PR back for re-approval instead: on a conflict the bot comments and fails; if the target keeps moving it pushes the re-synced head to the sync branch and comments, and you re-approve once checks pass.
+5. **Target has not moved.** The push is a plain, non-force push of the approved commit, so the server refuses anything that is not a fast-forward. For deploy and cut PRs the job comments and fails; update the PR and re-approve. A sync PR also counts as stale when the current source tip (`main` or `develop`) is not in the approved head, even if the target did not move. For sync PRs the bot merges the latest target and source into the approved head and, when that merge is clean, pushes it straight to the target and comments, as for a clean sync (the merge commit is untested). A new conflict, or a target that keeps moving, sends the PR back for re-approval instead: on a conflict the bot comments and fails; if the target keeps moving it pushes the re-synced head to the sync branch and comments, and you re-approve once checks pass.
 
 When all checks pass and no major is involved, a deploy PR behaves as before: the App pushes the approved commit to `main` and `push: main` triggers the stable release.
 
@@ -383,10 +383,10 @@ When all checks pass and no major is involved, a deploy PR behaves as before: th
 | Check                      | Workflow                                                                    | Fails when                                                                            |
 | -------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `Lint Pull Request`        | `[lint-pull-request.yml](../../../.github/workflows/lint-pull-request.yml)` | a `!` title targets any base other than `next` (the same-repository cut PR is exempt) |
-| `Require fast-forward`     | `[branch-policy.yml](../../../.github/workflows/branch-policy.yml)`         | the PR is `next` → `develop` or one of the two sync PRs                               |
+| `Require fast-forward`     | `[branch-policy.yml](../../../.github/workflows/branch-policy.yml)`         | the same-repository PR is `next` → `develop` or one of the two sync PRs               |
 | `Check maintenance source` | `[branch-policy.yml](../../../.github/workflows/branch-policy.yml)`         | a PR into `v<N>.x` is not from a `hotfix/*` or `backport/*` branch of this repository |
 
-These only block when they are required checks in the branch rulesets (see [MAINTAINERS.md](../../../.github/MAINTAINERS.md)).
+`branch-policy.yml` triggers on `pull_request_target` and never checks out PR code, so a fork PR cannot edit the jobs and still report the required check names. Both checks are skipped (green) in the merge queue. They only block when they are required checks in the branch rulesets (see [MAINTAINERS.md](../../../.github/MAINTAINERS.md)).
 
 ### Cutting a major (v3 runbook)
 
@@ -396,7 +396,7 @@ A major ships by promoting `next` into `develop`, soaking as a beta, then deploy
 2. **Confirm the maintenance prerequisites.** Everything in the [pre-cut checklist](#pre-cut-checklist) is already on `main` through a stable release, so `v2.x` will inherit it.
 3. **Pause the `develop` merge queue.** Stop merging into `develop` so it cannot move during the cut.
 4. **Make sure `next` contains `develop`.** `Sync branches` has no open `sync/develop-into-next` PR and `git merge-base --is-ancestor origin/develop origin/next` succeeds. Resolve any open sync PR first.
-5. **Open a PR `next` → `develop`** (any title; the title guard exempts this PR). Wait for the required checks to pass on its head, then approve. Approval fast-forwards `develop` to the `next` head. If `develop` moved, the job fails with a comment; merge `develop` into `next` (or let the sync do it), then re-approve.
+5. **Open a PR `next` → `develop`** (a valid conventional title, `!` allowed; the breaking-title guard exempts this PR). Wait for the required checks to pass on its head, then approve. Approval fast-forwards `develop` to the `next` head. If `develop` moved, the job fails with a comment; merge `develop` into `next` (or let the sync do it), then re-approve.
 6. **Resume the queue.** The push to `develop` publishes `3.0.0-beta.1`.
 7. **Soak the beta.** The deploy fast-forward refuses a major bump without `release-major`, so weekly deploys do not ship 3.0.0 early. v2 fixes go `hotfix/*` → `main` and sync back into `develop` (conflict PR if needed). Breaking merges into `next` are frozen for the duration.
 8. **Deploy.** Add the `release-major` label to the deploy PR and approve. `main` moves and the stable release publishes `3.0.0` on `latest`.
@@ -439,7 +439,7 @@ Changes reach `v<N>.x` through a PR from a `hotfix/*` or `backport/*` branch (`C
 - the `maintenance` channel in `release.yml` and `release-shared.yml`;
 - the `v+([0-9]).x` semantic-release entry in `apps/cli/package.json`;
 - `--latest=false` for maintenance GitHub releases, and skipping release-notes PRs for maintenance;
-- the `v*.x` PR branch filters in `test.yml`, `lint-pull-request.yml`, `run-ci.yml`, and `branch-policy.yml`;
+- the `v*.x` PR branch filters in `test.yml`, `run-ci.yml`, and `branch-policy.yml`;
 - the `branch` input on `live-e2e-gate.yml`, so the gate looks up runs of the dispatched ref;
 - `homebrewClassName` support for `supabase@<N>` in `update-homebrew.ts` and the `v<N>.stable` tag in `publish.ts` and the smoke tests.
 

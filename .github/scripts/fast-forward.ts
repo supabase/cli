@@ -370,6 +370,7 @@ async function resyncSyncBranch(
   promotion: Promotion,
   headSha: string,
   syncBranch: string,
+  moved: string,
 ): Promise<FastForwardOutcome> {
   const { git } = io;
   const { target, source } = promotion;
@@ -400,7 +401,7 @@ async function resyncSyncBranch(
           io,
           input,
           `Merging ${ref} into ${syncBranch} conflicts`,
-          `${target} moved since approval and merging \`${ref}\` into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
+          `\`${moved}\` moved since approval and merging \`${ref}\` into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
         );
       }
     }
@@ -414,7 +415,7 @@ async function resyncSyncBranch(
     if (pushMergedTarget(git, target, targetSha) === "pushed") {
       git(["push", "origin", "--delete", syncBranch]);
       await io.comment(
-        `\`${target}\` moved since approval, so I merged the latest \`${target}\` and \`${source}\` into the approved head and landed it as ${short(resyncedSha)}.`,
+        `\`${moved}\` moved since approval, so I merged the latest \`${target}\` and \`${source}\` into the approved head and landed it as ${short(resyncedSha)}.`,
       );
       return { status: "merged-after-resync", sha: resyncedSha };
     }
@@ -513,8 +514,18 @@ export async function runFastForward(
   const canFastForward = (): boolean =>
     git(["merge-base", "--is-ancestor", targetRef, headSha]).status === 0;
 
-  let moved = !canFastForward();
-  if (!moved) {
+  const sourceCurrent = (): boolean =>
+    promotion.kind !== "sync" ||
+    git(["merge-base", "--is-ancestor", `refs/remotes/origin/${promotion.source}`, headSha])
+      .status === 0;
+
+  let movedBranch: string | null = null;
+  if (!canFastForward()) {
+    movedBranch = promotion.target;
+  } else if (!sourceCurrent()) {
+    movedBranch = promotion.source;
+  }
+  if (movedBranch === null) {
     const push = pushSha(io, input, headSha, promotion.target);
     if (!push.ok) {
       gitOrThrow(git, [
@@ -526,13 +537,13 @@ export async function runFastForward(
       if (canFastForward()) {
         throw new Error(`git push to ${promotion.target} failed: ${push.stderr}`);
       }
-      moved = true;
+      movedBranch = promotion.target;
     }
   }
 
-  if (moved) {
+  if (movedBranch !== null) {
     if (promotion.kind === "sync") {
-      return resyncSyncBranch(io, input, promotion, headSha, pullRequest.head.ref);
+      return resyncSyncBranch(io, input, promotion, headSha, pullRequest.head.ref, movedBranch);
     }
     return refuse(
       io,
