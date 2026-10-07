@@ -350,7 +350,7 @@ it.live("forwards and rotates saved identity across composed services in one own
       const excludedStudio = (yield* owner.rpc.status({ id: studioId })).config;
       expect(excludedStudio.service).toBe("studio");
       if (excludedStudio.service === "studio")
-        expect(excludedStudio.config.anonKey).toBe("anon-one");
+        expect(excludedStudio.config.anonKey).toBe(secondCredentials.anonKey);
       for (const id of retainedIds)
         expect((yield* owner.rpc.status({ id: id })).lifecycle).toBe("stopped");
 
@@ -971,6 +971,59 @@ it.live("blocks a credential change while a standalone credential consumer runs"
       yield* owner.rpc.stopService({ id: standalone.id });
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+);
+
+it.live(
+  "refreshes a stopped standalone credential consumer when the stack credentials change",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "stack-owner-credential-refresh-",
+        });
+        const stack = initial("owner-credential-refresh");
+        const state = yield* stateFor(`${root}/state`);
+        yield* state.save(stack);
+        const owner = yield* ownerFor({ saved: stack, state, root: `${root}/data`, cacheRoot });
+        yield* Effect.addFinalizer(() => owner.namespace.destroy.pipe(Effect.ignore));
+        const rest = yield* owner.rpc.createService({
+          service: "rest",
+          config: { databaseUrl: "postgresql://authenticator@127.0.0.1:1/postgres" },
+          endpoints: {},
+        });
+        const explicitKeys = '[{"kty":"oct","k":"explicit"}]';
+        const auth = yield* owner.rpc.createService({
+          service: "auth",
+          config: { gotrueJwtKeys: explicitKeys },
+          endpoints: {},
+        });
+        const before = yield* owner.getStackCredentials;
+
+        yield* owner.rpc.supabaseComposition({
+          services: [{ service: "mail", config: {}, endpoints: {} }],
+          keys: {
+            gotrueJwtKeys: "[]",
+            publicSigningKeys: '[{"kty":"EC","kid":"rotated"}]',
+          },
+        });
+
+        const after = yield* owner.getStackCredentials;
+        expect(after.jwks).not.toBe(before.jwks);
+        const observed = yield* owner.rpc.status({ id: rest.id });
+        expect(observed.config).toMatchObject({ config: { jwks: after.jwks } });
+        const saved = yield* state.read(stack.id);
+        expect(saved?.instances.find(({ id }) => id === rest.id)?.creation).toMatchObject({
+          config: { jwks: after.jwks },
+        });
+        expect((yield* owner.rpc.status({ id: auth.id })).config).toMatchObject({
+          config: { gotrueJwtKeys: explicitKeys },
+        });
+
+        yield* owner.rpc.startService({ id: rest.id });
+        yield* owner.rpc.stopService({ id: rest.id });
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
 it.live("rejects a missing required input before starting or stopping the service", () =>

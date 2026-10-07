@@ -191,6 +191,19 @@ const credentialInputs: {
 export const credentialInputNames = (service: ServiceCreation["service"]): ReadonlyArray<string> =>
   Object.keys(credentialInputs[service]);
 
+const fillCredentials = (
+  creation: ServiceCreationInput,
+  config: Record<string, unknown>,
+  credentials: StackCredentials,
+): Effect.Effect<ServiceCreation, Schema.SchemaError> => {
+  for (const [input, source] of Object.entries(credentialInputs[creation.service])) {
+    const value = credentials[source];
+    if (creation.service === "database") config[input] = Redacted.make(value);
+    else if (input === "jwtSecret" || config[input] === undefined) config[input] = value;
+  }
+  return Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config });
+};
+
 /**
  * Completes a creation with the stack credentials it consumes. The JWT secret and database
  * credentials always come from the record; other inputs keep an explicit value.
@@ -198,12 +211,20 @@ export const credentialInputNames = (service: ServiceCreation["service"]): Reado
 export const withCredentials = (
   creation: ServiceCreationInput,
   credentials: StackCredentials,
+): Effect.Effect<ServiceCreation, Schema.SchemaError> =>
+  fillCredentials(creation, { ...creation.config }, credentials);
+
+/**
+ * Moves a saved creation from the previous credential record to the next. An input that differs
+ * from the previous record is explicit and kept; one equal to it follows the next record.
+ */
+export const refreshCredentials = (
+  creation: ServiceCreation,
+  previous: StackCredentials,
+  next: StackCredentials,
 ): Effect.Effect<ServiceCreation, Schema.SchemaError> => {
   const config: Record<string, unknown> = { ...creation.config };
-  for (const [input, source] of Object.entries(credentialInputs[creation.service])) {
-    const value = credentials[source];
-    if (creation.service === "database") config[input] = Redacted.make(value);
-    else if (input === "jwtSecret" || config[input] === undefined) config[input] = value;
-  }
-  return Schema.decodeUnknownEffect(ServiceCreation)({ ...creation, config });
+  for (const [input, source] of Object.entries(credentialInputs[creation.service]))
+    if (config[input] === previous[source]) delete config[input];
+  return fillCredentials(creation, config, next);
 };

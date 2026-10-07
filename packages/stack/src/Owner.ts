@@ -43,6 +43,7 @@ import {
   CredentialError,
   credentialOverrides,
   nextCredentials,
+  refreshCredentials,
   withCredentials,
   withoutUnusedCredentials,
 } from "./host/Credentials.ts";
@@ -342,8 +343,36 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         const current = yield* readSaved;
         const next = yield* nextCredentials(current, overrides, keys);
         if (next === current.credentials) return next;
-        if (current.credentials !== undefined) yield* requireStopped(current);
-        yield* options.state.save({ ...current, credentials: next });
+        const previous = current.credentials;
+        if (previous === undefined) {
+          yield* options.state.save({ ...current, credentials: next });
+          return next;
+        }
+        yield* requireStopped(current);
+        const refreshed = new Map(
+          yield* Effect.forEach(
+            current.instances.filter(({ creation }) => consumesCredentials(creation)),
+            ({ id, creation }) =>
+              refreshCredentials(creation, previous, next).pipe(
+                Effect.map((refreshedCreation) => [id, refreshedCreation] as const),
+              ),
+          ),
+        );
+        yield* options.state.save({
+          ...current,
+          credentials: next,
+          instances: current.instances.map((instance) => {
+            const creation = refreshed.get(instance.id);
+            return creation === undefined ? instance : { ...instance, creation };
+          }),
+        });
+        yield* Effect.forEach(
+          refreshed,
+          ([id, creation]) =>
+            orchestrator.get(id).pipe(Effect.flatMap((entry) => Ref.set(entry.creation, creation))),
+          { discard: true },
+        );
+        yield* Effect.annotateCurrentSpan("refreshed_instances", refreshed.size);
         return next;
       }),
     );
