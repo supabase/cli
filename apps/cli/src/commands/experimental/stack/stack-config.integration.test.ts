@@ -1,4 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { DEFAULT_SIGNING_KEY } from "@supabase/stack/defaults";
 import { Effect, Exit, FileSystem, Layer, Path, Ref, Schema } from "effect";
@@ -344,11 +345,11 @@ s3_secret_key = "env(S3_SECRET_KEY)"
   });
 
   it.live(
-    "fails closed on an unpublished OrioleDB version and ignores its inactive S3 settings",
+    "fails closed on an unpublished OrioleDB version and rejects S3 settings only for OrioleDB",
     () =>
       Effect.gen(function* () {
         const unpublished =
-          "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact; supported OrioleDB versions:";
+          "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships for the experimental stack; it ships:";
         const orioledb = yield* project(`project_id = "stack-config-orioledb"
 [experimental]
 orioledb_version = "17.0.0.000"
@@ -374,6 +375,20 @@ s3_host = "s3.example.test"
 `);
         const s3Config = yield* load(s3);
         expect(s3Config.source.experimental.s3_host).toBe("s3.example.test");
+
+        const [pinned = ""] = orioledbVersions();
+        const orioledbS3 = yield* project(`project_id = "stack-config-orioledb-s3"
+[db]
+orioledb_version = "${pinned}"
+[experimental]
+s3_host = "s3.example.test"
+`);
+        const orioledbS3Exit = yield* load(orioledbS3).pipe(Effect.exit);
+        expect(Exit.isFailure(orioledbS3Exit)).toBe(true);
+        if (Exit.isFailure(orioledbS3Exit))
+          expect(String(orioledbS3Exit.cause)).toContain(
+            "experimental.s3_host is unsupported by the experimental stack",
+          );
       }).pipe(Effect.provide(BunServices.layer)),
   );
 

@@ -41,7 +41,7 @@ describe("stackDatabaseVersion", () => {
       stackDatabaseVersion({ major_version: 17, orioledb_version: "17.6.1.000" }, published),
     ).toEqual(
       Result.fail(
-        "db.orioledb_version = 17.6.1.000 requires a published OrioleDB artifact; supported OrioleDB versions: 17.11.0.002",
+        "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.6.1.000 is not an OrioleDB build this CLI ships for the experimental stack; it ships: 17.11.0.002. A stack keeps the build it was created with, so moving an existing stack to another build means recreating it with supabase stack destroy, which permanently deletes its local database data",
       ),
     );
   });

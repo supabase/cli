@@ -601,7 +601,7 @@ describe("stack shadow databases", () => {
       );
 
       expect(error.message).toContain(
-        "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact",
+        "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
       );
       expect(roots).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),

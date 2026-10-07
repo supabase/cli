@@ -466,11 +466,9 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
-const ORIOLE_DB_VERSION = "17.11.0.002";
-
-/** The stack only runs catalog-pinned OrioleDB builds, so a stack project starts on the pinned one. */
-const stackOrioledbVersion = (): string =>
-  orioledbVersions().find((version) => postgresMajor(version) === "17") ?? ORIOLE_DB_VERSION;
+/** The catalog's pinned OrioleDB 17 build, which both stack and Compose projects can run. */
+const initOrioledbVersion = (): string =>
+  orioledbVersions().find((version) => postgresMajor(version) === "17") ?? "";
 
 const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
 stack = true
@@ -521,7 +519,7 @@ export function renderCliConfigTemplate(
 ): string {
   const rendered = CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
-    useOrioledb ? (experimentalStack ? stackOrioledbVersion() : ORIOLE_DB_VERSION) : "",
+    useOrioledb ? initOrioledbVersion() : "",
   );
   return experimentalStack ? applyExperimentalStackInitTemplate(rendered) : rendered;
 }

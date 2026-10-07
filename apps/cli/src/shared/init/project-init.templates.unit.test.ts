@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
-import { orioledbVersions } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -40,7 +40,10 @@ const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
   Effect.map((template) =>
     resolveGoTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Db.OrioleDBVersion }}", "17.11.0.002")
+      .replace(
+        "{{ .Db.OrioleDBVersion }}",
+        orioledbVersions().find((version) => postgresMajor(version) === "17") ?? "",
+      )
       // supabase init always opts new projects into pg-delta; the Go template
       // renders this from a flag only set on the init path.
       .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true"),
@@ -100,9 +103,11 @@ describe("project init templates", () => {
     ]);
   });
 
-  it("pins a stack project's OrioleDB version to one the artifact catalog publishes", () => {
-    const rendered = renderCliConfigTemplate("demo-project", true, true);
-    expect(orioledbVersions()).toContain(/^orioledb_version = "(.+)"$/m.exec(rendered)?.[1]);
+  it("pins init's OrioleDB version to one the artifact catalog publishes", () => {
+    for (const experimentalStack of [false, true]) {
+      const rendered = renderCliConfigTemplate("demo-project", true, experimentalStack);
+      expect(orioledbVersions()).toContain(/^orioledb_version = "(.+)"$/m.exec(rendered)?.[1]);
+    }
   });
 
   it("enables pg-delta by default in the generated config", () => {

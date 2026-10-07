@@ -18,9 +18,9 @@ export const stackDatabaseVersion = (
     return Result.succeed(String(db.major_version));
   if (!supported.includes(orioledb))
     return Result.fail(
-      `db.orioledb_version = ${orioledb} requires a published OrioleDB artifact; supported OrioleDB versions: ${
+      `db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = ${orioledb} is not an OrioleDB build this CLI ships for the experimental stack; it ships: ${
         supported.length === 0 ? "none" : supported.join(", ")
-      }`,
+      }. A stack keeps the build it was created with, so moving an existing stack to another build means recreating it with supabase stack destroy, which permanently deletes its local database data`,
     );
   const major = postgresMajor(orioledb);
   if (major !== String(db.major_version))

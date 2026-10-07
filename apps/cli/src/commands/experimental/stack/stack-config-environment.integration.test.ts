@@ -139,7 +139,7 @@ enabled = false
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit))
         expect(String(exit.cause)).toContain(
-          "db.orioledb_version = 17.0.0.000 requires a published OrioleDB artifact",
+          "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.0.0.000 is not an OrioleDB build this CLI ships",
         );
     }),
   );

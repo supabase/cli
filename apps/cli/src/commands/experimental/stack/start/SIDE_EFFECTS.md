@@ -35,7 +35,7 @@ require template serving and shared external JWKS verification respectively.
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) runs the catalog's OrioleDB build of that
 version instead of the stock major. Loading fails unless the catalog pins that OrioleDB version and
 `db.major_version` matches its major; the error lists the pinned OrioleDB versions. The
-`experimental.s3_*` OrioleDB settings are not forwarded.
+`experimental.s3_*` OrioleDB settings are not forwarded, so loading fails when they are set.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
