@@ -19,6 +19,7 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import { mockTelemetryStateTracked } from "../../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
@@ -108,6 +109,7 @@ function makeDatabaseStack(sqlPort: number, credentials: StackCredentials): Stac
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   } satisfies Stack;
 }

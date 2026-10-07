@@ -4,7 +4,7 @@ import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import { makePorts, probeVacant } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
@@ -85,6 +85,7 @@ const makeNetwork = (options: {
   readonly runtime: NetworkRuntime;
   readonly state: StackNamespace.Interface;
   readonly platform?: NodeJS.Platform;
+  readonly onAccess?: HttpAccessSink;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
@@ -186,7 +187,11 @@ const makeNetwork = (options: {
                               Effect.gen(function* () {
                                 if (endpoint.shared !== undefined) {
                                   yield* probe(key, host, port);
-                                  const proxy = yield* makeHttpProxy({ host, port });
+                                  const proxy = yield* makeHttpProxy({
+                                    host,
+                                    port,
+                                    onAccess: options.onAccess,
+                                  });
                                   return { proxy };
                                 }
                                 if (endpoint.protocol === "http") {
@@ -360,7 +365,12 @@ const makeNetwork = (options: {
     } satisfies Interface;
   });
 
-export const layer = (options: { readonly stackId: string; readonly runtime: NetworkRuntime }) =>
+export const layer = (options: {
+  readonly stackId: string;
+  readonly runtime: NetworkRuntime;
+  /** Receives the shared API listener's completed requests. */
+  readonly onAccess?: HttpAccessSink;
+}) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {

@@ -48,6 +48,10 @@ export const apiRoute = (service: ServiceCreation["service"]): string | undefine
   }
 };
 
+/** Whether the service's configured HTTP endpoint is served on the shared API listener. */
+export const sharesApiEndpoint = (creation: EndpointIntents): boolean =>
+  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
+
 type RouteKeys = NonNullable<NonNullable<NetworkEndpoint["shared"]>[number]["keyRewrite"]>["keys"];
 
 /** Routes a service's HTTP endpoint on the shared API listener, or `undefined` for a dedicated one. */

@@ -42,6 +42,7 @@ import {
   mockRuntimeInfo,
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   DbConnection,
   type DbSession,
@@ -403,6 +404,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     destroy: Effect.sync(() => {
       hostDestroyed += 1;
     }),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("command not used") },
   };
   return {

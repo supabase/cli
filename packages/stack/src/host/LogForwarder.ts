@@ -31,6 +31,7 @@ import {
   type LogflareEvent,
   type ShippedService,
 } from "./LogflareEvents.ts";
+import type { gatewayLog } from "./GatewayLog.ts";
 import { LogPosition, type LogRecord } from "./LogRecord.ts";
 import type * as LogStore from "./LogStore.ts";
 
@@ -45,6 +46,12 @@ export interface ForwardedInstance {
     readonly serving: boolean;
     readonly launchId: number | undefined;
   }>;
+}
+
+/** An owner log stream without a service instance; it ships while the owner runs. */
+export interface ForwardedStream {
+  readonly id: string;
+  readonly service: typeof gatewayLog.service;
 }
 
 export class StoredEventsError extends Schema.TaggedError<StoredEventsError>()(
@@ -62,8 +69,11 @@ export interface StoredEvents {
 }
 
 interface Interface {
-  /** Ships a shipped service's persisted logs, or tracks an Analytics instance as the target. */
-  readonly attach: (instance: ForwardedInstance) => Effect.Effect<void>;
+  /**
+   * Ships the persisted logs of a shipped service or an owner stream, or tracks an Analytics
+   * instance as the target.
+   */
+  readonly attach: (instance: ForwardedInstance | ForwardedStream) => Effect.Effect<void>;
   /** Stops following an instance; returns once no cursor write of it can still land. */
   readonly detach: (instanceId: string) => Effect.Effect<void>;
   /** Re-selects the shipping target after the composition changes. */
@@ -848,21 +858,25 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
       Stream.runDrain,
     );
 
-  /** Ships until the instance is detached or the store detaches its logs, which ends a session. */
-  const forward = (instance: ForwardedInstance, service: ShippedService) =>
+  /**
+   * Ships until the instance is detached or the store detaches its logs, which ends a session. A
+   * service instance ships only while it is a composition member; the gateway stream belongs to
+   * the owner.
+   */
+  const forward = (id: string, service: ShippedService, composed: boolean) =>
     Effect.gen(function* () {
       while (true) {
-        yield* membership(instance.id, true);
+        if (composed) yield* membership(id, true);
         const current = yield* serving;
         const failing = yield* Ref.make(false);
         const posting = yield* Semaphore.make(1);
         // A stopped or refused target pauses shipping until it changes; a failed log read resumes
         // from the cursor after a backoff.
-        const detached = yield* session(instance.id, service, current, failing, posting).pipe(
+        const detached = yield* session(id, service, current, failing, posting).pipe(
           Effect.tapError((error) =>
             error._tag === "StaleTarget"
               ? Effect.void
-              : warnOnce(failing, `Reading ${instance.id} logs to ship failed; retrying`, error),
+              : warnOnce(failing, `Reading ${id} logs to ship failed; retrying`, error),
           ),
           Effect.retry({
             schedule: retrySchedule,
@@ -873,23 +887,28 @@ export const make = Effect.fn("LogForwarder.make")(function* (options: LogForwar
           // A retarget or leaving the composition lets a started post finish, so its answer decides
           // the pending body.
           Effect.raceFirst(
-            Effect.raceFirst(retargeted(current), membership(instance.id, false)).pipe(
-              Effect.andThen(posting.take(1)),
-              Effect.as(false),
-            ),
+            Effect.raceFirst(
+              retargeted(current),
+              composed ? membership(id, false) : Effect.never,
+            ).pipe(Effect.andThen(posting.take(1)), Effect.as(false)),
           ),
         );
-        if (detached)
-          return yield* Effect.logDebug(`Log shipping of ${instance.id} stopped with its logs`);
+        if (detached) return yield* Effect.logDebug(`Log shipping of ${id} stopped with its logs`);
       }
     });
 
   const followers = yield* FiberMap.make<string>();
-  const attach = Effect.fn("LogForwarder.attach")(function* (instance: ForwardedInstance) {
+  const attach = Effect.fn("LogForwarder.attach")(function* (
+    instance: ForwardedInstance | ForwardedStream,
+  ) {
     if (instance.service === "analytics")
       yield* FiberMap.run(followers, instance.id, trackTarget(instance));
     else if (isShippedService(instance.service)) {
-      yield* FiberMap.run(followers, instance.id, forward(instance, instance.service));
+      yield* FiberMap.run(
+        followers,
+        instance.id,
+        forward(instance.id, instance.service, "serving" in instance),
+      );
     }
   });
 

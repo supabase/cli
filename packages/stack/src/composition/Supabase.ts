@@ -5,7 +5,7 @@ import type { Observation } from "../Rpc.ts";
 import { ServiceCreation, type ServiceCreationInput } from "../services/Catalog.ts";
 import type { SavedStack, StackKeysInput } from "../StackNamespace.ts";
 import { credentialInputNames } from "../host/Credentials.ts";
-import { apiRoute, endpointNames, endpointPort } from "../host/Endpoints.ts";
+import { endpointNames, endpointPort, sharesApiEndpoint } from "../host/Endpoints.ts";
 
 const DEFAULT_IDLE_MILLIS = 60_000;
 /** Studio idles slower than its peers: a background tab shouldn't cold-start it every minute. */
@@ -250,9 +250,6 @@ const differences = (left: unknown, right: unknown, path: string): ReadonlyArray
   return Object.is(left, right) ? [] : [path];
 };
 
-const sharesApiEndpoint = (creation: ServiceCreationInput): boolean =>
-  apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http");
-
 /** Fixed ports requested for the shared API endpoint; composition accepts at most one. */
 const fixedApiPorts = (creations: ReadonlyArray<ServiceCreationInput>): ReadonlySet<number> =>
   new Set(
@@ -456,10 +453,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
 
       const reusedByKind = new Map(reusedEntries.map((entry) => [entry.creation.service, entry]));
       const byKind = new Map(normalized.map((creation) => [creation.service, creation]));
-      const apiSource = normalized.find(
-        (creation) =>
-          apiRoute(creation.service) !== undefined && endpointNames(creation).includes("http"),
-      );
+      const apiSource = normalized.find(sharesApiEndpoint);
       if (
         apiSource === undefined &&
         normalized.some((creation) => ["auth", "functions", "studio"].includes(creation.service))

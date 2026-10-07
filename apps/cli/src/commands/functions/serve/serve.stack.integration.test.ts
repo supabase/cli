@@ -26,6 +26,7 @@ import {
 import { StackApi } from "../../../command-internal/stack-api.ts";
 import { OutputFlag } from "../../../command-internal/global-flags.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -283,6 +284,7 @@ const fixture = (
       },
       stop: Effect.die("unused"),
       destroy: Effect.die("unused"),
+      gateway: unusedGateway,
       commands: { run: () => Effect.die("unused") },
     } satisfies Stack;
     const identity = { projectRoot: "/project", branchContext: "main", stackName: "default" };

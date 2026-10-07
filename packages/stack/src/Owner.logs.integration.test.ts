@@ -14,6 +14,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { tmpdir } from "node:os";
 import { engineTarget, testEngine } from "../tests/engine-target.ts";
 import { ownerFor } from "../tests/owner-rpc.ts";
@@ -73,6 +74,22 @@ const openOwner = (
     };
   });
 
+/** The port the shared API listener serves a service's `http` endpoint on. */
+const httpPort = (
+  observation: Effect.Effect<
+    { readonly endpoints: ReadonlyArray<{ readonly name: string; readonly port: number }> },
+    StackError
+  >,
+) =>
+  observation.pipe(
+    Effect.flatMap(({ endpoints }) => {
+      const http = endpoints.find(({ name }) => name === "http");
+      return http === undefined
+        ? Effect.die("the service has no http endpoint")
+        : Effect.succeed(http.port);
+    }),
+  );
+
 const isOutput = (record: LogRecord) => record.kind === "stdout" || record.kind === "stderr";
 
 const firstOutput = (records: Stream.Stream<LogRecord, StackError>) =>
@@ -112,6 +129,7 @@ describe("owner persisted logs", () => {
         const directory = path.join(owner.logsRoot, "mail", mail.id);
         expect(yield* fs.exists(directory)).toBe(true);
         const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+          Stream.filter(({ instanceId }) => instanceId === mail.id),
           Stream.runCollect,
         );
         expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
@@ -145,7 +163,10 @@ describe("owner persisted logs", () => {
         yield* Scope.close(ownerScope, Exit.void);
 
         const selection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
-        const records = yield* streamStackLogs(selection).pipe(Stream.runCollect);
+        const records = yield* streamStackLogs(selection).pipe(
+          Stream.filter(({ instanceId }) => instanceId === mail.id),
+          Stream.runCollect,
+        );
         const invalid = yield* streamStackLogs({ ...selection, since: "soon" }).pipe(
           Stream.runDrain,
           Effect.flip,
@@ -199,6 +220,77 @@ describe("owner persisted logs", () => {
         expect(
           records.filter(({ kind }) => kind === "launch").map(({ launchId }) => launchId),
         ).toEqual([1, 2]);
+      }),
+    ).pipe(Effect.provide(services)),
+  );
+
+  it.live("keeps shared API requests as gateway logs across owner restarts until destroy", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const client = yield* HttpClient.HttpClient;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "owner-logs-gateway-" });
+        const firstScope = yield* Scope.make();
+        // Closes the first owner if the test fails before the restart closes it.
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+        const first = yield* openOwner("owner-logs-gateway-", "native", { root }).pipe(
+          Scope.provide(firstScope),
+        );
+        const rest = yield* first.rpc.createService({
+          service: "rest",
+          config: {},
+          endpoints: { http: { port: "auto" } },
+        });
+        yield* first.rpc.configureComposition({
+          members: [{ id: rest.id, activation: "lazy" }],
+          dependencies: [],
+        });
+        yield* first.rpc.startComposition();
+        const api = yield* httpPort(first.rpc.status({ id: rest.id }));
+
+        const response = yield* client.get(`http://127.0.0.1:${api}/unrouted`);
+        const [recorded] = yield* firstOutput(first.rpc.readLogs({ id: "gateway", follow: true }));
+
+        expect(response.status).toBe(404);
+        expect(recorded).toMatchObject({ launchId: 1, text: expect.stringContaining("/unrouted") });
+        const directory = path.join(first.logsRoot, "gateway", "gateway");
+        expect(yield* fs.readDirectory(directory)).toEqual(["0000000001.log"]);
+        yield* Scope.close(firstScope, Exit.void);
+        // A crash right after rotation leaves an empty newest segment.
+        yield* fs.writeFileString(path.join(directory, "0000000002.log"), "");
+
+        const state = Context.get(
+          yield* Layer.build(StackNamespace.layer({ root: first.stateRoot })),
+          StackNamespace.Service,
+        );
+        const saved = yield* state.read(first.stack.id);
+        if (saved === undefined) return yield* Effect.die("the stopped stack was not saved");
+        const second = yield* ownerFor({ saved, state, root: `${root}/data`, cacheRoot });
+        const history = Array.from(
+          yield* second.rpc.readLogs({ id: "gateway", follow: false }).pipe(Stream.runCollect),
+        );
+        const begun = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter(({ kind, launchId }) => kind === "launch" && launchId === 2),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeout("5 seconds"),
+        );
+        yield* second.rpc.startComposition();
+        const reopened = yield* httpPort(second.rpc.status({ id: rest.id }));
+        const again = yield* second.rpc.readLogs({ id: "gateway", follow: true }).pipe(
+          Stream.filter((record) => isOutput(record) && record.text?.includes("/again") === true),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* client.get(`http://127.0.0.1:${reopened}/again`);
+
+        expect(history).toContainEqual(recorded);
+        expect(begun).toHaveLength(1);
+        expect(Array.from(yield* Fiber.join(again))).toMatchObject([{ launchId: 2 }]);
+        yield* second.namespace.destroy;
+        expect(yield* fs.exists(first.logsRoot)).toBe(false);
       }),
     ).pipe(Effect.provide(services)),
   );

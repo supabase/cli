@@ -68,6 +68,7 @@ import { confirmStackDataRoot } from "./namespace/Paths.ts";
 import * as StackNamespace from "./StackNamespace.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { makeDockerHelperRegistry } from "./storage/DockerHelperRegistry.ts";
+import * as GatewayLog from "./host/GatewayLog.ts";
 import * as LogForwarder from "./host/LogForwarder.ts";
 import * as LogflareStorage from "./host/LogflareStorage.ts";
 import * as LogStore from "./host/LogStore.ts";
@@ -196,7 +197,10 @@ const withoutInstance = (current: SavedStack, id: string): SavedStack =>
     composition: Orchestrator.withoutMember(current.composition, id),
   });
 
-const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
+const makeOwner = Effect.fn("Owner.make")(function* (
+  options: OwnerOptions,
+  gateway: GatewayLog.GatewayLog,
+) {
   const services = yield* Effect.context<
     | FileSystem.FileSystem
     | Path.Path
@@ -261,6 +265,18 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
     logs: logStore,
     storedEvents: (analytics) => LogflareStorage.make(analyticsDatabase(analytics.id)),
   }).pipe(Effect.provideContext(services));
+  yield* logStore.attach({
+    ...GatewayLog.gatewayLog,
+    logs: gateway.logs,
+    launches: gateway.launches,
+  });
+  yield* gateway.begin(
+    Option.getOrElse(yield* logStore.latestLaunchId(GatewayLog.gatewayLog), () => 0) + 1,
+  );
+  yield* forwarder.attach({
+    id: GatewayLog.gatewayLog.instanceId,
+    service: GatewayLog.gatewayLog.service,
+  });
   const definitionGate = yield* Semaphore.make(1);
   const { id: stackId, runtime } = options.saved;
   const project = projectSegmentFor(options.saved.identity, path);
@@ -901,17 +917,24 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
 });
 
 export const layer = (options: Omit<OwnerOptions, "state">) =>
-  Layer.effect(
-    Service,
-    Effect.gen(function* () {
-      const state = yield* StackNamespace.Service;
-      return Service.of(yield* makeOwner({ ...options, state }));
-    }),
-  ).pipe(
-    Layer.provide(
-      Network.layer({
-        stackId: options.saved.id,
-        runtime: options.saved.runtime,
-      }),
+  Layer.unwrap(
+    GatewayLog.make.pipe(
+      Effect.map((gateway) =>
+        Layer.effect(
+          Service,
+          Effect.gen(function* () {
+            const state = yield* StackNamespace.Service;
+            return Service.of(yield* makeOwner({ ...options, state }, gateway));
+          }),
+        ).pipe(
+          Layer.provide(
+            Network.layer({
+              stackId: options.saved.id,
+              runtime: options.saved.runtime,
+              onAccess: gateway.record,
+            }),
+          ),
+        ),
+      ),
     ),
   );

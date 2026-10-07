@@ -98,7 +98,7 @@ export interface Interface {
   }) => Effect.Effect<void, LogStoreError>;
   /** Deletes log directories of instances that are not attached; failures are logged. */
   readonly removeOrphans: Effect.Effect<void, LogStoreError>;
-  /** The highest launch id at the end of an instance's newest segment, if one is readable. */
+  /** The highest launch id at the end of the newest segment that holds a record, if readable. */
   readonly latestLaunchId: (instance: {
     readonly service: string;
     readonly instanceId: string;

@@ -47,6 +47,7 @@ import { leftBehindStackIds, reclaimDeletedStack, reclaimStack } from "./Sweep.t
 import type { SavedStack, StackCredentials, StackKeysInput } from "./StackNamespace.ts";
 import { StackError, type Definition, type Observation } from "./Rpc.ts";
 import { sinceMillis, streamStackLogs as streamPersistedLogs } from "./host/LogStore.ts";
+import { gatewayLog } from "./host/GatewayLog.ts";
 import type { LogPosition, LogRecord, StackLogRecord } from "./host/LogRecord.ts";
 import {
   ServiceCreationInput as ServiceCreationInputSchema,
@@ -64,7 +65,8 @@ import type {
 
 export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
-export { apiRoute } from "./host/Endpoints.ts";
+export { apiRoute, sharesApiEndpoint } from "./host/Endpoints.ts";
+export { gatewayLog };
 export { StackError } from "./Rpc.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
@@ -262,6 +264,10 @@ export interface Stack {
     readonly start: Effect.Effect<ReadonlyArray<Observation>, StackError>;
     readonly stop: Effect.Effect<ReadonlyArray<Observation>, StackError>;
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
+  };
+  /** The shared API listener's access log, read through the live owner like an instance's. */
+  readonly gateway: {
+    readonly readLogs: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, StackError>;
   };
   readonly stop: Effect.Effect<void, StackError>;
   /**
@@ -544,6 +550,18 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
 
   const snapshotScope = (options: DatabaseSnapshotOptions | undefined) =>
     options?.scope === undefined ? {} : { scope: options.scope };
+  const readLogs =
+    (id: string) =>
+    (options?: ReadLogsOptions): Stream.Stream<LogRecord, StackError> =>
+      stream("readLogs", (rpc) =>
+        rpc.readLogs({
+          id,
+          follow: options?.follow ?? false,
+          ...(options?.from === undefined ? {} : { from: options.from }),
+          ...(options?.since === undefined ? {} : { since: options.since }),
+          ...(options?.tail === undefined ? {} : { tail: options.tail }),
+        }),
+      );
   const common = <K extends Kind>(id: string, service: K): ServiceInstance<K> => ({
     id,
     service,
@@ -565,16 +583,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     prepare: call("prepare", (rpc) => rpc.prepareService({ id })),
     status: call("status", (rpc) => rpc.status({ id }), "attach"),
     followStatus: stream("followStatus", (rpc) => rpc.followStatus({ id })),
-    readLogs: (options) =>
-      stream("readLogs", (rpc) =>
-        rpc.readLogs({
-          id,
-          follow: options?.follow ?? false,
-          ...(options?.from === undefined ? {} : { from: options.from }),
-          ...(options?.since === undefined ? {} : { since: options.since }),
-          ...(options?.tail === undefined ? {} : { tail: options.tail }),
-        }),
-      ),
+    readLogs: readLogs(id),
     credentials: (options) =>
       call("credentials", (rpc) => rpc.credentials({ id, from: options?.from ?? "host" })),
   });
@@ -819,6 +828,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       stop: whileRunning("stopComposition", (rpc) => rpc.stopComposition(), []),
       restart: call("restartComposition", (rpc) => rpc.restartComposition()),
     },
+    gateway: { readLogs: readLogs(gatewayLog.instanceId) },
     stop: shutdown(false).pipe(Effect.asVoid),
     destroy: shutdown(true),
     commands: { run },

@@ -17,6 +17,7 @@ import {
   containerEngineSpawner,
   type ContainerEngineState,
 } from "../../../../../tests/helpers/child-process-spawner.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -155,6 +156,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     },
     stop: Effect.void,
     destroy: Effect.void,
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();
