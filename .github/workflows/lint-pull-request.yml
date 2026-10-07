@@ -82,4 +82,9 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
-        run: bun .github/scripts/pr-title-guard.ts
+        run: |
+          if [ -f .github/scripts/pr-title-guard.ts ]; then
+            bun .github/scripts/pr-title-guard.ts
+          else
+            echo "::notice::pr-title-guard.ts is not on the default branch yet; skipping"
+          fi
