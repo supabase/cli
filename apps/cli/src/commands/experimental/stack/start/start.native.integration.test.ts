@@ -237,7 +237,7 @@ describe("experimental stack start native lifecycle", () => {
             const firstCredentials = yield* firstDatabase.credentials({ from: "host" });
             const firstDatabaseUrl = firstCredentials.databaseUrl;
             if (firstDatabaseUrl === undefined) return yield* Effect.die("database URL missing");
-            const firstConnection = parseConnectionString(firstDatabaseUrl);
+            const firstConnection = yield* parseConnectionString(firstDatabaseUrl);
             if (firstConnection === undefined) return yield* Effect.die("database URL invalid");
             const db = yield* DbConnection;
             yield* Effect.scoped(
@@ -270,7 +270,9 @@ describe("experimental stack start native lifecycle", () => {
             expect(secondDatabase.id).toBe(firstDatabase.id);
             const secondCredentials = yield* secondDatabase.credentials({ from: "host" });
             expect(secondCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const secondConnection = parseConnectionString(secondCredentials.databaseUrl ?? "");
+            const secondConnection = yield* parseConnectionString(
+              secondCredentials.databaseUrl ?? "",
+            );
             if (secondConnection === undefined) return yield* Effect.die("reopened URL invalid");
             const rows = yield* Effect.scoped(
               Effect.gen(function* () {
@@ -300,7 +302,7 @@ describe("experimental stack start native lifecycle", () => {
             expect(restartedDatabase.id).toBe(firstDatabase.id);
             const restartedCredentials = yield* restartedDatabase.credentials({ from: "host" });
             expect(restartedCredentials.databaseUrl).toBe(firstDatabaseUrl);
-            const restartedConnection = parseConnectionString(
+            const restartedConnection = yield* parseConnectionString(
               restartedCredentials.databaseUrl ?? "",
             );
             if (restartedConnection === undefined)

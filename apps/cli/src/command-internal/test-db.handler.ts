@@ -102,7 +102,7 @@ const managedStackFor = Effect.fn("test.db.managedStack")(function* () {
     return yield* new LocalDbRunningError({
       message: "The local database did not provide runtime credentials.",
     });
-  const connection = parseConnectionString(databaseUrl);
+  const connection = yield* parseConnectionString(databaseUrl);
   if (connection === undefined)
     return yield* new LocalDbRunningError({
       message: "The local database returned malformed runtime credentials.",

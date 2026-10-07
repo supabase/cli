@@ -68,7 +68,7 @@ const query = Effect.fn("PgDeltaNextShadowStackTest.query")(function* (
   url: string,
   sql: string,
 ) {
-  const connection = parseConnectionString(url);
+  const connection = yield* parseConnectionString(url);
   if (connection === undefined) return yield* Effect.die("invalid shadow URL");
   const session = yield* db.connect(connection, { isLocal: true, dnsResolver: "native" });
   return yield* session.query(sql);

@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
 import type * as Pg from "pg";
-import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../shared/telemetry/error-actionability.ts";
 import { SUGGEST_LOCAL_STACK } from "./connect-errors.ts";
@@ -290,25 +291,29 @@ describe("tlsExplicitlyRequested (CLI-2366: --db-url TLS against a local target)
     expect(tlsExplicitlyRequested({ ...base, sslmode: "disable" })).toBe(false);
   });
 
-  it("leaves a loopback DSN plaintext when PGSSLMODE filled sslmode the URL never set", () => {
-    // The real trigger: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so an
-    // ambient `PGSSLMODE=prefer` must not make a bare loopback `--db-url` demand TLS.
-    const conn = parseConnectionString(
-      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-      (name) => (name === "PGSSLMODE" ? "prefer" : undefined),
-    );
-    expect(conn?.sslmode).toBe("prefer");
-    expect(tlsExplicitlyRequested(conn!)).toBe(false);
-  });
+  it.effect("leaves a loopback DSN plaintext when PGSSLMODE filled sslmode the URL never set", () =>
+    Effect.gen(function* () {
+      // The real trigger: `sslmode` is also filled from `PGSSLMODE` and libpq service files, so an
+      // ambient `PGSSLMODE=prefer` must not make a bare loopback `--db-url` demand TLS.
+      const conn = yield* parseConnectionString(
+        "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        (name) => (name === "PGSSLMODE" ? "prefer" : undefined),
+      );
+      expect(conn?.sslmode).toBe("prefer");
+      expect(tlsExplicitlyRequested(conn!)).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("still demands TLS when PGSSLMODE asks for verification", () => {
-    const conn = parseConnectionString(
-      "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-      (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
-    );
-    expect(conn?.sslmode).toBe("verify-full");
-    expect(tlsExplicitlyRequested(conn!)).toBe(true);
-  });
+  it.effect("still demands TLS when PGSSLMODE asks for verification", () =>
+    Effect.gen(function* () {
+      const conn = yield* parseConnectionString(
+        "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+        (name) => (name === "PGSSLMODE" ? "verify-full" : undefined),
+      );
+      expect(conn?.sslmode).toBe("verify-full");
+      expect(tlsExplicitlyRequested(conn!)).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("is true when a root cert (file path or inline PEM) is set", () => {
     expect(tlsExplicitlyRequested({ ...base, sslrootcert: "/tmp/ca.pem" })).toBe(true);
