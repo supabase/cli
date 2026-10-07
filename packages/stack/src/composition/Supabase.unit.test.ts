@@ -65,7 +65,7 @@ const stopped = (instance: Effect.Success<ReturnType<typeof makeInstance>>) =>
   );
 
 it.live(
-  "keeps a studio member's pgmeta prerequisite awake past 60s, and sleeps both after studio idles",
+  "keeps Studio's pgmeta prerequisite awake without coupling its lifecycle to Functions",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -84,6 +84,11 @@ it.live(
           {
             service: "auth",
             config: { jwtSecret: "studio-idle-jwt-secret-with-32-chars", jwtExpiry: 3600 },
+            endpoints: { http: { port: "auto" } },
+          },
+          {
+            service: "functions",
+            config: { functionsRoot: "/project/supabase/functions" },
             endpoints: { http: { port: "auto" } },
           },
           { service: "studio", config: {}, endpoints: { http: { port: "auto" } } },
@@ -109,11 +114,12 @@ it.live(
           replaceCreation: () => Effect.die("replaceCreation is unused"),
           configure: (configuration) => Ref.set(captured, configuration),
         };
-        yield* makeSupabaseComposition(operations, inputs);
+        const configured = yield* makeSupabaseComposition(operations, inputs);
         const configuration = yield* Ref.get(captured);
         if (configuration === undefined) return yield* Effect.die("Composition was not configured");
 
         const studioId = idFor("studio");
+        const functionsId = idFor("functions");
         const pgmetaId = idFor("pgmeta");
         // pgmeta must be a declared prerequisite of studio for the dependent-blocks-sleep rule below to apply.
         expect(
@@ -121,6 +127,10 @@ it.live(
             (dependency) => dependency.from === pgmetaId && dependency.to === studioId,
           ),
         ).toBe(true);
+        const configuredStudio = configured.find(({ creation }) => creation.service === "studio");
+        if (configuredStudio?.creation.service !== "studio")
+          return yield* Effect.die("Studio was not configured");
+        expect(configuredStudio.creation.config.functionsUrl).toBe(`url::${functionsId}`);
 
         const orchestrator = yield* Orchestrator.make<Orchestrator.RegisteredInstance>();
         const database = yield* makeInstance(orchestrator, idFor("database"), {
@@ -134,17 +144,26 @@ it.live(
           inputs: ["databaseUrl"],
           outputs: { url: Effect.succeed("http://pgmeta") },
         });
+        yield* makeInstance(orchestrator, functionsId, {
+          outputs: { url: Effect.succeed(`url::${functionsId}`) },
+        });
         const studio = yield* makeInstance(orchestrator, studioId, {
           inputs: ["databaseUrl", "pgmetaUrl", "analyticsUrl", "functionsUrl"],
         });
         yield* orchestrator.configure(configuration);
         yield* orchestrator.startComposition;
+        yield* orchestrator.restart(functionsId);
+        yield* orchestrator.ready(functionsId);
+        expect(yield* studio.status).toMatchObject({ lifecycle: "stopped", wakeEnabled: true });
 
         const requestScope = yield* Scope.make();
         yield* orchestrator.acquire(studioId).pipe(Scope.provide(requestScope));
         yield* TestClock.adjust("1 second");
         expect((yield* database.status).lifecycle).toBe("running");
         expect((yield* pgmeta.status).lifecycle).toBe("running");
+        expect((yield* studio.status).lifecycle).toBe("running");
+        yield* orchestrator.restart(functionsId);
+        yield* orchestrator.ready(functionsId);
         expect((yield* studio.status).lifecycle).toBe("running");
 
         // The request finished; studio itself now idles on its own 5-minute timer.

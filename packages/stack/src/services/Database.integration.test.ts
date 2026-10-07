@@ -2,6 +2,7 @@ import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ConfigProvider,
   Context,
   Deferred,
   Effect,
@@ -12,6 +13,7 @@ import {
   Predicate,
   Redacted,
   Ref,
+  Schema,
   Stream,
 } from "effect";
 import { createHash } from "node:crypto";
@@ -217,6 +219,146 @@ describe("database component", { timeout: 180_000 }, () => {
         yield* service.destroy;
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("native PostgreSQL verifies outbound HTTPS against the configured CA bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const certs = yield* path.fromFileUrl(new URL("../../tests/certs", import.meta.url));
+        const key = yield* fs.readFileString(path.join(certs, "localhost.key"));
+        const serveHttps = (certificate: string) =>
+          fs.readFileString(path.join(certs, certificate)).pipe(
+            Effect.flatMap((cert) =>
+              Effect.acquireRelease(
+                Effect.try(() =>
+                  Bun.serve({
+                    hostname: "127.0.0.1",
+                    port: 0,
+                    tls: { key, cert },
+                    fetch: () => new Response("verified"),
+                  }),
+                ),
+                (server) => Effect.promise(() => server.stop(true)),
+              ),
+            ),
+          );
+        const trusted = yield* serveHttps("trusted.crt");
+        const untrusted = yield* serveHttps("untrusted.crt");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-tls-" });
+        const bundle = path.join(root, "trusted.crt");
+        yield* fs.copyFile(path.join(certs, "trusted.crt"), bundle);
+        yield* fs.chmod(bundle, 0o644);
+        const database = yield* makeDatabase({
+          stackId: "stack-database-tls",
+          instanceId: "tls",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeStandaloneService(database.definition, {
+          id: "database:tls",
+          config,
+        });
+        yield* service.start.pipe(
+          Effect.provide(
+            ConfigProvider.layerAdd(ConfigProvider.fromEnvRecord({ SSL_CERT_FILE: bundle }), {
+              asPrimary: true,
+            }),
+          ),
+        );
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        yield* query(
+          endpoint,
+          config.databasePassword,
+          "CREATE EXTENSION http WITH SCHEMA extensions; CREATE EXTENSION pg_net",
+        );
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT status, content FROM extensions.http_get('https://127.0.0.1:${trusted.port}/')`,
+          ),
+        ).toEqual([{ status: 200, content: "verified" }]);
+        const [request] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ id: Schema.String })]),
+        )(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/') AS id`,
+          ),
+        );
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT status, message, (response).status_code FROM net._http_collect_response(${request.id}, async := false)`,
+          ),
+        ).toEqual([{ status: "SUCCESS", message: "ok", status_code: 200 }]);
+        const rejected = yield* query(
+          endpoint,
+          config.databasePassword,
+          `SELECT status FROM extensions.http_get('https://127.0.0.1:${untrusted.port}/')`,
+        ).pipe(Effect.flip);
+        expect(rejected.reason.cause).toMatchObject({
+          message: expect.stringContaining("self-signed certificate"),
+        });
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live(
+    "native PostgreSQL defaults SSL_CERT_FILE to a host CA bundle and resolves each SSL_CERT_DIR entry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-trust-env-" });
+          const database = yield* makeDatabase({
+            stackId: "stack-database-trust-env",
+            instanceId: "trust-env",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const service = yield* makeStandaloneService(database.definition, {
+            id: "database:trust-env",
+            config,
+          });
+          yield* service.start.pipe(
+            Effect.provide(
+              ConfigProvider.layerAdd(
+                ConfigProvider.fromEnvRecord(
+                  { SSL_CERT_FILE: "", SSL_CERT_DIR: ":certs-a::certs-b" },
+                  { preserveEmptyStrings: true },
+                ),
+                { asPrimary: true },
+              ),
+            ),
+          );
+          yield* service.ready;
+          const endpoint = yield* database.endpoint;
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+          );
+          const [serverEnv] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
+          )(yield* query(endpoint, config.databasePassword, "SELECT file, dir FROM server_env"));
+          expect({ ...serverEnv, exists: yield* fs.exists(serverEnv.file) }).toEqual({
+            file: expect.stringMatching(/^\//u),
+            exists: true,
+            dir: `:${path.resolve("certs-a")}::${path.resolve("certs-b")}`,
+          });
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );
 
   it.live(

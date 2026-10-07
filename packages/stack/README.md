@@ -123,6 +123,8 @@ ephemeral range on every supported platform; this is not configurable, and a pub
 inside it is rejected. A host whose ephemeral range has been widened to overlap 10000–19999
 reintroduces the ephemeral-port race this reservation exists to avoid.
 
+Native PostgreSQL receives the owner's `SSL_CERT_FILE` and `SSL_CERT_DIR` when they are non-empty. When `SSL_CERT_FILE` is unset or empty, it receives the first of `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`, and `/etc/ssl/cert.pem` that exists, if any. The `http` and `pg_net` extensions verify HTTPS certificates against these. On macOS, `/etc/ssl/cert.pem` does not include roots added to the Keychain; to trust those, set `SSL_CERT_FILE` to a bundle that also holds the public roots, such as a copy of `/etc/ssl/cert.pem` with those roots appended. When PostgreSQL runs as a separate user, that user must be able to read the owner's `SSL_CERT_FILE` and `SSL_CERT_DIR` paths, which are not chowned to it. The detached owner inherits the environment of the client that starts it and keeps it until it exits, through restarts and repeated starts, so set these before the owner starts, and stop the stack before starting it again after changing them.
+
 ## Composition and operation scope
 
 Registering a service does not add it to the application composition. For a fresh composition, `composition.supabase` registers the selected recipes and supplies their standard bindings:

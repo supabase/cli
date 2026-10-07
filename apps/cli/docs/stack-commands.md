@@ -212,8 +212,8 @@ env-precedence rule as `start`/`stop`/`status`. See
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
-primary database without changing other services (webhooks setup only; no second overlay or
-migrate-and-seed).
+primary database without changing other services (webhooks setup only, creating a missing
+`supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 `db reset --local` and declarative resets rebuild the existing database while retaining stack
