@@ -172,6 +172,9 @@ const ownerDeathScenario = (shared: boolean) =>
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-owner-death-" });
       const stackId = `storage-owner-death-${yield* crypto.randomUUIDv4}`;
       const filter = `label=com.supabase.stack=${stackId}`;
+      // Pull before spawning so a cold image cache does not consume the owner's readiness timeout.
+      const container = yield* makeContainerRuntime({ engine: "docker", root });
+      yield* container.prepareImage(yield* postgresImage("17"));
       const child = yield* spawner.spawn(
         ChildProcess.make(
           process.execPath,
