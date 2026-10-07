@@ -78,8 +78,8 @@ describe("functions", () => {
   });
 
   describe("functions:deploy", () => {
-    // Deploy requires the Go binary to bundle function files locally before any API call,
-    // so error injection tests pre-create the function with `functions new` first.
+    // Deploy bundles function files locally before any API call, so error injection tests
+    // pre-create the function with `functions new` first.
 
     testBehaviour("exits non-zero on 401", async ({ run, apiUrl }) => {
       await run(["functions", "new", FUNCTION_NAME]);

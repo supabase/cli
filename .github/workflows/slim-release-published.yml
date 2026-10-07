@@ -150,10 +150,9 @@ jobs:
             generated_files=(
               packages/stack/src/Artifacts.ts
               apps/cli/src/shared/services/Dockerfile
-              apps/cli-go/pkg/config/templates/Dockerfile
             )
             if git diff --quiet -- "${generated_files[@]}"; then
-              echo "${branch}: catalog and Dockerfiles already match ${release}; skipping."
+              echo "${branch}: catalog and Dockerfile already match ${release}; skipping."
               continue
             fi
 
@@ -163,10 +162,10 @@ jobs:
             if ! push_output="$(git push --force "$push_url" "HEAD:refs/heads/${branch}" 2>&1)"; then
               echo "$push_output"
               if ! grep -q "queued for merging cannot be updated" <<<"$push_output"; then
-                echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+                echo "::error ::Failed to push ${branch}. Run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
                 exit 1
               fi
-              manual_steps="run manually: ${manual_prefix} ${release}, regenerate the Dockerfiles with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
+              manual_steps="run manually: ${manual_prefix} ${release}, regenerate the Dockerfile with \`bun apps/cli/scripts/render-service-dockerfile.ts\`, then open a pull request by hand."
               queued_steps="Once ${branch} leaves the merge queue, ${manual_steps}"
               # The app token minted just before this step expires after one hour; capping the wait at
               # 50 minutes into the step leaves room for the lookups and the dispatch that follow it.

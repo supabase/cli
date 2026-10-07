@@ -10,15 +10,8 @@
 /tools/*/package.json @supabase/cli @supabase-oss
 /pnpm-lock.yaml @supabase/cli @supabase-oss
 /pnpm-workspace.yaml @supabase/cli @supabase-oss
-/apps/cli-go/go.mod @supabase/cli @supabase-oss
-/apps/cli-go/go.sum @supabase/cli @supabase-oss
-/apps/cli-go/pkg/go.mod @supabase/cli @supabase-oss
-/apps/cli-go/pkg/go.sum @supabase/cli @supabase-oss
 /apps/cli/src/shared/services/Dockerfile @supabase/cli @supabase-oss
-/apps/cli-go/pkg/config/templates/Dockerfile @supabase/cli @supabase-oss
 /packages/stack/src/Artifacts.ts @supabase/cli @supabase-oss
-/apps/cli-go/api/v1-openapi.yaml @supabase/cli @supabase-oss
-/apps/cli-go/pkg/api/*.gen.go @supabase/cli @supabase-oss
 /packages/api/src/generated/ @supabase/cli @supabase-oss
 /packages/api/scripts/openapi-source.json @supabase/cli @supabase-oss
 

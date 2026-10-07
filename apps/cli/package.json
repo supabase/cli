@@ -24,8 +24,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "pnpm build:go-sidecar && pnpm build:binary && pnpm build:shim",
-    "build:go-sidecar": "mkdir -p dist && cp ../cli-go/supabase-go dist/supabase-go",
+    "build": "pnpm build:binary && pnpm build:shim",
     "build:binary": "bun scripts/build-binary.ts",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "docs:spec": "bun scripts/generate-docs-spec.ts",

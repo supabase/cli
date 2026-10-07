@@ -57,7 +57,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)                             | accepted   |
 | 0014 | [macOS Code Signing & Notarization](0014-macos-code-signing-and-notarization.md)                               | accepted   |
 | 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)                                     | superseded |
-| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed   |
+| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | superseded |
 | 0017 | [Simplified Managed Stack Architecture](0017-simplified-managed-stack-architecture.md)                         | superseded |
 | 0018 | [Sparse Config Subtraction](0018-sparse-config-subtraction.md)                                                 | proposed   |
 | 0019 | [Raw API-Response Passthrough on API-Sourced Config](0019-config-api-response-passthrough.md)                  | accepted   |
@@ -71,6 +71,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0027 | [CLI Tracing Conventions](0027-cli-tracing-conventions.md)                                                     | proposed   |
 | 0028 | [Release Branches and Maintenance Lines](0028-release-branches-and-maintenance-lines.md)                       | accepted   |
 | 0029 | [Native Postgres Privilege Step-Down](0029-native-postgres-privilege-step-down.md)                             | proposed   |
+| 0030 | [Go CLI Removal](0030-go-cli-removal.md)                                                                       | accepted   |
 
 ## Template
 

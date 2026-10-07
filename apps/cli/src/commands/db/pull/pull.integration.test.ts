@@ -1369,7 +1369,7 @@ describe("db pull", () => {
     });
     return Effect.gen(function* () {
       // The message and non-zero exit are the contract; the generic --debug footer is
-      // replaced with this explanation instead (docs/go-cli-divergences.md).
+      // replaced with this explanation instead.
       const error = yield* dbPull(flags()).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DbPullInSyncError",
