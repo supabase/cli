@@ -486,3 +486,149 @@ it.live.skipIf(process.platform === "win32")(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+/** A pinned port above the auto range, so it never meets a registry row from an auto allocation. */
+const pinnedPort = () => 33000 + (Math.abs(Hash.string(randomUUID())) % 16000);
+
+const withRegistry = Effect.provide(
+  Layer.merge(NodeServices.layer, PortReservations.layer.pipe(Layer.provide(NodeServices.layer))),
+);
+
+/** Two stacks of separate projects registered in one state root. */
+const twoProjects = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped();
+  const state = yield* makeTestState(root);
+  const projectA = `${root}/project-a`;
+  const projectB = `${root}/project-b`;
+  const a = `pinned-a-${randomUUID()}`;
+  const b = `pinned-b-${randomUUID()}`;
+  yield* saveStack(state, projectA, a);
+  yield* saveStack(state, projectB, b);
+  const ports = yield* makePorts(state);
+  const registry = Context.get(
+    yield* Layer.build(PortReservations.layer),
+    PortReservations.Service,
+  );
+  return { state, ports, registry, stateRoot: yield* fs.realPath(root), a, b, projectA };
+});
+
+it.live("a stopped stack's pinned port is free for another project's stack", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+      const port = pinnedPort();
+      const bind = (_host: string, bound: number) => Effect.succeed(bound);
+
+      yield* Effect.scoped(
+        ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind),
+      );
+
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+      const started = yield* ports.acquire(
+        { stackId: b, key: "db:sql", host: "127.0.0.1", port },
+        bind,
+      );
+      expect(started.port).toBe(port);
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live("a running stack's pinned port conflict names the port, its project, and the fix", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { state, ports, a, b, projectA } = yield* twoProjects;
+      const port = pinnedPort();
+      const bind = (_host: string, bound: number) => Effect.succeed(bound);
+      yield* state.acquireLease(a);
+      yield* ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind);
+
+      const failure = yield* ports
+        .acquire({ stackId: b, key: "db:sql", host: "127.0.0.1", port }, bind)
+        .pipe(Effect.flip);
+
+      expect(failure.message).toContain(String(port));
+      expect(failure.message).toContain(projectA);
+      expect(failure.message).toContain("supabase stack stop");
+      expect(failure.message).not.toContain("destroy");
+      if (!(failure instanceof PortError)) return yield* Effect.die("expected a PortError");
+      expect(failure.conflict?.holder).toMatchObject({ stackId: a });
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live(
+  "a pinned reservation left behind by a dead owner is released when the next owner stops",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+        const port = pinnedPort();
+        const bind = (_host: string, bound: number) => Effect.succeed(bound);
+        yield* registry.reserve(stateRoot, a, "db:sql", port);
+
+        yield* Effect.scoped(
+          ports.acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, bind),
+        );
+
+        expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+        expect(
+          (yield* ports.acquire({ stackId: b, key: "db:sql", host: "127.0.0.1", port }, bind)).port,
+        ).toBe(port);
+      }),
+    ).pipe(withRegistry),
+);
+
+it.live(
+  "a pinned port held by an owner that died without closing is free for another project",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { ports, registry, stateRoot, a, b } = yield* twoProjects;
+        const port = pinnedPort();
+        yield* registry.reserve(stateRoot, a, "db:sql", port);
+
+        const started = yield* ports.acquire(
+          { stackId: b, key: "db:sql", host: "127.0.0.1", port },
+          (_host, bound) => Effect.succeed(bound),
+        );
+
+        expect(started.port).toBe(port);
+        expect(yield* registry.find(stateRoot, b, "db:sql")).toBe(port);
+      }),
+    ).pipe(withRegistry),
+);
+
+it.live("a pinned port that fails to bind is not left reserved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, registry, stateRoot, a } = yield* twoProjects;
+      const port = pinnedPort();
+
+      yield* ports
+        .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, () =>
+          Effect.fail(new PortError({ key: "db:sql", message: "bind failed" })),
+        )
+        .pipe(Effect.flip);
+
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+    }),
+  ).pipe(withRegistry),
+);
+
+it.live("a pinned port inside the native backend range names the range and the endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { ports, a } = yield* twoProjects;
+
+      const failure = yield* ports
+        .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port: 15432 }, (_host, bound) =>
+          Effect.succeed(bound),
+        )
+        .pipe(Effect.flip);
+
+      expect(failure.message).toContain("db:sql");
+      expect(failure.message).toContain("native service backends");
+    }),
+  ).pipe(withRegistry),
+);

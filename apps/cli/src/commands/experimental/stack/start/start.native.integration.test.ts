@@ -381,7 +381,7 @@ describe("experimental stack start native lifecycle", () => {
               // Linux rejects the bind; platforms that allow overlapping binds reject the probe.
               expect(Cause.pretty(failedStart.cause)).toMatch(
                 new RegExp(
-                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is already in use)`,
+                  `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is in use by another process)`,
                 ),
               );
               const ownerPid = ownerPids[attempt];

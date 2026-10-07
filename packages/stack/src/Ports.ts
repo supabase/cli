@@ -8,10 +8,12 @@ import {
   Option,
   Path,
   Predicate,
+  Schema,
   Scope,
 } from "effect";
 import * as Net from "node:net";
 import type * as StackNamespace from "./StackNamespace.ts";
+import * as Lease from "./namespace/Lease.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import type { Holder } from "./namespace/PortReservations.ts";
 
@@ -125,7 +127,7 @@ export const probeVacant =
       if (yield* loopbackVacant(platform)(port)) return;
       return yield* new PortError({
         key,
-        message: `Port ${port} for ${key} at ${host}:${port} is already in use`,
+        message: `Port ${port} for ${key} at ${host}:${port} is in use by another process; free it or configure a different port for ${key}`,
         conflict: { port, endpoint: key, holder: "foreign" },
       });
     });
@@ -253,16 +255,20 @@ const resolveRequest = (
     return Effect.fail(
       new PortError({
         key: request.key,
-        message: `Public port ${requested} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service ports; choose a port outside that range`,
+        message: `Public port ${requested} for ${request.key} is inside ${nativePortBase}-${portBase - 1}, which is reserved for native service backends; configure a port outside that range`,
       }),
     );
   return Effect.succeed(requested);
 };
 
+const RegisteredProject = Schema.fromJsonString(
+  Schema.Struct({ identity: Schema.Struct({ projectRoot: Schema.String }) }),
+);
+
 /**
  * One stack's public ports, reserved through the per-user registry before any physical listener
- * exists: a reservation is committed first, then the listener is created, so a stopped stack's
- * ports stay reserved across every other stack's starts and across state roots.
+ * exists: a reservation is committed first, then the listener is created. An auto port stays
+ * reserved while its stack is stopped; a pinned port is reserved only while its listener is open.
  */
 export const makePorts = (state: StackNamespace.Interface) =>
   Effect.gen(function* () {
@@ -272,8 +278,15 @@ export const makePorts = (state: StackNamespace.Interface) =>
     // The registry's state_root is the realpath, so a symlinked or relative root still matches
     // the identity another process derives from the same stack.
     const stateRoot = yield* fs.realPath(state.root);
+    const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
 
-    const describe = (holder: Holder) => `stack ${holder.stackId} at ${holder.stateRoot}`;
+    /** The holder's project directory, read from its own registration; undefined when unreadable. */
+    const projectOf = (holder: Holder) =>
+      fs.readFileString(path.join(holder.stateRoot, holder.stackId, "state.json")).pipe(
+        Effect.flatMap(Schema.decodeEffect(RegisteredProject)),
+        Effect.map((saved) => saved.identity.projectRoot),
+        Effect.orElseSucceed(() => undefined),
+      );
 
     /** Only a confirmed `ENOENT` on the holder's own registration makes its reservation stale. */
     const isGone = (holder: Holder) =>
@@ -286,20 +299,31 @@ export const makePorts = (state: StackNamespace.Interface) =>
         Effect.orElseSucceed(() => false),
       );
 
+    /** Whether a process holds the holder stack's owner lease; an unreadable lease counts as held. */
+    const isLeased = (holder: Holder) =>
+      Lease.make({ root: holder.stateRoot, isRegistered: () => Effect.succeed(true) }).pipe(
+        Effect.flatMap((lease) => lease.leased(holder.stackId)),
+        Effect.provideContext(services),
+        Effect.orElseSucceed(() => true),
+      );
+
     /**
-     * Reserves `port` for `(stackId, key)`, running the lazy-reclamation check against a live
-     * conflict's own registration before giving up on it. Resolves to the still-live holder on
-     * conflict, or `undefined` once the row is ours. Untraced: an auto scan calls this per
-     * candidate port, and the enclosing `Ports.acquire` span already records the attempt count.
+     * Reserves `port` for `(stackId, key)`, running the lazy-reclamation check against a
+     * conflict's own registration before giving up on it. A pinned request also reclaims a
+     * holder with no live owner, since the owner that died never closed its listener. Resolves
+     * to the still-live holder on conflict, or `undefined` once the row is ours. Untraced: an
+     * auto scan calls this per candidate port, and the enclosing `Ports.acquire` span already
+     * records the attempt count.
      */
     const reserveCandidate = Effect.fnUntraced(function* (
       stackId: string,
       key: string,
       port: number,
+      pinned: boolean,
     ) {
       const holder = yield* portReservations.reserve(stateRoot, stackId, key, port);
       if (holder === undefined) return undefined;
-      if (!(yield* isGone(holder))) return holder;
+      if (!(yield* isGone(holder)) && !(pinned && !(yield* isLeased(holder)))) return holder;
       const reclaimed = yield* portReservations.reclaim(port, holder, {
         stateRoot,
         stackId,
@@ -308,10 +332,21 @@ export const makePorts = (state: StackNamespace.Interface) =>
       return reclaimed ? undefined : holder;
     });
 
-    const holderMessage = (key: string, port: number, stackId: string, holder: Holder) =>
-      holder.stackId === stackId
-        ? `Public port ${port} for ${key} is claimed by another listener of this stack`
-        : `Public port ${port} for ${key} is claimed by ${describe(holder)}`;
+    const holderMessage = Effect.fnUntraced(function* (
+      key: string,
+      port: number,
+      stackId: string,
+      holder: Holder,
+    ) {
+      if (holder.stackId === stackId)
+        return `Public port ${port} for ${key} is claimed by another listener of this stack`;
+      const project = yield* projectOf(holder);
+      const where =
+        project === undefined
+          ? `stack ${holder.stackId}`
+          : `the stack of project ${project} (stack ${holder.stackId})`;
+      return `Public port ${port} for ${key} is in use by ${where}; run \`supabase stack stop\` in that project, or configure a different port for ${key}`;
+    });
 
     const acquire = Effect.fn("Ports.acquire")(function* <A, R>(
       request: PortRequest,
@@ -350,11 +385,38 @@ export const makePorts = (state: StackNamespace.Interface) =>
               ),
             );
 
-          /** One bind attempt at `port`, in its own forked scope so a failure closes the listener; a success holds the scope open instead. */
+          /**
+           * One bind attempt at `port` in its own forked scope; a failure closes the scope, a
+           * success keeps it open. A pinned request's row lives exactly as long as that scope, so a
+           * stopped stack holds none; an auto assignment's row outlives it and is kept across stops.
+           */
           const attemptBind = (port: number) =>
             Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
+                if (owned === undefined) {
+                  const holder = yield* reserveCandidate(
+                    request.stackId,
+                    request.key,
+                    port,
+                    request.port !== "auto",
+                  );
+                  if (holder !== undefined)
+                    return Exit.fail(
+                      new PortError({
+                        key: request.key,
+                        message: yield* holderMessage(request.key, port, request.stackId, holder),
+                        conflict: { port, endpoint: request.key, holder },
+                      }),
+                    );
+                }
                 const scope = yield* Scope.fork(owner, "sequential");
+                if (request.port !== "auto")
+                  yield* Scope.addFinalizer(
+                    scope,
+                    portReservations
+                      .release(stateRoot, request.stackId, request.key)
+                      .pipe(Effect.orDie),
+                  );
                 return yield* restore(
                   bindListener(port).pipe(Effect.provideService(Scope.Scope, scope)),
                 ).pipe(
@@ -367,15 +429,6 @@ export const makePorts = (state: StackNamespace.Interface) =>
             );
 
           if (requested !== "auto") {
-            if (owned === undefined) {
-              const holder = yield* reserveCandidate(request.stackId, request.key, requested);
-              if (holder !== undefined)
-                return yield* new PortError({
-                  key: request.key,
-                  message: holderMessage(request.key, requested, request.stackId, holder),
-                  conflict: { port: requested, endpoint: request.key, holder },
-                });
-            }
             const result = yield* attemptBind(requested);
             if (Exit.isSuccess(result)) return result.value;
             const error = Cause.findErrorOption(result.cause);
@@ -386,8 +439,6 @@ export const makePorts = (state: StackNamespace.Interface) =>
               !(error.value instanceof PortError)
             )
               return yield* Effect.failCause(result.cause);
-            // Owning this port already, or reserving it exactly, is sticky: a bind failure never
-            // reassigns it, and the reservation survives so the next attempt retries this port.
             return yield* error.value;
           }
 
@@ -400,7 +451,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
           const attemptCandidate = (port: number) =>
             Effect.uninterruptibleMask((restore) =>
               Effect.gen(function* () {
-                const holder = yield* reserveCandidate(request.stackId, request.key, port);
+                const holder = yield* reserveCandidate(request.stackId, request.key, port, false);
                 if (holder !== undefined) return undefined;
                 const scope = yield* Scope.fork(owner, "sequential");
                 return yield* restore(

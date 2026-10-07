@@ -1,6 +1,7 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
-import { Context, Data, Deferred, Effect, Fiber, FileSystem, Layer, Path, Ref } from "effect";
+import { Context, Data, Deferred, Effect, Fiber, FileSystem, Hash, Layer, Path, Ref } from "effect";
+import { randomUUID } from "node:crypto";
 import * as Net from "node:net"; // oxlint-disable-line effecttsgo/node-builtin-import -- fixture retains an idle HTTP connection.
 import { createServer } from "node:http"; // oxlint-disable-line effecttsgo/node-builtin-import -- real socket fixture.
 import { HttpClient } from "effect/unstable/http";
@@ -218,6 +219,7 @@ it.live("reports a dedicated port conflict without taking over the holder's rese
       const state = yield* makeTestState(root);
       yield* state.save(stack("first"));
       yield* state.save(stack("second"));
+      yield* state.acquireLease("first");
       const target = yield* backend;
       const firstEnabled = yield* Ref.make(true);
       const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
@@ -591,6 +593,107 @@ it.live("addresses docker runtime endpoints through the stack host alias", () =>
       expect(runtime).toEqual({ ...host, host: DOCKER_HOST_ALIAS });
       yield* namespace.release;
       yield* namespace.releasePorts;
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+/** A pinned port above the auto range, so it never meets a registry row from an auto allocation. */
+const pinnedPort = () => 33000 + (Math.abs(Hash.string(randomUUID())) % 16000);
+
+it.live("addresses a pinned endpoint from its configured port without a registry row", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-address-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const namespace = yield* network.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Effect.succeed(false)), port } },
+      });
+
+      expect((yield* namespace.address("sql", "host")).port).toBe(port);
+      expect((yield* namespace.address("sql", "runtime")).port).toBe(port);
+      expect(yield* reservedPort(root, "stack", "db:sql")).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a pinned port is reserved only while its listener is open", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-stop-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("first"));
+      yield* state.save(stack("second"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const firstEnabled = yield* Ref.make(true);
+      const firstNetwork = yield* makeTestNetwork({ stackId: "first", runtime: "native", state });
+      const first = yield* firstNetwork.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Ref.get(firstEnabled)), port } },
+      });
+      yield* first.bind;
+      expect(yield* reservedPort(root, "first", "db:sql")).toBe(port);
+
+      yield* Ref.set(firstEnabled, false);
+      yield* first.close;
+      expect(yield* reservedPort(root, "first", "db:sql")).toBeUndefined();
+
+      const secondNetwork = yield* makeTestNetwork({ stackId: "second", runtime: "native", state });
+      const second = yield* secondNetwork.register({
+        id: "db",
+        endpoints: { sql: { ...endpoint(target, Effect.succeed(true)), port } },
+      });
+      yield* second.bind;
+      expect((yield* second.address("sql", "host")).port).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/started")).toBe("backend:/started");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a pinned shared listener keeps its reservation until its last route closes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "network-pinned-shared-" });
+      const state = yield* makeTestState(root);
+      yield* state.save(stack("stack"));
+      const target = yield* backend;
+      const port = pinnedPort();
+      const firstEnabled = yield* Ref.make(true);
+      const secondEnabled = yield* Ref.make(true);
+      const network = yield* makeTestNetwork({ stackId: "stack", runtime: "native", state });
+      const first = yield* network.register({
+        id: "rest",
+        endpoints: {
+          api: { ...endpoint(target, Ref.get(firstEnabled)), port, shared: [{ prefix: "/rest" }] },
+        },
+      });
+      const second = yield* network.register({
+        id: "auth",
+        endpoints: {
+          api: { ...endpoint(target, Ref.get(secondEnabled)), port, shared: [{ prefix: "/auth" }] },
+        },
+      });
+      yield* first.bind;
+      yield* second.bind;
+      expect(yield* reservedPort(root, "stack", "api")).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/auth/v1")).toBe("backend:/auth/v1");
+
+      yield* Ref.set(firstEnabled, false);
+      yield* first.close;
+      expect(yield* reservedPort(root, "stack", "api")).toBe(port);
+      expect(yield* request("127.0.0.1", port, "/auth/v1")).toBe("backend:/auth/v1");
+
+      yield* Ref.set(secondEnabled, false);
+      yield* second.close;
+      expect(yield* reservedPort(root, "stack", "api")).toBeUndefined();
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

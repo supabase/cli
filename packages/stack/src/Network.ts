@@ -2,7 +2,7 @@ import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effec
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
 import * as PortReservations from "./namespace/PortReservations.ts";
 import * as StackNamespace from "./StackNamespace.ts";
-import { makePorts, PortError, probeVacant } from "./Ports.ts";
+import { makePorts, probeVacant } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
 import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
@@ -70,6 +70,15 @@ const errorFor = (operation: string, cause: unknown) =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
+
+/** A later claimant reuses the open shared listener, so it never touches the port registry. */
+const joinClaim = (
+  existing: { readonly claim: number; readonly proxy: HttpProxy },
+  port: number | "auto",
+) =>
+  port !== "auto" && port !== existing.claim
+    ? Effect.fail(errorFor("bind", "Shared API port differs from existing claim"))
+    : Effect.succeed({ port: existing.claim, listener: { proxy: existing.proxy } });
 
 const makeNetwork = (options: {
   readonly stackId: string;
@@ -160,50 +169,50 @@ const makeNetwork = (options: {
                 Effect.gen(function* () {
                   const endpointScope = yield* Scope.fork(owner, "sequential");
                   const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
+                  const claimed =
+                    endpoint.shared === undefined ? undefined : yield* Ref.get(shared);
                   const result = yield* restore(
-                    ports
-                      .acquire<{ readonly proxy?: HttpProxy }, Scope.Scope>(
-                        { stackId: options.stackId, key, host: listenHost, port: endpoint.port },
-                        (host, port) =>
-                          Effect.gen(function* () {
-                            if (endpoint.shared !== undefined) {
-                              const current = yield* Ref.get(shared);
-                              if (current !== undefined) {
-                                if (current.claim !== port)
-                                  return yield* new PortError({
-                                    key: "api",
-                                    message: "Shared API port differs from existing claim",
-                                  });
-                                return { proxy: current.proxy };
-                              }
-                              yield* probe(key, host, port);
-                              const proxy = yield* makeHttpProxy({ host, port });
-                              return { proxy };
-                            }
-                            if (endpoint.protocol === "http") {
-                              yield* probe(key, host, port);
-                              const proxy = yield* makeHttpProxy({ host, port });
-                              yield* proxy.setRoutes([
-                                { id, prefix: "/", target: endpoint.backend },
-                              ]);
-                              return { proxy };
-                            }
-                            yield* probe(key, host, port);
-                            const listener = yield* bindTcp(host, port);
-                            yield* Effect.forkIn(
-                              serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
-                                Effect.provideService(Scope.Scope, endpointScope),
-                              ),
-                              endpointScope,
-                              { startImmediately: true },
-                            );
-                            return {};
-                          }),
-                      )
-                      .pipe(
-                        Effect.provideService(Scope.Scope, endpointScope),
-                        Effect.mapError((cause) => errorFor("bind", cause)),
-                      ),
+                    claimed !== undefined
+                      ? joinClaim(claimed, endpoint.port)
+                      : ports
+                          .acquire<{ readonly proxy?: HttpProxy }, Scope.Scope>(
+                            {
+                              stackId: options.stackId,
+                              key,
+                              host: listenHost,
+                              port: endpoint.port,
+                            },
+                            (host, port) =>
+                              Effect.gen(function* () {
+                                if (endpoint.shared !== undefined) {
+                                  yield* probe(key, host, port);
+                                  const proxy = yield* makeHttpProxy({ host, port });
+                                  return { proxy };
+                                }
+                                if (endpoint.protocol === "http") {
+                                  yield* probe(key, host, port);
+                                  const proxy = yield* makeHttpProxy({ host, port });
+                                  yield* proxy.setRoutes([
+                                    { id, prefix: "/", target: endpoint.backend },
+                                  ]);
+                                  return { proxy };
+                                }
+                                yield* probe(key, host, port);
+                                const listener = yield* bindTcp(host, port);
+                                yield* Effect.forkIn(
+                                  serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
+                                    Effect.provideService(Scope.Scope, endpointScope),
+                                  ),
+                                  endpointScope,
+                                  { startImmediately: true },
+                                );
+                                return {};
+                              }),
+                          )
+                          .pipe(
+                            Effect.provideService(Scope.Scope, endpointScope),
+                            Effect.mapError((cause) => errorFor("bind", cause)),
+                          ),
                   ).pipe(
                     Effect.onExit((exit) =>
                       Exit.isFailure(exit) ? Scope.close(endpointScope, exit) : Effect.void,
@@ -314,9 +323,12 @@ const makeNetwork = (options: {
           const endpoint = endpoints[name];
           if (endpoint === undefined) return yield* errorFor("address", `Unknown endpoint ${name}`);
           const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
-          const port = yield* ports
-            .assigned(options.stackId, key)
-            .pipe(Effect.mapError((cause) => errorFor("address", cause)));
+          const port =
+            endpoint.port === "auto"
+              ? yield* ports
+                  .assigned(options.stackId, key)
+                  .pipe(Effect.mapError((cause) => errorFor("address", cause)))
+              : endpoint.port;
           if (port === undefined)
             return yield* errorFor("address", `Endpoint ${name} is not assigned`);
           return {
