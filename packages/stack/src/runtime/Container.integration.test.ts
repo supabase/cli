@@ -17,6 +17,7 @@ import {
   Redacted,
   Ref,
   Schema,
+  Scope,
   Sink,
   Stream,
 } from "effect";
@@ -50,6 +51,11 @@ const image = await Effect.gen(function* () {
 // empty argv prefix leaves every command exactly as it was before pinning existed.
 const containerTarget: EngineTarget = { ...engineTarget, argv: [] };
 const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/u;
+// One probe for every test that does not assert probe behaviour, so engine load stays bounded.
+const sharedHostGateway = await makeHostGateway.pipe(
+  Effect.provideService(Scope.Scope, await Effect.runPromise(Scope.make())),
+  Effect.runPromise,
+);
 const stoppableIdleScript =
   "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)";
 
@@ -58,7 +64,7 @@ class ContainerTestError extends Data.TaggedError("ContainerTestError")<{
   readonly cause?: unknown;
 }> {}
 
-describe("container process adapter", () => {
+describe("container process adapter", { timeout: 120_000 }, () => {
   it.live("recognizes a cached pinned image without pulling", () =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -113,6 +119,7 @@ describe("container process adapter", () => {
           const runtime = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
+            hostGateway: sharedHostGateway,
           });
           yield* runtime.prepare(image);
           const process = yield* runtime.launch({
@@ -150,6 +157,7 @@ describe("container process adapter", () => {
           const runtime = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
+            hostGateway: sharedHostGateway,
           });
           yield* runtime.prepare(image);
           const process = yield* runtime.launchCommand({
@@ -565,6 +573,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
         const process = yield* runtime.launch({
@@ -592,6 +601,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
         const process = yield* runtime.launchCommand({
@@ -618,6 +628,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
         const crypto = yield* Crypto.Crypto;
@@ -651,6 +662,7 @@ describe("container process adapter", () => {
           const runtime = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
+            hostGateway: sharedHostGateway,
           });
           yield* runtime.prepare(image);
           const launch = (instanceId: string, marker: string) =>
@@ -690,6 +702,7 @@ describe("container process adapter", () => {
       const runtime = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
+        hostGateway: sharedHostGateway,
       });
       yield* runtime.prepare(image);
       const process = yield* runtime.launch({
@@ -719,6 +732,7 @@ describe("container process adapter", () => {
       const runtime = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
+        hostGateway: sharedHostGateway,
       });
       yield* runtime.prepare(image);
       const process = yield* runtime.launch({
@@ -749,6 +763,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
         const result = yield* runtime
@@ -780,6 +795,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         });
         yield* runtime.prepare(image);
         const process = yield* runtime.launch({
@@ -811,6 +827,7 @@ describe("container process adapter", () => {
         const runtime = yield* makeContainerRuntime({
           target: containerTarget,
           root: ".",
+          hostGateway: sharedHostGateway,
         }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -852,6 +869,7 @@ describe("container process adapter", () => {
           const runtime = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
+            hostGateway: sharedHostGateway,
           }).pipe(
             Effect.provideService(
               ChildProcessSpawner.ChildProcessSpawner,
@@ -885,6 +903,7 @@ describe("container process adapter", () => {
             const runtime = yield* makeContainerRuntime({
               target: containerTarget,
               root: ".",
+              hostGateway: sharedHostGateway,
             });
             yield* runtime.prepare(image);
             const process = yield* runtime.launch({
@@ -920,6 +939,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -960,6 +980,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -1005,6 +1026,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -1036,49 +1058,47 @@ describe("container process adapter", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live(
-    "waits for a real removal observed as removing",
-    () =>
-      Effect.gen(function* () {
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const crypto = yield* Crypto.Crypto;
-        const token = yield* crypto.randomUUIDv4;
-        const instanceId = `pending-remove-${token}`;
-        const pendingProbes = yield* Ref.make(2);
-        const lostResult = yield* Ref.make(false);
-        const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
-        yield* Effect.ensuring(
-          Effect.gen(function* () {
-            const result = yield* Effect.scoped(
-              Effect.gen(function* () {
-                const runtime = yield* makeContainerRuntime({
-                  target: containerTarget,
-                  root: ".",
-                });
-                yield* runtime.prepare(image);
-                const process = yield* runtime.launch({
-                  image,
-                  stackId: "n".repeat(64),
-                  instanceId,
-                  env: {},
-                  args: ["-e", stoppableIdleScript],
-                });
-                yield* process.stop;
-                yield* process.remove;
-              }),
-            ).pipe(
-              Effect.exit,
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            );
-            expect(yield* Ref.get(lostResult)).toBe(true);
-            expect(yield* Ref.get(pendingProbes)).toBe(0);
-            expect(Exit.isSuccess(result)).toBe(true);
-            expect(yield* idsByInstance(instanceId)).toHaveLength(0);
-          }),
-          removeByInstance(instanceId).pipe(Effect.orDie),
-        );
-      }).pipe(Effect.provide(NodeServices.layer)),
-    { timeout: 120_000 },
+  it.live("waits for a real removal observed as removing", () =>
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const token = yield* crypto.randomUUIDv4;
+      const instanceId = `pending-remove-${token}`;
+      const pendingProbes = yield* Ref.make(2);
+      const lostResult = yield* Ref.make(false);
+      const spawner = makePendingRemoveSpawner(delegate, pendingProbes, lostResult);
+      yield* Effect.ensuring(
+        Effect.gen(function* () {
+          const result = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const runtime = yield* makeContainerRuntime({
+                target: containerTarget,
+                root: ".",
+                hostGateway: sharedHostGateway,
+              });
+              yield* runtime.prepare(image);
+              const process = yield* runtime.launch({
+                image,
+                stackId: "n".repeat(64),
+                instanceId,
+                env: {},
+                args: ["-e", stoppableIdleScript],
+              });
+              yield* process.stop;
+              yield* process.remove;
+            }),
+          ).pipe(
+            Effect.exit,
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          expect(yield* Ref.get(lostResult)).toBe(true);
+          expect(yield* Ref.get(pendingProbes)).toBe(0);
+          expect(Exit.isSuccess(result)).toBe(true);
+          expect(yield* idsByInstance(instanceId)).toHaveLength(0);
+        }),
+        removeByInstance(instanceId).pipe(Effect.orDie),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("retains the remove failure when removing never reaches absence", () =>
@@ -1097,6 +1117,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -1147,6 +1168,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -1194,6 +1216,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               const process = yield* runtime.launch({
@@ -1250,6 +1273,7 @@ describe("container process adapter", () => {
             const runtime = yield* makeContainerRuntime({
               target: containerTarget,
               root: ".",
+              hostGateway: sharedHostGateway,
             });
             yield* runtime.prepare(image);
             const result = yield* runtime
@@ -1294,6 +1318,7 @@ describe("container process adapter", () => {
               const runtime = yield* makeContainerRuntime({
                 target: containerTarget,
                 root: ".",
+                hostGateway: sharedHostGateway,
               });
               yield* runtime.prepare(image);
               return yield* runtime
@@ -1337,6 +1362,7 @@ describe("container process adapter", () => {
           const runtime = yield* makeContainerRuntime({
             target: containerTarget,
             root: ".",
+            hostGateway: sharedHostGateway,
           });
           yield* runtime.prepare(image);
           const launch = yield* runtime
@@ -1369,6 +1395,7 @@ describe("container process adapter", () => {
       const runtime = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
+        hostGateway: sharedHostGateway,
       }).pipe(Effect.provide(engine.layer));
       const launch = yield* Effect.scoped(
         runtime.launch({ image, stackId: "i".repeat(64), instanceId: "hung-create", env: {} }),
@@ -1394,6 +1421,7 @@ describe("container process adapter", () => {
       const runtime = yield* makeContainerRuntime({
         target: containerTarget,
         root: ".",
+        hostGateway: sharedHostGateway,
       }).pipe(Effect.provide(engine.layer));
       const launch = yield* Effect.scoped(
         runtime.launch({ image, stackId: "i".repeat(64), instanceId: "interrupted", env: {} }),
