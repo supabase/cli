@@ -13,19 +13,18 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as State from "./State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
 
-const saved: State.SavedStack = {
+const saved: StackNamespace.SavedStack = {
   id: "stack-main",
   identity: { projectRoot: "C:\\project", branchContext: "test", stackName: "windows" },
   runtime: "native",
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 };
 
-class HolderError extends Data.TaggedError("StateWindowsHolderError")<{
+class HolderError extends Data.TaggedError("NamespaceWindowsHolderError")<{
   readonly message: string;
 }> {}
 
@@ -42,7 +41,7 @@ const testSharingViolation = () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-state-windows-" });
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "namespace-windows-" });
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const target = path.join(root, saved.id, "state.json");
@@ -74,8 +73,10 @@ const testSharingViolation = () =>
             ),
         }),
       );
-      const context = yield* Layer.build(State.layer({ root }).pipe(Layer.provide(injectedFs)));
-      const state = Context.get(context, State.Service);
+      const context = yield* Layer.build(
+        StackNamespace.layer({ root }).pipe(Layer.provide(injectedFs)),
+      );
+      const state = Context.get(context, StackNamespace.Service);
       yield* state.save(saved);
       yield* fs.writeFileString(path.join(root, "hold-state.ps1"), sharingHolder);
 
@@ -167,9 +168,12 @@ const testSharingViolation = () =>
       );
       expect((yield* state.read(saved.id))?.identity.stackName).toBe("recovered");
       expect(yield* Ref.get(failures).pipe(Effect.map((seen) => seen.length))).toBeGreaterThan(0);
+      // Only the staging document the recovered publish produced is left under the stack directory.
       expect(
-        (yield* fs.readDirectory(root)).some((entry) => entry.startsWith(".state-write-")),
-      ).toBe(false);
+        (yield* fs.readDirectory(path.join(root, saved.id))).filter((entry) =>
+          entry.endsWith(".tmp"),
+        ),
+      ).toEqual([]);
       yield* Fiber.join(output);
       yield* Fiber.join(diagnostics);
     }),

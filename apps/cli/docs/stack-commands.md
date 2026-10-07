@@ -32,8 +32,8 @@ when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
 selected runtime is saved with the stack and reused without probing; when auto selection skips
 Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
-`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
-the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+`--stack` name. When an explicit `--runtime docker` or `--runtime podman`, or a saved container
+stack, cannot reach its engine, the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
@@ -313,7 +313,7 @@ retained in stack state, so starting without `--exclude` restores the project's 
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
 directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
-success or unavailable summary is emitted when a stop fails.
+success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.

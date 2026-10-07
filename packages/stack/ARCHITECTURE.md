@@ -4,26 +4,27 @@ This document defines the stack package architecture. The package implements the
 
 ## Core model
 
-Use **a graph of service instances, with a small serialized lifecycle for each instance**. Keep application readiness separate from that lifecycle. Add a proxy that starts services on public traffic and sleeps them on public inactivity. Run finite commands with the same identity, artifacts and execution primitives, without treating them as services.
+Use **a graph of service instances whose lifecycle one reducer per owner decides**. Keep application readiness separate from that lifecycle. Add a proxy that starts services on public traffic and sleeps them on public inactivity. Run finite commands with the same identity, artifacts and execution primitives, without treating them as services.
 
 The critical simplification is:
 
 > Starting a process and waiting for that process to become healthy are different operations.
 
-A service finishes its current lifecycle transition before accepting another lifecycle signal. There is no cancellation of one transition by another, ownership handoff, special pending-stop state, or general desired-state reconciliation engine.
+Lifecycle decisions are pure transitions applied under one gate per owner; executing them is separate. An execution reports generation-tagged outcomes, so a late outcome never affects a newer generation. There is no second lifecycle state outside the reducer.
 
 Preserve the useful identity and instance use cases while replacing the underlying machinery. The contract intentionally stays small and behavioral.
 
 ## The mental model: a service runs itself; the orchestrator connects services
 
-Establish the individual service lifecycle first, then compose it through a dependency-aware orchestrator. Identity and resource ownership are foundations for both. The orchestrator uses the same service operations for one service or a whole stack; it does not implement a second lifecycle.
+Each service execution runs one generation's launch, readiness check and cleanup. The orchestrator's reducer decides when each happens, for one service or a whole stack. Identity and resource ownership are foundations for both.
 
 ```mermaid
 flowchart TB
     Handle["Public service or stack handle"] --> Orchestrator
     Proxy["Proxy: traffic and idle signals"] --> Orchestrator
     Composition["Stack composition<br/>dependency edges and input wiring"] --> Orchestrator
-    Orchestrator["Orchestrator<br/>validate graph, order operations, await readiness"] --> Executor["Individual service executor<br/>serialize its own lifecycle transitions"]
+    Orchestrator["Orchestrator<br/>owner gate and lifecycle reducer"] -->|launch, stop, reprobe| Executor["Service execution<br/>one generation's runtime and cleanup"]
+    Executor -.->|generation-tagged outcomes| Orchestrator
     Executor --> Backend["Native or container backend<br/>launch, observe, stop, remove"]
     Context["Shared stack context<br/>identity, owned data, sticky ports"] -.-> Orchestrator
     Context -.-> Executor
@@ -37,10 +38,10 @@ A URL implies a connection requirement, not ownership of another service. Do not
 | ----------------- | ------------------------------------------------------------------------ | ------------------------------------------------------- |
 | Recipe/definition | Typed configuration inputs, such as a database URL; own runtime behavior | Where inputs originate or which stack services must run |
 | Stack composition | Concrete dependency edges and how values populate service inputs         | Runtime lifecycle implementation                        |
-| Orchestrator      | Graph, input resolution, readiness requirements, selected operations     | How PostgreSQL launches or a container stops            |
-| Service executor  | Own state, processes, readiness, data and resolved inputs                | Dependency ordering or other services' lifecycle        |
+| Orchestrator      | Graph, lifecycle state, demand, admission, timers and input resolution   | How PostgreSQL launches or a container stops            |
+| Service execution | One generation's processes, readiness check, cleanup and data            | When to launch, stop or sleep, or other services' state |
 
-Calling public `service.start()` or `service.stop()` still goes through the orchestrator. The executor is internal, so callers cannot accidentally bypass graph checks. Sleep is an internal proxy policy over the same stop/start mechanics; it has no public service method or RPC endpoint.
+Calling public `service.start()` or `service.stop()` goes through the orchestrator. The execution boundary is internal, so callers cannot bypass the reducer. Sleep is an internal idle policy over the same stop/launch mechanics; it has no public service method or RPC endpoint.
 
 Each long-running service is an individually identified instance with its own executor, lifecycle and health. There is no capability layer, hidden service group or aggregate service handle. Composition connects instances; it does not hide their identities.
 
@@ -50,7 +51,7 @@ Keep the implementation Effect V4 from the domain inward. Promise is the outer f
 
 Organize by cohesive responsibilities. The package shape is:
 
-- `src/` modules: the instance executor, orchestrator, owner, detached host, networking, persistence, and RPC boundary.
+- `src/` modules: the lifecycle reducer, orchestrator, service execution, owner, detached host, networking, persistence, and RPC boundary.
 - `services/`: one definition per service, owning its configuration, endpoints, launch settings, and readiness. `Catalog.ts` validates and dispatches creation; `Recipe.ts` defines their contract and `ProcessRecipe.ts` shares process mechanics.
 - `composition/Supabase.ts`: default Supabase membership, dependency edges, and input wiring.
 - `host/`: endpoint projections, command execution, and command attachment transport.
@@ -61,7 +62,7 @@ Organize by cohesive responsibilities. The package shape is:
 - `testing.ts`: disposable, composed session stacks for tests, with database checkpoints, in Promise and Effect forms.
 - `Defaults.ts`: shared local-development credentials, exported once as `./defaults`.
 
-This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservations, public sleep APIs, or extra lifecycle states to force this shape.
+This is navigational guidance, not a required file scaffold. Split modules when a responsibility needs it; avoid one folder or interface per operation. Keep service definitions narrow, with graph edges and input wiring in composition. Do not introduce capabilities, projections, recovery journals, reservation mechanisms beyond the machine-wide per-OS-user port registry, public sleep APIs, or extra lifecycle states to force this shape. That registry is the one deliberate reservation and the only saved public-port assignment.
 
 Application services use Effect `Context.Service` and `Layer.effect`; consumers obtain their dependencies from the Effect context. Each owner receives an isolated orchestrator graph. Commands share the host lifetime alongside the owner. Individual executors, recipes, and process handles remain scoped resources because a stack owns multiple independently identified instances.
 
@@ -75,20 +76,20 @@ Use that separation for both backends:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Stopped: register
-    Stopped --> Starting: start or authorized wake
-    Starting --> Running: process launched
-    Starting --> Stopped: launch failed and cleanup confirmed
-    Running --> Stopping: stop, proxy idle sleep, destroy, or unexpected exit
-    Stopping --> Stopped: cleanup confirmed
+    [*] --> Stopped: register (unarmed)
+    Stopped --> Starting: demand or explicit start
+    Starting --> Running: session available
+    Starting --> Failed: launch failed, cleanup confirmed
+    Running --> Stopping: unexpected exit, stop, restart or idle sleep
+    Starting --> Stopping: unexpected exit, stop or restart
+    Stopping --> Failed: unexpected exit, cleanup confirmed
+    Stopping --> Stopped: stop, restart or idle sleep, cleanup confirmed
+    Stopping --> Stopping: cleanup failed, retried on request
+    Failed --> Starting: demand, behind the breaker
+    Failed --> Stopped: explicit stop
     Stopped --> [*]: destroy owned data and registration
 
-    note right of Starting
-        The next lifecycle signal waits.
-        Preparation already completed.
-    end note
     note right of Running
-        Start transition is complete.
         Health is observed separately.
     end note
     note left of Stopped
@@ -97,7 +98,7 @@ stateDiagram-v2
     end note
 ```
 
-The final marker means the registration no longer exists. `destroy` of a running instance follows stop, then removal, within the admitted operation. If runtime cleanup fails, remain stopping with the current process/exit observation and cleanup error; the next stop/restart retries the remaining cleanup. Do not report a dead process as running or unfinished cleanup as stopped. Failed data removal leaves the registration present. Restart composes stop and launch; it does not add a new stable state.
+Each phase after `Stopped` belongs to one generation. The final marker means the registration no longer exists. `destroy` of a running instance stops it, then removes its data under a storage reservation, which it takes once any running storage operation releases it. A generation whose cleanup fails stays stopping, holding its resources; the next stop, restart, start or waiter retries the remaining cleanup. A workload that exits on its own enters `Stopping` at once, so no traffic routes to its dead endpoint while cleanup runs; it counts toward the breaker then, and ends `Failed` once cleanup is confirmed. A dead process is never reported as running, nor unfinished cleanup as stopped. Failed data removal leaves the registration present. Restart composes stop and launch; it adds no stable state.
 
 ### Chart 2: health does not hold the lifecycle gate
 
@@ -112,13 +113,13 @@ flowchart LR
     Stopping -->|cleanup confirmed| Stopped["Lifecycle: stopped"]
 ```
 
-Only running + healthy satisfies a readiness wait. A health failure records an error and leaves the process running; it neither locks the lifecycle nor automatically stops the process.
+Only running + healthy satisfies a readiness wait. A health failure records an error and leaves the process running; it fails the explicit waits that needed it and is re-checked while traffic still waits on it.
 
 **For one service instance, running means its process has launched. It does not mean the application is ready.** Every instance exposes its own observation. Separately observe health: starting, healthy, or unhealthy. A failed launch records its error; unsuccessful cleanup must not be reported as a successful stop. Destroy removes the registration only after stopped resources and owned data are safely removed.
 
-Example: PostgreSQL launches, so its start transition finishes in running. Its initialization and health are still pending. A stop request can now run the ordinary stopping transition; there is no start transition to interrupt. A request arriving during actual launch waits for launch to settle first.
+Example: PostgreSQL launches, so its generation is running. Its initialization and health are still pending. A stop now interrupts only the readiness check and cleans the session. A stop arriving while the runtime is being acquired waits for that acquisition, then cleans what it produced; a stop arriving during preparation abandons it.
 
-Dependency waits and health waits never hold a lifecycle transition open. Artifact preparation completes before the start transition is admitted, as a shared cache operation whose callers may cancel their own wait. Downloads and image pulls cannot run inside the serialized launch transition. Bounded native pre-launch steps such as initdb remain part of launch. Actual launch and stop work have bounded success/failure paths. A timeout is the current transition settling through its own failure handling, not another command pre-empting it.
+Dependency waits and health waits never hold the owner gate or the execution lock. Preparation (artifact downloads and image pulls) runs at the start of each launch, outside the execution lock, and is idempotent. Bounded native pre-launch steps such as initdb remain part of runtime acquisition. Actual launch and stop work have bounded success and failure paths.
 
 ## 2. Ownership, instances and composition
 
@@ -227,88 +228,94 @@ flowchart LR
 
 The `service: "database"` discriminator selects a service definition and its configuration type; it does not name a group or identify a unique instance. Two databases have the same definition kind and different instance IDs. Operations and dependency edges address instance IDs. Short-lived initialization helpers remain implementation details of an operation; they do not justify a hidden hierarchy of long-running services.
 
-## 3. One lifecycle implementation, one graph planner
+## 3. One lifecycle authority per owner
 
-An instance has one serial transition executor. Requests wait until the current transition settles, then revalidate against the resulting state. An already-satisfied request does no runtime work; an explicit stop still updates intent and disables wake as described below. A waiting caller can cancel its wait; an admitted transition belongs to the StackHost and finishes independently of that caller.
+Each owner holds one pure reducer, `Lifecycle.ts`: `reduce(state, event, now)` returns the next state and the commands to execute. It owns every service's intent (eager, lazy or stopped), phase (stopped, starting, running, stopping or failed, each tagged with its generation), work leases, waiters, idle epoch, crash-loop breaker, storage reservation and pending destroy. Every lifecycle writer is an event: explicit start, arm, stop, restart and destroy; traffic admission and release; storage reservation; graph updates; and execution outcomes. No other component holds lifecycle state, so status, admission, storage eligibility and retries all read the same record.
 
-### Interruption and command concurrency
+### The owner gate
 
-An executing instance operation cannot be interrupted or replaced by another command. Start, stop, restart, destroy, export and restore use the same serial execution gate. Internal proxy-triggered sleep also uses that gate. Incoming commands wait, revalidate against the resulting state, then execute. An instance's restart keeps that gate across stop and launch; readiness observation happens afterward. There is no priority-stop path or ownership handoff.
+`Orchestrator.ts` applies events under one gate per owner. One step reduces a batch of events, starts the resulting executions and timers, publishes the new state, then resolves the waiters the step admitted or failed. Executions and timers run outside the gate and report back as events. An event tagged with a generation, idle epoch or breaker cooldown that is no longer current changes nothing, so a late outcome cannot affect a replacement.
 
-```text
-start executing → stop requested → stop waits
-start settles   → stop executes  → stopped
-```
+| Command                             | Executed as                                                          |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `Launch`, `Stop`, `Reprobe`         | A fiber in the owner scope driving that service's execution          |
+| `ArmIdleTimer`, `ArmCooldownTimer`  | A timer that reports `IdleElapsed` or `CooldownElapsed`              |
+| `AdmitConnection`, `FailConnection` | Completing that waiter, after the state it was decided on is visible |
+| `RequestRejected`                   | The requesting caller's failure                                      |
 
-Cancellation has a limited meaning at each boundary:
+Explicit stop and restart wait on the reducer state itself: a stop completes when its generation leaves `stopping`, and fails while that generation's cleanup is pending.
 
-| Caller activity                                        | Effect of cancellation                                                                                        |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Preparing artifacts or waiting for execution admission | Abandon this request before its lifecycle operation begins; shared preparation may continue for other callers |
-| Waiting for an executing instance operation            | Stop waiting; the StackHost finishes the operation and its cleanup                                            |
-| Waiting for readiness or following logs                | End the observation without changing lifecycle                                                                |
-| Running an attached command invocation                 | Terminate and clean up that invocation                                                                        |
+### The execution boundary
 
-A service is stopped by an explicit stop command, not by a disconnected caller. Launch completes at running, so stop during health-starting uses the ordinary stop operation. If the launch ends while a caller awaits readiness, that observation fails rather than attaching to a later launch.
+`Service.ts` executes one generation at a time and owns its resources from before preparation until cleanup is confirmed. A launch prepares, acquires the runtime under the service's execution lock, reports the live session, then runs the readiness check. A stop fences its generation under the same lock, so a launch of that generation that has not acquired its runtime never will; it then interrupts the attempt while it prepares or checks readiness, and cleans only that generation's session, never a newer one. Every outcome is reported: `SessionAvailable`, `LaunchSucceeded`, `ReadinessLost`/`ReadinessRecovered`, `LaunchFailed`, `SessionLost` as soon as a runtime exits on its own, and `Exited` once cleanup is confirmed, or `StopFailed` while resources are still held.
 
-A pending orchestration plan is different from an executing transition: stopping REST while its start request waits for database readiness must prevent the old request from later launching REST. The intent revision described below handles this one stale-request check. It does not interrupt an admitted operation.
+A generation whose cleanup failed stays `stopping` with its cleanup failure recorded. Nothing launches and no storage operation is admitted while it holds resources, and its waiters fail with the cleanup error. The next explicit stop, restart or start, or the next waiter, retries only the remaining cleanup.
 
-Independent instances execute concurrently. Admission and dependency validation use short coordination sections; downloads, readiness probes, process operations and snapshots do not hold a global execution lock. Each operation settles through success or its own timeout/failure handling and cleanup. Process crashes and owner loss remain possible; report unavailable observations or cleanup errors rather than claiming success. Crash recovery is outside this design. This ownership rule does not require one blanket uninterruptible region around all Effect code.
+### Waits and cancellation
 
-### Chart 3: dependency awareness lives in the orchestrator
+| Caller activity                         | Effect of cancellation                                                 |
+| --------------------------------------- | ---------------------------------------------------------------------- |
+| Waiting for the owner gate              | Leave without dispatching anything                                     |
+| Waiting for traffic admission           | Withdraw the waiter; a lease already granted is released               |
+| Waiting for an explicit operation       | Withdraw the wait; the admitted execution continues in the owner scope |
+| Waiting for readiness or following logs | End the observation without changing lifecycle                         |
+| Running an attached command invocation  | Terminate and clean up that invocation                                 |
 
-Here stack composition has wired the primary database’s connection URL into REST configuration and declared a readiness dependency. The caller composes `start` and `ready`, as a CLI command that needs a usable service would. The service executors never call each other. With an external database URL, the managed database branch is absent.
+Each waiter has a kind. A `traffic` waiter carries a lease and holds through a breaker cooldown. An `explicit` waiter (start, ready, restart, composition start) opens no lease and fails fast with its target's or a prerequisite's outcome when that fails, loses readiness or fails its cleanup; it waits without a budget or cap. The reducer holds no clocks for waiters. The orchestrator enforces the wake budget, 120 seconds by default, with one timeout around the whole traffic wait, from the client's arrival through the gate wait and the wait for readiness. On expiry it withdraws the waiter, which releases any lease already granted, and fails only that caller with the stage it was blocked on; the shared launch continues. At most 256 traffic waiters queue per service; beyond that, admission fails at once.
+
+A service is stopped by an explicit stop, never by a disconnected caller.
+
+### Demand, admission and readiness
+
+A service has demand while it holds leases or waiters, after an explicit start, while it is eager and has not failed, or while any transitive dependent has demand or is starting, running or stopping. Demand launches a stopped or failed service whose intent is not stopped and whose prerequisites are ready. A failed eager service relaunches only on new demand, so a broken launch is not retried in a loop.
+
+Admission requires the target and its whole prerequisite closure to be ready. An inspector acquisition needs only a live target session. A readiness failure is not terminal: the session keeps running, and the waiters that awaited that readiness itself, or explicitly through a dependent, fail with its error. While any other waiter is still blocked on it, the reducer keeps re-checking that generation, one check at a time and one second apart after a failed re-check, until it recovers, its generation ends or no waiter needs it; the waiters' budgets bound how long that lasts. Losing a prerequisite never replaces a healthy dependent; a crashed prerequisite with running dependents relaunches because they keep demand on it.
+
+A destroy that holds its storage reservation owns the service: removing it from the graph succeeds even while work leases are outstanding, and a lease released afterwards is ignored.
+
+### Crash-loop breaker
+
+Each launch failure or unrequested exit counts once per generation. Three failures, each within five minutes of the previous one, open the breaker for a fixed 30 seconds; a failure after a longer quiet spell starts a new count. While open, admission fails at once naming the last cause; the cooldown's end re-admits one shared recovery attempt, and a further failure reopens it for the same 30 seconds. An explicit start, restart or composition start resets the breaker.
+
+### Chart 3: dependency awareness lives in the reducer
+
+Here stack composition has wired the primary database's connection URL into REST configuration and declared a readiness dependency. The service executions never call each other.
 
 ```mermaid
 sequenceDiagram
     participant Caller
-    participant O as Orchestrator
-    participant DB as Database executor
-    participant REST as REST executor
+    participant O as Owner gate and reducer
+    participant DB as Database execution
+    participant REST as REST execution
 
-    Caller->>O: Start REST and wait for readiness
-    O->>O: Read composition edge and input mapping
-    O->>DB: Start
-    DB-->>O: Running; health still starting
-    Note over DB: Launch transition has finished
-    O->>DB: Await readiness of this launch
-    Note over O,DB: Observation only; lifecycle remains available
-    DB-->>O: Healthy
-    O->>O: Revalidate target intent and graph
-    O->>REST: Start with ordinary database URL input
-    REST-->>O: Running; health still starting
-    O->>REST: Await readiness of this launch
-    REST-->>O: Healthy
-    O-->>Caller: REST ready
+    Caller->>O: StartRequested(REST) and a readiness wait
+    O->>DB: Launch(generation 1)
+    Note over O: REST has demand but its prerequisite is not ready
+    DB-->>O: SessionAvailable, then LaunchSucceeded
+    O->>REST: Launch(generation 1) with the resolved database URL
+    REST-->>O: SessionAvailable, then LaunchSucceeded
+    O-->>Caller: Waiter admitted
 ```
 
-If the prerequisite stops or readiness fails, the wait fails and REST is not launched. The wait does not reserve a long-running start transition. Deliberate stop still goes through the orchestrator's graph checks.
+If the database fails, loses readiness or fails its cleanup, the explicit wait fails and REST is not launched.
 
-The orchestrator performs a few graph operations:
+The reducer applies a few graph rules:
 
-| Operation | Rule                                                                                                                                                                                |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Start     | Start declared prerequisite instances; await their health; launch the selected instance                                                                                             |
-| Stop      | Admit only when every dependent is stopped with wake disabled, regardless of batch selection; composition stops dependents first                                                    |
-| Restart   | Individual restart follows the same stop check, then launches; composition restart stops in reverse dependency order, then starts dependency-gated members concurrently             |
-| Sleep     | Require proxy inactivity and no running/starting dependent                                                                                                                          |
-| Destroy   | Reject while any registered dependent still references the instance; composition/namespace destruction removes dependents first, then performs ordinary stop and owned-data removal |
+| Operation | Rule                                                                                                                                                                                                                                                                                                           |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start     | Arm the target and its prerequisites; demand launches each prerequisite, then the target once they are ready                                                                                                                                                                                                   |
+| Stop      | Reject while any transitive dependent has demand, is up or winding down, or is still armed; composition stops dependents first                                                                                                                                                                                 |
+| Restart   | The same dependent check, then stop and relaunch; composition restart stops in reverse dependency order, then performs composition start                                                                                                                                                                       |
+| Sleep     | An armed lazy service sleeps after its idle timeout once it is ready and has no demand, including demand from its dependents                                                                                                                                                                                   |
+| Destroy   | Reject while a dependency edge still references the instance; then the ordinary stop, a storage reservation for data removal taken once any storage operation releases it, and the graph update removing it. A pending destroy refuses new starts, restarts and storage operations; any other exit gives it up |
 
-For stop/restart, a running, starting, stopping or wake-armed dependent blocks prerequisite shutdown until that dependent has stopped and settled. Batch membership never bypasses this check. For sleep, a dependent that is already sleeping does not prevent prerequisite sleep. These are admission checks under the same short graph coordination boundary, not long-lived reservations.
+Validate composition references, input/output types and cycles when registering or changing the graph. Wiring uses only a source instance ID and named output mapped to a target instance ID and named configuration input. The service catalog declares those input/output schemas. There is no expression language, arbitrary callback or general JSON-path evaluator. Resolve bindings into ordinary configuration at launch. Bind references to immutable instance IDs, not names. Derive ordering from this one graph. A graph change requires every affected instance to be stopped and unarmed, and the reducer's verdict is checked before the change is persisted.
 
-Validate composition references, input/output types and cycles when registering or changing the graph. Wiring uses only a source instance ID and named output mapped to a target instance ID and named configuration input. The service catalog declares those input/output schemas. There is no expression language, arbitrary callback or general JSON-path evaluator. Resolve bindings into ordinary configuration before handing it to the service. Validate each service’s configuration separately from that graph. Bind references to immutable instance IDs, not names. Derive ordering from this one graph; do not maintain separate capability and instance lifecycle graphs.
+Composition start first assigns or reuses and binds every configured public listener of its selected members, including lazy members, and registers their routes. One worker per member then waits for its prerequisites' outcomes: a lazy member is armed (also after a prerequisite failed), and an eager member is started and awaited for readiness, or reported as blocked when a prerequisite failed. Prerequisites outside the configured members run as eager standalone instances. It does not select unrelated standalone instances. Successful start returns member observations with their public endpoints; credentials reads render usable connection strings from these assignments without starting lazy backends. A failed launch or readiness check makes the operation return an error with per-instance outcomes; a running but unhealthy instance remains running, and completed steps are not rolled back.
 
-**Readiness waiting is observation, not a transition.** If PostgreSQL stops while REST is waiting for its health, the wait fails and REST does not launch. It does not restart PostgreSQL or continue using a stale ready result. Readiness is associated with the exact runtime launch.
+After binding the shared API listener, default composition setup uses the endpoint renderer to populate ordinary configuration values: Studio receives `apiUrl` and `publicApiUrl`, Auth receives `externalApiUrl`, and Functions receives `apiUrl`. When the database has a configured SQL endpoint, Functions also receives its rendered `databaseUrl`; this saved value is refreshed when callers recompose the composition, and does not create a database readiness dependency for Function execution. These values are saved in each instance's configuration; individual starts and normal host reopening consume that configuration. This is concrete default setup code, not declarative input wiring or a public listener-binding API. The endpoint renderer owns the host/runtime reachability rules; custom configurations supply plain URLs through the same inputs. URL values do not imply graph edges.
 
-Before launching a dependent, atomically check its prerequisites, verify its own intent revision is unchanged since the request began, and mark its transition starting. Explicit stop advances that revision and disables wake even if no process exists yet; an older request still preparing artifacts or waiting for dependencies cannot launch afterward. This revision fences unadmitted work; it never interrupts an executing transition. This closes the race between dependency validation and another command stopping the prerequisite. Do not reserve an entire composition or acquire a set of batch locks. Each instance operation waits for its own gate and rechecks the current graph and observations on admission. If another caller starts a dependent between two batch steps, stopping the prerequisite is rejected and the batch reports partial results. A stale start plan cannot resume after another operation stops or replaces its prerequisites.
-
-Independent instances still execute concurrently. A shadow startup or snapshot must not block Functions restart. Serialize only short in-memory admission decisions and durable writes; never hold the graph decision boundary while downloading, starting processes, probing health, archiving data or writing files. Gateway traffic on unrelated ready instances must not wait behind a state write.
-
-Composition and namespace methods select instances and call these same operations. Default composition start first assigns/reuses and binds every configured public listener needed by its selected members, including lazy members, and registers their routes. It then starts one dependency-gated worker per selected instance, including prerequisites outside the configured members; independent branches overlap, and outcomes remain in topological order. Eager members launch only after all immediate prerequisites are healthy. Lazy routes arm after their prerequisites settle, including when a prerequisite fails; an eager descendant with a failed prerequisite is reported as blocked and is not launched. It does not select unrelated standalone instances. Successful start returns member observations with their public endpoints; credentials reads render usable connection strings from these assignments without starting lazy backends. It awaits readiness for every launched eager member, including leaves. A failed launch or readiness check makes the operation return an error with per-instance outcomes; a running-but-unhealthy instance remains running, and already completed steps are not rolled back. Armed lazy members need not launch unless required by an eager member.
-
-After binding the shared API listener, default composition setup uses the endpoint renderer to populate ordinary configuration values: Studio receives `apiUrl` and `publicApiUrl`, Auth receives `externalApiUrl`, and Functions receives `apiUrl`. When the database has a configured SQL endpoint, Functions also receives its rendered `databaseUrl`; this saved value is refreshed when callers recompose the composition, and does not create a database readiness dependency for Function execution. These values are saved in each instance's configuration alongside the saved listener assignment; individual starts and normal host reopening consume that configuration. This is concrete default setup code, not declarative input wiring or a public listener-binding API. The endpoint renderer owns the host/runtime reachability rules; custom configurations supply plain URLs through the same inputs. URL values do not imply graph edges.
-
-Composition restart is two passes: stop the selected instances in reverse dependency order, then perform dependency-gated composition start according to eager/lazy policy. It is not a loop of individual `restart()` calls. If the stop pass fails, report partial results without beginning the start pass. Cancelling composition interrupts its waits and work not yet admitted; already admitted instance operations continue to settle in their owner scope, and launched instances remain until an explicit stop or owner close. Readiness does not hold an instance gate or a composition-wide reservation. Explicit empty selection is a no-op; there is no generic rollback engine.
+Composition restart is two passes: stop the selected instances in reverse dependency order, then perform composition start. If the stop pass fails, report partial results without beginning the start pass. Cancelling composition withdraws its waits; admitted executions continue in the owner scope, and launched instances remain until an explicit stop or owner close. Explicit empty selection is a no-op; there is no generic rollback engine.
 
 ## 4. Recipes own runtime details
 
@@ -320,9 +327,9 @@ A successful launch returns an owned runtime handle with readiness observation a
 
 The database keeps only the initialization information needed to reuse its data on a normal stop/start. Mark initialization complete only after it succeeds. If an ordinary stop interrupts application initialization, the recipe must either support a safe retry or report that initialization is incomplete; do not add a generic persisted operation journal or recovery workflow.
 
-Unexpected process exit is observed by the living host. Immediately disable forwarding and automatic wake for that instance and record its exit result. The executor uses the ordinary serialized stop/remove cleanup for the exact owned runtime handle, reaching stopped only after cleanup succeeds. Stop cannot be a no-op while runtime resources remain; start/restart must finish that cleanup before launching a replacement. If exit occurs during an executing transition, that transition settles and the same gate orders any remaining cleanup; no transition is pre-empted. Old-handle events cannot affect a replacement. This adds no Exited lifecycle state and no cleanup scanner: the host already owns the handle and its exit observation.
+Unexpected process exit is observed by the living host. The execution records the exit result, cleans the exact owned session under its execution lock, and reports the exit once cleanup is confirmed, or a cleanup failure while resources remain. Nothing launches a replacement while resources are held. Old-handle events cannot affect a replacement. This adds no cleanup scanner: the host already owns the handle and its exit observation.
 
-There is **no automatic restart, continuous dependency shutdown cascade, or self-healing controller**. A crashed service stays stopped until explicit start/restart. A wake operation may use a running prerequisite or launch a stopped prerequisite whose wake route is armed; an explicitly stopped or unexpectedly exited prerequisite makes wake fail. Only an explicit start may launch those prerequisites. Explicit composition startup can arm initially lazy instances, and sleep retains that permission; unexpected exit removes it. Existing dependents may observe connection failures, as they can with Compose. Deliberate lifecycle changes still obey graph checks.
+A crashed service stays armed. Demand relaunches it behind the crash-loop breaker; a crashed prerequisite with running dependents relaunches because they keep demand on it. There is no continuous dependency shutdown cascade: existing dependents may observe connection failures until it is back, as they can with Compose. An explicitly stopped prerequisite makes wake fail. Deliberate lifecycle changes still obey graph checks.
 
 ## 5. Sleep stays simple
 
@@ -332,9 +339,9 @@ There is **no automatic restart, continuous dependency shutdown cascade, or self
 - The idle timer and wake route belong to one instance. Sleep stops that instance after the ordinary dependency checks, retains its data and keeps its wake route armed. It does not implicitly stop companion instances. Instances without a supported public wake route remain running until explicitly stopped; no group sleep mechanism is introduced.
 - The next request starts the instance through the orchestrator, ensuring its declared prerequisites are ready, then waits for its own health before forwarding.
 - Explicit stop disables wake. Traffic never reverses it.
-- If a prerequisite's sleep is blocked by a running dependent, recheck its existing idle eligibility when that dependent sleeps/stops. No new activity heuristic is needed.
+- A prerequisite stays awake while any dependent has demand or is starting, running or stopping. Once the dependent's stop is confirmed, the prerequisite idles on its own timeout.
 
-Sleep is therefore ordinary stop mechanics plus an armed wake route. There is no separate sleep runtime. Activity acquisition and sleep admission must make one atomic in-memory decision so sleep cannot race a request. A request that arrives after sleep was admitted waits for it to finish, then wakes the instance.
+Sleep is therefore ordinary stop mechanics plus an armed wake route. There is no separate sleep runtime. The idle timer carries an epoch that any new admission advances, so a request admitted before the reducer commits the sleep keeps the instance running. A request that arrives after the sleep was committed waits for the confirmed stop, then is served by the next generation.
 
 ### Chart 4: sleep, stop and destroy have different retained state
 
@@ -351,9 +358,9 @@ flowchart TB
     Stopped -->|explicit start| Start["Orchestrator starts selected services<br/>Reuses saved public ports"]
 ```
 
-Sleep retains the public listener needed to wake. Whole-stack stop closes listeners while preserving saved assignments; the next start rebinds the same ports. Destruction releases only the removed instance's owned assignments, not unrelated services' shared listeners or claims.
+Sleep retains the public listener needed to wake. Whole-stack stop closes listeners and releases pinned reservations while preserving automatic ones; the next start rebinds the same ports. Destroying an individual instance deletes only the registry rows it owns, not unrelated services' shared listeners or rows; a stack-wide destroy deletes its rows only after the registration is removed, so a failed destroy keeps the automatic ones (a configured port's row is released when its listener closes) and a failed release leaves them for lazy reclamation.
 
-Composition validation permits lazy activation only for instances with a configured public wake endpoint. A route-less prerequisite, such as pg-meta without its own public endpoint, is eager; it is not implicitly armed through a dependent. This avoids a second wake-permission mechanism. Internal sleep is available only for instances with a supported public wake route and an enabled idle policy. Database and Functions need no automatic idle timer by default. Functions inspector access remains possible while health is starting; ordinary application traffic waits for healthy.
+Composition validation permits lazy activation only for instances with a configured public wake endpoint. A route-less prerequisite, such as pg-meta without its own public endpoint, is eager; it is not implicitly armed through a dependent. This avoids a second wake-permission mechanism. Internal sleep is available only for lazy instances with a supported public wake route and an enabled idle policy. The default composition gives every lazy service one, Functions included; the database is eager. Functions inspector access remains possible while health is starting; ordinary application traffic waits for healthy.
 
 ## 6. Commands share execution, not service lifecycle
 
@@ -470,8 +477,7 @@ stateDiagram-v2
     Serving --> Serving: clients connect or disconnect
     Serving --> Serving: instances start, stop or sleep
     Serving --> Draining: host.stop or host.destroy
-    Draining --> Exited: operations settled and cleanup complete
-    Draining --> Serving: cleanup failed; report error and retain ownership
+    Draining --> Exited: cleanup complete, or failed and reported
     Exited --> [*]
 ```
 
@@ -483,9 +489,13 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach. `create({ startOwner: true })` registers a detached stack through its owner the same way; an owner whose startup fails removes the registration it made, so a failed or interrupted first launch leaves no stack behind.
 
-**Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. A stack whose directory, and with it its lease, was deleted is visited the same way when containers labelled with its data root in this state root remain on an engine the root's stacks use. Only those containers are removed, even while an owner of that stack still runs; its data in the root's shared database volume stays, and starting the stack again waits for the visit to end. `findDeleted` selects any stack that is no longer registered and still has such containers, such as one whose directory was deleted, by its full id, so a client can destroy those containers the same way. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
+**Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. A container-runtime owner also visits stacks that have no registration but left containers labelled with this state root on its pinned engine, such as when their directory was deleted, under the same lease and unregistered check, and removes only those containers; the stack's data in the shared database volume stays. `findDeleted` selects such a stack by its full id, so a client can destroy those containers on demand. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first. The sweep also removes the empty `<id>/` and `data/` directories a destroy leaves behind, once they are over ten minutes old and hold nothing else.
 
-**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
+**Lost ownership.** The orphan sweep above covers a dead owner whose registration survives; the opposite case is a live owner whose registration disappears out from under it (the stack directory or state root is deleted, moved or unmounted, possibly followed by a new start of the same stack). Every owner polls on an interval (30 seconds by default) and treats its ownership as ended when `<stateRoot>/<id>/state.json` is confirmed missing (ENOENT) or `owner.lock` at its path is no longer the file its lease locked. Any other read error keeps the owner running and logs a warning. When ownership ends, the owner stops what it launched once any stop already running settles, closes its listeners and exits. It does not destroy instance data, sweep labels or write the registry, and it retracts `owner.json` only while the lock file at its path is still its own, so a successor owner's lease is never disturbed. Closing the listeners releases the reservations of configured ports; automatic reservations are kept. A stop already running when the directory is deleted and the same stack restarted can still sweep the successor's containers by label. Leftovers of a stack whose directory is gone are reclaimed by the existing paths: the next container owner's sweep of unregistered labelled stacks, lazy reclamation of reservations whose registration is gone, and `destroy --stack-id`. Docker database data in the shared volume of such a stack is not reclaimed.
+
+**Engine targets.** A container stack's owner pins the engine target it resolves at startup, so every command it runs reaches the same engine. The target is not saved with the stack: an owner started after the Docker context or `DOCKER_HOST` changed resolves the new target, and containers left on the previous engine are not reached from there; switch back to clean them up. Docker pins `DOCKER_HOST` as `--host`, else the current context. Podman pins `CONTAINER_HOST` as `--url`, else `CONTAINER_CONNECTION` as `--connection`; with neither set, a bare `podman info` decides whether the engine is local or remote. A remote engine (macOS `podman machine`) pins the default system connection by name, and a local one adds no flags. On rootless Podman, containers that run as the caller's uid with writable borrowed bind mounts get `--userns=keep-id` so files stay owned by the caller. Containers reach host listeners through the engine's host alias, `host.docker.internal` or `host.containers.internal`.
+
+**Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon or service not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then fails with that reason, leaving the registration, port reservations and host data untouched; run it again once the engine is reachable. `stop` without a live owner takes the same lease and reclaims the registered stack's leftovers (the orphan-sweep path: containers, plus destruction of a session stack) before succeeding; it fails if another process holds the lease or the cleanup fails, and so needs the engine for a container stack.
 
 During Serving, keep the owner alive independently of callers. Sleeping instances still need its public listeners. This is process lifetime management, not automatic service restart or continuous reconciliation.
 
@@ -493,20 +503,36 @@ Where the platform delivers SIGTERM or SIGINT to the host, treat it as the same 
 
 During Draining:
 
-1. Close admission to new mutations and proxy wake requests.
+1. Close admission to new mutations and to proxy traffic that would wake a service at rest.
+   Traffic to starting or running services stays admitted.
 2. Reject queued work that has not begun.
 3. Let executing instance operations settle.
-4. Cancel and settle attached commands and stop owned services through their existing operations.
+4. Cancel and settle attached commands and stop owned services in reverse dependency order,
+   with every listener still open (ordered stop, below).
 5. For destruction, remove proven-owned data and metadata after shutdown.
 6. Send the outcome, close the control endpoint and release ownership.
 
-**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the live host retains ownership for inspection and retry; the stack is not reported stopped. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and saved port assignments. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
+**Ordered stop.** Stop and destroy close no listener up front. Public and internal
+dependency traffic share the same listeners, so a dependent's graceful stop still reaches its
+prerequisite through the stack proxy while it is running. Services stop in reverse dependency order, and each listener closes once its own
+service has stopped, through the ordinary scope teardown. Traffic that would wake a service at rest
+is refused for the whole shutdown. Accepted, documented tradeoff: the proxy offers no completion
+window, so an in-flight request survives only as far as its service's own graceful stop carries it,
+and a slow client can lose a response.
+
+**Draining is one-way.** The host holds the single serving/draining fact; the owner reads it for
+admission. Once a stop or destroy begins, the
+owner never serves again. A failed stop or destroy reports its error, the stack stays registered
+with uncertain state, and the owner exits. The next stop or destroy finds no owner and reclaims
+the stack under its lease.
+
+**Successful whole-stack shutdown.** `stack.stop()` reports success only after admitted work settles, every owned live service and command workload has stopped (including native processes, descendants and containers labeled with this stack and data root), stack listeners close with their services, the shutdown request is acknowledged, and the detached host's exit is confirmed. If workload cleanup cannot be confirmed, stop fails and the host exits without resuming service; the stack is not reported stopped and remains registered for the next stop or destroy to reclaim. If cleanup succeeds but host exit cannot be confirmed, stop also fails, though the host may already have exited. A delivered SIGTERM or SIGINT follows this cleanup path. Stop preserves stack definitions, service data, caches and port reservations. `destroy` follows the same live-workload cleanup, then removes only proven-owned persistent data.
 
 The client captures the live owner PID from the validated identity endpoint or readiness handshake, completes the shutdown request, then performs bounded process-existence checks. An absent PID confirms exit; a permission-denied probe remains inconclusive until the deadline. Failure to confirm exit is a `shutdown-exit` error carrying the PID in its message, even when workload cleanup has already succeeded. This does not require persisted PID records or forceful termination. Caller cancellation ends its wait without cancelling admitted owner cleanup.
 
 Callers must not start or restart the same stack concurrently with whole-stack shutdown. In particular, replacing an owner between identity lookup and the shutdown request is outside this guarantee. Parallel stacks with separate identities remain independent. Client disposal and Effect scope closure do not implicitly stop a detached stack; disposable fixtures register explicit destruction or use a session stack, which closing its creating handle destroys.
 
-Returning to Serving after cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. Native launchers stop their process groups when the dead host's pipe closes. The next host startup for that stack sweeps its containers without removing volumes or saved definitions, and any host start in the same state root sweeps them in the background, also destroying the stack if it is a session stack. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
+A cleanup failure does not undo completed cleanup. Unexpected host death does not resume interrupted operations or restore live service state. Native launchers stop their process groups when the dead host's pipe closes. The next host startup for that stack sweeps its containers without removing volumes or saved definitions, and any host start in the same state root sweeps them in the background, also destroying the stack if it is a session stack. A forced host termination does not guarantee immediate container cleanup. A lost control response is reported as uncertain; do not blindly retry a mutation.
 
 ### Request lifetime is separate from execution lifetime
 
@@ -516,16 +542,16 @@ Once an instance operation starts executing, the host owns it until settlement. 
 sequenceDiagram
     participant Client
     participant RPC as RPC handler
-    participant Executor as Host-owned executor
+    participant Executor as Owner gate and executions
     Client->>RPC: service.start(id)
-    RPC->>Executor: Submit start
-    Executor->>Executor: Admit and execute launch
+    RPC->>Executor: StartRequested and a readiness wait
+    Executor->>Executor: Reduce and launch in the owner scope
     Client--xRPC: Client disconnects
-    Note over RPC: Caller stops waiting
-    Note over Executor: Executing operation continues
-    Executor->>Executor: Record running or failure
+    Note over RPC: Caller's wait is withdrawn
+    Note over Executor: Launch continues
+    Executor->>Executor: Reduce the reported outcome
     Client->>RPC: Reconnect; service.status(id)
-    RPC->>Executor: Read observation
+    RPC->>Executor: Read status
     Executor-->>RPC: Current state
     RPC-->>Client: Current state
 ```
@@ -536,16 +562,17 @@ Attached commands have a separate contract. `runCommand` streams `started(jobId)
 
 ## 8. Keep safety infrastructure at its boundary
 
-### Instance observations are the runtime source of truth
+### The reducer state is the lifecycle source of truth
 
-Each instance owns one observable runtime state. Its executor updates lifecycle and current operation; runtime observations update health, exits and errors. `service.status`, `service.followStatus`, dependency readiness checks and CLI presentation consume those same observations. Endpoint availability comes from the component that owns the listener. The StackHost transports these observations without maintaining another lifecycle copy.
+Lifecycle and health come from the owner's reducer state; the service execution adds only execution facts: configuration, the last error, a pending cleanup error, the exit result and the current operation. `service.status` and `service.followStatus` join the two, and admission, dependency readiness and CLI presentation read the same state. Endpoint availability comes from the component that owns the listener. The StackHost transports these observations without maintaining another lifecycle copy.
 
 ```mermaid
 flowchart LR
-    Executor["Executor transitions"] --> Instance["Instance observation"]
-    Runtime["Health and process events"] --> Instance
-    Instance --> RPC["status and followStatus"]
-    Instance --> Dependencies["Orchestrator readiness checks"]
+    Outcomes["Execution outcomes and requests"] --> Reducer["Reducer state"]
+    Execution["Execution facts"] --> Status["Instance status"]
+    Reducer --> Status
+    Reducer --> Admission["Admission and readiness"]
+    Status --> RPC["status and followStatus"]
     RPC --> CLI["CLI display"]
 ```
 
@@ -553,19 +580,19 @@ A composition returns the observations of its members. Remove the separate capab
 
 ### Persist only what normal stop/start needs
 
-Retain stack/instance identity, service configuration and selected versions, composition membership/wiring, credentials, public port assignments and the service-specific information needed to reopen the data. Derive stack and instance data locations from the state root and saved identities rather than persisting duplicate paths. Keep the data itself across stop. Shared port claims remain necessary for stickiness across parallel stacks. The active host's exclusive lease prevents competing owners; it is not a crash-recovery subsystem.
+Retain stack/instance identity, service configuration and selected versions, composition membership/wiring, credentials and the service-specific information needed to reopen the data. Derive stack and instance data locations from the state root and saved identities rather than persisting duplicate paths. Keep the data itself across stop. Public port assignments are not part of the stack document: the machine-wide port registry (`ports.sqlite`) holds the only saved assignment and keeps ports sticky across parallel stacks. The active host's exclusive lease prevents competing owners; it is not a crash-recovery subsystem.
 
 Do not persist health, runtime lifecycle projections, transition progress, command queues, operation results or recovery checkpoints. A disconnected caller can reconnect to the same living host; resuming after host death is not part of the contract. Incomplete operations and leftover resources after a crash may require manual cleanup, without automatic deletion of valuable data.
 
 Some foundations are not optional, but they do not need to dominate the service model:
 
-| Foundation | Keep                                                                                                                                        |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity   | Stack and instance IDs; deterministic names and paths for their resources                                                                   |
-| Ownership  | One detached StackHost and exclusive lease; client handles do not own service lifetime                                                      |
-| Ports      | Persist public port assignments across stop/start; reuse the same ports, including initially automatic assignments; never silently relocate |
-| Data       | Stop retains data; destroy removes only proven owned data                                                                                   |
-| Snapshots  | DB-specific keyed save, compatible empty-target restore, complete entry publication and credential reconciliation                           |
+| Foundation | Keep                                                                                                                          |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Identity   | Stack and instance IDs; deterministic names and paths for their resources                                                     |
+| Ownership  | One detached StackHost and exclusive lease; client handles do not own service lifetime                                        |
+| Ports      | Persist automatic port assignments across stop/start; a pinned port is reserved only while listening; never silently relocate |
+| Data       | Stop retains data; destroy removes only proven owned data                                                                     |
+| Snapshots  | DB-specific keyed save, compatible empty-target restore, complete entry publication and credential reconciliation             |
 
 ### Port allocation and endpoint ownership
 
@@ -587,7 +614,7 @@ A shared listener is a networking resource, not a capability or service group. C
 
 A lazy database already has a bound SQL proxy listener and a concrete connection URL; lazy REST already has its path on the bound shared API listener. Their backend processes may still be absent. The first request launches the needed backends, waits for readiness and forwards through the already published endpoint. Backend address allocation can wait until that launch; public port assignment cannot. If a required listener cannot bind, startup returns an error with partial outcomes rather than reporting successful startup with unusable URLs.
 
-A host-wide allocation registry coordinates claims across parallel stacks, including stopped instances and stacks. Before first listener activation, obtain an assignment and bind it. Automatic allocation excludes managed claims and tries to bind an available candidate. Persist the assignment before advertising it and retain that socket; do not probe then release it. Later activations bind the saved port. Fixed requests obey the same ownership and binding checks.
+A host-wide allocation registry coordinates claims across parallel stacks. Before first listener activation, obtain an assignment and bind it. Automatic allocation excludes managed claims and tries to bind an available candidate. Reserve the assignment in the registry before advertising it and retain that socket; do not probe then release it. Later activations bind the saved port. An automatic assignment stays reserved while its stack is stopped. A configured (pinned) port is reserved only while its listener is open, so a stopped stack blocks no other project; the endpoint's address always comes from the configured number, never from the registry. A pinned port inside the native backend range is rejected. A conflict names the port and, for a registry holder, its project and the commands that free it.
 
 ```mermaid
 flowchart LR
@@ -598,18 +625,18 @@ flowchart LR
     Runtime["Native or container runtime"] -.-> Backend
 ```
 
-| Operation              | Dedicated instance listener                                     | Route on a shared listener                                 |
-| ---------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| Start                  | Bind saved port and connect backend                             | Enable this route and bind the saved shared port if needed |
-| Restart                | Retain assignment and update target                             | Retain shared assignment and update this route's target    |
-| Sleep                  | Keep listener for wake                                          | Keep route armed for wake                                  |
-| Stop                   | Close listener; retain claim                                    | Disable this route; leave other routes alone               |
-| Instance destroy       | Remove endpoint and release its claim                           | Remove this route; retain the stack-owned listener claim   |
-| Namespace stop/destroy | Close all listeners; stop retains claims, destroy releases them | Same rule                                                  |
+| Operation              | Dedicated instance listener                                               | Route on a shared listener                                 |
+| ---------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Start                  | Bind saved port and connect backend                                       | Enable this route and bind the saved shared port if needed |
+| Restart                | Retain assignment and update target                                       | Retain shared assignment and update this route's target    |
+| Sleep                  | Keep listener for wake                                                    | Keep route armed for wake                                  |
+| Stop                   | Close listener; retain an automatic claim                                 | Disable this route; leave other routes alone               |
+| Instance destroy       | Remove endpoint and release its claim                                     | Remove this route; retain the stack-owned listener claim   |
+| Namespace stop/destroy | Close all listeners; stop retains automatic claims, destroy releases them | Same rule                                                  |
 
-A shared listener stays bound while any route is running or armed. When no route needs it, its socket may close while its stack-owned claim remains. Removing the final route does not release that claim; namespace destruction or explicit listener reconfiguration does. Sleeping routes still need the listener.
+A shared listener stays bound while any route is running or armed. When no route needs it, its socket closes; an automatic claim remains, a pinned one is released with the socket. Removing the final route does not release an automatic claim; namespace destruction or explicit listener reconfiguration does. Sleeping routes still need the listener.
 
-**Public port stickiness is a retained contract.** Sleep/wake, stop/start, restart and host reopening preserve every established assignment, including the shared API port. Other managed stacks cannot take retained claims. An unrelated process may occupy a saved port while its socket is closed; the next activation reports a conflict and preserves the assignment, never silently relocating it. A destroyed and recreated instance has a new identity and receives a new dedicated allocation.
+**Public port stickiness is a retained contract for automatic assignments.** Sleep/wake, stop/start, restart and host reopening preserve every established automatic assignment, including the shared API port. Automatic allocation never takes another stack's retained claim. A pinned port is the configuration's own number, so it needs no retention; its registry row exists only while the listener is open, and a pinned request reclaims a row whose stack has no live owner (a free owner lease), such as after a crash or reboot. If that row was a stopped stack's automatic assignment, that stack receives a new automatic port on its next start. An unrelated process may occupy a saved port while its socket is closed; the next activation reports a conflict and preserves the assignment, never silently relocating it. A destroyed and recreated instance has a new identity and receives a new dedicated allocation.
 
 Standalone and composed instances use the same allocator. Two shadow databases have separate IDs, data and dedicated listeners. Composition membership does not change listener ownership. The runtime reports the backend address; the proxy updates its target without altering the public assignment.
 
@@ -654,8 +681,8 @@ The owner is the only subscriber of each instance's output and persists it as re
 - **Retention:** the oldest closed segments except the newest are deleted while an instance holds
   more than 10 MiB or 64 segments. A failed deletion is retried at the next rotation, with one
   warning until a pass succeeds.
-- **Launch ids:** keep increasing across owner starts, since each saved instance records its latest
-  one; an instance saved without one continues after the launch ids at the end of its newest segment.
+- **Launch ids:** keep increasing across owner starts: an instance continues after the launch id at
+  the end of its newest segment.
 - **Lines:** state is kept per launch, process and stream. A late partial line of an ended launch
   waits for its newline for two seconds of quiet, or until the store closes.
 - **Loss:** chunk sequence numbers span a launch's streams and processes, so any dropped chunk
@@ -700,7 +727,7 @@ launch changes.
   launch its latest post went to, and when that post ends at the latest). A missing or unreadable
   cursor starts at the oldest retained segment, and a cursor in a deleted segment resumes at the
   next retained one. A failed log read restarts the instance from its cursor after a capped
-  backoff, and attaching an instance removes temporary cursor writes a dead owner left behind.
+  backoff.
 - **Why delivery is confirmed:** Logflare answers a post once it queued the events and stores them
   later in per-source batches; a batch holding an id already stored is dropped whole.
 - **Stored-id check:** the owner reads which ids `_analytics.log_events_<token>` holds, resolving the
@@ -746,6 +773,9 @@ process death also releases ownership. The file stays in place and is accessed o
 SQLite. No tables, state records, or WAL are created there. Saved stack data remains in JSON;
 the lock does not make multi-file operations transactional or recover interrupted operations.
 This uses the built-in SQLite API available in the pinned Bun runtime and modern Node.js.
+Every lock connection in a process goes through that one SQLite library, which tracks locks per
+file across connections, so a second connection in the same process is excluded exactly as another
+process would be, and closing one connection never releases a lock another still holds.
 
 #### Stop and destroy
 
@@ -781,8 +811,8 @@ Keep the contract narrow:
 
 - Save requires confirmed stopped, initialized data. The caller explicitly stops first; snapshotting does not secretly stop dependents or restart services. A save publishes only a complete entry and replaces the previous entry for the same key.
 - Restore requires a confirmed stopped instance with empty data. Validate format, artifact/runtime compatibility and initialization profile before installing restored data. A missing key returns `false`; a compatible published entry returns `true`; reject a nonempty target rather than overwriting it.
-- Both operations occupy the instance's existing serial operation gate and leave lifecycle stopped. Queued start, destroy or another storage operation waits for settlement and revalidates. No new lifecycle states are necessary; the observable pending operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
-- Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
+- Both operations hold the instance's storage reservation in the lifecycle reducer and leave it stopped. While the reservation is held, a start keeps the instance stopped until it is released and another storage operation is rejected at once. A destroy waits for the storage operation to settle, then takes the reservation; once a destroy is pending, new storage operations are refused, so it cannot be starved. No new lifecycle states are necessary; the observable current operation identifies snapshot work. An armed wake route is not a substitute for explicit stop.
+- Native snapshots copy or clone the host data; container snapshots copy database data through a managed volume and helper. Docker data normally lives in a managed volume, while existing host data can be retained through the host-backed fallback; Podman always uses host-backed data. The host storage marker detects a missing or mismatched Docker volume; deleting that volume loses its database data.
 - Restore transfers compatible database contents, not the source instance's identity, public port claims or composition membership. The target retains its own data location and configuration, with database-specific credentials reconciled before readiness. Cache snapshots survive destruction of the source instance because their managed storage is separate; instance snapshots restore only into their own instance.
 
 These are physical database snapshots for the cache use case. A `pg_dump` invocation remains an ordinary client command for logical exports. CLI code owns cache keys, migrations and the decision to fall back to rebuilding a baseline; managed storage owns publication and retention. The snapshot API does not acquire CLI cache policy.
@@ -791,7 +821,7 @@ These are physical database snapshots for the cache use case. A `pg_dump` invoca
 
 `DatabaseInstance.resetData` removes the selected database instance's owned data and initialization metadata while retaining its registration, configuration, composition bindings, and public port assignments. It is database-specific, alongside snapshot save and restore; other service types do not expose a reset operation.
 
-The caller must stop the database with wake disabled first. Reset runs through the same serialized storage-operation gate as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
+The caller must stop the database with wake disabled first. Reset holds the same storage reservation as snapshots and leaves the database stopped. Deletion uses the database's ownership checks and runtime-specific filesystem handling. The next normal start initializes a fresh PostgreSQL cluster using the retained configuration. Reset does not apply project migrations or seeds, stop other services, or resume the composition; those decisions belong to the CLI. It adds no lifecycle state or persisted recovery phase.
 
 ## 9. What changes for the CLI
 
@@ -809,7 +839,7 @@ Make lifecycle and health explicit in status instead of forcing them into the ol
 | Process exited                        | Exit result is visible while ordinary cleanup settles, then stopped; report unexpected exit as failure         |
 | Stop cleanup failed                   | Runtime cleanup remains stopping with current process/exit observation and error; stop/restart retries cleanup |
 
-Functions serve observes lifecycle and health separately and reports an unhealthy or stopped runtime. DB/storage readiness checks require running and healthy. The current operation remains observable in memory, but shadow finalizers no longer poll it: `destroy()` queues behind an executing snapshot and runs after settlement. Do not persist it for crash recovery. Health observations are attached to the current launch; they cannot make a replacement healthy or failed.
+Functions serve observes lifecycle and health separately and reports an unhealthy or stopped runtime. DB/storage readiness checks require running and healthy. The current operation remains observable in memory. `destroy()` issued during a snapshot waits for it to settle, then removes the data. Do not persist it for crash recovery. Health observations are attached to the current launch; they cannot make a replacement healthy or failed.
 
 The public surface stays recognizable: create/open/discover, services create/get/list, lifecycle, credentials, status/logs and preparation. Promise stays an outer adapter over Effect. The important API clarification is **launch versus readiness**.
 

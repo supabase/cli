@@ -35,8 +35,9 @@ require template serving and shared external JWKS verification respectively.
 
 Secrets needed by enabled services are passed to the runtime. State and service data live under
 `$SUPABASE_HOME/stacks/<stack-id>/` (`~/.supabase/stacks/<stack-id>/` by default); native artifacts
-use `$SUPABASE_HOME/cache/stack`. Storage files use the caller-owned project directory
-`supabase/.temp/stack-uploads/<stack-id>/`. Functions preparation may build the project's source.
+use `$SUPABASE_HOME/cache/stack`, keyed by content digest and retired automatically once unused for
+30 days. Storage files use the caller-owned project directory `supabase/.temp/stack-uploads/<stack-id>/`.
+Functions preparation may build the project's source.
 The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>/logs/`, keeping at
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
 the stack deletes those logs; stopping the stack and resetting database data keep them.
@@ -55,27 +56,40 @@ refresh, ID, and provider tokens, and the `X-Amz-Signature`, `X-Amz-Credential`,
 as `redacted`, whatever their parameter is used for, as are values under any name that hold a
 secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair (a `redirect_to`
 URL with a token), and URL userinfo.
-When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
-members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
-under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
-migration that fails is logged as a warning and retried by the next owner start.
 
-For a new stack, `--runtime auto` selects Docker when `docker version` reaches its daemon, then
-Podman when `podman info` reaches its engine, then native on Linux x64/arm64 and macOS arm64. Each
-probe is bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and
-asks the user to start Docker or Podman. When auto selection skips Docker, an info line names the
-saved Podman or native runtime and how to switch to Docker. An existing stack keeps its saved
-runtime and runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
-When an explicit or saved Docker runtime is unreachable, the reported failure suggests starting
-Docker, and `--runtime native` for a new stack on platforms that support native. Explicit
+Public ports are reserved in one SQLite registry per OS user at `<passwd home>/.supabase/ports.sqlite`,
+which `$SUPABASE_HOME` does not affect and which has no override. A stopped stack's automatic
+ports stay reserved across every other stack's starts, including in a different state root, and
+starting it again reuses the same ports. A configured port is reserved only while its listener is
+open, so a stopped stack never blocks another project's configured port; a configured port takes
+over a reservation whose stack has no running owner (after a crash or reboot), and that stack gets a
+new automatic port on its next start. A saved or configured port held by another running stack, or
+occupied by a process outside the registry, fails start naming the port and, for a stack, its
+project, instead of picking a different port; only automatic allocation tries another candidate. On macOS a process can still win
+a narrow race against the pre-bind probe before a brand-new listener exists.
+Native backend ports (not publicly exposed) are reserved from 10000–19999, disjoint from the public
+auto range and below the OS ephemeral range on every supported platform; this range is not
+configurable, and a public port pinned inside it is rejected. A host whose ephemeral range has been widened to overlap it reintroduces the
+ephemeral-port race this reservation exists to avoid.
+
+For a new stack, `--runtime auto` selects Docker when its engine answers, then Podman when its
+engine answers, then native on Linux x64/arm64 and macOS arm64. Each probe resolves the engine
+target the owner later pins (so a local or remote Podman is judged by the same endpoint) and is
+bounded by 10 seconds. Without a reachable engine on other platforms, the command fails and asks
+the user to start Docker or Podman. When auto selection skips Docker, an info line names the saved
+Podman or native runtime and how to switch to Docker. An existing stack keeps its saved runtime and
+runs no probe. Explicit `--runtime docker`, `podman`, or `native` has no fallback.
+When an explicit or saved container runtime is unreachable, the reported failure suggests starting
+that engine, and `--runtime native` for a new stack on platforms that support native. Explicit
 `--runtime native` on a platform with no native artifacts fails before creating a stack.
 
 Native startup refuses root because PostgreSQL `initdb` cannot run as root, unless a Claude Code
 or Modal Sandbox is detected or `SUPABASE_NATIVE_POSTGRES_USER` names a non-root user. PostgreSQL then runs
 as that user: the CLI chowns the instance data, root key, socket directory, and the cached bundle's
-`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
-root's home directory. Later commands that restrict the artifact cache and stack state roots to
-their owner keep that grant.
+`pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to the parent directories outside the
+cached artifact (the artifact cache and stack state roots, including root's home directory), which
+stay owner-restricted between launches otherwise. A directory inside the cached artifact itself is
+never chmodded; it keeps the archive's own mode, and startup fails if one is not already traversable.
 
 Native PostgreSQL receives `SSL_CERT_FILE` and `SSL_CERT_DIR` when they are non-empty. When
 `SSL_CERT_FILE` is unset or empty, PostgreSQL receives the first of
@@ -90,9 +104,9 @@ stack owner, and a running owner keeps them through `stack restart` and repeated
 export them before starting and stop and start the stack after changing them.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
-Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A
+Lazy services stop after 60 seconds without traffic, Studio after 5 minutes. A
 service that a running service depends on, such as pg-meta for Studio, stays up until that
-dependent stops. Functions has no automatic idle stop. `--eager` makes all selected services eager.
+dependent stops. `--eager` makes all selected services eager.
 Changes to activation policy take effect after stopping and starting the stack, including when a
 later invocation omits an earlier `--eager` flag. `--preparation` selects on-demand or background
 artifact preparation.

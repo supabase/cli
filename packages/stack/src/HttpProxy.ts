@@ -413,7 +413,9 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
   ) =>
     Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ route_id: route.id });
-      const backend = yield* Effect.raceFirst(route.target, disconnected(request, response));
+      // Re-resolved on retry: a backend invalidated between attempts may have its address reused.
+      const resolveBackend = () => Effect.raceFirst(route.target, disconnected(request, response));
+      const backend = yield* resolveBackend();
       yield* forward(
         request,
         response,
@@ -426,7 +428,12 @@ const proxyRequest = Effect.fn("HttpProxy.proxyRequest")(
           Effect.logWarning(
             `Route ${route.id} ${request.method ?? "GET"} upstream failed before responding, retrying`,
             error,
-          ).pipe(Effect.andThen(forward(request, response, route, backend, false, sent))),
+          ).pipe(
+            Effect.andThen(resolveBackend()),
+            Effect.andThen((retryBackend) =>
+              forward(request, response, route, retryBackend, false, sent),
+            ),
+          ),
         ),
       );
     }).pipe(
@@ -635,7 +642,9 @@ export const makeHttpProxy = (options: {
     });
     server.on("connection", (socket) => {
       sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
+      socket.once("close", () => {
+        sockets.delete(socket);
+      });
     });
     server.on("upgrade", (request, socket, head) => {
       socket.on("error", () => socket.destroy());

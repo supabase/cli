@@ -1,6 +1,6 @@
 import { Config, Effect, Option } from "effect";
 
-/** Environment variable a test run sets so stack-created Docker/Podman resources can be labelled. */
+/** Environment variable a test run sets so stack-created Docker resources can be labelled. */
 export const testRunEnvVar = "SUPABASE_STACK_TEST_RUN";
 
 /** Label key stamped on volumes and containers a test run creates. */

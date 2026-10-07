@@ -70,6 +70,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0026 | [Slim Image and Native Artifact Mirrors](0026-slim-artifact-mirrors.md)                                        | proposed   |
 | 0027 | [CLI Tracing Conventions](0027-cli-tracing-conventions.md)                                                     | proposed   |
 | 0028 | [Release Branches and Maintenance Lines](0028-release-branches-and-maintenance-lines.md)                       | accepted   |
+| 0029 | [Native Postgres Privilege Step-Down](0029-native-postgres-privilege-step-down.md)                             | proposed   |
 
 ## Template
 

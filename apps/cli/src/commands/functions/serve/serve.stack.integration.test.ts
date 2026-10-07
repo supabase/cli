@@ -92,12 +92,8 @@ const observation = (
   health: "healthy",
   currentOperation: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
-  launchId: 1,
-  intentRevision: 1,
   wakeEnabled: false,
-  registered: true,
   ...overrides,
 });
 
@@ -306,7 +302,6 @@ const fixture = (
               instances: [],
               lifetime: "detached" as const,
               composition: { members: [], dependencies: [] },
-              ports: [],
             },
             host: undefined,
           }),

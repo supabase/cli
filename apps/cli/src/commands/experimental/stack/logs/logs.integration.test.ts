@@ -39,6 +39,10 @@ const mail = (id: string): SavedInstance => ({
   id,
   creation: { service: "mail", config: {}, endpoints: {} },
 });
+const rest = (id: string): SavedInstance => ({
+  id,
+  creation: { service: "rest", config: {}, endpoints: { http: { port: "auto" } } },
+});
 const database = (id: string): SavedInstance => ({
   id,
   creation: {
@@ -96,7 +100,6 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
     readonly stateRoot: string;
     readonly stackId: string;
   }) => ReadonlyArray<ServiceInstance<"mail">>;
-  readonly ports?: SavedStack["ports"];
   readonly gatewayLogs?: (options?: ReadLogsOptions) => Stream.Stream<LogRecord, never>;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -115,7 +118,6 @@ const fixture = Effect.fn("StackLogsTest.fixture")(function* (options: {
   const definition: SavedStack = {
     ...found.value.definition,
     instances: options.instances,
-    ports: options.ports ?? [],
     composition: {
       members: options.members.map((id) => ({ id, activation: "eager" as const })),
       dependencies: [],
@@ -279,18 +281,15 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  it.live("starts --since start at each instance's saved launch, even before it logged", () =>
+  it.live("starts --since start at each instance's highest launch record", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
-        instances: [
-          { ...mail("mail-a"), launchId: 3 },
-          { ...mail("mail-b"), launchId: 2 },
-        ],
+        instances: [mail("mail-a"), mail("mail-b")],
         members: ["mail-a", "mail-b"],
       });
       yield* f.writeSegment("mail", "mail-a", [
         launch(t0, 2),
-        line(t0 + 1, "stdout", "a previous launch", 2),
+        line(t0 + 1, "stdout", "a only launch", 2),
       ]);
       yield* f.writeSegment("mail", "mail-b", [
         launch(t0 + 2, 1),
@@ -304,6 +303,8 @@ describe("stack logs", () => {
       expect(
         output.events.map(({ instance_id, kind, line: text }) => [instance_id, kind ?? text]),
       ).toEqual([
+        ["mail-a", "launch"],
+        ["mail-a", "a only launch"],
         ["mail-b", "launch"],
         ["mail-b", "b current launch"],
       ]);
@@ -449,16 +450,14 @@ describe("stack logs", () => {
     }).pipe(Effect.scoped, Effect.provide(live)),
   );
 
-  const apiPort = [{ key: "api", host: "127.0.0.1", port: 54321 }];
   const request =
     '127.0.0.1 - - [29/Sep/2026:10:00:00 +0000] "GET /rest/v1/ HTTP/1.1" 200 2 "-" "curl/8.7.1" 3ms';
 
   it.live("includes the gateway's requests by default and selects them with --service", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
-        instances: [mail("mail-a")],
-        members: ["mail-a"],
-        ports: apiPort,
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
       });
       yield* f.writeSegment("mail", "mail-a", [launch(t0), line(t0 + 1, "stdout", "mail up")]);
       yield* f.writeSegment("gateway", "gateway", [launch(t0), line(t0 + 2, "stdout", request)]);
@@ -501,9 +500,8 @@ describe("stack logs", () => {
   it.live("follows the gateway's new requests through the owner", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
-        instances: [],
-        members: [],
-        ports: apiPort,
+        instances: [rest("rest-a")],
+        members: ["rest-a"],
         running: true,
         gatewayLogs: () =>
           Stream.make({
@@ -527,9 +525,8 @@ describe("stack logs", () => {
   it.live("keeps only the current owner run's gateway requests with --since start", () =>
     Effect.gen(function* () {
       const f = yield* fixture({
-        instances: [{ ...mail("mail-a"), launchId: 2 }],
-        members: ["mail-a"],
-        ports: apiPort,
+        instances: [mail("mail-a"), rest("rest-a")],
+        members: ["mail-a", "rest-a"],
       });
       yield* f.writeSegment("mail", "mail-a", [
         launch(t0, 1),
@@ -560,19 +557,20 @@ describe("stack logs", () => {
         position: { generation: 1, byteOffset: offset },
       });
       const f = yield* fixture({
-        instances: [{ ...mail("mail-a"), launchId: 3 }],
+        instances: [mail("mail-a")],
         members: ["mail-a"],
         running: true,
         handles: () => [
           followingMail("mail-a", () =>
             Stream.make(
-              record(0, 3, "current launch"),
-              record(1, 2, "delayed earlier launch"),
-              record(2, 4, "newer launch"),
+              record(100, 3, "current launch"),
+              record(101, 2, "delayed earlier launch"),
+              record(102, 4, "newer launch"),
             ),
           ),
         ],
       });
+      yield* f.writeSegment("mail", "mail-a", [launch(t0 - 1, 3)]);
 
       const { exit, output } = yield* f.run(
         { follow: true, since: Option.some("start") },

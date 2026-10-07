@@ -1,13 +1,31 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { create as createStack } from "@supabase/stack/effect";
-import { Data, Effect, FileSystem, Layer, Path, Redacted, Schema } from "effect";
+import {
+  create as createStack,
+  postgres,
+  type Observation,
+  type Stack,
+  type StackError,
+} from "@supabase/stack/effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 
 import { spawnSupabase } from "../../../../tests/helpers/cli.ts";
 import { generateGoJwt } from "../../../command-internal/go-jwt.ts";
 import { destroyTestStack } from "../../../../tests/helpers/stack-cleanup.ts";
+import { stackArtifactCacheRoot } from "../../../../tests/helpers/stack-artifacts.ts";
 
 const jwtSecret = "functions-serve-stack-e2e-secret-at-least-32-characters";
 const nativeSupported =
@@ -55,9 +73,8 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
   );
   yield* fs.writeFileString(path.join(root, "override.env"), "CUSTOM_VALUE=overridden\n");
   yield* fs.makeDirectory(path.join(home, "cache"), { recursive: true });
-  const artifacts = path.join(tmpdir(), "supabase-stack-artifacts");
-  yield* fs.makeDirectory(artifacts, { recursive: true });
-  yield* fs.symlink(artifacts, path.join(home, "cache", "stack"));
+  yield* fs.makeDirectory(stackArtifactCacheRoot, { recursive: true });
+  yield* fs.symlink(stackArtifactCacheRoot, path.join(home, "cache", "stack"));
   const stack = yield* createStack({
     projectRoot: root,
     stateRoot: path.join(home, "stacks"),
@@ -182,6 +199,42 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
 
 const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 
+/**
+ * Follows a service's statuses from the first one it delivers and returns a fiber that resolves
+ * with every status delivered before `barrier` matches. Statuses arrive in order, so a later
+ * transition the test causes proves the recorded prefix is complete.
+ */
+const statusesBefore = Effect.fn("FunctionsServeE2e.statusesBefore")(function* (
+  instance: { readonly followStatus: Stream.Stream<Observation, StackError> },
+  barrier: (status: Observation) => boolean,
+) {
+  const subscribed = yield* Deferred.make<void>();
+  const before = yield* instance.followStatus.pipe(
+    Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+    Stream.takeWhile((status) => !barrier(status)),
+    Stream.runCollect,
+    Effect.forkScoped,
+  );
+  yield* Deferred.await(subscribed);
+  return before;
+});
+
+/** The database process start time, which changes whenever Postgres is relaunched. */
+const postmasterStartTime = Effect.fn("FunctionsServeE2e.postmasterStartTime")(function* (
+  stack: Stack,
+  databaseUrl: string,
+) {
+  const decoder = new TextDecoder();
+  let stdout = "";
+  const result = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+    args: ["--dbname", databaseUrl, "-tA", "--command", "SELECT pg_postmaster_start_time()"],
+    stdout: (bytes) => Effect.sync(() => (stdout += decoder.decode(bytes))),
+    stderr: () => Effect.void,
+  });
+  expect(result.exitCode).toBe(0);
+  return stdout.trim();
+});
+
 describe("functions serve (stack e2e)", () => {
   for (const runtime of ["native", "docker"] as const) {
     if (runtime === "native" && !nativeSupported) continue;
@@ -205,7 +258,13 @@ describe("functions serve (stack e2e)", () => {
           expect(savedStudio.wakeEnabled).toBe(true);
           const composition = yield* stack.composition.describe;
           const plain = yield* serve(root, home);
-          const active = yield* functions.status;
+          const beforeOverride = yield* statusesBefore(
+            functions,
+            (status) =>
+              status.lifecycle === "running" &&
+              status.config.service === "functions" &&
+              status.config.config.env?.CUSTOM_VALUE === "overridden",
+          );
           expect(yield* payload(apiUrl, true)).toEqual({
             value: "original",
             anon: true,
@@ -222,7 +281,6 @@ describe("functions serve (stack e2e)", () => {
           expect((yield* payload(apiUrl, true)).value).toBeNull();
           yield* fs.writeFileString(sourcePath, source);
           yield* interrupt(plain);
-          expect((yield* functions.status).launchId).toBe(active.launchId);
           expect(yield* studio.status).toMatchObject({
             lifecycle: savedStudio.lifecycle,
             wakeEnabled: savedStudio.wakeEnabled,
@@ -241,6 +299,12 @@ describe("functions serve (stack e2e)", () => {
             databaseUrl,
           });
           yield* interrupt(overridden);
+          // The override's own restart is the only launch before its configuration is running.
+          const launches = (yield* Fiber.join(beforeOverride)).filter(
+            ({ lifecycle }, index, all) =>
+              lifecycle === "starting" && all[index - 1]?.lifecycle !== "starting",
+          );
+          expect(launches).toHaveLength(1);
           expect((yield* functions.status).config).toEqual(saved.config);
           expect(yield* studio.status).toMatchObject({
             lifecycle: savedStudio.lifecycle,
@@ -262,9 +326,7 @@ describe("functions serve (stack e2e)", () => {
             false,
           );
           const composition = yield* stack.composition.describe;
-          const database = services.find((instance) => instance.service === "database");
-          if (database === undefined) return yield* Effect.die("Database missing");
-          const databaseLaunch = (yield* database.status).launchId;
+          const startedAt = yield* postmasterStartTime(stack, databaseUrl);
           const child = yield* serve(root, home);
           expect(yield* payload(apiUrl, true)).toEqual({
             value: null,
@@ -279,10 +341,10 @@ describe("functions serve (stack e2e)", () => {
             services.map(({ id }) => id).sort(),
           );
           expect(yield* stack.composition.describe).toEqual(composition);
-          expect((yield* database.status).launchId).toBe(databaseLaunch);
           expect((yield* invoke(apiUrl, false)).status).toBe(404);
           const http = yield* HttpClient.HttpClient;
           expect((yield* http.get(`${apiUrl}/rest/v1/`)).status).toBe(200);
+          expect(yield* postmasterStartTime(stack, databaseUrl)).toBe(startedAt);
         }).pipe(Effect.provide(layer)),
       { timeout: 360_000 },
     );

@@ -3,9 +3,19 @@
 import { Config, ConfigProvider, Duration, Effect, Option, Schema } from "effect";
 import { Socket } from "node:net";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- FileSystem cannot adopt inherited fd3/fd4; Bun also requires synchronous fd4 reads at this process boundary.
-import { createReadStream, readFileSync, writeSync } from "node:fs";
+import { createReadStream, readFileSync, utimesSync, writeSync } from "node:fs";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- workloads join the launcher's process group and need child-only signal forwarding; Effect spawners signal child process groups.
 import { spawn } from "node:child_process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- this standalone process has no Effect FileSystem/SQLite service; it opens its own pin connection directly.
+import { DatabaseSync } from "node:sqlite";
+import { takeSharedLockSync } from "../namespace/drivers/sqlite-pin.ts";
+
+/** Best-effort diagnostic: a write to a gone owner's stderr pipe must never end the launcher and release its pin. */
+const report = (message: string): void => {
+  try {
+    writeSync(2, message);
+  } catch {}
+};
 
 interface LaunchSpec {
   readonly executable: string;
@@ -14,6 +24,7 @@ interface LaunchSpec {
   readonly cwd?: string;
   readonly uid?: number;
   readonly gid?: number;
+  readonly artifactLockPath?: string;
   readonly gracefulStopSignal?: "SIGTERM" | "SIGINT";
   readonly gracefulStopTimeoutMs?: number;
 }
@@ -25,6 +36,7 @@ const LaunchSpecSchema = Schema.Struct({
   cwd: Schema.optionalKey(Schema.String),
   uid: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
   gid: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  artifactLockPath: Schema.optionalKey(Schema.String),
   gracefulStopSignal: Schema.optionalKey(Schema.Literals(["SIGTERM", "SIGINT"])),
   gracefulStopTimeoutMs: Schema.optionalKey(
     Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -48,6 +60,7 @@ const decodeSpec = (bytes: Buffer): LaunchSpec | undefined => {
       env: value.env,
       uid: value.uid,
       gid: value.gid,
+      artifactLockPath: value.artifactLockPath,
       ...(value.gracefulStopSignal === undefined
         ? {}
         : { gracefulStopSignal: value.gracefulStopSignal }),
@@ -55,6 +68,32 @@ const decodeSpec = (bytes: Buffer): LaunchSpec | undefined => {
         ? {}
         : { gracefulStopTimeoutMs: value.gracefulStopTimeoutMs }),
     };
+  }
+};
+
+/**
+ * Takes this launcher's own SHARED pin on the workload's artifact generation before it spawns,
+ * independent of whatever pin its owner process holds: the launcher outlives a dead owner, so its
+ * own kernel lock is what keeps a concurrent retirement sweep from touching a generation whose
+ * workload is still running. There is no heartbeat; the lock's mtime is touched once, here.
+ */
+const pinArtifactGeneration = (lockPath: string): (() => void) | undefined => {
+  try {
+    const connection = new DatabaseSync(lockPath);
+    takeSharedLockSync(connection);
+    // oxlint-disable-next-line effecttsgo/global-date -- this standalone process has no Effect Clock service to source "now" from.
+    const now = new Date();
+    utimesSync(lockPath, now, now);
+    return () => {
+      try {
+        connection.close();
+      } catch {
+        // The workload has already exited; a failure to close is not actionable here.
+      }
+    };
+  } catch (error) {
+    report(`Unable to pin the native artifact generation: ${String(error)}\n`);
+    return undefined;
   }
 };
 
@@ -115,7 +154,9 @@ export const runNativeLauncher = (): void => {
       // before this launcher exits while preserving the workload's exit code.
       process.kill(-(child?.pid ?? process.pid), signal);
     } catch {
-      child?.kill(signal);
+      try {
+        child?.kill(signal);
+      } catch {}
     }
   };
 
@@ -204,6 +245,66 @@ export const runNativeLauncher = (): void => {
   } else {
     specGracefulStopSignal = spec.gracefulStopSignal;
     specGracefulStopTimeoutMs = spec.gracefulStopTimeoutMs;
+    // Taken before spawning and released only after the workload's group has been sent SIGKILL,
+    // on every exit path below, so a concurrent retirement sweep never races a running workload.
+    const releasePin =
+      spec.artifactLockPath === undefined
+        ? undefined
+        : pinArtifactGeneration(spec.artifactLockPath);
+    if (spec.artifactLockPath !== undefined && releasePin === undefined) {
+      // The pin could not be taken: never spawn a workload whose generation isn't protected.
+      // Reporting nothing on fd5 is the same failure the owner already handles when the
+      // launcher never writes a valid process group.
+      process.exit(127);
+      return;
+    }
+    /**
+     * ESRCH (no such process group) counts as success: the group is already gone. A real failure
+     * (for example EPERM) must never be treated as confirmation that it is.
+     */
+    const killGroupForExit = (pgid: number): boolean => {
+      if (process.platform === "win32") return true;
+      try {
+        process.kill(-pgid, "SIGKILL");
+        return true;
+      } catch (error) {
+        return (
+          typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH"
+        );
+      }
+    };
+    // Once SIGKILL has reached every group member, none can run user code again, and unlinking
+    // this generation's files afterward cannot affect an fd or mapping a member already holds
+    // open: releasing the pin right after the kill, without waiting to confirm each member has
+    // actually been reaped, is safe. A real kill failure must never reach `afterRelease`, since
+    // exiting closes this process's own fd and reclaims the advisory lock regardless of whether
+    // `releasePin` was ever called: staying alive and retrying is the only way to keep it held.
+    const releaseAfterGroupKill = (afterRelease: () => void): void => {
+      const pgid = child?.pid;
+      if (releasePin === undefined) {
+        afterRelease();
+        return;
+      }
+      if (pgid === undefined) {
+        releasePin();
+        afterRelease();
+        return;
+      }
+      const attempt = (reported: boolean): void => {
+        if (killGroupForExit(pgid)) {
+          releasePin();
+          afterRelease();
+          return;
+        }
+        if (!reported)
+          report(
+            "Unable to confirm the native workload's process group is gone; keeping its artifact generation pinned and retrying\n",
+          );
+        // oxlint-disable-next-line effecttsgo/global-timers -- this standalone process has no Effect runtime to schedule through.
+        setTimeout(() => attempt(true), 1_000);
+      };
+      attempt(false);
+    };
     child = spawn(spec.executable, [...spec.args], {
       cwd: spec.cwd,
       env: { ...Effect.runSync(inheritedEnvironment), ...spec.env },
@@ -216,23 +317,26 @@ export const runNativeLauncher = (): void => {
       writeSync(5, `${child.pid ?? 0}\n`);
     } catch {
       terminateWorkloadGroup("SIGKILL");
-      process.exit(127);
+      releaseAfterGroupKill(() => process.exit(127));
+      return;
     }
     child.on("error", (error) => {
-      writeSync(2, `Native workload failed to start: ${error.message}\n`);
-      process.exit(127);
+      report(`Native workload failed to start: ${error.message}\n`);
+      releaseAfterGroupKill(() => process.exit(127));
     });
     child.on("exit", (code, signal) => {
       childExited = true;
       terminateWorkloadGroup("SIGKILL");
-      if (ownerLossGraceful) {
+      releaseAfterGroupKill(() => {
+        if (ownerLossGraceful) {
+          process.exit(code ?? 1);
+          return;
+        }
+        ownerPipe.destroy();
+        if (!gracefulForwarded && signal !== null)
+          report(`Native workload exited due to signal ${signal}\n`);
         process.exit(code ?? 1);
-        return;
-      }
-      ownerPipe.destroy();
-      if (!gracefulForwarded && signal !== null)
-        writeSync(2, `Native workload exited due to signal ${signal}\n`);
-      process.exit(code ?? 1);
+      });
     });
   }
 };

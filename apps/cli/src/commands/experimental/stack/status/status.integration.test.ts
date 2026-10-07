@@ -103,13 +103,9 @@ const makeObservation = (
   lifecycle: "stopped",
   health: undefined,
   error: undefined,
-  cleanupError: undefined,
   exit: undefined,
   currentOperation: undefined,
-  launchId: undefined,
-  intentRevision: 1,
   wakeEnabled: true,
-  registered: true,
   ...input,
 });
 
@@ -241,7 +237,6 @@ const runStatus = (input: {
       })),
       composition: { members: input.members ?? [], dependencies: [] },
       lifetime: "detached" as const,
-      ports: [],
     };
     const api = Layer.succeed(StackApi, {
       create: () => Effect.die("create must not run"),

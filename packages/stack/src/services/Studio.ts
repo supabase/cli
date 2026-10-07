@@ -129,4 +129,8 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
           ]),
     ]),
   startupCommands: [],
+  callerPaths: (creation) => [
+    ...(creation.config.functionsRoot === undefined ? [] : [creation.config.functionsRoot]),
+    ...(creation.config.snippetsRoot === undefined ? [] : [creation.config.snippetsRoot]),
+  ],
 });

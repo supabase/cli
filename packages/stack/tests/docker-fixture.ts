@@ -1,14 +1,18 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Layer, Schema, Sink, Stream } from "effect";
 import { cleanupDockerRoot } from "./docker-cleanup.ts";
+import { testEngine } from "./test-engine.ts";
 
-/** Runs a Docker CLI command and returns its combined output and exit code. */
-export const runDocker = Effect.fn("DockerTest.runDocker")((args: ReadonlyArray<string>) =>
+/**
+ * Runs a command of the selected test engine's CLI and returns its combined output and exit code.
+ * It does not pin the engine target, so it works before an engine is known to be reachable.
+ */
+export const runEngine = Effect.fn("DockerTest.runEngine")((args: ReadonlyArray<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
-        ChildProcess.make("docker", args, { stdout: "pipe", stderr: "pipe" }),
+        ChildProcess.make(testEngine, args, { stdout: "pipe", stderr: "pipe" }),
       );
       const [stdout, stderr, code] = yield* Effect.all(
         [
@@ -55,12 +59,17 @@ const encodeLabels = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String])),
 );
 
+/** The connection options `resolveEngineTarget` pins in front of a subcommand. */
+const TARGET_OPTIONS = ["--context", "--host", "--url", "--connection"];
+
 /**
- * Docker and Podman engines that each start with `containers`. `ps --format` prints their labels
- * as JSON lines, then every string entry as is; `ps --quiet` prints the ids of those matching every
- * `--filter`; `rm --force <id>` removes one. A command fails with the given stderr when `failures`
- * names its engine (`docker`) or its engine and subcommand (`podman rm`). Every command is recorded
- * and passed to `onCommand` before it is answered; `remaining` lists an engine's containers.
+ * Docker and Podman engines that each start with `containers`. Both answer the commands
+ * `resolveEngineTarget` runs; a target's connection options are not part of a command's subcommand.
+ * `ps --format` prints their labels as JSON lines, then every string entry as is; `ps --quiet`
+ * prints the ids of those matching every `--filter`; `rm --force <id>` removes one. A command fails
+ * with the given stderr when `failures` names its engine (`docker`) or its engine and subcommand
+ * (`podman rm`). Every command is recorded and passed to `onCommand` before it is answered;
+ * `remaining` lists an engine's containers.
  */
 export const engineStub = (
   containers: ReadonlyArray<StubContainer | string>,
@@ -77,7 +86,10 @@ export const engineStub = (
         return yield* Effect.die("Unexpected child process command");
       const argv = [command.command, ...command.args];
       commands.push(argv);
-      const [subcommand] = command.args;
+      const args = TARGET_OPTIONS.includes(command.args[0] ?? "")
+        ? command.args.slice(2)
+        : command.args;
+      const [subcommand] = args;
       const failure = failures[`${command.command} ${subcommand}`] ?? failures[command.command];
       const inventory = inventories.get(command.command) ?? [];
       const filters = command.args.filter((_, index) => command.args[index - 1] === "--filter");
@@ -91,17 +103,25 @@ export const engineStub = (
           ].includes(filter),
         ),
       );
+      const listing = Effect.gen(function* () {
+        if (!command.args.includes("--format")) return listed.map(({ id }) => id).join("\n");
+        const labels = yield* Effect.forEach(listed, ({ stackId, root }) =>
+          encodeLabels([stackId, root]).pipe(Effect.orDie),
+        );
+        return [...labels, ...noise].join("\n");
+      });
+      const identity =
+        command.command === "podman" ? "false|false|stub-host|/stub/graph" : "stub-id";
       const stdout =
-        failure !== undefined || subcommand !== "ps"
+        failure !== undefined
           ? ""
-          : command.args.includes("--format")
-            ? [
-                ...(yield* Effect.forEach(listed, ({ stackId, root }) =>
-                  encodeLabels([stackId, root]).pipe(Effect.orDie),
-                )),
-                ...noise,
-              ].join("\n")
-            : listed.map(({ id }) => id).join("\n");
+          : subcommand === "context"
+            ? "stub-context"
+            : subcommand === "info"
+              ? identity
+              : subcommand === "ps"
+                ? yield* listing
+                : "";
       if (failure === undefined && subcommand === "rm")
         inventories.set(
           command.command,

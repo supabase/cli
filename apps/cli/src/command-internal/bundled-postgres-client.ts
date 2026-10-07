@@ -15,8 +15,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   ArtifactError,
   postgresVersion,
-  prepareNativeArtifact,
   resolveArtifact,
+  useNativeArtifact,
 } from "@supabase/stack/internal/artifacts";
 
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
@@ -249,7 +249,9 @@ export const bundledPostgresClientLayer: Layer.Layer<
             );
             return yield* dockerRun(options, resolved.image, docker);
           }
-          const prepared = yield* prepareNativeArtifact(
+          // Pins the generation for the life of this scope, before the spawn inside `nativeRun`:
+          // the client child always exits before this scope closes, so the pin covers it fully.
+          const prepared = yield* useNativeArtifact(
             { service: "database", version },
             path.join(settings.supabaseHome, "cache", "stack"),
             { os: runtimeInfo.platform, arch: runtimeInfo.arch },

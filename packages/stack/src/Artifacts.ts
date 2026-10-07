@@ -79,6 +79,8 @@ export interface PreparedNativeArtifact {
   readonly version: string;
   readonly root: string;
   readonly executable: string;
+  /** The generation's digest lock file; a native workload spawned from `root` pins this too. */
+  readonly lockPath: string;
 }
 
 interface ArtifactDefinition {
@@ -606,6 +608,49 @@ export const catalogPins = (): ReadonlyArray<{
 const artifactKey = (artifact: SlimServicesArtifact): string =>
   `slim-services/${artifact.service}/${artifact.version}/${artifact.target}`;
 
+/** Builds the native store request shared by ahead-of-time preparation and launch-time use. */
+const nativeStoreRequest = Effect.fn("Artifacts.nativeStoreRequest")(function* (
+  request: { readonly service: ArtifactKind; readonly version?: string },
+  platform: { readonly os: string; readonly arch: string },
+) {
+  const resolved = yield* resolveArtifact(request);
+  const target = targetForPlatform(platform);
+  if (target === undefined)
+    return yield* new ArtifactError({
+      message: `Native artifacts are unsupported on ${platformText(platform)}`,
+      service: request.service,
+      version: resolved.version,
+      platform: platformText(platform),
+    });
+  const sourceArtifact = artifactFor(request.service, resolved, target);
+  const key = artifactKey(sourceArtifact);
+  const source = makeSlimServicesSource((candidate) =>
+    candidate.key === key ? sourceArtifact : undefined,
+  );
+  return {
+    resolved,
+    storeRequest: {
+      key,
+      requiredRuntimePaths: resolved.requiredRuntimePaths,
+      executablePath: resolved.executablePath,
+    },
+    source,
+  };
+});
+
+const toNativeArtifact = (
+  resolved: ArtifactResolution,
+  prepared: { readonly path: string; readonly lockPath: string },
+  path: Path.Path,
+): PreparedNativeArtifact => ({
+  service: resolved.service,
+  version: resolved.version,
+  root: prepared.path,
+  executable: path.join(prepared.path, resolved.executablePath),
+  lockPath: prepared.lockPath,
+});
+
+/** Ahead-of-time: downloads and publishes the generation, but pins nothing. */
 export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact")(function* (
   request: { readonly service: ArtifactKind; readonly version?: string },
   cacheRoot: string,
@@ -616,32 +661,44 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
 ) {
   const resolved = yield* resolveArtifact(request);
   return yield* Effect.gen(function* () {
-    const target = targetForPlatform(platform);
-    if (target === undefined)
-      return yield* new ArtifactError({
-        message: `Native artifacts are unsupported on ${platformText(platform)}`,
-        service: request.service,
-        version: resolved.version,
-        platform: platformText(platform),
-      });
-    const sourceArtifact = artifactFor(request.service, resolved, target);
-    const key = artifactKey(sourceArtifact);
-    const source = makeSlimServicesSource((candidate) =>
-      candidate.key === key ? sourceArtifact : undefined,
-    );
-    const store = yield* makeArtifactStore({ cacheRoot, source });
-    const prepared = yield* store.prepare({
-      key,
-      requiredRuntimePaths: resolved.requiredRuntimePaths,
-      executablePath: resolved.executablePath,
-    });
+    const built = yield* nativeStoreRequest(request, platform);
+    const store = yield* makeArtifactStore({ cacheRoot, source: built.source });
+    const prepared = yield* store.prepare(built.storeRequest);
     const path = yield* Path.Path;
-    return {
-      service: resolved.service,
-      version: resolved.version,
-      root: prepared.path,
-      executable: path.join(prepared.path, resolved.executablePath),
-    };
+    return toNativeArtifact(built.resolved, prepared, path);
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof ArtifactError
+        ? cause
+        : new ArtifactError({
+            message: `Unable to prepare ${request.service} artifact: ${errorMessage(cause)}`,
+            service: request.service,
+            version: resolved.version,
+            cause,
+          }),
+    ),
+  );
+});
+
+/**
+ * The one scoped launch-time operation: pins the generation, resolves or prepares it, and returns
+ * its paths. Every consumer must use the returned paths only inside this scope.
+ */
+export const useNativeArtifact = Effect.fn("Artifacts.useNativeArtifact")(function* (
+  request: { readonly service: ServiceKind; readonly version?: string },
+  cacheRoot: string,
+  platform: { readonly os: string; readonly arch: string } = {
+    os: process.platform,
+    arch: process.arch,
+  },
+) {
+  const resolved = yield* resolveArtifact(request);
+  return yield* Effect.gen(function* () {
+    const built = yield* nativeStoreRequest(request, platform);
+    const store = yield* makeArtifactStore({ cacheRoot, source: built.source });
+    const prepared = yield* store.use(built.storeRequest);
+    const path = yield* Path.Path;
+    return toNativeArtifact(built.resolved, prepared, path);
   }).pipe(
     Effect.mapError((cause) =>
       cause instanceof ArtifactError
