@@ -178,7 +178,7 @@ it.live.skipIf(process.platform === "win32")(
           [
             awaitContainerRemoved(orphan, since),
             awaitContainerRemoved(deleted, since),
-            awaitRemoval(path.join(rootA, sessionId), "state.json"),
+            awaitRemoval(rootA, sessionId),
             awaitRemoval(path.join(rootA, deadId), "owner.json"),
           ],
           { concurrency: "unbounded" },
