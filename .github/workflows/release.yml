@@ -62,9 +62,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVIEWER: ${{ github.event.review.user.login }}
         run: |
-          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${REVIEWER}/permission" --jq '[.permission, .role_name] | join(" ")')
-          case " ${role} " in
-            *" admin "* | *" maintain "* | *" write "*)
+          role=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${REVIEWER}/permission" --jq '.permission')
+          case "${role}" in
+            admin | write)
               echo "allowed=true" >> "$GITHUB_OUTPUT"
               ;;
             *)
