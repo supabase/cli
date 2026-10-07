@@ -402,10 +402,9 @@ jobs:
           src/services/Rest.integration.test.ts
           src/services/AuthStorage.integration.test.ts
           src/services/StorageGateway.integration.test.ts
-          src/services/AnalyticsVectorImgproxy.integration.test.ts
+          src/services/AnalyticsImgproxy.integration.test.ts
           src/services/Mail.integration.test.ts
           src/services/Pooler.integration.test.ts
-          src/services/Vector.integration.test.ts
           tests/docker-volume-run.integration.test.ts
           --passWithNoTests=false
 

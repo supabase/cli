@@ -1,6 +1,6 @@
 # 0025. Ephemeral Postgres for schema tooling
 
-**Status**: superseded by throwaway stack shadow stacks and [database snapshots](../../packages/stack/ARCHITECTURE.md#snapshots-belong-to-the-database-instance) — `EphemeralPostgres` was never built; see [`stack-shadow.ts`](../../apps/cli/src/command-internal/stack-shadow.ts)
+**Status**: superseded by throwaway stack shadow stacks and [database snapshots](../../packages/stack/ARCHITECTURE.md#snapshots-belong-to-the-database-instance) — `EphemeralPostgres` was never built; see [`stack-shadow.ts`](../../apps/cli/src/command-internal/stack-shadow.ts); runtime auto-selection and native-as-root handling amended by [ADR 0028](0028-native-postgres-privilege-step-down.md)
 **Date**: 2026-09-09
 
 ## Problem Statement
@@ -124,17 +124,13 @@ whether **this start created the stack identity** (first create / `unconfigured`
 
 ### Default runtime and native-as-root
 
-Auto-selecting a **new** identity probes the Docker engine (not only `docker --version`), then
-Podman. A reachable engine persists its runtime. When neither is reachable, **native** is persisted
-where native artifacts exist. Skipping Docker prints a notice that the chosen runtime is saved with
-the stack and that destroy-and-recreate (or a new `--stack` name) is required to get Docker later.
-Persisted runtime never flips. Explicit `--runtime docker` or `--runtime podman` still requires a
-reachable engine.
+Auto-selecting a **new** identity probes the Docker daemon (not only `docker --version`). A live
+daemon persists Docker. A present client with a dead daemon persists **native** and prints a
+notice that destroy-and-recreate (or a new `--stack` name) is required to get Docker later.
+Persisted runtime never flips. Explicit `--runtime docker` still requires a live daemon.
 
-Native Postgres refuses to run as uid 0 (`initdb` refuses root), so when the stack runs as root
-only the PostgreSQL process steps down to an unprivileged user: one named by
-`SUPABASE_NATIVE_POSTGRES_USER`, or the account of a detected agent sandbox. Otherwise use
-`--runtime docker`.
+Native Postgres is refused when the process uid is 0 (`initdb` refuses root). There is no
+uid-drop. Use `--runtime docker`.
 
 ### Optional catalog downloads
 
@@ -153,7 +149,7 @@ leaving schema policy in the CLI.
 
 ### Positive
 
-- Native and container shadows share one API and the same slim baseline as `stack start`.
+- Native and Docker/Podman shadows share one API and the same slim baseline as `stack start`.
 - Schema commands can target a running project stack through `credentials()` when the flag is on.
   `credentials().database` is available whenever the database listener is assigned, including when
   Auth is disabled. `credentials().api` is absent when Auth is off. Overlay and `--local` keep
@@ -170,8 +166,8 @@ leaving schema policy in the CLI.
 - A failed first live setup after the engine is running is stuck until `db reset`, same as
   Compose. A failed cold launch that never reached running retries first-create.
 - Windows native dump/test/squash need a working Docker client even though Postgres itself is native.
-- Native stacks as uid 0 need `SUPABASE_NATIVE_POSTGRES_USER` or a detected agent sandbox; otherwise Docker (or a non-root user) is required.
-- Auto-selected native or Podman after an unreachable Docker engine is sticky until destroy or a new stack name.
+- Native stacks as uid 0 cannot start; Docker (or a non-root user) is required.
+- Auto-selected native after a dead Docker daemon is sticky until destroy or a new stack name.
 
 ## Alternatives Considered
 
