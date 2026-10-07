@@ -1,5 +1,6 @@
 import { Effect, FileSystem, Path } from "effect";
-import { isSharingViolation, namespaceError, transientRetrySchedule } from "./Capabilities.ts";
+import { retrySharingViolation } from "../internal/sharing-violation.ts";
+import { namespaceError } from "./Capabilities.ts";
 import * as Drivers from "./drivers/FileSystem.ts";
 
 export interface PublishOptions {
@@ -28,11 +29,7 @@ export const publish = Effect.fn("Namespace.publish")(function* (
     directory,
     `.${path.basename(options.target)}.${process.pid}-${++counter}.tmp`,
   );
-  const platform = options.platform ?? process.platform;
-  const retry = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.retry({ schedule: transientRetrySchedule, while: isSharingViolation(platform) }),
-    );
+  const retry = retrySharingViolation(options.platform);
   yield* Effect.acquireUseRelease(
     Effect.succeed(staging),
     () =>

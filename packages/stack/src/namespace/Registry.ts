@@ -1,7 +1,9 @@
 import { Clock, Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope } from "effect";
 import { CompositionConfig } from "../Orchestrator.ts";
 import { ServiceCreation } from "../services/Catalog.ts";
-import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
+import { SafeId } from "../identity/SafeId.ts";
+import { retrySharingViolation } from "../internal/sharing-violation.ts";
+import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import { OWNER_FILE, OWNER_LOG_FILE } from "./Lease.ts";
 import { stackLogsRoot } from "./Paths.ts";
 import * as Publication from "./Publication.ts";
@@ -10,13 +12,6 @@ import { acquireLock, isBusy, takeLock } from "./drivers/Sqlite.ts";
 
 /** How long a destroyed stack's empty directories stay, so a same-id restart finds them. */
 const DESTROYED_RETENTION_MILLIS = 10 * 60 * 1000;
-
-const SafeId = Schema.String.pipe(
-  Schema.refine((value): value is string => /^[a-zA-Z0-9_-]+$/u.test(value), {
-    identifier: "SafeStateId",
-    message: "Expected a safe state id",
-  }),
-);
 
 const SavedInstance = Schema.Struct({
   id: SafeId,
@@ -131,7 +126,7 @@ export const make = (
     const statePath = (id: string) => path.join(stackRoot(id), "state.json");
     const retryRead = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
-        retryTransientRead(options.platform),
+        retrySharingViolation(options.platform),
         Effect.mapError((cause) => namespaceError("read", cause)),
       );
     const read = Effect.fn("Namespace.Registry.read")(function* (id: string) {
@@ -184,7 +179,7 @@ export const make = (
       yield* checkId(id);
       // Logs go before the state file, so a stack whose logs remain stays listed for another removal.
       yield* fs.remove(stackLogsRoot(path, root, id), { recursive: true, force: true }).pipe(
-        retryTransientRead(options.platform),
+        retrySharingViolation(options.platform),
         Effect.mapError((cause) => namespaceError("remove", cause)),
       );
       for (const file of [

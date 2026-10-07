@@ -21,6 +21,7 @@ import {
   resolveArtifact,
   useNativeArtifact,
 } from "../Artifacts.ts";
+import { isSafeId } from "../identity/SafeId.ts";
 import * as Environment from "../namespace/Environment.ts";
 import { borrow } from "../namespace/Paths.ts";
 import { makeContainerRuntime, type EngineTarget, type HostGateway } from "../runtime/Container.ts";
@@ -88,7 +89,7 @@ const makeCommandRunner = (options: {
     const crypto = yield* Crypto.Crypto;
     const http = yield* HttpClient.HttpClient;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    if (!/^[a-zA-Z0-9_-]+$/u.test(options.stackId)) return yield* failure("Invalid stack identity");
+    if (!isSafeId(options.stackId)) return yield* failure("Invalid stack identity");
     const container =
       options.engineTarget === undefined
         ? undefined

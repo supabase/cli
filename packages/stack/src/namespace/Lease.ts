@@ -1,6 +1,8 @@
 import { Effect, Exit, FileSystem, Option, Path, Schedule, Schema, Scope } from "effect";
 import type { DatabaseSync } from "node:sqlite";
-import { namespaceError, retryTransientRead, type NamespaceError } from "./Capabilities.ts";
+import { isSafeId } from "../identity/SafeId.ts";
+import { retrySharingViolation } from "../internal/sharing-violation.ts";
+import { namespaceError, type NamespaceError } from "./Capabilities.ts";
 import * as Publication from "./Publication.ts";
 import { removeEmptyDirectory } from "./drivers/FileSystem.ts";
 import { acquireLock, errcode, isBusy, isMissing, takeLock } from "./drivers/Sqlite.ts";
@@ -57,9 +59,7 @@ export const OWNER_FILE = "owner.json";
 export const OWNER_LOG_FILE = "owner.log";
 
 const checkId = (id: string): Effect.Effect<void, NamespaceError> =>
-  /^[a-zA-Z0-9_-]+$/u.test(id)
-    ? Effect.void
-    : Effect.fail(namespaceError("identity", `Invalid state id: ${id}`));
+  isSafeId(id) ? Effect.void : Effect.fail(namespaceError("identity", `Invalid state id: ${id}`));
 
 export interface Options {
   readonly root: string;
@@ -80,7 +80,7 @@ export const make = (
     const leasePath = (id: string) => path.join(stackRoot(id), "owner.lock");
     const ownerPath = (id: string) => path.join(stackRoot(id), OWNER_FILE);
     const ownerLog = (id: string) => path.join(stackRoot(id), OWNER_LOG_FILE);
-    const retryRead = retryTransientRead(options.platform);
+    const retryRead = retrySharingViolation(options.platform);
 
     /** An open file that was unlinked: SQLite IOERR_VNODE on macOS, IOERR_FSTAT on Linux. */
     const isMoved = (error: NamespaceError) =>

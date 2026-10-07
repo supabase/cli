@@ -2,6 +2,7 @@ import { Crypto, Data, Effect, FileSystem, Path, type PlatformError, Schema } fr
 import { contentDigestHex } from "../internal/content-digest.ts";
 import { publishGeneration } from "../internal/generation-publish.ts";
 import { StackIdSchema, type StackId } from "../identity/StackId.ts";
+import { isSafeId } from "../identity/SafeId.ts";
 
 export class FunctionsBootstrapError extends Data.TaggedError("FunctionsBootstrapError")<{
   readonly message: string;
@@ -45,8 +46,7 @@ export const makeFunctionsBootstrapOwner = Effect.fn("FunctionsBootstrap.makeOwn
   yield* Schema.decodeEffect(StackIdSchema)(options.stackId).pipe(
     Effect.mapError((cause) => failure("Invalid stack identity", { cause })),
   );
-  if (!/^[a-zA-Z0-9_-]+$/u.test(options.instanceId))
-    return yield* failure("Invalid Functions instance identity");
+  if (!isSafeId(options.instanceId)) return yield* failure("Invalid Functions instance identity");
   const root = path.join(options.root, options.instanceId, "runtime", "functions");
 
   const write = Effect.fn("FunctionsBootstrap.write")(function* (input: {

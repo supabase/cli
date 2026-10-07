@@ -21,7 +21,7 @@ import {
 import { existsSync } from "node:fs";
 import { create, discover } from "../effect.ts";
 import { destroyTestStack } from "../../tests/stack-cleanup.ts";
-import { errorCode } from "./Capabilities.ts";
+import { errorCode } from "../internal/sharing-violation.ts";
 import * as StackNamespace from "../StackNamespace.ts";
 import * as Paths from "./Paths.ts";
 
