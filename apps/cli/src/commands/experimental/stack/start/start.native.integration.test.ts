@@ -384,6 +384,12 @@ describe("experimental stack start native lifecycle", () => {
                   `127\\.0\\.0\\.1:${occupiedPort}(: Cannot bind TCP listener| is in use by another process)`,
                 ),
               );
+              expect(Cause.findErrorOption(failedStart.cause)).toMatchObject(
+                Option.some({
+                  suggestion:
+                    "Set `db.port` in supabase/config.toml (or SUPABASE_DB_PORT) to a free port.",
+                }),
+              );
               const ownerPid = ownerPids[attempt];
               expect(ownerPid).toBeDefined();
               if (ownerPid === undefined) return yield* Effect.die("stack owner PID missing");

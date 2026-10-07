@@ -94,18 +94,45 @@ const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   );
 };
 
+/**
+ * Names the config setting behind a contested public port. A conflicting endpoint key ends in its
+ * endpoint name (the shared API listener is keyed `api`); only a name that maps to one setting
+ * across the requested services gets a suggestion.
+ */
+const portConflictSuggestion = (
+  conflict: StackError["conflict"],
+  services: ReadonlyArray<{ readonly service: string }>,
+): string | undefined => {
+  if (conflict === undefined) return undefined;
+  const settings =
+    conflict.endpoint === "api"
+      ? [stackEndpointSetting("rest", "http")]
+      : services.map(({ service }) =>
+          stackEndpointSetting(
+            service,
+            conflict.endpoint.slice(conflict.endpoint.indexOf(":") + 1),
+          ),
+        );
+  const [setting, ...rest] = settings.filter((candidate) => candidate !== undefined);
+  return setting === undefined || rest.some(({ envVar }) => envVar !== setting.envVar)
+    ? undefined
+    : `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+};
+
 const stackError = (
-  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes">>,
-  members: ReadonlyArray<{ readonly id: string; readonly service: string }> = [],
+  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
+  members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
+  const suggestion = portConflictSuggestion(cause.conflict, members);
   return new StackCommandStartError({
     reason: "unknown",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
+    ...(suggestion === undefined ? {} : { suggestion }),
     cause,
   });
 };
@@ -785,7 +812,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError(stackError),
+        Effect.mapError((error) => stackError(error, requested)),
       );
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
