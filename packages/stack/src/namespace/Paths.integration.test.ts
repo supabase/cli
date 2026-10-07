@@ -243,6 +243,29 @@ describe("the stack data root", () => {
     ),
   );
 
+  it.live("is refused when the stack directory is a symlink to an outside directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-dir-symlink-" });
+        const outside = path.join(root, "outside");
+        yield* fs.makeDirectory(path.join(outside, "data"), { recursive: true });
+        const survivor = path.join(outside, "data", "keep");
+        yield* fs.writeFileString(survivor, "do not remove me");
+        yield* fs.makeDirectory(path.join(root, "state"));
+        yield* fs.symlink(outside, path.join(root, "state", "stack"));
+
+        const failure = yield* resolveStackDataRoot(path.join(root, "state"), "stack").pipe(
+          Effect.flip,
+        );
+
+        expect(failure.message).toContain("symlink");
+        expect(yield* fs.exists(survivor)).toBe(true);
+      }),
+    ),
+  );
+
   it.live("is refused at launch when it is a dangling symlink", () =>
     run(
       Effect.gen(function* () {

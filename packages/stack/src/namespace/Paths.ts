@@ -163,9 +163,10 @@ export const destroyOwnedRoot = Effect.fn("Namespace.Paths.destroyOwnedRoot")(
 );
 
 /**
- * Refuses a stack's `data` directory when it is a symlink (dangling or not), not a directory, or
- * resolves outside the stack directory, so nothing is created in or removed from a target the stack
- * does not own. A missing directory passes: only launch creates it.
+ * Refuses a stack directory that is a symlink or resolves outside the state root, and a stack's
+ * `data` directory when it is a symlink (dangling or not), not a directory, or resolves outside the
+ * stack directory, so nothing is created in or removed from a target the stack does not own. A
+ * missing directory passes: only launch creates it.
  */
 export const confirmStackDataRoot = Effect.fn("Namespace.Paths.confirmStackDataRoot")(function* (
   stateRoot: string,
@@ -175,6 +176,11 @@ export const confirmStackDataRoot = Effect.fn("Namespace.Paths.confirmStackDataR
   const path = yield* Path.Path;
   const stackRoot = path.join(stateRoot, stackId);
   const dataRoot = path.join(stackRoot, "data");
+  const stackInfo = yield* lstatPath(stackRoot).pipe(
+    Effect.mapError((cause) => namespaceError("destroy", cause)),
+  );
+  if (stackInfo !== undefined)
+    yield* confirmRealOwnedDirectory(fs, path, stackRoot, stateRoot, namespaceError);
   const info = yield* lstatPath(dataRoot).pipe(
     Effect.mapError((cause) => namespaceError("destroy", cause)),
   );
