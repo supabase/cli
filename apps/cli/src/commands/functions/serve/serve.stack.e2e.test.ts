@@ -1,15 +1,21 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { create as createStack } from "@supabase/stack/effect";
+import {
+  create as createStack,
+  postgres,
+  type Observation,
+  type Stack,
+  type StackError,
+} from "@supabase/stack/effect";
 import {
   Data,
   Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
   Path,
   Redacted,
-  Ref,
   Schema,
   Stream,
 } from "effect";
@@ -188,23 +194,40 @@ const payload = Effect.fn("FunctionsServeE2e.payload")(function* (
 
 const layer = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
 
-/** Records every lifecycle the service reports once its follow is subscribed. */
-const trackLifecycles = Effect.fn("FunctionsServeE2e.trackLifecycles")(function* (instance: {
-  readonly followStatus: Stream.Stream<{ readonly lifecycle: string }, unknown>;
-}) {
-  const seen = yield* Ref.make<ReadonlySet<string>>(new Set());
+/**
+ * Follows a service's statuses from the first one it delivers and returns a fiber that resolves
+ * with every status delivered before `barrier` matches. Statuses arrive in order, so a later
+ * transition the test causes proves the recorded prefix is complete.
+ */
+const statusesBefore = Effect.fn("FunctionsServeE2e.statusesBefore")(function* (
+  instance: { readonly followStatus: Stream.Stream<Observation, StackError> },
+  barrier: (status: Observation) => boolean,
+) {
   const subscribed = yield* Deferred.make<void>();
-  yield* instance.followStatus.pipe(
-    Stream.tap((value) =>
-      Ref.update(seen, (lifecycles) => new Set([...lifecycles, value.lifecycle])).pipe(
-        Effect.andThen(Deferred.succeed(subscribed, undefined)),
-      ),
-    ),
-    Stream.runDrain,
+  const before = yield* instance.followStatus.pipe(
+    Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+    Stream.takeWhile((status) => !barrier(status)),
+    Stream.runCollect,
     Effect.forkScoped,
   );
   yield* Deferred.await(subscribed);
-  return seen;
+  return before;
+});
+
+/** The database process start time, which changes whenever Postgres is relaunched. */
+const postmasterStartTime = Effect.fn("FunctionsServeE2e.postmasterStartTime")(function* (
+  stack: Stack,
+  databaseUrl: string,
+) {
+  const decoder = new TextDecoder();
+  let stdout = "";
+  const result = yield* stack.commands.run(postgres.psql({ major: 17 }), {
+    args: ["--dbname", databaseUrl, "-tA", "--command", "SELECT pg_postmaster_start_time()"],
+    stdout: (bytes) => Effect.sync(() => (stdout += decoder.decode(bytes))),
+    stderr: () => Effect.void,
+  });
+  expect(result.exitCode).toBe(0);
+  return stdout.trim();
 });
 
 describe("functions serve (stack e2e)", () => {
@@ -225,7 +248,13 @@ describe("functions serve (stack e2e)", () => {
           expect(saved.wakeEnabled).toBe(true);
           const composition = yield* stack.composition.describe;
           const plain = yield* serve(root, home);
-          const lifecycles = yield* trackLifecycles(functions);
+          const beforeOverride = yield* statusesBefore(
+            functions,
+            (status) =>
+              status.lifecycle === "running" &&
+              status.config.service === "functions" &&
+              status.config.config.env?.CUSTOM_VALUE === "overridden",
+          );
           expect(yield* payload(apiUrl, true)).toEqual({
             value: "original",
             anon: true,
@@ -242,7 +271,6 @@ describe("functions serve (stack e2e)", () => {
           expect((yield* payload(apiUrl, true)).value).toBeNull();
           yield* fs.writeFileString(sourcePath, source);
           yield* interrupt(plain);
-          expect(yield* Ref.get(lifecycles)).toEqual(new Set(["running"]));
           expect((yield* invoke(apiUrl, false)).status).toBe(401);
 
           const overridden = yield* serve(root, home, [
@@ -257,6 +285,12 @@ describe("functions serve (stack e2e)", () => {
             databaseUrl,
           });
           yield* interrupt(overridden);
+          // The override's own restart is the only launch before its configuration is running.
+          const launches = (yield* Fiber.join(beforeOverride)).filter(
+            ({ lifecycle }, index, all) =>
+              lifecycle === "starting" && all[index - 1]?.lifecycle !== "starting",
+          );
+          expect(launches).toHaveLength(1);
           expect((yield* functions.status).config).toEqual(saved.config);
           expect((yield* invoke(apiUrl, false)).status).toBe(401);
           expect((yield* payload(apiUrl, true)).value).toBe("original");
@@ -276,7 +310,9 @@ describe("functions serve (stack e2e)", () => {
           const composition = yield* stack.composition.describe;
           const database = services.find((instance) => instance.service === "database");
           if (database === undefined) return yield* Effect.die("Database missing");
-          const databaseLifecycles = yield* trackLifecycles(database);
+          const hostDatabaseUrl = (yield* database.credentials()).databaseUrl;
+          if (hostDatabaseUrl === undefined) return yield* Effect.die("Database URL missing");
+          const startedAt = yield* postmasterStartTime(stack, hostDatabaseUrl);
           const child = yield* serve(root, home);
           expect(yield* payload(apiUrl, true)).toEqual({
             value: null,
@@ -291,10 +327,10 @@ describe("functions serve (stack e2e)", () => {
             services.map(({ id }) => id).sort(),
           );
           expect(yield* stack.composition.describe).toEqual(composition);
-          expect(yield* Ref.get(databaseLifecycles)).toEqual(new Set(["running"]));
           expect((yield* invoke(apiUrl, false)).status).toBe(404);
           const http = yield* HttpClient.HttpClient;
           expect((yield* http.get(`${apiUrl}/rest/v1/`)).status).toBe(200);
+          expect(yield* postmasterStartTime(stack, hostDatabaseUrl)).toBe(startedAt);
         }).pipe(Effect.provide(layer)),
       { timeout: 360_000 },
     );

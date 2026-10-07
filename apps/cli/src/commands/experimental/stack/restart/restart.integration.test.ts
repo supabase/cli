@@ -1,7 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { StackError } from "@supabase/stack/effect";
-import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Ref, Stream } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockCommandSettings,
@@ -12,7 +13,36 @@ import { stackRestart } from "./restart.handler.ts";
 import { destroyTestStack } from "../../../../../tests/helpers/stack-cleanup.ts";
 import { stackArtifactCacheRoot } from "../../../../../tests/helpers/stack-artifacts.ts";
 
-const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
+const live = Layer.provideMerge(
+  stackApiLayer,
+  Layer.merge(BunServices.layer, FetchHttpClient.layer),
+);
+const MailpitInfo = Schema.Struct({ RuntimeStats: Schema.Struct({ SMTPAccepted: Schema.Finite }) });
+
+// Mailpit counts accepted messages per process, so the count restarts from zero after a relaunch.
+const mailpit = Effect.fn("StackRestartTest.mailpit")(function* (port: number) {
+  const http = yield* HttpClient.HttpClient;
+  const origin = `http://127.0.0.1:${port}`;
+  return {
+    send: http
+      .execute(
+        HttpClientRequest.post(`${origin}/api/v1/send`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            From: { Email: "from@example.com" },
+            To: [{ Email: "to@example.com" }],
+            Subject: "restart",
+            Text: "restart",
+          }),
+        ),
+      )
+      .pipe(Effect.flatMap((response) => response.text)),
+    accepted: http.get(`${origin}/api/v1/info`).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(MailpitInfo)),
+      Effect.map((info) => info.RuntimeStats.SMTPAccepted),
+    ),
+  };
+});
 const fixture = Effect.fn("StackRestartTest.fixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -71,6 +101,13 @@ describe("stack restart", () => {
               yield* standalone.start;
               yield* standalone.ready;
               const before = yield* member.status;
+              const standaloneHttpPort = (yield* standalone.status).endpoints.find(
+                ({ name }) => name === "http",
+              )?.port;
+              if (standaloneHttpPort === undefined) return yield* Effect.die("Mail port missing");
+              const standaloneMail = yield* mailpit(standaloneHttpPort);
+              yield* standaloneMail.send;
+              expect(yield* standaloneMail.accepted).toBe(1);
 
               // Both follows are subscribed once their first status arrives, before the restart.
               const memberFollowing = yield* Deferred.make<void>();
@@ -84,19 +121,7 @@ describe("stack restart", () => {
                 Stream.runDrain,
                 Effect.forkScoped,
               );
-              const standaloneFollowing = yield* Deferred.make<void>();
-              const standaloneLifecycles = yield* Ref.make<ReadonlyArray<string>>([]);
-              yield* standalone.followStatus.pipe(
-                Stream.tap((value) =>
-                  Ref.update(standaloneLifecycles, (seen) => [...seen, value.lifecycle]).pipe(
-                    Effect.andThen(Deferred.succeed(standaloneFollowing, undefined)),
-                  ),
-                ),
-                Stream.runDrain,
-                Effect.forkScoped,
-              );
               yield* Deferred.await(memberFollowing);
-              yield* Deferred.await(standaloneFollowing);
 
               const result = yield* stackRestart(f.flags).pipe(Effect.provide(f.layer));
               yield* Fiber.join(relaunched);
@@ -107,7 +132,7 @@ describe("stack restart", () => {
               expect(after.health).toBe("healthy");
               expect(after.endpoints).toEqual(before.endpoints);
               expect(standaloneAfter.lifecycle).toBe("running");
-              expect(new Set(yield* Ref.get(standaloneLifecycles))).toEqual(new Set(["running"]));
+              expect(yield* standaloneMail.accepted).toBe(1);
               expect(f.output.stdoutText).toContain("using its saved configuration");
               expect(f.telemetry.flushed).toBe(true);
               yield* stack.stop;
