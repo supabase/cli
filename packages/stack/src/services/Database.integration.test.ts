@@ -323,7 +323,7 @@ describe("database component", { timeout: 180_000 }, () => {
             Effect.provide(
               ConfigProvider.layerAdd(
                 ConfigProvider.fromEnvRecord(
-                  { SSL_CERT_FILE: "", SSL_CERT_DIR: "certs-a:certs-b" },
+                  { SSL_CERT_FILE: "", SSL_CERT_DIR: ":certs-a::certs-b" },
                   { preserveEmptyStrings: true },
                 ),
                 { asPrimary: true },
@@ -343,7 +343,7 @@ describe("database component", { timeout: 180_000 }, () => {
           expect({ ...serverEnv, exists: yield* fs.exists(serverEnv.file) }).toEqual({
             file: expect.stringMatching(/^\//u),
             exists: true,
-            dir: `${path.resolve("certs-a")}:${path.resolve("certs-b")}`,
+            dir: `:${path.resolve("certs-a")}::${path.resolve("certs-b")}`,
           });
           yield* service.destroy;
         }),
