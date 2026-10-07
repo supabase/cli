@@ -299,10 +299,23 @@ export const makePorts = (state: StackNamespace.Interface) =>
         Effect.orElseSucceed(() => false),
       );
 
-    /** Whether a process holds the holder stack's owner lease; an unreadable lease counts as held. */
+    /**
+     * Whether a process holds the holder stack's owner lease; an unreadable lease counts as held.
+     * A sweeper holding it does not count, since a sweeper never uses the stack's public ports.
+     */
     const isLeased = (holder: Holder) =>
       Lease.make({ root: holder.stateRoot, isRegistered: () => Effect.succeed(true) }).pipe(
-        Effect.flatMap((lease) => lease.leased(holder.stackId)),
+        Effect.flatMap((lease) =>
+          lease
+            .leased(holder.stackId)
+            .pipe(
+              Effect.flatMap((leased) =>
+                leased
+                  ? lease.readHolder(holder.stackId).pipe(Effect.map((h) => h?.role !== "sweeper"))
+                  : Effect.succeed(false),
+              ),
+            ),
+        ),
         Effect.provideContext(services),
         Effect.orElseSucceed(() => true),
       );

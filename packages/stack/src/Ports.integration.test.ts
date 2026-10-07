@@ -2,6 +2,7 @@ import { NodeFileSystem, NodeHttpClient, NodeServices } from "@effect/platform-n
 import { expect, it } from "@effect/vitest";
 import {
   Context,
+  DateTime,
   Effect,
   Exit,
   FileSystem,
@@ -597,6 +598,31 @@ it.live(
         expect(yield* registry.find(stateRoot, b, "db:sql")).toBe(port);
       }),
     ).pipe(withRegistry),
+);
+
+it.live("a configured port takes over a reservation whose stack is only held by a sweeper", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { state, ports, registry, stateRoot, a, b } = yield* twoProjects;
+      const port = pinnedPort();
+      yield* registry.reserve(stateRoot, a, "db:sql", port);
+      const lease = yield* state.acquireLease(a);
+      yield* lease.publishHolder({
+        role: "sweeper",
+        pid: process.pid,
+        startedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+
+      const started = yield* ports.acquire(
+        { stackId: b, key: "db:sql", host: "127.0.0.1", port },
+        (_host, bound) => Effect.succeed(bound),
+      );
+
+      expect(started.port).toBe(port);
+      expect(yield* registry.find(stateRoot, b, "db:sql")).toBe(port);
+      expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+    }),
+  ).pipe(withRegistry),
 );
 
 it.live("a pinned port that fails to bind is not left reserved", () =>
