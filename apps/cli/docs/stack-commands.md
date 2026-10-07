@@ -9,6 +9,11 @@ Native PostgreSQL requires passwords for every role except `supabase_admin`. Its
 and password-reconciliation connection uses that administrative role, so a native
 `supabase_admin` connection is not password-checked.
 
+Native pg_cron runs jobs in background workers, so a job body cannot contain its own `BEGIN` or
+`COMMIT`. Jobs enforce the same `supautils` role policies as client sessions. Native databases
+default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
+`ALTER SYSTEM`, and `[db.settings]` values take precedence.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |
@@ -212,8 +217,8 @@ env-precedence rule as `start`/`stop`/`status`. See
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
-primary database without changing other services (webhooks setup only; no second overlay or
-migrate-and-seed).
+primary database without changing other services (webhooks setup only, creating a missing
+`supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 `db reset --local` and declarative resets rebuild the existing database while retaining stack

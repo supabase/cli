@@ -5,8 +5,10 @@ import {
   create,
   discover,
   find,
+  findDeleted,
   open,
   type CreateOptions,
+  type DeletedStack,
   type DestroyResult,
   type FindOptions,
   type FoundStack,
@@ -27,6 +29,9 @@ export class StackApi extends Context.Service<
       options: Parameters<typeof discover>[0],
     ) => Effect.Effect<DiscoverResult, StackError>;
     readonly find: (options: FindOptions) => Effect.Effect<Option.Option<FoundStack>, StackError>;
+    readonly findDeleted: (
+      options: Parameters<typeof findDeleted>[0],
+    ) => Effect.Effect<Option.Option<DeletedStack>, StackError>;
   }
 >()("supabase/stack/StackApi") {}
 
@@ -58,11 +63,15 @@ export const stackApiLayer = Layer.effect(
     const findStack = Effect.fn("StackApi.find")((options: FindOptions) =>
       provideServices(find(options)),
     );
+    const findDeletedStack = Effect.fn("StackApi.findDeleted")(
+      (options: Parameters<typeof findDeleted>[0]) => provideServices(findDeleted(options)),
+    );
     return StackApi.of({
       create: createStack,
       open: openStack,
       discover: discoverStacks,
       find: findStack,
+      findDeleted: findDeletedStack,
     });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));

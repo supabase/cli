@@ -19,6 +19,7 @@ const managedBindings: ReadonlyArray<{
   readonly output: string;
   readonly targetKind: ServiceCreation["service"];
   readonly input: string;
+  readonly lifecycleDependency?: boolean;
 }> = [
   {
     sourceKind: "database",
@@ -110,6 +111,7 @@ const managedBindings: ReadonlyArray<{
     output: "url",
     targetKind: "studio",
     input: "functionsUrl",
+    lifecycleDependency: false,
   },
   {
     sourceKind: "mail",
@@ -546,6 +548,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           output: outputName,
           targetKind,
           input: inputName,
+          lifecycleDependency = true,
         } of managedBindings) {
           const source = entriesByKind.get(sourceKind);
           const target = entriesByKind.get(targetKind);
@@ -561,6 +564,7 @@ export const makeSupabaseComposition = Effect.fn("Supabase.compose")(
           }
           values[inputName] = yield* operations.output(source.id, outputName);
           configInputs.set(target.id, values);
+          if (!lifecycleDependency) continue;
           const key = `${source.id}->${target.id}`;
           const dependency = dependencyMap.get(key) ?? {
             from: source.id,

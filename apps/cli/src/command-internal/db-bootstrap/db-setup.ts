@@ -23,7 +23,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
-import type { DbConnectError } from "../db-connection.errors.ts";
+import type { DbConnectError, DbExecError } from "../db-connection.errors.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
 import { checkDbToml, resolveSeedSqlPath } from "../db-config.toml-read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
@@ -42,6 +42,7 @@ import { REALTIME_TENANT_ID, buildRealtimeEnv } from "./realtime-env.ts";
 import { START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
 import { START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
 import { START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
+import { STACK_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { startInternalDbPassword, startInternalDbUrl } from "./internal-db-connection.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -648,6 +649,38 @@ export const applyDatabaseWebhooks = Effect.fnUntraced(function* (
     tmpDir,
     "enable-database-webhooks.sql",
     START_ENABLE_DATABASE_WEBHOOKS_SQL,
+  );
+});
+
+const WEBHOOK_SCHEMA_LOCK_ID_SQL = "hashtext('supabase_internal.supabase_functions')";
+
+/**
+ * Creates the `supabase_functions` schema on stack databases, which never run the PG15+ entrypoint
+ * that creates it. Runs under an advisory lock and skips when the schema exists, since the template
+ * is not re-runnable.
+ */
+export const ensureStackWebhookSchema = Effect.fn("DbSetup.ensureStackWebhookSchema")(function* (
+  session: DbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tmpDir: string,
+) {
+  const databaseError = (error: DbExecError) =>
+    new DbSetupError({ message: error.message, reason: "database" });
+  const exec = (sql: string) => session.exec(sql).pipe(Effect.mapError(databaseError));
+  yield* Effect.acquireUseRelease(
+    Effect.interruptible(exec(`select pg_advisory_lock(${WEBHOOK_SCHEMA_LOCK_ID_SQL})`)),
+    () =>
+      Effect.gen(function* () {
+        const rows = yield* session
+          .query("select pg_catalog.to_regnamespace('supabase_functions') is null as missing")
+          .pipe(Effect.mapError(databaseError));
+        const missing = rows[0]?.["missing"] === true;
+        if (missing)
+          yield* execSqlConstant(session, fs, path, tmpDir, "webhook.sql", STACK_DB_WEBHOOK_SQL);
+        yield* Effect.annotateCurrentSpan("db.webhook_schema.created", missing);
+      }),
+    () => exec(`select pg_advisory_unlock(${WEBHOOK_SCHEMA_LOCK_ID_SQL})`),
   );
 });
 

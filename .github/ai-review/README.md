@@ -55,6 +55,16 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
   comments where the diff can anchor them, a summary body for everything
   else), then best-effort supersedes any prior AI review on the PR.
 
+### Next-branch impact
+
+For PRs into `develop`, when a `next` branch exists, each model job also writes
+`/tmp/ai-review/next-context.md` (`generate-next-context.ts`: commits and changed
+files on `next` that `develop` lacks). The prompts then ask for findings in the
+`next-impact` category where the PR would fundamentally conflict with that work.
+`post-review.ts` caps their severity at `minor` and renders them in a separate
+"Next impact (advisory)" section, never as inline comments. They never block a
+PR, and with no `next` branch (or another base) the file and section are absent.
+
 ## Once-per-PR semantics and manual re-runs
 
 New commits never re-trigger a review — `resolve.ts`'s dedup guard skips a
