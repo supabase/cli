@@ -27,13 +27,18 @@ const BranchListItem = Schema.Struct({
 });
 const BranchList = Schema.Array(BranchListItem);
 
+const section = (name: string, text: string) => (text.length === 0 ? "" : `\n${name}:\n${text}`);
+
 class BranchCommandFailed extends Data.TaggedError("BranchCommandFailed")<{
   readonly phase: string;
   readonly exitCode: number;
+  // Unset where stdout can hold secrets: `branches get` prints the branch password and JWT secret.
+  readonly stdout?: string;
   readonly stderr: string;
 }> {
   override get message(): string {
-    return `${this.phase} failed (exit ${this.exitCode})${this.stderr.length === 0 ? "" : `\nstderr:\n${this.stderr}`}`;
+    const streams = section("stdout", this.stdout ?? "") + section("stderr", this.stderr);
+    return `${this.phase} failed (exit ${this.exitCode})${streams}`;
   }
 }
 
@@ -69,8 +74,8 @@ type BranchError<E> =
   | BranchPayloadInvalid
   | AggregateError;
 
-function boundedStderr(stderr: string): string {
-  return stderr.length <= 2_000 ? stderr : stderr.slice(stderr.length - 2_000);
+function bounded(output: string): string {
+  return output.length <= 2_000 ? output : output.slice(output.length - 2_000);
 }
 
 function command<E>(
@@ -88,7 +93,8 @@ function command<E>(
             new BranchCommandFailed({
               phase,
               exitCode: result.exitCode,
-              stderr: boundedStderr(result.stderr),
+              stdout: bounded(result.stdout),
+              stderr: bounded(result.stderr),
             }),
           ),
     ),
@@ -179,7 +185,7 @@ function getBranchReady<E>(
         new BranchCommandFailed({
           phase: `branches get ${name}`,
           exitCode: result.exitCode,
-          stderr: boundedStderr(result.stderr),
+          stderr: bounded(result.stderr),
         }),
       );
     }),
@@ -258,7 +264,7 @@ function deleteBranch<E>(
         new BranchCommandFailed({
           phase,
           exitCode: result.exitCode,
-          stderr: boundedStderr(result.stderr),
+          stderr: bounded(result.stderr),
         }),
       );
     }),
