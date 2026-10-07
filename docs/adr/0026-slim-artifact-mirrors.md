@@ -141,13 +141,18 @@ upgrade first and the hotfix PR is superseded and must be closed by hand.
 
 A service with a single pin and no engine variants has a single line, which accepts any comparable
 newer upstream: a Studio year rollover or a postgrest major bump moves that line forward. Only
-postgres, which has additional pins and engine variants, assigns each release tag to a line by its
-leading version component plus any engine-variant suffix, even when the catalog carries one pin: postgres `17.11.0.002-orioledb` is on line `17-orioledb`, separate
-from stock `17`, and compares within it without the suffix. The first release of a variant line
-whose stock major the catalog carries, in a catalog that already has an additional pin to insert
-after, is an **add** (branch `slim-bump/<svc>-<line>`, title
-`chore(stack): add <svc> <release_version>`) that inserts the line's pin; later releases hotfix or
-upgrade it like any other line. Any other tag on no carried line, or with a version that isn't
+postgres, which has additional pins and engine variants, assigns each release tag to a line, even
+when the catalog carries one pin. A stock tag's line is its leading version component. An
+engine-variant build is its own line, because a newer build may refuse its data (OrioleDB 17.11
+refuses data written by 17.9: its checkpoint format changed). So a project's exact
+`db.orioledb_version` keeps working after a CLI upgrade: postgres `17.11.0.002-orioledb` is on line
+`17.11.0.002-orioledb`, and a newer OrioleDB build is added beside it rather than replacing it. The
+first release of a variant build whose stock major the catalog carries, in a catalog that already
+has an additional pin to insert after, is an **add** (branch `slim-bump/<svc>-<line>`, title
+`chore(stack): add <svc> <release_version>`) that inserts the build's pin; later revisions of that
+build hotfix it in place. Only the newest unshipped build of a variant is added, and only when it is
+newer than every carried build of that variant: older builds no shipped CLI pinned are never
+backfilled. A stock line hotfixes or upgrades like any other line. Any other tag on no carried line, or with a version that isn't
 comparable, is warned about and ignored rather than failing the run. Comparison strips a trailing `-sha-<hex>`, so two Studio builds dated
 the same day compare equal and never produce an upgrade; the manual `--release` path pins such a
 build.

@@ -1,4 +1,5 @@
 import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { postgresVersionCompare } from "../../command-internal/db-bootstrap/postgres.service.ts";
 
 const CONFIG_TEMPLATE_RAW = `# For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
@@ -466,9 +467,12 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
-/** The catalog's pinned OrioleDB 17 build, which both stack and Compose projects can run. */
+/** The catalog's newest OrioleDB 17 build, which both stack and Compose projects can run. */
 const initOrioledbVersion = (): string =>
-  orioledbVersions().find((version) => postgresMajor(version) === "17") ?? "";
+  orioledbVersions()
+    .filter((version) => postgresMajor(version) === "17")
+    .toSorted(postgresVersionCompare)
+    .at(-1) ?? "";
 
 const EXPERIMENTAL_STACK_INIT_FLAG = `# Use the new local stack backend for start, stop, and status, and for --local targets of db, migration, test db, gen types, inspect, and pull.
 stack = true

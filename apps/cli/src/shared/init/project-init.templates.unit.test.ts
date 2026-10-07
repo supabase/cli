@@ -2,7 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { applyConfigEdits, type ConfigEdit } from "@supabase/config/internal";
-import { orioledbVersions, postgresMajor } from "@supabase/stack/internal/artifacts";
+import { orioledbVersions } from "@supabase/stack/internal/artifacts";
 import {
   INIT_GITIGNORE_TEMPLATE,
   INTELLIJ_DENO_TEMPLATE,
@@ -40,9 +40,11 @@ const renderExpectedGoEject = readVendoredTemplate("config.toml").pipe(
   Effect.map((template) =>
     resolveGoTemplateEscapes(template)
       .replace("{{ .ProjectId }}", "demo-project")
+      // The version is catalog data, checked by the pinned-version test below.
       .replace(
         "{{ .Db.OrioleDBVersion }}",
-        orioledbVersions().find((version) => postgresMajor(version) === "17") ?? "",
+        /^orioledb_version = "(.*)"$/m.exec(renderCliConfigTemplate("demo-project", true))?.[1] ??
+          "",
       )
       // supabase init always opts new projects into pg-delta; the Go template
       // renders this from a flag only set on the init path.

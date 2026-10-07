@@ -99,8 +99,9 @@ function workflowCommand(kind: "error" | "warning", message: string): string {
 }
 
 /**
- * Upstream suffixes that put a release on its own engine-variant line beside the stock line of
- * the same major, e.g. postgres `17.11.0.002-orioledb` on line `17-orioledb`.
+ * Upstream suffixes of engine variants whose data is tied to one build, so each build is its own
+ * line beside the stock major: postgres `17.11.0.002-orioledb` is on line `17.11.0.002-orioledb`,
+ * and a newer OrioleDB build is added rather than replacing a pin existing projects still use.
  */
 const LINE_VARIANTS: Readonly<Record<string, ReadonlyArray<string>>> = {
   postgres: ["-orioledb"],
@@ -117,14 +118,14 @@ function withoutVariant(service: string, version: string): string {
 }
 
 /**
- * Leading numeric component, `v` stripped, plus any engine-variant suffix. Only postgres carries
- * more than one line.
+ * Leading numeric component, `v` stripped; an engine-variant build is its own line. Only postgres
+ * carries more than one line.
  */
 function releaseLine(service: string, version: string): string {
-  const withoutPrefix = withoutVariant(service, version).replace(/^[vV]/, "");
+  if (lineVariant(service, version) !== undefined) return version;
+  const withoutPrefix = version.replace(/^[vV]/, "");
   const separator = withoutPrefix.indexOf(".");
-  const major = separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
-  return `${major}${lineVariant(service, version) ?? ""}`;
+  return separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
 }
 
 /** Whether `service` assigns release tags to lines rather than accepting any newer upstream. */
@@ -133,11 +134,14 @@ function hasReleaseLines(service: string, additional: ReadonlyArray<unknown>): b
 }
 
 /**
- * Whether an uncarried `line` may be added on first publish: an engine-variant line whose stock
+ * Whether an uncarried `line` may be added on first publish: an engine-variant build whose stock
  * major the catalog already carries.
  */
 function isAddableLine(service: string, line: string, carried: (line: string) => boolean): boolean {
-  return lineVariant(service, line) !== undefined && carried(withoutVariant(service, line));
+  return (
+    lineVariant(service, line) !== undefined &&
+    carried(releaseLine(service, withoutVariant(service, line)))
+  );
 }
 
 /**
@@ -946,17 +950,37 @@ export function planSlimUpdates(
     }
   }
 
-  const newLines = [...candidatesByLine.keys()].filter((line) => !carried(line)).sort();
-  for (const line of newLines) {
+  // Each variant family (e.g. `17-orioledb`) adds only its newest build, and only past every
+  // carried one: builds no shipped CLI pinned are never backfilled.
+  const variantFamily = (line: string) =>
+    `${releaseLine(service, withoutVariant(service, line))}${lineVariant(service, line) ?? ""}`;
+  const newLinesByFamily = new Map<string, ReadonlyArray<string>>();
+  for (const line of [...candidatesByLine.keys()].filter((line) => !carried(line))) {
+    const family = variantFamily(line);
+    newLinesByFamily.set(family, [...(newLinesByFamily.get(family) ?? []), line]);
+  }
+  for (const family of [...newLinesByFamily.keys()].sort()) {
     const best = newest(
-      candidatesByLine.get(line) ?? [],
+      (newLinesByFamily.get(family) ?? []).flatMap((line) => candidatesByLine.get(line) ?? []),
       (upstream) => comparableVersion(withoutVariant(service, upstream)) !== undefined,
     );
-    if (best !== undefined) {
-      updates.push(
-        buildUpdate("add", service, line, hasLines, undefined, best.upstream, best.revision),
-      );
-    }
+    if (best === undefined) continue;
+    const superseded = [...pinnedByLine].some(
+      ([line, pinned]) =>
+        variantFamily(line) === family && (compareOnLine(pinned.upstream, best.upstream) ?? 0) >= 0,
+    );
+    if (superseded) continue;
+    updates.push(
+      buildUpdate(
+        "add",
+        service,
+        releaseLine(service, best.upstream),
+        hasLines,
+        undefined,
+        best.upstream,
+        best.revision,
+      ),
+    );
   }
 
   return { updates, warnings };
