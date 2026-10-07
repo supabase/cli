@@ -11,9 +11,9 @@ import { testEngine } from "../tests/test-engine.ts";
 import type { ContainerEngine } from "./runtime/Container.ts";
 
 /**
- * The per-user port reservation registry: a stopped stack keeps its public ports across
- * every other stack's starts and across state roots, a restart recovers the same ports or fails
- * with a structured `PortConflict`, and destroy (but never stop or a kill) releases them.
+ * The per-user port reservation registry: a stopped stack keeps its automatic ports across state
+ * roots unless another stack's configured port takes one over, a restart recovers the same ports
+ * or fails with a structured `PortConflict`, and destroy (but never stop or a kill) releases them.
  */
 
 const servicesLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -102,7 +102,7 @@ const withFakeHome = <A, E, R>(home: string, use: Effect.Effect<A, E, R>) =>
   );
 
 it.live(
-  "a stopped stack's reserved port survives another stack's start in a different state root; a fixed claim on it is a structured PortConflict naming the holder, and the stack restarts on the same port",
+  "a configured port takes over a stopped stack's automatic port in another state root, and the stopped stack restarts on a new automatic port",
   () =>
     run(
       Effect.gen(function* () {
@@ -113,38 +113,26 @@ it.live(
         yield* mailA.start;
         yield* mailA.ready;
         const port = portOf(yield* mailA.status);
-
-        // A is stopped, not destroyed: its registration, and the public port it was given, persist.
-        // `Stack.stop` already confirms the owner (and so its listener) has exited.
         yield* stackA.stop;
 
         const { stack: stackB } = yield* makeStack(fs, cacheRoot);
         const mailB = yield* stackB.services.create(mailOn(port));
-        const startB = yield* Effect.exit(mailB.start);
-        expect(Exit.isFailure(startB)).toBe(true);
-        expect(conflictHolderStackId(startB)).toBe(stackA.id);
+        yield* mailB.start;
+        yield* mailB.ready;
+        expect(portOf(yield* mailB.status)).toBe(port);
 
-        // A's restart recovers its own reserved port; B never legitimately held it.
         const reopenedA = yield* open({ id: stackA.id, stateRoot: stateRootA, cacheRoot });
         const reopenedMailA = yield* reopenedA.services.get(mailA.id);
         yield* reopenedMailA.start;
         yield* reopenedMailA.ready;
-        expect(portOf(yield* reopenedMailA.status)).toBe(port);
-
-        // Destroy releases the reservation: a third stack can now claim the exact same port.
-        yield* reopenedA.destroy;
-        const { stack: stackC } = yield* makeStack(fs, cacheRoot);
-        const mailC = yield* stackC.services.create(mailOn(port));
-        yield* mailC.start;
-        yield* mailC.ready;
-        expect(portOf(yield* mailC.status)).toBe(port);
+        expect(portOf(yield* reopenedMailA.status)).not.toBe(port);
       }),
     ),
   { timeout: 120_000 },
 );
 
 it.live(
-  "a SIGKILLed owner's reservation survives: another stack's claim on its port is a conflict, the original restarts on the same port, and destroy then releases it",
+  "a SIGKILLed owner's automatic reservation survives, the stack restarts on the same port, and destroy then releases it",
   () =>
     run(
       Effect.gen(function* () {
@@ -163,12 +151,6 @@ it.live(
         // The owner's own exit already confirms the kernel has reclaimed its listeners.
         yield* waitForOwnerExit(pid, ownerExitProbe(fs));
 
-        const { stack: stackB } = yield* makeStack(fs, cacheRoot);
-        const mailB = yield* stackB.services.create(mailOn(port));
-        const startB = yield* Effect.exit(mailB.start);
-        expect(Exit.isFailure(startB)).toBe(true);
-        expect(conflictHolderStackId(startB)).toBe(stackA.id);
-
         const reopenedA = yield* open({ id: stackA.id, stateRoot: stateRootA, cacheRoot });
         const reopenedMailA = yield* reopenedA.services.get(mailA.id);
         yield* reopenedMailA.start;
@@ -176,11 +158,17 @@ it.live(
         expect(portOf(yield* reopenedMailA.status)).toBe(port);
 
         yield* reopenedA.destroy;
-        const { stack: stackC } = yield* makeStack(fs, cacheRoot);
-        const mailC = yield* stackC.services.create(mailOn(port));
-        yield* mailC.start;
-        yield* mailC.ready;
-        expect(portOf(yield* mailC.status)).toBe(port);
+        const portReservations = Context.get(
+          yield* Layer.build(PortReservations.layer),
+          PortReservations.Service,
+        );
+        expect(
+          yield* portReservations.find(
+            yield* fs.realPath(stateRootA),
+            stackA.id,
+            `${mailA.id}:http`,
+          ),
+        ).toBeUndefined();
       }),
     ),
   { timeout: 120_000 },
@@ -404,7 +392,7 @@ it.live(
         const failure = yield* Effect.flip(mail.start);
 
         expect(failure.message).toContain("10000-19999");
-        expect(failure.message).toContain("choose a port outside that range");
+        expect(failure.message).toContain("reserved for native service backends");
         const reservationContext = yield* Layer.build(PortReservations.layer);
         const portReservations = Context.get(reservationContext, PortReservations.Service);
         expect(

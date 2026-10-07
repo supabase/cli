@@ -100,8 +100,8 @@ Every public port is reserved, before any listener binds it, in one SQLite regis
 user database (`getent passwd <uid>` on Linux, `dscacheutil -q user -a uid <uid>` on macOS), never
 `$HOME` or `SUPABASE_HOME`, and with no override; a process cannot steer the registry's location by
 setting its own environment. The registry is the only saved port assignment (the stack's `state.json` holds none) and the only authority on which stack owns a port across
-every state root on the machine, so a stopped stack keeps its ports across other
-stacks' starts, and a restart reuses the same ports or fails with a `StackError` whose `conflict`
+every state root on the machine, so a stopped stack keeps its automatic ports across other
+stacks' automatic allocation, and a restart reuses the same ports or fails with a `StackError` whose `conflict`
 field names the port, the endpoint, and either the live holder (`{ stackId, stateRoot }`) or
 `"foreign"` for a process outside the registry. A fixed or previously saved port is never silently
 reassigned; only automatic allocation tries another candidate. A reservation is released when
@@ -109,7 +109,9 @@ deleting an individual service releases the endpoints only it owned, or when a s
 has removed the registration. A failed stack-wide `destroy` keeps automatic reservations (a configured port's reservation is released when its listener closes); a failed
 individual-service destroy may already have released some of that service's endpoints, and the
 service can stay unavailable until the destroy is retried. Stopping a stack or killing its
-owner leaves reservations in place. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
+owner leaves automatic reservations in place, but a configured port claimed by another stack takes
+over a reservation whose stack has no running owner; that stack's next start allocates a new
+automatic port. A reservation whose owning stack's `state.json` is confirmed gone (`ENOENT`, for example
 after deleting its state root) is reclaimed lazily by the next stack that needs its port.
 
 Known limitations: on macOS, BSD, and Windows, where the kernel allows overlapping binds, a loopback
