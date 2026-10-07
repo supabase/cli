@@ -1729,7 +1729,7 @@ describe("db start stack backend", () => {
         restart: Effect.succeed([]),
       },
       stop: Effect.void,
-      destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      destroy: Effect.void,
       commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };

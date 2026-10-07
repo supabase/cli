@@ -154,7 +154,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       restart: Effect.succeed([]),
     },
     stop: Effect.void,
-    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    destroy: Effect.void,
     commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();

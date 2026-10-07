@@ -402,7 +402,6 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
     }),
     destroy: Effect.sync(() => {
       hostDestroyed += 1;
-      return { runtimeCleanup: "complete" as const };
     }),
     commands: { run: () => Effect.die("command not used") },
   };

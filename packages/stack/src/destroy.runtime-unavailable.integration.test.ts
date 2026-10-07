@@ -70,8 +70,7 @@ it.live(
         root,
         '#!/bin/sh\nif [ "$1" = "info" ]; then\n  echo \'fake-daemon-id\'\nfi\nexit 0\n',
       );
-      const second = yield* stack.destroy;
-      expect(second).toEqual({ runtimeCleanup: "complete" });
+      yield* stack.destroy;
       expect(yield* discover({ stateRoot: options.stateRoot })).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   30_000,

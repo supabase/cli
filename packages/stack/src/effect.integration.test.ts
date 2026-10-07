@@ -757,7 +757,7 @@ it.live("removes a deleted stack's containers from both engines, not another roo
       yield* findDeleted({ ...locations, id: deletedId }).pipe(Effect.provide(engine.layer)),
     );
 
-    expect(yield* deleted.destroy).toEqual({ runtimeCleanup: "complete" });
+    yield* deleted.destroy;
     const kept = containers.filter(({ id }) => id !== "deleted");
     expect(engine.remaining("docker")).toEqual(kept);
     expect(engine.remaining("podman")).toEqual(kept);

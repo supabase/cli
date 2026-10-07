@@ -21,7 +21,6 @@ export type {
   CreateOptions,
   CreationChange,
   DatabaseSnapshotOptions,
-  DestroyResult,
   FindOptions,
   FoundStack,
   LogPosition,

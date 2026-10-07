@@ -174,7 +174,6 @@ describe("stack destroy", () => {
                   id,
                   destroy: Effect.sync(() => {
                     destroyed += 1;
-                    return { runtimeCleanup: "complete" } as const;
                   }),
                 })
               : Option.none(),

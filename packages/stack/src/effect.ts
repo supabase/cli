@@ -199,12 +199,6 @@ export type ServiceInstances = {
   [K in Kind]: K extends "database" ? DatabaseInstance : ServiceInstance<K>;
 };
 type AnyInstance = ServiceInstances[Kind];
-/**
- * The outcome of {@link Stack.destroy}. When the stack's container engine is unreachable, destroy
- * fails with reason `runtime-unavailable` and leaves the registration, data and claimed resources
- * in place; calling it again once the engine is reachable finishes the cleanup.
- */
-export type DestroyResult = { readonly runtimeCleanup: "complete" };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -270,7 +264,12 @@ export interface Stack {
     readonly restart: Effect.Effect<ReadonlyArray<Observation>, StackError>;
   };
   readonly stop: Effect.Effect<void, StackError>;
-  readonly destroy: Effect.Effect<DestroyResult, StackError>;
+  /**
+   * Removes the stack. When its container engine is unreachable, fails with reason
+   * `runtime-unavailable` and leaves the registration, data and claimed resources in place;
+   * calling it again once the engine is reachable finishes the cleanup.
+   */
+  readonly destroy: Effect.Effect<void, StackError>;
   readonly commands: {
     readonly run: CommandRunner;
   };
@@ -532,7 +531,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
       Effect.provideContext(services),
       Effect.mapError((cause) => failure(operation, cause)),
     );
-    if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;
+    if (endpoint === undefined) return;
     if (Exit.isFailure(refusal))
       return yield* Option.match(Cause.findErrorOption(refusal.cause), {
         onNone: () => failure(operation, Cause.pretty(refusal.cause)),
@@ -541,7 +540,6 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
     yield* waitForOwnerExit(endpoint.pid, ownerExitProbe(fs)).pipe(
       Effect.mapError((cause) => failure("shutdown-exit", cause)),
     );
-    return { runtimeCleanup: "complete" } as const;
   });
 
   const snapshotScope = (options: DatabaseSnapshotOptions | undefined) =>
@@ -1040,7 +1038,6 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
           "destroy",
           `Removed the ${matched.map(({ target }) => engineLabel(target.engine)).join(" and ")} containers stack ${options.id} left behind. ${unlisted}`,
         );
-      return { runtimeCleanup: "complete" } as const;
     }).pipe(
       Effect.mapError((cause) => failure("destroy", cause)),
       Effect.provideContext(services),
