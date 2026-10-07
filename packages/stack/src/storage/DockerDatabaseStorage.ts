@@ -601,16 +601,23 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.timeout("1 second"),
                     Effect.orElseSucceed(() => ""),
                   );
-                  const reason = Exit.isFailure(exit)
-                    ? Option.match(Cause.findErrorOption(exit.cause), {
-                        onNone: () => Cause.pretty(exit.cause),
-                        onSome: (error) =>
-                          Cause.isTimeoutError(error)
-                            ? "Database helper did not become ready within 30 seconds"
-                            : failureMessage(error),
-                      })
-                    : "Database helper exited before becoming ready";
-                  return yield* errorFor("helper", diagnostic.trim() || reason);
+                  const tail = diagnostic.trim();
+                  const timedOut =
+                    Exit.isFailure(exit) &&
+                    Option.exists(Cause.findErrorOption(exit.cause), Cause.isTimeoutError);
+                  const reason = timedOut
+                    ? "Database helper did not become ready within 30 seconds"
+                    : Exit.isFailure(exit)
+                      ? Option.match(Cause.findErrorOption(exit.cause), {
+                          onNone: () => Cause.pretty(exit.cause),
+                          onSome: failureMessage,
+                        })
+                      : "Database helper exited before becoming ready";
+                  // A hung helper's stderr can hold only warnings, so keep the timeout reason.
+                  return yield* errorFor(
+                    "helper",
+                    timedOut && tail !== "" ? `${reason}: ${tail}` : tail || reason,
+                  );
                 }),
           ),
           Effect.onExit((exit) =>
