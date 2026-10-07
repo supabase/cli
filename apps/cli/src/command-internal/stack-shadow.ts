@@ -3,7 +3,7 @@ import type { DatabaseInstance, Stack } from "@supabase/stack/effect";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
-import { skippedRuntimeCleanupWarning, StackApi } from "./stack-api.ts";
+import { StackApi } from "./stack-api.ts";
 import { initializeStackDatabase } from "./stack-bootstrap.ts";
 import { stackProjectRuntime } from "./stack-local-database.ts";
 import { selectStackRuntime, type StackRuntime } from "./stack-runtime.ts";
@@ -233,14 +233,6 @@ export const stackAcquireShadowDatabase = Effect.fn("StackShadow.acquire")(funct
   const output = yield* Output;
   const namespace = yield* Effect.acquireRelease(acquireNamespace(opts), ({ stack }) =>
     stack.destroy.pipe(
-      Effect.flatMap((result) =>
-        result.runtimeCleanup === "skipped"
-          ? output.raw(
-              `Warning: ${skippedRuntimeCleanupWarning(`shadow stack ${stack.id}`, stack.id, result.engine)}\n`,
-              "stderr",
-            )
-          : Effect.void,
-      ),
       Effect.catch((cause) =>
         output.raw(`Failed to destroy shadow stack ${stack.id}: ${cause.message}.\n`, "stderr"),
       ),

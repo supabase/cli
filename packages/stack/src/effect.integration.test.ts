@@ -670,6 +670,35 @@ it.live("finds a deleted stack only by the containers left in its own state root
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.live("names the directory of a saved stack whose state cannot be decoded", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-unreadable-" });
+    const options = {
+      projectRoot: root,
+      stateRoot: `${root}/state`,
+      cacheRoot: `${root}/cache`,
+      runtime: "native",
+    } satisfies Parameters<typeof create>[0];
+    const stack = yield* create(options);
+    const statePath = `${options.stateRoot}/${stack.id}/state.json`;
+    const saved = yield* fs.readFileString(statePath);
+    yield* fs.writeFileString(
+      statePath,
+      saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
+    );
+
+    const failure = yield* find({ stateRoot: options.stateRoot, projectRoot: root }).pipe(
+      Effect.flip,
+    );
+
+    expect(failure.operation).toBe("find");
+    expect(failure.message).toContain(`Stack ${stack.id} could not be read`);
+    expect(failure.message).toContain(`Remove its directory ${options.stateRoot}/${stack.id}`);
+    expect(yield* fs.exists(statePath)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.live("removes nothing for a stack whose registration is unreadable", () =>
   Effect.gen(function* () {
     const { fs, locations, containers } = yield* deletedStackRoot();

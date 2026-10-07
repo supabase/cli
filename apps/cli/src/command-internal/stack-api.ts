@@ -1,4 +1,3 @@
-import type { ContainerEngine } from "@supabase/stack/internal/engine";
 import { Context, Crypto, Effect, FileSystem, Layer, Option, Path, Scope } from "effect";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -16,7 +15,6 @@ import {
   type Stack,
   type StackError,
 } from "@supabase/stack/effect";
-import { containerEngineName } from "./stack-runtime.ts";
 
 type DiscoverResult = Effect.Success<ReturnType<typeof discover>>;
 
@@ -76,15 +74,5 @@ export const stackApiLayer = Layer.effect(
     });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
-
-/** Describes why a destroy left engine resources behind, without promising automatic cleanup. */
-export const skippedRuntimeCleanupWarning = (
-  subject: string,
-  stackId: string,
-  engine: ContainerEngine,
-): string => {
-  const name = containerEngineName(engine);
-  return `${name} was unavailable, so ${name} resources for ${subject} were not removed. Restore ${name} and run "supabase stack destroy --stack-id ${stackId}" again to finish removing it.`;
-};
 
 export type { Stack };

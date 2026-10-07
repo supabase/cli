@@ -200,14 +200,11 @@ export type ServiceInstances = {
 };
 type AnyInstance = ServiceInstances[Kind];
 /**
- * The outcome of {@link Stack.destroy}. `skipped` means the stack's container engine was
- * unreachable, so nothing was confirmed removed: its registration, data and claimed resources all
- * stay in place. Recovery means calling destroy again once the engine is reachable; reopening the
- * stack does not clean this up on its own.
+ * The outcome of {@link Stack.destroy}. When the stack's container engine is unreachable, destroy
+ * fails with reason `runtime-unavailable` and leaves the registration, data and claimed resources
+ * in place; calling it again once the engine is reachable finishes the cleanup.
  */
-export type DestroyResult =
-  | { readonly runtimeCleanup: "complete" }
-  | { readonly runtimeCleanup: "skipped"; readonly engine: "docker" | "podman" };
+export type DestroyResult = { readonly runtimeCleanup: "complete" };
 /** Options for streaming PostgreSQL command input and output. */
 export interface PostgresCommandOptions<E, R> {
   readonly args?: ReadonlyArray<string>;
@@ -310,27 +307,6 @@ interface Connection {
   /** Replaced by a newer connection; closes once its last user finishes. */
   retired: boolean;
 }
-/**
- * Destroys a stack whose owner cannot start because its container engine is unreachable: since
- * nothing can be confirmed removed, registration, data and claims all stay exactly as they are.
- * The next lease acquisition's reconcile loop (and, once an owner can start, the stack's normal
- * destroy path) finishes the cleanup once the engine is reachable again.
- */
-const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(
-  function* (state: StackNamespace.Interface, saved: SavedStack, engine: "docker" | "podman") {
-    const id = saved.id;
-    if (yield* state.leased(id))
-      return yield* failure(
-        "destroy",
-        "An owner for this stack started during destroy; run destroy again",
-      );
-    const current = yield* state.read(id);
-    if (current === undefined) return { runtimeCleanup: "complete" } as const;
-    return { runtimeCleanup: "skipped", engine } as const;
-  },
-  Effect.mapError((cause) => failure("destroy", cause)),
-);
-
 /** `launch` starts an owner when none is live; `attach` requires a live one. */
 type Reach = "launch" | "attach";
 
@@ -516,11 +492,10 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   const shutdown = Effect.fn("Stack.shutdown")(function* (destroy: boolean) {
     const operation = destroy ? "destroy" : "shutdown";
     yield* invalidate();
-    const engine = saved.runtime === "native" ? undefined : saved.runtime;
     // Shutdown uses the release-stable endpoint, so it reaches owners of any release.
-    const { endpoint, refusal, engineUnavailable } = yield* Effect.scoped(
+    const { endpoint, refusal } = yield* Effect.scoped(
       Effect.gen(function* () {
-        const idle = { endpoint: undefined, refusal: Exit.void, engineUnavailable: false };
+        const idle = { endpoint: undefined, refusal: Exit.void };
         const live = yield* connectHost(state, saved.id, { anyRelease: true }).pipe(
           Effect.map(Option.some),
           Effect.catchIf(ownerAbsent, () =>
@@ -531,13 +506,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
             }),
           ),
           Effect.catchIf(stackGone, () => Effect.succeed(Option.none<HostAccess>())),
-          // The owner's startup sweep reports an unreachable engine before any owner serves.
-          Effect.catchIf(
-            (cause) => engine !== undefined && hasReason("runtime-unavailable")(cause),
-            () => Effect.succeed("engine-unavailable" as const),
-          ),
         );
-        if (live === "engine-unavailable") return { ...idle, engineUnavailable: true };
         if (Option.isNone(live)) return idle;
         const access = live.value;
         const endpoint = access.endpoint;
@@ -557,16 +526,12 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
           ),
           Effect.exit,
         );
-        return { endpoint, refusal, engineUnavailable: false };
+        return { endpoint, refusal };
       }),
     ).pipe(
       Effect.provideContext(services),
       Effect.mapError((cause) => failure(operation, cause)),
     );
-    if (engineUnavailable && engine !== undefined)
-      return yield* destroyWithoutEngine(state, saved, engine).pipe(
-        Effect.provideContext(services),
-      );
     if (endpoint === undefined) return { runtimeCleanup: "complete" } as const;
     if (Exit.isFailure(refusal))
       return yield* Option.match(Cause.findErrorOption(refusal.cause), {
@@ -987,7 +952,17 @@ export const find = Effect.fn("Stack.find")(
     const state = yield* stateFor(options.stateRoot);
     const id =
       "id" in options ? options.id : yield* deriveStackId(yield* resolveStackIdentity(options));
-    const definition = yield* state.read(id);
+    const path = yield* Path.Path;
+    const definition = yield* state.read(id).pipe(
+      Effect.catchIf(
+        (error) => error.operation === "decode",
+        (error) =>
+          failure(
+            "find",
+            `Stack ${id} could not be read: ${error.message}. Remove its directory ${path.join(options.stateRoot, id)} to discard it. Containers it left behind are removed when a container stack next starts under this state root or when the stack is destroyed by id, and its port reservations are released when another stack needs them; its data in the shared database volume is not removed.`,
+          ),
+      ),
+    );
     if (definition === undefined) return Option.none<FoundStack>();
     return Option.some({ definition, host: yield* observeHost(state, definition) });
   },

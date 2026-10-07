@@ -11,17 +11,13 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
-import {
-  skippedRuntimeCleanupWarning,
-  StackApi,
-  stackApiLayer,
-} from "../../../command-internal/stack-api.ts";
+import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import {
   recordStackRuntimeTelemetry,
   type StackRuntime,
 } from "../../../command-internal/stack-runtime.ts";
 
-export { skippedRuntimeCleanupWarning, StackApi, stackApiLayer };
+export { StackApi, stackApiLayer };
 
 /** The target selected by the CLI adapter for one stack command. */
 export interface StackTarget {
@@ -162,13 +158,7 @@ export const stackTargetResolverLayer = Layer.effect(
         });
       const [invalid] = unreadable;
       if (invalid !== undefined)
-        return yield* new StackTargetError({
-          message: `Stack ${invalid.id} could not be read: ${invalid.error.message}`,
-          reason: "invalid-config",
-          suggestion:
-            "Inspect the stack registry under $SUPABASE_HOME/stacks or ~/.supabase/stacks.",
-          cause: invalid.error,
-        });
+        yield* stackApi.find({ stateRoot, id: invalid.id }).pipe(Effect.mapError(stateError));
       return matches[0];
     });
     const resolve = Effect.fn("StackTargetResolver.resolve")(function* (input: {

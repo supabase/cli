@@ -10,21 +10,26 @@ import {
   isStackId,
   StackApi,
   rejectStackOutput,
-  skippedRuntimeCleanupWarning,
   StackTargetResolver,
   mapTargetError,
   validateStackTarget,
 } from "../stack.shared.ts";
-import { containerEngineName } from "../../../../command-internal/stack-runtime.ts";
 import type { StackDestroyFlags } from "./destroy.command.ts";
 import { StackCommandDestroyError } from "./destroy.errors.ts";
 
-const destroyError = (cause: StackError) =>
-  new StackCommandDestroyError({
-    reason: "unknown",
-    message: cause.message,
-    cause,
-  });
+const destroyError = (id: string) => (cause: StackError) =>
+  cause.reason === "runtime-unavailable"
+    ? new StackCommandDestroyError({
+        reason: "runtime",
+        message: cause.message,
+        suggestion: `Start the container engine, then run "supabase stack destroy --stack-id ${id} --yes" again; nothing was removed.`,
+        cause,
+      })
+    : new StackCommandDestroyError({
+        reason: "unknown",
+        message: cause.message,
+        cause,
+      });
 
 export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
   flags: StackDestroyFlags,
@@ -113,9 +118,9 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     }
     const stack = Option.isSome(deleted)
       ? deleted.value
-      : yield* api.open({ ...locations, id }).pipe(Effect.mapError(destroyError));
+      : yield* api.open({ ...locations, id }).pipe(Effect.mapError(destroyError(id)));
     const destroying = yield* output.task(`Destroying stack ${id}...`);
-    const result = yield* stack.destroy.pipe(
+    yield* stack.destroy.pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit)
           ? destroying.clear
@@ -123,30 +128,15 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
             ? destroying.cancel()
             : destroying.fail(Option.getOrUndefined(Exit.findErrorOption(exit))?.message),
       ),
-      Effect.mapError(destroyError),
+      Effect.mapError(destroyError(id)),
     );
-    yield* Effect.annotateCurrentSpan({
-      "stack.prompted": !yes,
-      "stack.runtime_cleanup": result.runtimeCleanup,
-    });
-    if (result.runtimeCleanup === "skipped")
-      yield* output.warn(skippedRuntimeCleanupWarning(`stack ${id}`, id, result.engine));
-    if (output.format !== "text")
-      yield* output.success("", {
-        destroyed: result.runtimeCleanup === "complete",
-        id,
-        runtime_cleanup: result.runtimeCleanup,
-        ...(result.runtimeCleanup === "skipped" ? { engine: result.engine } : {}),
-      });
-    else if (result.runtimeCleanup === "complete")
+    yield* Effect.annotateCurrentSpan({ "stack.prompted": !yes });
+    if (output.format !== "text") yield* output.success("", { destroyed: true, id });
+    else
       yield* output.raw(
         target === undefined
           ? `Removed the containers stack ${id} left behind.\n`
           : `Stack ${id} destroyed.\n`,
-      );
-    else
-      yield* output.raw(
-        `Stack ${id} could not be fully destroyed because ${containerEngineName(result.engine)} is unreachable; restore it and run "supabase stack destroy --stack-id ${id}" again.\n`,
       );
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));

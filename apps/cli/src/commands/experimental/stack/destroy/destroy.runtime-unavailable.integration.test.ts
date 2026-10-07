@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { StackError } from "@supabase/stack/effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../../command-internal/global-flags.ts";
 import {
@@ -10,32 +11,37 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackDestroy } from "./destroy.handler.ts";
+import { StackCommandDestroyError } from "./destroy.errors.ts";
 
 const live = Layer.provideMerge(stackApiLayer, BunServices.layer);
 
 /**
- * A registration real enough for target resolution, whose `destroy` reports the skipped-engine
- * outcome directly: the namespace reconcile this models (claim stays, a later acquisition
- * finishes it) is covered by packages/stack's own suite; this fixture is only the CLI's
- * formatting of that result.
+ * A real registration whose `destroy` fails the way the stack owner reports an unreachable engine:
+ * the namespace behaviour behind it (registration and claims untouched) is covered by
+ * packages/stack's own suite; this fixture is only the CLI's mapping of that failure.
  */
 const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function* (
   format: "text" | "json",
-  engine: "docker" | "podman" = "docker",
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-destroy-runtime-" });
   const realApi = yield* StackApi;
   const locations = { stateRoot: path.join(root, "stacks"), cacheRoot: path.join(root, "cache") };
-  const stack = yield* realApi.create({ ...locations, projectRoot: root, runtime: engine });
+  const stack = yield* realApi.create({ ...locations, projectRoot: root, runtime: "docker" });
   const api = StackApi.of({
     ...realApi,
     open: (options) =>
       realApi.open(options).pipe(
         Effect.map((opened) => ({
           ...opened,
-          destroy: Effect.succeed({ runtimeCleanup: "skipped", engine } as const),
+          destroy: Effect.fail(
+            new StackError({
+              operation: "destroy",
+              message: "Docker CLI or daemon isn't reachable",
+              reason: "runtime-unavailable",
+            }),
+          ),
         })),
       ),
   });
@@ -65,52 +71,22 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
   };
 });
 
-it.live(
-  "keeps a stack registered and reports pending engine cleanup when its engine is unreachable",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture("text");
-      yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
-      expect(f.output.stdoutText).toBe(
-        `Stack ${f.stack.id} could not be fully destroyed because Docker is unreachable; restore it and run "supabase stack destroy --stack-id ${f.stack.id}" again.\n`,
-      );
-      expect(f.output.messages).toContainEqual({
-        type: "warn",
-        message: `Docker was unavailable, so Docker resources for stack ${f.stack.id} were not removed. Restore Docker and run "supabase stack destroy --stack-id ${f.stack.id}" again to finish removing it.`,
-      });
-      expect(yield* f.api.discover(f.locations)).toHaveLength(1);
-    }).pipe(Effect.scoped, Effect.provide(live)),
-);
+for (const format of ["text", "json"] as const)
+  it.live(
+    `fails with the exact --yes retry command and keeps the stack registered when its engine is unreachable (${format})`,
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture(format);
 
-it.live("reports skipped engine cleanup in the JSON result", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture("json");
-    yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
-    expect(f.output.messages).toContainEqual(
-      expect.objectContaining({
-        data: {
-          destroyed: false,
-          id: f.stack.id,
-          runtime_cleanup: "skipped",
-          engine: "docker",
-        },
-      }),
-    );
-    expect(yield* f.api.discover(f.locations)).toHaveLength(1);
-  }).pipe(Effect.scoped, Effect.provide(live)),
-);
+        const failure = yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer), Effect.flip);
 
-it.live("names Podman when a Podman stack's engine is unreachable", () =>
-  Effect.gen(function* () {
-    const f = yield* fixture("text", "podman");
-    yield* stackDestroy(f.flags).pipe(Effect.provide(f.layer));
-    expect(f.output.stdoutText).toBe(
-      `Stack ${f.stack.id} could not be fully destroyed because Podman is unreachable; restore it and run "supabase stack destroy --stack-id ${f.stack.id}" again.\n`,
-    );
-    expect(f.output.messages).toContainEqual({
-      type: "warn",
-      message: `Podman was unavailable, so Podman resources for stack ${f.stack.id} were not removed. Restore Podman and run "supabase stack destroy --stack-id ${f.stack.id}" again to finish removing it.`,
-    });
-    expect(yield* f.api.discover(f.locations)).toHaveLength(1);
-  }).pipe(Effect.scoped, Effect.provide(live)),
-);
+        expect(failure).toBeInstanceOf(StackCommandDestroyError);
+        expect(failure.reason).toBe("runtime");
+        expect(failure.suggestion).toContain(
+          `supabase stack destroy --stack-id ${f.stack.id} --yes`,
+        );
+        expect(f.output.stdoutText).not.toContain("destroyed");
+        expect(f.output.messages.filter(({ type }) => type === "success")).toEqual([]);
+        expect(yield* f.api.discover(f.locations)).toHaveLength(1);
+      }).pipe(Effect.scoped, Effect.provide(live)),
+  );

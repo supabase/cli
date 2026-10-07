@@ -233,6 +233,38 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live(
+    "tells the user to remove the directory of a saved stack with an unknown service kind",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, home, register, resolve } = yield* workspace;
+        const id = yield* register({ projectRoot: root });
+        const statePath = path.join(home, "stacks", id, "state.json");
+        const saved = yield* fs.readFileString(statePath);
+        yield* fs.writeFileString(
+          statePath,
+          saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
+        );
+
+        const byProject = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(Effect.flip);
+        const byPrefix = yield* resolve({
+          projectRoot: root,
+          id: id.slice(0, 8),
+          runtime: "auto",
+        }).pipe(Effect.flip);
+
+        for (const failure of [byProject, byPrefix]) {
+          expect(failure.reason).toBe("invalid-config");
+          expect(failure.message).toContain(`Stack ${id} could not be read`);
+          expect(failure.message).toContain(
+            `Remove its directory ${path.join(home, "stacks", id)}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("surfaces an unreadable saved stack that an id prefix selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

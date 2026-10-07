@@ -48,9 +48,9 @@ shutdown is refused.
 
 When no owner is running and the engine reports that its daemon cannot be
 reached, destruction removes nothing: the registration, port claims and host
-data stay as they are, stderr warns that the stack's engine (Docker or Podman) resources were not removed, and
-the command exits 0 reporting the stack as not destroyed. Run destroy again once
-the engine is reachable. Any other engine failure, an owner starting during
+data stay as they are, and the command exits 1 with one error whose suggestion
+gives the exact `supabase stack destroy --stack-id <id> --yes` command to run
+once the engine is reachable. Any other engine failure, an owner starting during
 destruction, an instance whose data (including a native database's socket
 directory) cannot be removed, or a labelled container that survives removal,
 fails the command and keeps the stack registered; the error lists what
@@ -69,8 +69,8 @@ routing/settings can read project configuration and profiles.
 
 Destruction releases this stack's rows in the per-user port registry at
 `<passwd home>/.supabase/ports.sqlite` (independent of `SUPABASE_HOME`, with no
-override) only once cleanup is confirmed complete; a destroy that fails or skips
-engine cleanup keeps the stack's reservations, and its ports remain unavailable
+override) only once cleanup is confirmed complete; a destroy that fails
+keeps the stack's reservations, and its ports remain unavailable
 to other stacks until a later destroy succeeds. A reservation whose owning
 stack's state was deleted without going through destroy (for example a removed
 or unmounted state root) is usually released by that stack's own still-running
@@ -81,12 +81,15 @@ remains the backstop when no owner is left alive to do so.
 ## Output, exit codes and telemetry
 
 Text prints `Stack <id> destroyed.` (`Removed the containers stack <id> left behind.`
-for a deleted stack's containers), or, when engine cleanup was skipped,
-`Stack <id> could not be fully destroyed because <Engine> is unreachable; restore it and run "supabase stack destroy --stack-id <id>" again.`
-JSON and stream-json success data contain `destroyed` (`false` when engine
-cleanup was skipped), `id`, and `runtime_cleanup` (`complete` or `skipped`); a
-skipped cleanup also carries `engine`. Exit 0 on destruction or skipped engine cleanup, 1 on invalid flags, missing
-selection, rejected/cancelled confirmation or cleanup failure, and 130 on
-interruption. Standard command telemetry is unchanged, with no custom events.
+for a deleted stack's containers). JSON and stream-json success data contain
+`destroyed` (`true`) and `id`. Exit 0 on destruction, 1 on invalid flags, missing
+selection, rejected/cancelled confirmation, an unreachable engine, or cleanup
+failure, and 130 on interruption. A saved stack whose state cannot be decoded
+(for example one saved by an older CLI with a service kind this CLI no longer
+knows) fails with an error naming its directory under the state root; removing
+that directory discards the stack. Its leftover containers are then removed
+when a container stack next starts under the same state root or by
+`destroy --stack-id`, and its port reservations are released when another stack
+needs them; its data in the shared database volume is not removed. Standard command telemetry is unchanged, with no custom events.
 Telemetry flushes on success and failure to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

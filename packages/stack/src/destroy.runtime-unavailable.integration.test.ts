@@ -43,7 +43,7 @@ const shimDocker = Effect.fn("shimDocker")(function* (root: string, script: stri
 });
 
 it.live(
-  "keeps a stack registered when destroy finds no owner and its engine is unreachable, then finishes the cleanup once a later owner can start",
+  "fails destroy with runtime-unavailable and keeps the stack registered when its engine is unreachable, then finishes the cleanup once a later owner can start",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -61,8 +61,8 @@ it.live(
       } satisfies Parameters<typeof create>[0];
       const stack = yield* create(options);
 
-      const result = yield* stack.destroy;
-      expect(result).toEqual({ runtimeCleanup: "skipped", engine: "docker" });
+      const failure = yield* Effect.flip(stack.destroy);
+      expect(failure.reason).toBe("runtime-unavailable");
       expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
 
       // The engine is back: destroy retried finishes the cleanup automatically.
@@ -93,9 +93,9 @@ it.live("keeps a stack registered when Windows reports its Docker daemon pipe is
       runtime: "docker",
     });
 
-    const result = yield* stack.destroy;
+    const failure = yield* Effect.flip(stack.destroy);
 
-    expect(result.runtimeCleanup).toBe("skipped");
+    expect(failure.reason).toBe("runtime-unavailable");
     expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
@@ -123,9 +123,9 @@ it.live("keeps a stack registered when its engine CLI is not installed", () =>
       }),
     );
 
-    const result = yield* stack.destroy;
+    const failure = yield* Effect.flip(stack.destroy);
 
-    expect(result.runtimeCleanup).toBe("skipped");
+    expect(failure.reason).toBe("runtime-unavailable");
     expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
@@ -146,9 +146,9 @@ it.live("keeps a stack registered when Docker reports its API socket is missing"
       runtime: "docker",
     });
 
-    const result = yield* stack.destroy;
+    const failure = yield* Effect.flip(stack.destroy);
 
-    expect(result.runtimeCleanup).toBe("skipped");
+    expect(failure.reason).toBe("runtime-unavailable");
     expect(yield* discover({ stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
