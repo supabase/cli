@@ -1,21 +1,23 @@
 # `supabase stack destroy`
 
-Permanently removes the selected managed namespace, its service registrations,
+Permanently removes each selected managed namespace, its service registrations,
 owned database data, port claims, and attached jobs. Caller-owned Storage upload
 files remain. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
 Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive; a missing target fails. Explicit legacy
-`-o/--output` is rejected in favor of `--output-format`.
+The selectors are mutually exclusive; a missing target fails. `--stack-id` repeats
+to select several stacks; every id resolves before confirmation, so a missing one
+fails before anything is destroyed, and ids naming the same stack select it once.
+Explicit legacy `-o/--output` is rejected in favor of `--output-format`.
 
-Interactive text mode asks for confirmation and states that Storage uploads are
-preserved. Non-interactive and machine-output runs require `--yes`. With `--yes`
-the command prints no question; stderr states which stack and data are destroyed
-and that Storage uploads are preserved. Rejection or cancellation does not open or
-destroy a stack. Discovery may create/chmod the registry directory to 0700 but
-does not launch an owner.
+Interactive text mode asks one question for all selected stacks and states that
+Storage uploads are preserved. Non-interactive and machine-output runs require
+`--yes`. With `--yes` the command prints no question; stderr states which stacks and
+data are destroyed and that Storage uploads are preserved. Rejection or cancellation
+does not open or destroy a stack. Discovery may create/chmod the registry directory
+to 0700 but does not launch an owner.
 
 A full `--stack-id` that is not registered under the state root makes destroy
 list stack-labelled containers on Docker and Podman before confirming; an engine
@@ -36,9 +38,10 @@ cleanup holds the lease. The deleted stack's data in the state root's shared
 database volume stays, and containers of other state roots are never touched;
 for a deleted `SUPABASE_HOME`, run destroy with that `SUPABASE_HOME`.
 
-After confirmation the command opens the selected handle and destroys its entire
-namespace. Destruction may start an owner to clean up a stopped namespace.
-Cleanup failures remain errors; the command does not claim success on failure.
+After confirmation the command opens each selected handle in turn and destroys its
+entire namespace; a stack that fails to be destroyed does not stop the rest.
+Destruction may start an owner to clean up a stopped namespace. Cleanup failures
+remain errors; the command does not claim success on failure.
 A failed destroy may leave its owner running; retry destruction or use
 `stack stop` to shut down that owner.
 
@@ -68,8 +71,12 @@ for a deleted stack's containers), or, when engine cleanup was skipped,
 `Stack <id> was removed locally; its <Engine> resources remain until the commands above are run.`
 JSON and stream-json success data contain `destroyed: true`, `id`, and
 `runtimeCleanup` (`complete` or `skipped`); a skipped cleanup also carries `engine` and
-`cleanupCommands`. Exit 0 on destruction, 1 on invalid flags, missing
-selection, rejected/cancelled confirmation or cleanup failure, and 130 on
-interruption. Standard command telemetry is unchanged, with no custom events.
-Telemetry flushes on success and failure to
+`cleanupCommands`. More than one `--stack-id` flag, even when they name one stack,
+instead reports `destroyed: true` and `stacks`, one entry per stack with the same
+fields apart from `destroyed`; when any of them fails, the command fails once with
+each failed stack in the error detail, and the JSON/stream-json error envelope lists
+the entries of the stacks it did destroy in `destroyed_stacks`. Exit 0 on
+destruction, 1 on invalid flags, missing selection, rejected/cancelled confirmation
+or cleanup failure, and 130 on interruption. Standard command telemetry is
+unchanged, with no custom events. Telemetry flushes on success and failure to
 `<SUPABASE_HOME or ~/.supabase>/telemetry.json`.

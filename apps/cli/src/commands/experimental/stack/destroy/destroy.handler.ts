@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Option, Path, Result } from "effect";
-import type { DeletedStack, StackError } from "@supabase/stack/effect";
+import type { StackError } from "@supabase/stack/effect";
+import { MachineErrorContext } from "../../../../shared/output/machine-error-context.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag, resolveYes } from "../../../../command-internal/global-flags.ts";
 import { promptYesNo } from "../../../../command-internal/prompt-yes-no.ts";
@@ -9,7 +10,6 @@ import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts
 import {
   isStackId,
   StackApi,
-  type StackTarget,
   StackTargetError,
   rejectStackOutput,
   skippedRuntimeCleanupWarning,
@@ -35,13 +35,8 @@ const destroyError = (cause: StackError) =>
     cause,
   });
 
-export interface StackDestroyInput {
-  readonly stack?: Option.Option<string> | string;
-  readonly stackId?: ReadonlyArray<string> | Option.Option<string> | string;
-}
-
 export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
-  flags: StackDestroyFlags | StackDestroyInput,
+  flags: StackDestroyFlags,
 ) {
   const telemetryState = yield* TelemetryState;
   const body = Effect.gen(function* () {
@@ -50,29 +45,9 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
     const api = yield* StackApi;
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
     yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
-
-    const stackOption =
-      flags.stack !== undefined && Option.isOption(flags.stack)
-        ? flags.stack
-        : typeof flags.stack === "string"
-          ? Option.some(flags.stack)
-          : Option.none<string>();
-
-    const rawStackId = flags.stackId;
-    const stackIds: ReadonlyArray<string> =
-      rawStackId === undefined
-        ? []
-        : Array.isArray(rawStackId)
-          ? rawStackId
-          : typeof rawStackId === "string"
-            ? [rawStackId]
-            : Option.isOption(rawStackId) && Option.isSome(rawStackId)
-              ? [rawStackId.value]
-              : [];
-
     yield* validateStackTarget({
-      stack: Option.getOrUndefined(stackOption),
-      stackId: stackIds,
+      stack: Option.getOrUndefined(flags.stack),
+      stackId: flags.stackId[0],
     }).pipe(Effect.mapError(mapTargetError));
 
     const resolver = yield* StackTargetResolver;
@@ -81,26 +56,26 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
       stateRoot: path.join(settings.supabaseHome, "stacks"),
       cacheRoot: path.join(settings.supabaseHome, "cache", "stack"),
     };
-
-    const targets: Array<{
-      readonly id: string;
-      readonly target?: StackTarget;
-      readonly deleted: Option.Option<DeletedStack>;
-    }> = [];
-    if (stackIds.length > 0) {
-      for (const id of stackIds) {
-        const lookup = isStackId(id)
-          ? yield* Effect.result(api.findDeleted({ ...locations, id }))
-          : Result.succeedNone;
+    /* Every id resolves before the prompt, so a missing one destroys nothing. */
+    const resolved = yield* Effect.forEach(
+      flags.stackId.length === 0 ? [undefined] : flags.stackId,
+      Effect.fnUntraced(function* (stackId: string | undefined) {
+        const lookup =
+          stackId !== undefined && isStackId(stackId)
+            ? yield* Effect.result(api.findDeleted({ ...locations, id: stackId }))
+            : Result.succeedNone;
         const deleted = Result.getOrElse(lookup, Option.none);
-        if (Option.isSome(deleted)) {
-          targets.push({ id: deleted.value.id, deleted });
-          continue;
-        }
+        if (Option.isSome(deleted))
+          return {
+            id: deleted.value.id,
+            deleted,
+            scope: `the containers deleted stack ${deleted.value.id} left behind`,
+          };
         const target = yield* resolver
           .resolve({
             projectRoot: settings.workdir,
-            id,
+            ...(Option.isSome(flags.stack) ? { name: flags.stack.value } : {}),
+            ...(stackId === undefined ? {} : { id: stackId }),
             runtime: "auto",
           })
           .pipe(
@@ -108,36 +83,22 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
               mapTargetError(error, Result.isFailure(lookup) ? lookup.failure.message : undefined),
             ),
           );
-        targets.push({ id: target.id!, target, deleted });
-      }
-    } else {
-      const target = yield* resolver
-        .resolve({
-          projectRoot: settings.workdir,
-          ...(Option.isSome(stackOption) ? { name: stackOption.value } : {}),
-          runtime: "auto",
-        })
-        .pipe(Effect.mapError((error) => mapTargetError(error)));
-      if (target.id === undefined)
-        return yield* new StackCommandDestroyError({
-          reason: "flags",
-          message: Option.isSome(stackOption)
-            ? `No managed stack named "${stackOption.value}" was found for this project.`
-            : "No managed stack was found for this project.",
-          suggestion: "Choose an existing --stack name or --stack-id.",
-        });
-      targets.push({ id: target.id, target, deleted: Option.none() });
-    }
-
-    const seen = new Set<string>();
-    const uniqueTargets: typeof targets = [];
-    for (const target of targets) {
-      if (!seen.has(target.id)) {
-        seen.add(target.id);
-        uniqueTargets.push(target);
-      }
-    }
-
+        if (target.id === undefined)
+          return yield* new StackCommandDestroyError({
+            reason: "flags",
+            message: Option.isSome(flags.stack)
+              ? `No managed stack named "${flags.stack.value}" was found for this project.`
+              : "No managed stack was found for this project.",
+            suggestion: "Choose an existing --stack name or --stack-id.",
+          });
+        return {
+          id: target.id,
+          deleted,
+          scope: `stack ${target.id} at ${target.projectRoot} and its owned data`,
+        };
+      }),
+    );
+    const selected = [...new Map(resolved.map((entry) => [entry.id, entry])).values()];
     const yes = yield* resolveYes;
     const tty = yield* Tty;
     if (!yes && (!tty.stdinIsTty || !output.interactive || output.format !== "text"))
@@ -146,15 +107,8 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         message: "Destroying a stack requires confirmation; rerun with --yes.",
         suggestion: "Pass --yes when running non-interactively or in a machine-readable format.",
       });
-
+    const scope = selected.map((entry) => entry.scope).join("; ");
     const preserved = "Storage upload files will be preserved.";
-    const scope =
-      uniqueTargets.length === 1
-        ? uniqueTargets[0]!.target === undefined
-          ? `the containers deleted stack ${uniqueTargets[0]!.id} left behind`
-          : `stack ${uniqueTargets[0]!.id} at ${uniqueTargets[0]!.target.projectRoot} and its owned data`
-        : `stacks ${uniqueTargets.map((t) => t.id).join(", ")} and their owned data`;
-
     if (yes) yield* output.raw(`Permanently destroying ${scope}. ${preserved}\n`, "stderr");
     else {
       const confirmed = yield* promptYesNo(
@@ -169,27 +123,13 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
           message: "Stack destruction was not confirmed.",
         });
     }
-
-    const successes: Array<{
-      readonly id: string;
-      readonly result: {
-        readonly runtimeCleanup: "complete" | "partial" | "skipped";
-        readonly engine?: "docker" | "podman";
-        readonly remainingCommands?: ReadonlyArray<string>;
-      };
-    }> = [];
-    const failures: Array<{
-      readonly id: string;
-      readonly error: StackCommandDestroyError;
-    }> = [];
-
-    for (const target of uniqueTargets) {
-      const targetId = target.id;
-      const destroySingle = Effect.gen(function* () {
-        const stack = Option.isSome(target.deleted)
-          ? target.deleted.value
-          : yield* api.open({ ...locations, id: targetId }).pipe(Effect.mapError(destroyError));
-        const destroying = yield* output.task(`Destroying stack ${targetId}...`);
+    const batch = flags.stackId.length > 1;
+    const [failed, destroyed] = yield* Effect.partition(selected, ({ id, deleted }) =>
+      Effect.gen(function* () {
+        const stack = Option.isSome(deleted)
+          ? deleted.value
+          : yield* api.open({ ...locations, id }).pipe(Effect.mapError(destroyError));
+        const destroying = yield* output.task(`Destroying stack ${id}...`);
         const result = yield* stack.destroy.pipe(
           Effect.onExit((exit) =>
             Exit.isSuccess(exit)
@@ -200,82 +140,49 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
           ),
           Effect.mapError(destroyError),
         );
-        return result;
-      });
-
-      const exit = yield* Effect.exit(destroySingle);
-      if (Exit.isSuccess(exit)) {
-        const result = exit.value;
-        successes.push({ id: targetId, result });
+        if (!batch)
+          yield* Effect.annotateCurrentSpan({
+            "stack.prompted": !yes,
+            "stack.runtime_cleanup": result.runtimeCleanup,
+          });
         if (result.runtimeCleanup === "skipped")
-          yield* output.warn(skippedRuntimeCleanupWarning(`stack ${targetId}`, result));
-        if (output.format === "text") {
-          if (result.runtimeCleanup === "complete")
-            yield* output.raw(
-              target.target === undefined
-                ? `Removed the containers stack ${targetId} left behind.\n`
-                : `Stack ${targetId} destroyed.\n`,
-            );
-          else
-            yield* output.raw(
-              `Stack ${targetId} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`,
-            );
-        }
-      } else {
-        const error = Option.getOrElse(
-          Exit.findErrorOption(exit),
-          () =>
-            new StackCommandDestroyError({
-              reason: "unknown",
-              message: `Failed to destroy stack ${targetId}`,
-            }),
-        );
-        failures.push({ id: targetId, error });
-        yield* output.error(`Failed to destroy stack ${targetId}: ${error.message}`);
-      }
-    }
-
-    if (uniqueTargets.length === 1 && successes.length === 1) {
+          yield* output.warn(skippedRuntimeCleanupWarning(`stack ${id}`, result));
+        if (output.format === "text")
+          yield* output.raw(
+            result.runtimeCleanup === "skipped"
+              ? `Stack ${id} was removed locally; its ${result.engine === "docker" ? "Docker" : "Podman"} resources remain until the commands above are run.\n`
+              : Option.isSome(deleted)
+                ? `Removed the containers stack ${id} left behind.\n`
+                : `Stack ${id} destroyed.\n`,
+          );
+        else if (!batch) yield* output.success("", { destroyed: true, id, ...result });
+        return { id, ...result };
+      }).pipe(
+        Effect.scoped,
+        Effect.mapError((error) => ({ id, error })),
+      ),
+    );
+    if (batch)
       yield* Effect.annotateCurrentSpan({
         "stack.prompted": !yes,
-        "stack.runtime_cleanup": successes[0]!.result.runtimeCleanup,
+        "stack.count": selected.length,
+        "stack.destroyed_count": destroyed.length,
       });
-    } else {
-      yield* Effect.annotateCurrentSpan({
-        "stack.prompted": !yes,
-        "stack.count": uniqueTargets.length,
-        "stack.destroyed_count": successes.length,
-        "stack.failed_count": failures.length,
-      });
-    }
-
-    if (output.format !== "text") {
-      if (uniqueTargets.length === 1 && successes.length === 1) {
-        yield* output.success("", {
-          destroyed: true,
-          id: successes[0]!.id,
-          ...successes[0]!.result,
-        });
-      } else {
-        yield* output.success("", {
-          destroyed: failures.length === 0,
-          stacks: successes.map(({ id, result }) => ({ id, ...result })),
-          failures: failures.map(({ id, error }) => ({ id, message: error.message })),
-        });
-      }
-    }
-
-    if (failures.length > 0) {
-      if (failures.length === 1 && uniqueTargets.length === 1) {
-        return yield* failures[0]!.error;
-      }
+    const [failure] = failed;
+    if (failure !== undefined) {
+      if (!batch) return yield* failure.error;
+      const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
+      if (Option.isSome(machineErrorContext))
+        yield* machineErrorContext.value.set({ destroyed_stacks: destroyed });
       return yield* new StackCommandDestroyError({
         reason: "unknown",
-        message: `Failed to destroy ${failures.length} managed stack(s).`,
-        detail: failures.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
-        cause: failures,
+        message: `Failed to destroy ${failed.length} managed stack(s).`,
+        detail: failed.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
+        cause: failed,
       });
     }
+    if (batch && output.format !== "text")
+      yield* output.success("", { destroyed: true, stacks: destroyed });
   });
   return yield* body.pipe(Effect.ensuring(telemetryState.flush));
 });

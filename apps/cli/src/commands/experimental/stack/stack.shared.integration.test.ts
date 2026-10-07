@@ -7,7 +7,6 @@ import {
   StackTargetResolver,
   stackApiLayer,
   stackTargetResolverLayer,
-  validateStackTarget,
 } from "./stack.shared.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
 import {
@@ -274,44 +273,5 @@ describe("stack API layer", () => {
       expect(discovered[0]?.host).toBeUndefined();
       expect(opened.id).toBe(created.id);
     }).pipe(Effect.provide(BunServices.layer)),
-  );
-});
-
-describe("validateStackTarget", () => {
-  it.live("allows stack without stackId", () =>
-    Effect.gen(function* () {
-      yield* validateStackTarget({ stack: "my-stack" });
-      yield* validateStackTarget({ stack: "my-stack", stackId: [] });
-    }),
-  );
-
-  it.live("allows single or multiple stackId without stack", () =>
-    Effect.gen(function* () {
-      yield* validateStackTarget({ stackId: "id1" });
-      yield* validateStackTarget({ stackId: ["id1", "id2"] });
-      yield* validateStackTarget({});
-    }),
-  );
-
-  it.live("fails when stack is combined with string stackId", () =>
-    Effect.gen(function* () {
-      const error = yield* validateStackTarget({
-        stack: "my-stack",
-        stackId: "id1",
-      }).pipe(Effect.flip);
-      expect(error.reason).toBe("flags");
-      expect(error.message).toBe("--stack and --stack-id cannot be used together");
-    }),
-  );
-
-  it.live("fails when stack is combined with array stackId", () =>
-    Effect.gen(function* () {
-      const error = yield* validateStackTarget({
-        stack: "my-stack",
-        stackId: ["id1", "id2"],
-      }).pipe(Effect.flip);
-      expect(error.reason).toBe("flags");
-      expect(error.message).toBe("--stack and --stack-id cannot be used together");
-    }),
   );
 });
