@@ -249,8 +249,11 @@ const ownerDeathScenario = (shared: boolean) =>
           ]),
         ).toBe("volume");
       const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
+      const destroyed = yield* awaitDestroyed(id, since).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
       if (yield* child.isRunning) yield* child.kill({ killSignal: "SIGKILL" });
-      yield* awaitDestroyed(id, since).pipe(
+      yield* Fiber.join(destroyed).pipe(
         Effect.timeoutOrElse({
           duration: "1 minute",
           orElse: () => new DockerTestError({ message: `Orphaned database helper: ${id}` }),

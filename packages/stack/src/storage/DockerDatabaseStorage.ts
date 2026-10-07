@@ -1,4 +1,5 @@
 import {
+  Cause,
   Crypto,
   Effect,
   Exit,
@@ -601,7 +602,13 @@ export const makeDockerDatabaseStorage = Effect.fn("DockerDatabaseStorage.make")
                     Effect.orElseSucceed(() => ""),
                   );
                   const reason = Exit.isFailure(exit)
-                    ? failureMessage(exit.cause)
+                    ? Option.match(Cause.findErrorOption(exit.cause), {
+                        onNone: () => Cause.pretty(exit.cause),
+                        onSome: (error) =>
+                          Cause.isTimeoutError(error)
+                            ? "Database helper did not become ready within 30 seconds"
+                            : failureMessage(error),
+                      })
                     : "Database helper exited before becoming ready";
                   return yield* errorFor("helper", diagnostic.trim() || reason);
                 }),
