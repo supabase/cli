@@ -682,7 +682,7 @@ describe("runFastForward sync", () => {
     expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
   });
 
-  test("re-syncs the branch instead of moving the target when the target moved", async () => {
+  test("lands the approved head merged with a non-conflicting target move", async () => {
     const { repo, head, io, comments } = resolvedSyncScenario();
     git(repo.seed, "switch", "develop");
     const movedDevelop = repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
@@ -690,16 +690,93 @@ describe("runFastForward sync", () => {
 
     const outcome = await runFastForward(io, { reviewCommitId: head });
 
+    const landed = repo.remoteTip("develop");
+    expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
+    expect(repo.isAncestor(head, landed)).toBe(true);
+    expect(repo.isAncestor(movedDevelop, landed)).toBe(true);
+    expect(() => repo.remoteTip("sync/main-into-develop")).toThrow();
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain("moved since approval");
+    expect(comments[0]).toContain(`landed it as ${landed.slice(0, 7)}`);
+    expect(comments[0]).not.toContain("Re-approve");
+  });
+
+  test("retries the merge when the target moves again before the push", async () => {
+    const { repo, head, io } = resolvedSyncScenario();
+    git(repo.seed, "switch", "develop");
+    repo.commit(repo.seed, "late-1.txt", "1\n", "feat(cli): late 1");
+    git(repo.seed, "push", "origin", "develop");
+    let raced = false;
+    const racing: FastForwardIo = {
+      ...io,
+      git(args) {
+        if (args[0] === "push" && !raced) {
+          raced = true;
+          repo.commit(repo.seed, "late-2.txt", "2\n", "feat(cli): late 2");
+          git(repo.seed, "push", "origin", "develop");
+        }
+        return io.git(args);
+      },
+    };
+
+    const outcome = await runFastForward(racing, { reviewCommitId: head });
+
+    const landed = repo.remoteTip("develop");
+    expect(outcome).toEqual({ status: "merged-after-resync", sha: landed });
+    expect(git(repo.remote, "ls-tree", "--name-only", landed)).toContain("late-2.txt");
+    expect(repo.isAncestor(head, landed)).toBe(true);
+  });
+
+  test("falls back to re-approval when the target keeps moving", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    git(repo.seed, "switch", "develop");
+    let movedDevelop = repo.commit(repo.seed, "late-0.txt", "late\n", "feat(cli): late 0");
+    git(repo.seed, "push", "origin", "develop");
+    let moves = 0;
+    const racing: FastForwardIo = {
+      ...io,
+      git(args) {
+        if (args[0] === "push" && args[2] === "HEAD:refs/heads/develop") {
+          moves += 1;
+          movedDevelop = repo.commit(
+            repo.seed,
+            `late-${moves}.txt`,
+            "late\n",
+            `feat(cli): late ${moves}`,
+          );
+          git(repo.seed, "push", "origin", "develop");
+        }
+        return io.git(args);
+      },
+    };
+
+    const outcome = await runFastForward(racing, { reviewCommitId: head });
+
     expect(outcome.status).toBe("resynced");
+    expect(moves).toBe(3);
     expect(repo.remoteTip("develop")).toBe(movedDevelop);
     const resynced = repo.remoteTip("sync/main-into-develop");
     expect(resynced).not.toBe(head);
     expect(repo.isAncestor(head, resynced)).toBe(true);
-    expect(repo.isAncestor(movedDevelop, resynced)).toBe(true);
+    expect(comments).toHaveLength(1);
     expect(comments[0]).toContain("Re-approve");
   });
 
-  test("refuses and leaves the branch alone when re-syncing conflicts", async () => {
+  test("dry run pushes nothing when the target moved cleanly", async () => {
+    const { repo, head, io, comments } = resolvedSyncScenario();
+    git(repo.seed, "switch", "develop");
+    const movedDevelop = repo.commit(repo.seed, "late.txt", "late\n", "feat(cli): late");
+    git(repo.seed, "push", "origin", "develop");
+
+    const outcome = await runFastForward(io, { reviewCommitId: head, dryRun: true });
+
+    expect(outcome.status).toBe("dry-run");
+    expect(repo.remoteTip("develop")).toBe(movedDevelop);
+    expect(repo.remoteTip("sync/main-into-develop")).toBe(head);
+    expect(comments).toEqual([]);
+  });
+
+  test("refuses and leaves the branch alone when a moved target conflicts", async () => {
     const { repo, head, io, comments } = resolvedSyncScenario();
     git(repo.seed, "switch", "develop");
     const movedDevelop = repo.commit(

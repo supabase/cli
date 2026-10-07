@@ -1,9 +1,11 @@
 import {
   type GitRunner,
+  MAX_PUSH_ATTEMPTS,
   githubRequest,
   gitOrThrow,
   isAllowedSyncPair,
   makeGit,
+  pushMergedTarget,
   requireEnv,
 } from "./promotion-shared.ts";
 
@@ -33,7 +35,6 @@ export interface SyncIo {
   createPullRequest(draft: PullRequestDraft): Promise<number>;
 }
 
-const MAX_PUSH_ATTEMPTS = 3;
 const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 export function parsePair(value: string): SyncPair {
@@ -152,14 +153,8 @@ export async function syncBranches(io: SyncIo, pair: SyncPair): Promise<SyncOutc
       return { status: "conflict-pr-opened", pullRequest, files };
     }
 
-    const push = git(["push", "origin", `HEAD:refs/heads/${pair.target}`]);
-    if (push.status === 0) {
+    if (pushMergedTarget(git, pair.target, targetSha) === "pushed") {
       return { status: "merged" };
-    }
-    // A rejected push is only retryable when the target advanced under us.
-    const latestTarget = git(["ls-remote", "--heads", "origin", `refs/heads/${pair.target}`]);
-    if (latestTarget.status !== 0 || latestTarget.stdout.startsWith(targetSha)) {
-      throw new Error(`git push to ${pair.target} failed: ${push.stderr}`);
     }
   }
 

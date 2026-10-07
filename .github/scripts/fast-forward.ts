@@ -1,12 +1,14 @@
 import { analyzeCommits } from "../../apps/cli/scripts/analyze-commits-title.js";
 import {
   type GitRunner,
+  MAX_PUSH_ATTEMPTS,
   RELEASE_BOT_LOGIN,
   SYNC_PAIRS,
   githubGraphql,
   githubRequest,
   gitOrThrow,
   makeGit,
+  pushMergedTarget,
   requireEnv,
 } from "./promotion-shared.ts";
 
@@ -213,6 +215,7 @@ export interface FastForwardInput {
 export type FastForwardOutcome =
   | { status: "ignored"; reason: string }
   | { status: "fast-forwarded"; sha: string }
+  | { status: "merged-after-resync"; sha: string }
   | { status: "resynced"; sha: string }
   | { status: "refused"; reason: string }
   | { status: "dry-run"; reason: string };
@@ -369,34 +372,57 @@ async function resyncSyncBranch(
   syncBranch: string,
 ): Promise<FastForwardOutcome> {
   const { git } = io;
-  gitOrThrow(git, ["checkout", "--detach", headSha]);
-  for (const ref of [promotion.target, promotion.source]) {
-    const merge = git(["merge", "--no-edit", `refs/remotes/origin/${ref}`]);
-    if (merge.status !== 0) {
-      const files = git(["diff", "--name-only", "--diff-filter=U"]).stdout;
-      git(["merge", "--abort"]);
-      const list = files
-        .split("\n")
-        .filter(Boolean)
-        .map((file) => `- \`${file}\``)
-        .join("\n");
-      return refuse(
-        io,
-        input,
-        `Merging ${ref} into ${syncBranch} conflicts`,
-        `${promotion.target} moved since approval and merging \`${ref}\` into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
+  const { target, source } = promotion;
+  const targetRef = `refs/remotes/origin/${target}`;
+  let resyncedSha = headSha;
+
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt += 1) {
+    gitOrThrow(git, [
+      "fetch",
+      "--no-tags",
+      "origin",
+      `+refs/heads/${target}:${targetRef}`,
+      `+refs/heads/${source}:refs/remotes/origin/${source}`,
+    ]);
+    const targetSha = gitOrThrow(git, ["rev-parse", targetRef]);
+    gitOrThrow(git, ["checkout", "--detach", headSha]);
+    for (const ref of [target, source]) {
+      const merge = git(["merge", "--no-edit", `refs/remotes/origin/${ref}`]);
+      if (merge.status !== 0) {
+        const files = git(["diff", "--name-only", "--diff-filter=U"]).stdout;
+        git(["merge", "--abort"]);
+        const list = files
+          .split("\n")
+          .filter(Boolean)
+          .map((file) => `- \`${file}\``)
+          .join("\n");
+        return refuse(
+          io,
+          input,
+          `Merging ${ref} into ${syncBranch} conflicts`,
+          `${target} moved since approval and merging \`${ref}\` into \`${syncBranch}\` conflicts:\n\n${list}\n\nResolve on the branch and re-approve.`,
+        );
+      }
+    }
+    resyncedSha = gitOrThrow(git, ["rev-parse", "HEAD"]);
+
+    // A clean merge on top of the approved head carries the same trust as a clean sync, which also lands untested.
+    if (input.dryRun) {
+      console.log(`[dry-run] would push ${resyncedSha} to ${target}`);
+      return { status: "dry-run", reason: `would land the re-synced ${syncBranch} on ${target}` };
+    }
+    if (pushMergedTarget(git, target, targetSha) === "pushed") {
+      git(["push", "origin", "--delete", syncBranch]);
+      await io.comment(
+        `\`${target}\` moved since approval, so I merged the latest \`${target}\` and \`${source}\` into the approved head and landed it as ${short(resyncedSha)}.`,
       );
+      return { status: "merged-after-resync", sha: resyncedSha };
     }
   }
 
-  const resyncedSha = gitOrThrow(git, ["rev-parse", "HEAD"]);
-  if (input.dryRun) {
-    console.log(`[dry-run] would push ${resyncedSha} to ${syncBranch}`);
-    return { status: "dry-run", reason: `would re-sync ${syncBranch}` };
-  }
-  gitOrThrow(git, ["push", "origin", `HEAD:refs/heads/${syncBranch}`]);
+  gitOrThrow(git, ["push", "origin", `${resyncedSha}:refs/heads/${syncBranch}`]);
   await io.comment(
-    `\`${promotion.target}\` moved since approval, so I merged the latest \`${promotion.target}\` and \`${promotion.source}\` into \`${syncBranch}\` (${short(resyncedSha)}). Re-approve once checks pass.`,
+    `\`${target}\` kept moving, so I merged the latest \`${target}\` and \`${source}\` into \`${syncBranch}\` (${short(resyncedSha)}). Re-approve once checks pass.`,
   );
   return { status: "resynced", sha: resyncedSha };
 }

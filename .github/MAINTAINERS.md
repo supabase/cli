@@ -136,7 +136,10 @@ Full procedures live in the
 syncs for that pair skip while it is open. Merge the target into the sync
 branch, resolve, and push; then **approve** the PR. Approval fast-forwards the
 target and deletes the branch. Never use the merge button. If the target moved,
-the bot re-syncs the branch and asks for a new approval. Only two sync pairs
+the bot merges the latest target and source into the approved head and lands
+it directly if the merge is clean, as for a clean sync (the merge commit is
+untested); only a new conflict, or a target that keeps moving, sends the PR
+back for a new approval. Only two sync pairs
 exist (`sync/main-into-develop` into `develop`, `sync/develop-into-next` into
 `next`), and only the release bot's PRs from those branches qualify; approving
 a hand-made PR from one of them is refused with a comment (close it and run

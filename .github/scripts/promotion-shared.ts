@@ -30,6 +30,25 @@ export function gitOrThrow(git: GitRunner, args: string[]): string {
   return result.stdout;
 }
 
+export const MAX_PUSH_ATTEMPTS = 3;
+
+/** Pushes HEAD to the target; `retry` means the push lost a race with a newer target tip, so merge again. */
+export function pushMergedTarget(
+  git: GitRunner,
+  target: string,
+  mergedTargetSha: string,
+): "pushed" | "retry" {
+  const push = git(["push", "origin", `HEAD:refs/heads/${target}`]);
+  if (push.status === 0) {
+    return "pushed";
+  }
+  const latestTarget = git(["ls-remote", "--heads", "origin", `refs/heads/${target}`]);
+  if (latestTarget.status !== 0 || latestTarget.stdout.startsWith(mergedTargetSha)) {
+    throw new Error(`git push to ${target} failed: ${push.stderr}`);
+  }
+  return "retry";
+}
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
