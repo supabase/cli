@@ -3,8 +3,9 @@ name: Test
 # Release-notes PRs (head ref `release-notes/*`) only add markdown under
 # `release-notes/` and are published via approval — skip the full CI suite.
 #
-# Default path: ready (non-draft) PRs targeting `develop`, plus the merge queue.
-# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
+# Default path: ready (non-draft) PRs targeting `develop`, `next`, `main` or a
+# `v*.x` maintenance branch, plus the merge queue for `develop` and `next`.
+# `run-ci.yml` calls this workflow for drafts and stacked PRs.
 on:
   pull_request:
     types:
@@ -15,11 +16,15 @@ on:
       - converted_to_draft
     branches:
       - develop
+      - main
+      - next
+      - "v*.x"
   merge_group:
     types:
       - checks_requested
     branches:
       - develop
+      - next
   workflow_call:
     inputs:
       force:

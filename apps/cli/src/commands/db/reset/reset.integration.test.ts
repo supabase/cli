@@ -834,6 +834,7 @@ function mockResetStackApi(opts: {
             host: undefined,
           }),
         ),
+      findDeleted: () => Effect.die("unused"),
       open: () => Effect.succeed(stack),
     }),
     get resetCalls() {

@@ -11,6 +11,7 @@ export const unusedStackServices = Layer.mergeAll(
     open: unused,
     discover: unused,
     find: unused,
+    findDeleted: unused,
   }),
   Layer.succeed(StackCatalogSetup, { apply: unused }),
 );

@@ -100,7 +100,8 @@ Writes lifecycle text to stderr / stdout while the command is running:
 
 ### `--output-format json`
 
-Long-running raw log / error output only; there is no final success payload object for this command.
+The legacy backend emits long-running raw log / error output with no final success payload.
+Stack mode rejects `--output-format json` before opening or mutating the stack.
 
 ### `--output-format stream-json`
 
@@ -108,6 +109,15 @@ The legacy backend emits long-running raw log / error events with no terminal `r
 Stack mode emits a readiness `result` containing the instance ID and URL, then live log events
 for Functions output persisted since the command started, stamped with the owner's record time,
 and a `log-marker` event of kind `lost` for output the stack could not persist.
+When neither output flag is explicit, Stack mode defaults to `stream-json` for detected coding
+agents or `--agent yes`, including when no agent is detected. `--agent no` selects text even in a
+detected coding-agent environment. The legacy backend retains its JSON default in agent mode.
+Explicit `--output-format text` and `--output-format stream-json` are supported by both backends.
+Stack mode rejects every `-o` / `--output` value before opening or mutating the stack.
+Legacy serve ignores the requested `-o` / `--output` serialization format: `json`, `yaml`, `toml`,
+and `env` select text output with task/progress UI suppressed, while `pretty` keeps the normal
+output layer and progress UI. Use `--output-format` without `-o` to select JSON or stream-json
+for the legacy backend.
 
 ## Notes
 

@@ -314,7 +314,9 @@ describe("LogForwarder", () => {
         yield* logflare.apply();
         yield* release;
         yield* Scope.close(firstLaunch, Exit.void);
-        const unavailable = yield* logflare.next;
+        // The retired session may save the asleep record as pending to launch 1 before it ends,
+        // which holds the next post until its saved deadline plus the flush window passed.
+        const unavailable = yield* nextPost(logflare, manual);
         yield* manual.sleeping(pollMillis);
         yield* manual.advance(flushWindowMillis);
         const caughtUp = yield* logflare.next;
@@ -925,10 +927,13 @@ describe("LogForwarder", () => {
         manual.clock,
       ).pipe(Effect.provideService(FileSystem.FileSystem, injected));
       yield* logflare.respond(401);
+      // Holding the answer arms the gate before the forwarder can act on the refusal.
+      const release = yield* logflare.hold;
 
       yield* database.log("refused line");
       const refusedPost = yield* logflare.next;
       yield* Deferred.succeed(refused, undefined);
+      yield* release;
       // A retried post first waits on the clock, so the cursor write wins only when it pauses.
       const outcome = yield* Deferred.await(savedAfterRefusal).pipe(
         Effect.as("paused"),

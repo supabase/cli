@@ -2,15 +2,19 @@ import { PgClient } from "@effect/sql-pg";
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ConfigProvider,
   Context,
   Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
+  Option,
   Path,
   Predicate,
   Redacted,
   Ref,
+  Schema,
   Stream,
 } from "effect";
 import { tmpdir } from "node:os";
@@ -29,7 +33,7 @@ const config: DatabaseConfig = {
 
 const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
 
-const query = (
+const query = <Row extends object = object>(
   endpoint: BackendEndpoint,
   password: Redacted.Redacted<string>,
   statement: string,
@@ -48,7 +52,7 @@ const query = (
           password,
         }),
       );
-      return yield* Context.get(services, PgClient.PgClient).unsafe(statement);
+      return yield* Context.get(services, PgClient.PgClient).unsafe<Row>(statement);
     }),
   );
 
@@ -207,6 +211,259 @@ describe("database component", { timeout: 180_000 }, () => {
           yield* query(yield* database.endpoint, rotated, "SELECT 1 AS ok", "postgres", "postgres"),
         ).toEqual([{ ok: 1 }]);
         yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live("native PostgreSQL verifies outbound HTTPS against the configured CA bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const certs = yield* path.fromFileUrl(new URL("../../tests/certs", import.meta.url));
+        const key = yield* fs.readFileString(path.join(certs, "localhost.key"));
+        const serveHttps = (certificate: string) =>
+          fs.readFileString(path.join(certs, certificate)).pipe(
+            Effect.flatMap((cert) =>
+              Effect.acquireRelease(
+                Effect.try(() =>
+                  Bun.serve({
+                    hostname: "127.0.0.1",
+                    port: 0,
+                    tls: { key, cert },
+                    fetch: () => new Response("verified"),
+                  }),
+                ),
+                (server) => Effect.promise(() => server.stop(true)),
+              ),
+            ),
+          );
+        const trusted = yield* serveHttps("trusted.crt");
+        const untrusted = yield* serveHttps("untrusted.crt");
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-tls-" });
+        const bundle = path.join(root, "trusted.crt");
+        yield* fs.copyFile(path.join(certs, "trusted.crt"), bundle);
+        yield* fs.chmod(bundle, 0o644);
+        const database = yield* makeDatabase({
+          stackId: "stack-database-tls",
+          instanceId: "tls",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeService(database.definition, { id: "database:tls", config });
+        yield* service.start.pipe(
+          Effect.provide(
+            ConfigProvider.layerAdd(ConfigProvider.fromEnvRecord({ SSL_CERT_FILE: bundle }), {
+              asPrimary: true,
+            }),
+          ),
+        );
+        yield* service.ready;
+        const endpoint = yield* database.endpoint;
+        yield* query(
+          endpoint,
+          config.databasePassword,
+          "CREATE EXTENSION http WITH SCHEMA extensions; CREATE EXTENSION pg_net",
+        );
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT status, content FROM extensions.http_get('https://127.0.0.1:${trusted.port}/')`,
+          ),
+        ).toEqual([{ status: 200, content: "verified" }]);
+        const [request] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ id: Schema.String })]),
+        )(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT net.http_get('https://127.0.0.1:${trusted.port}/') AS id`,
+          ),
+        );
+        expect(
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `SELECT status, message, (response).status_code FROM net._http_collect_response(${request.id}, async := false)`,
+          ),
+        ).toEqual([{ status: "SUCCESS", message: "ok", status_code: 200 }]);
+        const rejected = yield* query(
+          endpoint,
+          config.databasePassword,
+          `SELECT status FROM extensions.http_get('https://127.0.0.1:${untrusted.port}/')`,
+        ).pipe(Effect.flip);
+        expect(rejected.reason.cause).toMatchObject({
+          message: expect.stringContaining("self-signed certificate"),
+        });
+        yield* service.destroy;
+      }),
+    ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  it.live(
+    "native PostgreSQL defaults SSL_CERT_FILE to a host CA bundle and resolves each SSL_CERT_DIR entry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-trust-env-" });
+          const database = yield* makeDatabase({
+            stackId: "stack-database-trust-env",
+            instanceId: "trust-env",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const service = yield* makeService(database.definition, {
+            id: "database:trust-env",
+            config,
+          });
+          yield* service.start.pipe(
+            Effect.provide(
+              ConfigProvider.layerAdd(
+                ConfigProvider.fromEnvRecord(
+                  { SSL_CERT_FILE: "", SSL_CERT_DIR: ":certs-a::certs-b" },
+                  { preserveEmptyStrings: true },
+                ),
+                { asPrimary: true },
+              ),
+            ),
+          );
+          yield* service.ready;
+          const endpoint = yield* database.endpoint;
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE TABLE server_env (file text, dir text); COPY server_env FROM PROGRAM 'printf "%s\\t%s\\n" "$SSL_CERT_FILE" "$SSL_CERT_DIR"'`,
+          );
+          const [serverEnv] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ file: Schema.String, dir: Schema.String })]),
+          )(yield* query(endpoint, config.databasePassword, "SELECT file, dir FROM server_env"));
+          expect({ ...serverEnv, exists: yield* fs.exists(serverEnv.file) }).toEqual({
+            file: expect.stringMatching(/^\//u),
+            exists: true,
+            dir: `:${path.resolve("certs-a")}::${path.resolve("certs-b")}`,
+          });
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+  );
+
+  for (const version of ["15", "17"])
+    it.live(`runs native PostgreSQL ${version} cron jobs in supautils-guarded workers`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-cron-" });
+          const database = yield* makeDatabase({
+            stackId: "stack-integration",
+            instanceId: "cron",
+            root,
+            cacheRoot: artifactCacheRoot,
+            runtime: "native",
+          });
+          const databaseConfig = { ...config, version };
+          const service = yield* makeService(database.definition, {
+            id: "database:cron",
+            config: databaseConfig,
+          });
+          yield* service.start;
+          yield* service.ready;
+          const endpoint = yield* database.endpoint;
+          const asPostgres = (statement: string) =>
+            query(endpoint, config.databasePassword, statement, "postgres", "postgres");
+          yield* asPostgres("CREATE EXTENSION pg_cron");
+          yield* query(
+            endpoint,
+            config.databasePassword,
+            `CREATE FUNCTION report_cron_run() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              PERFORM pg_notify('cron_runs', (SELECT jobname FROM cron.job WHERE jobid = NEW.jobid)
+                || ': ' || NEW.status || ': ' || coalesce(NEW.return_message, ''));
+              RETURN NEW;
+            END $$;
+            CREATE TRIGGER report_cron_run AFTER INSERT OR UPDATE ON cron.job_run_details
+              FOR EACH ROW WHEN (NEW.status IN ('succeeded', 'failed'))
+              EXECUTE FUNCTION report_cron_run();`,
+          );
+          const sql = Context.get(
+            yield* Layer.build(
+              PgClient.layer({
+                host: endpoint.kind === "unix" ? endpoint.path : endpoint.host,
+                port: endpoint.port,
+                database: "postgres",
+                username: "supabase_admin",
+                password: config.databasePassword,
+              }),
+            ),
+            PgClient.PgClient,
+          );
+          const cronRun = (name: string, command: string) =>
+            Effect.gen(function* () {
+              /* Jobs repeat every second, so a run reported before LISTEN is ready is not lost. */
+              const run = yield* sql.listen("cron_runs").pipe(
+                Stream.filter((message) => message.startsWith(`${name}: `)),
+                Stream.runHead,
+                Effect.forkScoped({ startImmediately: true }),
+              );
+              yield* asPostgres(`SELECT cron.schedule('${name}', '1 seconds', $$${command}$$)`);
+              const message = yield* Fiber.join(run).pipe(Effect.timeout("60 seconds"));
+              yield* asPostgres(`SELECT cron.unschedule('${name}')`);
+              return Option.getOrElse(message, () => "");
+            });
+          expect(yield* cronRun("own_job", "SELECT 1")).toContain("own_job: succeeded");
+          expect(yield* cronRun("reserved_role", "ALTER ROLE anon LOGIN")).toContain(
+            'reserved_role: failed: ERROR: "anon" is a reserved role',
+          );
+          const settings = Effect.flatMap(database.endpoint, (current) =>
+            query<{ workers: string; cron: string; preload: string }>(
+              current,
+              config.databasePassword,
+              "SELECT current_setting('max_worker_processes') AS workers, current_setting('cron.use_background_workers') AS cron, current_setting('shared_preload_libraries') AS preload",
+            ),
+          );
+          const [initial] = yield* settings;
+          expect(initial).toMatchObject({ workers: "17", cron: "on" });
+          yield* service.restart({ ...databaseConfig, stopGraceSeconds: 0 });
+          yield* service.ready;
+          const [shadow] = yield* settings;
+          expect(shadow).toMatchObject({ workers: "8", cron: "off" });
+          expect(initial?.preload).toBe(`${shadow?.preload},supautils`);
+          yield* query(
+            yield* database.endpoint,
+            config.databasePassword,
+            "ALTER SYSTEM SET max_worker_processes = 32",
+          );
+          yield* service.restart(databaseConfig);
+          yield* service.ready;
+          expect(yield* settings).toMatchObject([{ workers: "32", cron: "on" }]);
+          yield* service.destroy;
+        }),
+      ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
+    );
+
+  it.live("bounds the native configuration probe before first boot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-database-probe-" });
+        const database = yield* makeDatabase({
+          stackId: "stack-integration",
+          instanceId: "probe",
+          root,
+          cacheRoot: artifactCacheRoot,
+          runtime: "native",
+        });
+        const service = yield* makeService(database.definition, {
+          id: "database:probe",
+          config: { ...config, healthTimeoutMs: 0 },
+        });
+        const failure = yield* service.start.pipe(Effect.flip);
+        expect(String(failure)).toContain("PostgreSQL configuration probe timed out");
+        expect(yield* fs.readDirectory(`${root}/probe/data`)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
   );

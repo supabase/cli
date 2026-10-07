@@ -186,6 +186,7 @@ const runStatusEnv = (input: {
       },
       discover: () => Effect.die("unused"),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     });
     // Only `--workdir` selects the project here; an absent flag falls back to the ambient cwd,
     // which is registered under its own distinguishable stack so a dropped `--workdir` fails

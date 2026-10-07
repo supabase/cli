@@ -23,8 +23,6 @@ jobs:
     # Setup (~10 min) + release visibility (<1 min) + the S3-mirror wait (up to ~10 min, normally only
     # for the first planned item) + pin, render and push per item + the merge-queue wait (up to 30 min).
     timeout-minutes: 75
-    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
-    environment: auto-approve
     permissions:
       contents: read
     steps:
@@ -106,13 +104,12 @@ jobs:
 
       # One branch per planned item, rebuilt from the recorded base commit, never from a previous
       # iteration's HEAD; `--release` pins the planned release, never "highest at apply time".
-      # `bun`/`pnpm` run with both tokens unset: only `git push` and `gh` ever see them.
+      # `bun`/`pnpm` run with the tokens unset: only `git push` and `gh` ever see them.
       # A merge-queued branch rejects pushes; see ADR 0026 "Hotfix and upgrade pickup" for the wait and hand-off.
       - name: Apply planned updates
         if: steps.plan.outputs.count != '0'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
-          AUTO_APPROVE_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
           GITHUB_TOKEN: ${{ github.token }}
           SERVICE: ${{ steps.validate.outputs.service }}
           UPSTREAM_VERSION: ${{ steps.validate.outputs.upstream_version }}
@@ -146,9 +143,9 @@ jobs:
 
             git checkout -B "$branch" "$BASE_SHA"
 
-            env -u APP_TOKEN -u AUTO_APPROVE_TOKEN bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
-            env -u APP_TOKEN -u AUTO_APPROVE_TOKEN -u GITHUB_TOKEN pnpm exec oxfmt --config .oxfmtrc.json packages/stack/src/Artifacts.ts
-            env -u APP_TOKEN -u AUTO_APPROVE_TOKEN -u GITHUB_TOKEN bun apps/cli/scripts/render-service-dockerfile.ts
+            env -u APP_TOKEN bun .github/scripts/sync-artifacts-catalog.ts --service "$SERVICE" --release "$release"
+            env -u APP_TOKEN -u GITHUB_TOKEN pnpm exec oxfmt --config .oxfmtrc.json packages/stack/src/Artifacts.ts
+            env -u APP_TOKEN -u GITHUB_TOKEN bun apps/cli/scripts/render-service-dockerfile.ts
 
             generated_files=(
               packages/stack/src/Artifacts.ts
@@ -231,30 +228,12 @@ jobs:
                 echo "::error ::Pushed ${branch} but failed to edit pull request #${existing}. Run manually: ${manual_prefix} ${release}, then edit the pull request from ${branch} by hand."
                 exit 1
               fi
-              pr="$existing"
-            elif ! pr="$(GH_TOKEN="$APP_TOKEN" gh pr create \
+            elif ! GH_TOKEN="$APP_TOKEN" gh pr create \
               --title "$title" \
               --body "$body" \
-              --assignee supabase-oss \
               --head "$branch" \
-              --base "$DEFAULT_BRANCH")"; then
+              --base "$DEFAULT_BRANCH"; then
               echo "::error ::Pushed ${branch} but failed to open a pull request. Run manually: ${manual_prefix} ${release}, then open a pull request from ${branch} against ${DEFAULT_BRANCH} by hand."
-              exit 1
-            fi
-            pr="${pr##*/}"
-
-            # `supabase-oss` co-owns the generated files in CODEOWNERS; the app cannot approve its own PR.
-            # Skipping an approved PR avoids stacking a new review on every rewrite.
-            if ! decision="$(GH_TOKEN="$APP_TOKEN" gh pr view "$pr" --json reviewDecision --jq .reviewDecision)"; then
-              echo "::error ::Failed to read the review state of pull request #${pr}; approve and merge it by hand."
-              exit 1
-            fi
-            if [ "$decision" != "APPROVED" ] && ! GH_TOKEN="$AUTO_APPROVE_TOKEN" gh pr review --approve "$pr"; then
-              echo "::error ::Failed to approve pull request #${pr}; approve and merge it by hand."
-              exit 1
-            fi
-            if ! GH_TOKEN="$APP_TOKEN" gh pr merge --auto --squash "$pr"; then
-              echo "::error ::Failed to enable auto-merge on pull request #${pr}; merge it by hand once CI is green."
               exit 1
             fi
           done 3< "${RUNNER_TEMP}/slim-updates.tsv"
