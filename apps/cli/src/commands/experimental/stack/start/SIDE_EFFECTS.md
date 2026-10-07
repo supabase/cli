@@ -41,7 +41,20 @@ The owner persists each service's output under `$SUPABASE_HOME/stacks/<stack-id>
 most about 10 MiB (plus the segment being written) per service instance. Destroying an instance or
 the stack deletes those logs; stopping the stack and resetting database data keep them.
 PostgREST runs with `PGRST_LOG_LEVEL=info`, so every request line, query string included, is
-persisted and shipped to Analytics.
+persisted and shipped to Analytics. The shared API port also records each request and WebSocket
+upgrade under `logs/gateway/gateway/`, with the same retention, as one nginx combined line with a
+millisecond timestamp and a trailing duration:
+
+```text
+127.0.0.1 - - [01/Oct/2026:09:25:23.456 +0000] "GET /rest/v1/todos?select=* HTTP/1.1" 200 126 "-" "curl/8.7.1" 12ms
+```
+
+Credential query and fragment values (`apikey`, `jwt`, `token`, `token_hash`, `code`, access,
+refresh, ID, and provider tokens, and the `X-Amz-Signature`, `X-Amz-Credential`, and
+`X-Amz-Security-Token` of S3 presigned URLs), in the request target and the Referer, are written
+as `redacted`, whatever their parameter is used for, as are values under any name that hold a
+secret key (`sb_secret_…`) or a JWT, values that themselves carry such a pair (a `redirect_to`
+URL with a token), and URL userinfo.
 When an owner starts a stack saved with a Vector instance, it removes that instance, its composition
 members, dependencies and port claims from `state.json`, and its stack-owned Vector config files
 under `data/<instance-id>/runtime/vector/`; its containers go with the stack's container sweep. A
@@ -63,6 +76,18 @@ as that user: the CLI chowns the instance data, root key, socket directory, and 
 `pgsodium_getkey.sh` to it, and adds traverse-only `o+x` to their parent directories, including
 root's home directory. Later commands that restrict the artifact cache and stack state roots to
 their owner keep that grant.
+
+Native PostgreSQL receives `SSL_CERT_FILE` and `SSL_CERT_DIR` when they are non-empty. When
+`SSL_CERT_FILE` is unset or empty, PostgreSQL receives the first of
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`,
+and `/etc/ssl/cert.pem` that exists, if any. The `http` and `pg_net` extensions verify HTTPS
+certificates against these. On macOS, `/etc/ssl/cert.pem` does not include roots added to the
+Keychain; to trust those, export `SSL_CERT_FILE` pointing to a bundle that also holds the public
+roots, such as a copy of `/etc/ssl/cert.pem` with those roots appended. When PostgreSQL runs as a
+separate user, that user must be able to read exported `SSL_CERT_FILE` and `SSL_CERT_DIR` paths,
+which are not chowned to it. The values come from the environment of the command that starts the
+stack owner, and a running owner keeps them through `stack restart` and repeated `stack start`, so
+export them before starting and stop and start the stack after changing them.
 
 Database is eager by default. Other services are lazy; traffic wakes them through their listeners.
 Lazy services with idle policies stop after 60 seconds without traffic, Studio after 5 minutes. A
@@ -90,11 +115,12 @@ Studio requires REST; excluding REST while keeping Studio fails before stopping 
 
 ## Service logs in Analytics
 
-The owner ships the persisted Auth, REST, Realtime, Storage, Functions, and database output lines
-(not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its direct backend,
-using the Analytics API key and the legacy Logflare source names (`gotrue.logs.prod`,
-`postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`, `deno-relay-logs`,
-`postgres.logs`) with the legacy per-service field remaps. This applies to the Docker, Podman, and
+The owner ships the persisted Auth, REST, Realtime, Storage, Functions, database, and gateway
+output lines (not launch or lost markers) to Analytics' `POST /api/logs` ingest endpoint on its
+direct backend, using the Analytics API key and the legacy Logflare source names
+(`gotrue.logs.prod`, `postgREST.logs.prod`, `realtime.logs.prod`, `storage.logs.prod.2`,
+`deno-relay-logs`, `postgres.logs`, and `cloudflare.logs.prod` for Studio's API Gateway page) with
+the legacy per-service field remaps. This applies to the Docker, Podman, and
 native runtimes. Shipping runs only while the composed Analytics service is running and healthy;
 each instance keeps its position in `logs/<service>/<instance-id>/cursor.json`, so lines written
 while Analytics is stopped, starting, or unhealthy are shipped with their original timestamps once
@@ -132,9 +158,11 @@ reverting it or running the stack's exact `supabase stack destroy` command to re
 ## First startup and retries
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
-services, applies the database overlay, and runs project migrations and seeds. Membership changes
+services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
+database overlay, and runs project migrations and seeds. Membership changes
 apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
-composition reapplies the webhook setting before activation.
+composition reapplies the webhook setting before activation, first creating the
+`supabase_functions` schema when the database lacks it.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
 files using the service-role JWT, silently overwriting or pruning existing buckets without a

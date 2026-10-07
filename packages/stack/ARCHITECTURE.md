@@ -483,7 +483,7 @@ During Starting, acquire the exclusive stack lease, load the instance definition
 
 **Session lifetime.** A session stack is registered by its owner under the lease, so it never exists without a live owner except after that owner dies. Its spawner keeps the owner's stdin pipe open for the life of the creating handle. End of input means the creator is gone, whether it closed the handle or its process died: the owner destroys the stack and exits. Only the creating handle starts a session stack's owner; other handles attach. `create({ startOwner: true })` registers a detached stack through its owner the same way; an owner whose startup fails removes the registration it made, so a failed or interrupted first launch leaves no stack behind.
 
-**Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
+**Orphan sweep.** Stack-labelled containers and session stacks exist only while their lease is held. After readiness, each owner visits every other stack in its state root in the background, with a bounded time per stack. It skips stacks whose lease is held. For a free lease it takes that lease for the duration of the visit, publishing a sweeper record in `owner.json` so clients wait for the visit instead of mistaking it for a starting owner, removes containers labelled with the stack and its data root, and destroys the stack through the owner's own destroy path when its lifetime is `session`. A stack whose directory, and with it its lease, was deleted is visited the same way when containers labelled with its data root in this state root remain on an engine the root's stacks use. Only those containers are removed, even while an owner of that stack still runs; its data in the root's shared database volume stays, and starting the stack again waits for the visit to end. `findDeleted` selects any stack that is no longer registered and still has such containers, such as one whose directory was deleted, by its full id, so a client can destroy those containers the same way. Filtering on the data-root label keeps other state roots untouched. Creating a stack whose identity belongs to a dead session stack reclaims that stack the same way first.
 
 **Unreachable engine.** An owner of a container stack fails startup with a `runtime-unavailable` reason when its first container sweep finds the engine CLI missing or its daemon not listening; permission, TLS, authentication and timeout failures are ordinary startup errors. `destroy` then proceeds without an owner: it takes the free lease, publishing a sweeper record like the orphan sweep, refuses when any stack data directory cannot be deleted by the current user, removes the host data and the registration with its port claims, and returns the shell commands that remove the stack's containers and engine-volume data once the engine runs. `stop` without a live owner already succeeds without contacting the engine.
 
@@ -670,12 +670,26 @@ The owner is the only subscriber of each instance's output and persists it as re
   of instances no longer saved, so a failed deletion is retried. Destroying the stack removes
   `logs/`; resetting database data keeps them.
 
+#### Gateway access logs
+
+The shared API listener is the stack's gateway. Each completed request, and each WebSocket upgrade
+once its status line arrives, becomes one nginx combined line with a millisecond timestamp and a
+trailing duration. In the target and the Referer, credential query and fragment values (API keys,
+tokens, token hashes, PKCE codes) are redacted by name on every route, as are values under any
+name shaped like a secret key or a JWT, values that nest one or a URL with userinfo, and URL
+userinfo. The proxy hands each line to a bounded sliding
+buffer after the response settles, so logging never delays a response or holds a target's
+activity. The owner persists these lines as the `gateway` stream, `logs/gateway/gateway/`, with
+one launch per owner run numbered after the newest retained one; it is not a service instance, so
+orphan cleanup keeps it.
+
 #### Shipping logs to Analytics
 
 While the composed Analytics instance is running and healthy, the owner ships the persisted
 stdout/stderr records of the Auth, REST, Realtime, Storage, Functions and database instances of the
-composition to its direct backend, never the proxy, so shipping neither wakes it nor counts as
-activity; standalone instances such as shadow databases are not shipped. The owner logs
+composition, and of the gateway stream as Studio's API Gateway source, to its direct backend, never
+the proxy, so shipping neither wakes it nor counts as activity; standalone instances such as shadow
+databases are not shipped. The owner logs
 each target change, and the target is re-selected when the composition, Analytics' health or its
 launch changes.
 
@@ -821,7 +835,7 @@ Composition policy stays in the package. `composition.supabase` owns the managed
 
 The Functions recipe publishes a default Edge Runtime main service built from [`serve.main.ts`](./src/functions/serve.main.ts). [`generate-functions-bootstrap.ts`](./scripts/generate-functions-bootstrap.ts) bundles it, with its dependencies inlined for offline use, into the committed module [`serve-main-bundle.ts`](./src/functions/generated/serve-main-bundle.ts); `pnpm generate` refreshes it and a unit test fails when it drifts from the sources. A creation may override it with `bootstrap`; the default is not saved in the stack document. `stack start` and the stack-backed `functions serve` command use the default.
 
-The CLI owns the foreground `functions serve` session. It attaches to an existing composition member and leaves it available on exit. Supported explicit overrides replace its configuration for the session, then restore it on normal cleanup. If Functions is excluded, the CLI creates and later destroys one standalone instance without changing composition. The package needs no session or recovery API: ordinary create, start, restart, status, logs, and destroy suffice. Functions accepts custom environment values and a database URL; its recipe derives default keys, while the composer supplies the runtime database URL without a dependency edge. See the [command lifecycle](../../apps/cli/docs/stack-commands.md) for supported flags and cleanup limits.
+The CLI owns the foreground `functions serve` session. It attaches to an existing composition member and leaves it available on exit. Supported explicit overrides replace its configuration for the session, then restore it on normal cleanup. If Functions is excluded, the CLI creates and later destroys one standalone instance without changing composition. The package needs no session or recovery API: ordinary create, start, restart, status, logs, and destroy suffice. Functions accepts custom environment values and a database URL; its recipe derives default keys, while the composer supplies the runtime database URL without a dependency edge. Studio receives the stable Functions proxy URL as configuration without making Functions its lifecycle prerequisite. See the [command lifecycle](../../apps/cli/docs/stack-commands.md) for supported flags and cleanup limits.
 
 Artifact knowledge remains in Stack and is exposed to the CLI through the single internal [`artifacts` entrypoint](./src/internal/artifacts.ts), including the service catalog, PostgreSQL version resolution, and native artifact preparation and verification. A remote `db dump --db-url` can use those existing helpers and run without creating a local or dummy stack: the CLI owns the external process or container execution, as shown by [`bundled-postgres-client.ts`](../../apps/cli/src/command-internal/bundled-postgres-client.ts), while managed jobs continue to use `stack.commands.run`.
 

@@ -1,5 +1,10 @@
 import { Clock, Effect, Option, Path, Stream } from "effect";
-import { streamStackLogs, type SavedStack, type StackLogRecord } from "@supabase/stack/effect";
+import {
+  gatewayLog,
+  streamStackLogs,
+  type SavedStack,
+  type StackLogRecord,
+} from "@supabase/stack/effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { dim } from "../../../../command-internal/colors.ts";
@@ -50,9 +55,16 @@ const select = (
     service: creation.service,
     launchId,
   });
+  // The owner records the shared API listener's requests once the stack has claimed its port.
+  const gateway: ReadonlyArray<Selected> = definition.ports.some(({ key }) => key === "api")
+    ? [{ id: gatewayLog.instanceId, service: gatewayLog.service, launchId: undefined }]
+    : [];
   if (requested.length === 0) {
     const members = new Set(definition.composition.members.map(({ id }) => id));
-    const selected = definition.instances.filter(({ id }) => members.has(id)).map(subject);
+    const selected = [
+      ...definition.instances.filter(({ id }) => members.has(id)).map(subject),
+      ...gateway,
+    ];
     return selected.length === 0
       ? Effect.fail(
           new StackCommandLogsError({
@@ -65,17 +77,20 @@ const select = (
   }
   const unmatched = requested.find(
     (value) =>
-      !definition.instances.some(({ id, creation }) => id === value || creation.service === value),
+      !definition.instances.some(
+        ({ id, creation }) => id === value || creation.service === value,
+      ) && !gateway.some(({ service }) => service === value),
   );
   if (unmatched !== undefined)
     return Effect.fail(
       new StackCommandLogsError({ reason: "flags", message: `No service matches ${unmatched}.` }),
     );
-  return Effect.succeed(
-    definition.instances
+  return Effect.succeed([
+    ...definition.instances
       .filter(({ id, creation }) => requested.includes(id) || requested.includes(creation.service))
       .map(subject),
-  );
+    ...gateway.filter(({ service }) => requested.includes(service)),
+  ]);
 };
 
 export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: StackLogsFlags) {
@@ -189,7 +204,7 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
           ]),
         );
         const missing = selected
-          .filter(({ id }) => !handles.has(id))
+          .filter(({ id }) => id !== gatewayLog.instanceId && !handles.has(id))
           .map(({ id, service }) => `${service} (${id})`);
         if (missing.length === selected.length)
           return yield* new StackCommandLogsError({
@@ -203,13 +218,14 @@ export const stackLogs = Effect.fn("experimental.stack.logs")(function* (flags: 
             `Not following ${missing.join(", ")}, which the running stack does not serve.`,
           );
         const streams = selected.flatMap(({ id, service }) => {
-          const handle = handles.get(id);
-          if (handle === undefined) return [];
+          const readLogs =
+            id === gatewayLog.instanceId ? stack.gateway.readLogs : handles.get(id)?.readLogs;
+          if (readLogs === undefined) return [];
           const from = printed.get(id);
           // Without history, the owner pins the start at its end under the writer's lock.
           const start = flags.tail === 0 ? { tail: 0 } : from === undefined ? {} : { from };
           return [
-            handle.readLogs({ follow: true, ...start, ...sinceTime }).pipe(
+            readLogs({ follow: true, ...start, ...sinceTime }).pipe(
               Stream.filter(
                 (record) => isAfter(record, from) && isFromLaunch(record, launches.get(id)),
               ),

@@ -97,7 +97,7 @@ export interface Interface {
   }) => Effect.Effect<void, LogStoreError>;
   /** Deletes log directories of instances that are not attached; failures are logged. */
   readonly removeOrphans: Effect.Effect<void, LogStoreError>;
-  /** The highest launch id at the end of an instance's newest segment, if one is readable. */
+  /** The highest launch id at the end of the newest segment that holds a record, if readable. */
   readonly latestLaunchId: (instance: {
     readonly service: string;
     readonly instanceId: string;
@@ -259,42 +259,34 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.mapError(storeError("read")),
     );
 
-  /** Reads only the last chunk of the newest segment, skipping its first, possibly cut, line. */
-  const latestLaunchId = (directory: string) =>
-    generations(directory).pipe(
-      Effect.flatMap((listed) => {
-        const newest = listed.at(-1);
-        if (newest === undefined) return Effect.succeed(Option.none<number>());
-        const file = path.join(directory, segmentName(newest));
-        return fs.stat(file).pipe(
-          Effect.mapError(storeError("read")),
-          Effect.flatMap((info) => {
-            const offset = Math.max(0, Number(info.size) - readChunkBytes);
-            return readChunk(file, offset).pipe(
-              Effect.map(
-                Option.match({
-                  onNone: () => Option.none<number>(),
-                  onSome: (bytes) => {
-                    let latest: number | undefined;
-                    for (const line of decoder
-                      .decode(bytes)
-                      .split("\n")
-                      .slice(offset > 0 ? 1 : 0, -1)) {
-                      const launchId = parseRecord(line, {
-                        generation: newest,
-                        byteOffset: 0,
-                      })?.launchId;
-                      if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
-                    }
-                    return Option.fromNullishOr(latest);
-                  },
-                }),
-              ),
-            );
-          }),
-        );
-      }),
-    );
+  /**
+   * Reads only the last chunk of each segment, newest first, until one holds a complete record;
+   * a crash right after rotation can leave the newest segment empty or cut.
+   */
+  const latestLaunchId = Effect.fnUntraced(function* (directory: string) {
+    for (const generation of (yield* generations(directory)).toReversed()) {
+      const file = path.join(directory, segmentName(generation));
+      const size = yield* fs.stat(file).pipe(
+        Effect.map((info) => Option.some(Number(info.size))),
+        Effect.catchIf(isNotFound, () => Effect.succeed(Option.none<number>())),
+        Effect.mapError(storeError("read")),
+      );
+      if (Option.isNone(size)) continue;
+      const offset = Math.max(0, size.value - readChunkBytes);
+      const bytes = yield* readChunk(file, offset);
+      if (Option.isNone(bytes)) continue;
+      let latest: number | undefined;
+      for (const line of decoder
+        .decode(bytes.value)
+        .split("\n")
+        .slice(offset > 0 ? 1 : 0, -1)) {
+        const launchId = parseRecord(line, { generation, byteOffset: 0 })?.launchId;
+        if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
+      }
+      if (latest !== undefined) return Option.some(latest);
+    }
+    return Option.none<number>();
+  });
 
   const guarded = <A, E>(live: Live | undefined, effect: Effect.Effect<A, E>) =>
     live === undefined ? effect : live.passes.withPermits(1)(effect);

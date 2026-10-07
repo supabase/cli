@@ -14,7 +14,7 @@ const config = {
   ),
   stackId: Flag.string("stack-id").pipe(
     Flag.withDescription(
-      "Destroy an existing stack by id or unique id prefix; repeat to select several.",
+      "Destroy an existing stack by id or unique id prefix; repeat to select several. A full id, such as a container's `com.supabase.stack` label, also selects the containers a deleted stack left behind.",
     ),
     Flag.atLeast(0),
   ),

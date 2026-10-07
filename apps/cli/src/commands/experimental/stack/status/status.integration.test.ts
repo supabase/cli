@@ -9,6 +9,7 @@ import {
   StackError,
 } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
@@ -176,6 +177,7 @@ const makeStack = (
   },
   stop: Effect.die("unused"),
   destroy: Effect.die("unused"),
+  gateway: unusedGateway,
   commands: {
     run: (_tool, _options) => Effect.die("unused"),
   },
@@ -246,6 +248,7 @@ const runStatus = (input: {
       open: () => Effect.succeed(stack),
       discover: () => Effect.die("discover must not run"),
       find: () => Effect.die("find must not run"),
+      findDeleted: () => Effect.die("findDeleted must not run"),
     });
     const resolver = Layer.succeed(StackTargetResolver, {
       resolve: (target) =>

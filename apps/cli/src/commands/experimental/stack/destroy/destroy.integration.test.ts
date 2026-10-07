@@ -1,5 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { StackError } from "@supabase/stack/effect";
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { YesFlag } from "../../../../command-internal/global-flags.ts";
@@ -8,7 +9,6 @@ import {
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { StackError } from "@supabase/stack/effect";
 import { StackApi, stackApiLayer, stackTargetResolverLayer } from "../stack.shared.ts";
 import { stackDestroy } from "./destroy.handler.ts";
 
@@ -138,6 +138,64 @@ describe("stack destroy", () => {
         other.id,
       ]);
       expect(f.output.stdoutText).toContain(`Stack ${f.stack.id} destroyed.`);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("dispatches a full ID with no registration to its deleted-stack cleanup", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const id = "d".repeat(64);
+      let destroyed = 0;
+      const api = Layer.succeed(StackApi, {
+        ...f.api,
+        findDeleted: (options) =>
+          Effect.succeed(
+            options.id === id
+              ? Option.some({
+                  id,
+                  destroy: Effect.sync(() => {
+                    destroyed += 1;
+                    return { runtimeCleanup: "complete" } as const;
+                  }),
+                })
+              : Option.none(),
+          ),
+      });
+
+      yield* stackDestroy({ ...f.flags, stackId: Option.some(id) }).pipe(
+        Effect.provide(Layer.merge(f.layer, api)),
+      );
+
+      expect(destroyed).toBe(1);
+      expect(f.output.stderrText).toContain(
+        `Permanently destroying the containers deleted stack ${id} left behind. Storage upload files will be preserved.\n`,
+      );
+      expect(f.output.stdoutText).toContain(`Removed the containers stack ${id} left behind.`);
+      expect((yield* f.api.discover(f.locations)).map(({ definition }) => definition.id)).toEqual([
+        f.stack.id,
+      ]);
+    }).pipe(Effect.provide(live)),
+  );
+
+  it.live("reports a full ID as not found, with the engine that could not be searched", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(true);
+      const id = "d".repeat(64);
+      const unlisted = `Unable to list Docker containers while looking for stack ${id}'s leftovers: permission denied`;
+      const api = Layer.succeed(StackApi, {
+        ...f.api,
+        findDeleted: () => Effect.fail(new StackError({ operation: "find", message: unlisted })),
+      });
+
+      const error = yield* stackDestroy({ ...f.flags, stackId: Option.some(id) }).pipe(
+        Effect.provide(Layer.merge(f.layer, api)),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("flags");
+      expect(error.message).toContain("was not found");
+      expect(error.suggestion).toContain("Run `supabase stack list`");
+      expect(error.detail).toBe(unlisted);
     }).pipe(Effect.provide(live)),
   );
 

@@ -39,6 +39,7 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
 import { ProjectRefNotLinkedError } from "../../../config/project-ref.errors.ts";
@@ -808,6 +809,7 @@ function mockResetStackApi(opts: {
     },
     stop: Effect.die("unused"),
     destroy: Effect.die("unused"),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   };
   return {
@@ -832,6 +834,7 @@ function mockResetStackApi(opts: {
             host: undefined,
           }),
         ),
+      findDeleted: () => Effect.die("unused"),
       open: () => Effect.succeed(stack),
     }),
     get resetCalls() {

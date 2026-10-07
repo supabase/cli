@@ -16,6 +16,7 @@ on:
           - latest
           - alpha
           - beta
+          - next
         default: beta
 
 permissions:

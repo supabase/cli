@@ -93,6 +93,11 @@ const fixture = Effect.fn("FunctionsServeE2e.fixture")(function* (
             },
             endpoints: { http: { port: "auto" as const } },
           },
+          {
+            service: "studio" as const,
+            config: { jwtSecret },
+            endpoints: { http: { port: "auto" as const } },
+          },
         ]
       : []),
   ]);
@@ -189,10 +194,15 @@ describe("functions serve (stack e2e)", () => {
             true,
           );
           const functions = services.find((instance) => instance.service === "functions");
+          const studio = services.find((instance) => instance.service === "studio");
           if (functions?.service !== "functions") return yield* Effect.die("Functions missing");
+          if (studio?.service !== "studio") return yield* Effect.die("Studio missing");
           const saved = yield* functions.status;
+          const savedStudio = yield* studio.status;
           expect(saved.lifecycle).toBe("stopped");
           expect(saved.wakeEnabled).toBe(true);
+          expect(savedStudio.lifecycle).toBe("stopped");
+          expect(savedStudio.wakeEnabled).toBe(true);
           const composition = yield* stack.composition.describe;
           const plain = yield* serve(root, home);
           const active = yield* functions.status;
@@ -213,6 +223,10 @@ describe("functions serve (stack e2e)", () => {
           yield* fs.writeFileString(sourcePath, source);
           yield* interrupt(plain);
           expect((yield* functions.status).launchId).toBe(active.launchId);
+          expect(yield* studio.status).toMatchObject({
+            lifecycle: savedStudio.lifecycle,
+            wakeEnabled: savedStudio.wakeEnabled,
+          });
           expect((yield* invoke(apiUrl, false)).status).toBe(401);
 
           const overridden = yield* serve(root, home, [
@@ -228,6 +242,10 @@ describe("functions serve (stack e2e)", () => {
           });
           yield* interrupt(overridden);
           expect((yield* functions.status).config).toEqual(saved.config);
+          expect(yield* studio.status).toMatchObject({
+            lifecycle: savedStudio.lifecycle,
+            wakeEnabled: savedStudio.wakeEnabled,
+          });
           expect((yield* invoke(apiUrl, false)).status).toBe(401);
           expect((yield* payload(apiUrl, true)).value).toBe("original");
           expect(yield* stack.composition.describe).toEqual(composition);

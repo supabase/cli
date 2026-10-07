@@ -10,6 +10,7 @@ type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
   readonly explicitOutputFormat: Option.Option<OutputFormat>;
+  readonly agentDefaultOutputFormat?: OutputFormat;
   readonly goOutputFormat?: Option.Option<GoOutputFormat>;
   readonly agentOverride?: AgentOverride;
   readonly detectedAgentName?: Option.Option<string>;
@@ -207,7 +208,7 @@ export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFor
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
     isCodingAgent && Option.isNone(goOutputFormat) && !options.isBuiltInTextRequest
-      ? "json"
+      ? (options.agentDefaultOutputFormat ?? "json")
       : "text",
   );
 }
@@ -215,6 +216,7 @@ export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFor
 export function resolveAgentOutputFormatFromArgs(
   args: ReadonlyArray<string>,
   detectedAgentName: Option.Option<string>,
+  agentDefaultOutputFormat: OutputFormat = "json",
 ): OutputFormat {
   const explicitOutputFormat = outputFormatFromArg(readLongFlag(args, "--output-format"));
   const goOutputFormat = goOutputFormatFromArg(readOutputFlag(args));
@@ -222,6 +224,7 @@ export function resolveAgentOutputFormatFromArgs(
 
   return resolveAgentOutputFormat({
     explicitOutputFormat,
+    agentDefaultOutputFormat,
     goOutputFormat,
     agentOverride,
     detectedAgentName,

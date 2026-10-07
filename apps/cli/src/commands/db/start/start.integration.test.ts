@@ -23,6 +23,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
@@ -363,6 +364,7 @@ function setup(opts: SetupOpts = {}) {
     open: () => Effect.die("unused"),
     discover: () => Effect.die("unused"),
     find: () => Effect.die("unused"),
+    findDeleted: () => Effect.die("unused"),
   });
 
   const layer = Layer.mergeAll(
@@ -1733,6 +1735,7 @@ describe("db start stack backend", () => {
       },
       stop: Effect.void,
       destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      gateway: unusedGateway,
       commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };
@@ -1760,6 +1763,7 @@ describe("db start stack backend", () => {
               })
             : Option.none(),
         ),
+      findDeleted: () => Effect.die("unused"),
     });
 
   it.live("creates and starts only the primary database", () => {

@@ -19,8 +19,6 @@ jobs:
   sync:
     name: Sync API Types
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
-    environment: auto-approve
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -73,7 +71,6 @@ jobs:
 
       - name: Create Pull Request
         if: steps.check.outputs.has_changes == 'true'
-        id: cpr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -85,20 +82,6 @@ jobs:
             Changes were detected after refreshing `apps/cli-go/api/v1-openapi.yaml` from the latest spec from infrastructure, and `apps/cli-go/pkg/api` is regenerated from it. The snapshot diff is the upstream API change and is worth reading: it is marked `linguist-generated`, so GitHub collapses it behind a "Load diff" click rather than hiding it.
           branch: sync/api-types
           base: develop
-
-      - name: Approve Pull Request
-        if: steps.check.outputs.has_changes == 'true'
-        run: gh pr review --approve --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
-        env:
-          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
-          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-
-      - name: Enable Pull Request Automerge
-        if: steps.check.outputs.has_changes == 'true'
-        run: gh pr merge --auto --squash --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
 defaults:
   run:
     working-directory: apps/cli-go

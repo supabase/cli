@@ -75,7 +75,7 @@ export const validateStackTarget = (input: {
     : Effect.void;
 };
 
-const isStackId = Schema.is(StackId);
+export const isStackId = Schema.is(StackId);
 const STACK_ID_PREFIX = /^[0-9a-f]{4,64}$/;
 
 const validateStackId = (id: string): Effect.Effect<string, StackTargetError> =>

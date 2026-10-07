@@ -9,6 +9,11 @@ Native PostgreSQL requires passwords for every role except `supabase_admin`. Its
 and password-reconciliation connection uses that administrative role, so a native
 `supabase_admin` connection is not password-checked.
 
+Native pg_cron runs jobs in background workers, so a job body cannot contain its own `BEGIN` or
+`COMMIT`. Jobs enforce the same `supautils` role policies as client sessions. Native databases
+default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
+`ALTER SYSTEM`, and `[db.settings]` values take precedence.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |
@@ -212,8 +217,8 @@ env-precedence rule as `start`/`stop`/`status`. See
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
-primary database without changing other services (webhooks setup only; no second overlay or
-migrate-and-seed).
+primary database without changing other services (webhooks setup only, creating a missing
+`supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 `db reset --local` and declarative resets rebuild the existing database while retaining stack
@@ -238,13 +243,14 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` prints the retained stdout/stderr of composition members and
-exits; `-f/--follow` then streams new lines until interrupted. Select `--stack <name>`
-or `--stack-id <id>`; the repeatable `--service <kind-or-instance-id>` can include
-standalone services too. History is read from the persisted log files, so it works
-while the stack is stopped; `--follow` requires a running owner and fails before
-printing anything without one. Neither mode starts an owner or service, and Ctrl-C
-leaves services running.
+`supabase stack logs` prints the retained stdout/stderr of composition members, plus
+the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
+streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+repeatable `--service <kind-or-instance-id>` can include standalone services too, and
+`--service gateway` reads only the request lines. History is read from the persisted
+log files, so it works while the stack is stopped; `--follow` requires a running owner
+and fails before printing anything without one. Neither mode starts an owner or
+service, and Ctrl-C leaves services running.
 
 `--tail N` (default 200) keeps the newest lines across the selected services and
 `--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
