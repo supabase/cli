@@ -106,6 +106,7 @@ describe("owner persisted logs", () => {
         const directory = path.join(owner.logsRoot, "mail", mail.id);
         expect(yield* fs.exists(directory)).toBe(true);
         const offline = yield* LogStore.streamStackLogs({ root: owner.logsRoot }).pipe(
+          Stream.filter(({ instanceId }) => instanceId === mail.id),
           Stream.runCollect,
         );
         expect(offline.slice(0, history.length).map(({ position }) => position)).toEqual(
@@ -139,7 +140,10 @@ describe("owner persisted logs", () => {
         yield* Scope.close(ownerScope, Exit.void);
 
         const selection = { stateRoot: owner.stateRoot, stackId: owner.stack.id };
-        const records = yield* streamStackLogs(selection).pipe(Stream.runCollect);
+        const records = yield* streamStackLogs(selection).pipe(
+          Stream.filter(({ instanceId }) => instanceId === mail.id),
+          Stream.runCollect,
+        );
         const invalid = yield* streamStackLogs({ ...selection, since: "soon" }).pipe(
           Stream.runDrain,
           Effect.flip,
