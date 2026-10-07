@@ -61,6 +61,8 @@ import {
   defaultNativeProcessLauncher,
   spawnNativeProcess,
   type NativeProcess,
+  type NativeProcessIdentity,
+  type NativeProcessSpec,
 } from "../runtime/NativeProcess.ts";
 import type { StackId } from "../identity/StackId.ts";
 import {
@@ -94,7 +96,7 @@ export const DatabaseConfig = Schema.Struct({
   jwtSecret: Schema.Redacted(Schema.String),
   jwtExpiry: Schema.Finite,
   healthTimeoutMs: Schema.optionalKey(Schema.Finite),
-  /** When 0, the database is disposable and can use reduced-durability settings. */
+  /** When 0, the database is disposable: reduced durability and pg_cron's default mode. */
   stopGraceSeconds: Schema.optionalKey(Schema.Finite),
   rootKey: Schema.optionalKey(Schema.Redacted(Schema.String)),
   settings: Schema.optionalKey(
@@ -399,6 +401,60 @@ const nativeTrustStore = Effect.gen(function* () {
   return env;
 });
 
+/* Background workers skip session_preload_libraries, so supautils must be shared-preloaded. */
+const sharedPreload = Effect.fn("Database.sharedPreload")(function* (
+  artifact: PreparedNativeArtifact,
+  spec: NativeProcessSpec & { readonly args: ReadonlyArray<string> },
+  dataPath: string,
+  settings: ReadonlyArray<string>,
+  identity: NativeProcessIdentity,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const probe = yield* spawnNativeProcess(
+    {
+      ...spec,
+      executable: `${artifact.root}/bin/postgres`,
+      args: [
+        ...((yield* fs.exists(`${dataPath}/PG_VERSION`))
+          ? spec.args
+          : [
+              "-D",
+              dataPath,
+              "-c",
+              `config_file=${artifact.root}/share/supabase-cli/config/postgresql.conf.template`,
+              ...settings,
+            ]),
+        "-C",
+        "shared_preload_libraries",
+      ],
+    },
+    defaultNativeProcessLauncher(),
+    identity,
+  );
+  const [stdout, stderr, code] = yield* Effect.all(
+    [
+      probe.stdout.pipe(Stream.decodeText, Stream.mkString),
+      probe.stderr.pipe(
+        Stream.decodeText,
+        Stream.runFold(
+          () => "",
+          (text, chunk) => (text + chunk).slice(-4096),
+        ),
+      ),
+      probe.exitCode,
+    ],
+    { concurrency: "unbounded" },
+  );
+  yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
+  if (code !== 0)
+    return yield* errorFor(
+      "exit",
+      `${describePostgresExit(Number(code))}: ${stderr.trim() || stdout.trim() || "PostgreSQL configuration probe failed"}`,
+    );
+  const libraries = [stdout.trim(), "supautils"].filter((library) => library !== "").join(",");
+  return ["-c", `shared_preload_libraries=${libraries}`];
+}, Effect.scoped);
+
 const nativeProcess = (
   artifact: PreparedNativeArtifact,
   config: DatabaseConfig,
@@ -407,6 +463,7 @@ const nativeProcess = (
     readonly socketPath: string;
     readonly hbaPath: string;
     readonly rootKeyPath: string;
+    readonly configPath: string | undefined;
   },
   settings: ReadonlyArray<string>,
   scope: Scope.Closeable,
@@ -416,44 +473,64 @@ const nativeProcess = (
   user: PasswdEntry | undefined,
   environment: Environment.NativeEnvironment,
   trustStore: Readonly<Record<string, string>>,
-): Effect.Effect<NativeProcess, ServiceError> =>
-  spawnNativeProcess(
-    {
-      executable: artifact.executable,
-      artifactLockPath: artifact.lockPath,
-      ...(user === undefined ? {} : { uid: user.uid, gid: user.gid, cwd: "/" }),
-      args: [
-        "-D",
-        paths.dataPath,
-        "-p",
-        "5432",
-        "-c",
-        "listen_addresses=",
-        "-c",
-        `unix_socket_directories=${paths.socketPath}`,
-        "-c",
-        `hba_file=${paths.hbaPath}`,
-        ...settings,
-      ],
-      env: {
-        ...trustStore,
-        PGDATA: paths.dataPath,
-        PGSODIUM_KEY_FILE: paths.rootKeyPath,
-        POSTGRES_USER: "supabase_admin",
-        POSTGRES_DB: "postgres",
-        POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
-      },
-      environment,
-      gracefulStopSignal: "SIGINT",
-      gracefulStopTimeout: "15 seconds",
+  fs: FileSystem.FileSystem,
+): Effect.Effect<NativeProcess, ServiceError> => {
+  const identity = { stackId, workloadId: instanceId };
+  const spec = {
+    executable: artifact.executable,
+    artifactLockPath: artifact.lockPath,
+    ...(user === undefined ? {} : { uid: user.uid, gid: user.gid, cwd: "/" }),
+    args: [
+      "-D",
+      paths.dataPath,
+      "-p",
+      "5432",
+      "-c",
+      "listen_addresses=",
+      "-c",
+      `unix_socket_directories=${paths.socketPath}`,
+      "-c",
+      `hba_file=${paths.hbaPath}`,
+      ...(paths.configPath === undefined
+        ? []
+        : ["-c", "cron.use_background_workers=on", "-c", `config_file=${paths.configPath}`]),
+      ...settings,
+    ],
+    env: {
+      ...trustStore,
+      PGDATA: paths.dataPath,
+      PGSODIUM_KEY_FILE: paths.rootKeyPath,
+      POSTGRES_USER: "supabase_admin",
+      POSTGRES_DB: "postgres",
+      POSTGRES_PASSWORD: Redacted.value(config.databasePassword),
     },
-    defaultNativeProcessLauncher(),
-    { stackId, workloadId: instanceId },
-  ).pipe(
+    environment,
+    gracefulStopSignal: "SIGINT",
+    gracefulStopTimeout: "15 seconds",
+  } satisfies NativeProcessSpec;
+  return Effect.gen(function* () {
+    const preload =
+      paths.configPath === undefined
+        ? []
+        : yield* sharedPreload(artifact, spec, paths.dataPath, settings, identity).pipe(
+            Effect.timeoutOrElse({
+              duration: config.healthTimeoutMs ?? 60_000,
+              orElse: () =>
+                Effect.fail(errorFor("launch", "PostgreSQL configuration probe timed out")),
+            }),
+          );
+    return yield* spawnNativeProcess(
+      { ...spec, args: [...spec.args, ...preload] },
+      defaultNativeProcessLauncher(),
+      identity,
+    );
+  }).pipe(
     Scope.provide(scope),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fs),
     Effect.mapError((cause) => errorFor("launch", cause)),
   );
+};
 
 /** Creates a database component backed by one native or container PostgreSQL session. */
 export const makeDatabase = (
@@ -851,6 +928,23 @@ export const makeDatabase = (
             yield* fs
               .writeFileString(hbaPath, NATIVE_HBA_RULES, { mode: 0o600 })
               .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+            /* pg_cron's default TCP jobs can't reach this socket-only server; shadows keep that mode. */
+            const configPath =
+              config.stopGraceSeconds === 0 ? undefined : path.join(socketPath, "postgresql.conf");
+            if (configPath !== undefined) {
+              const original = path
+                .resolve(dataPath, "postgresql.conf")
+                .replaceAll("\\", "\\\\")
+                .replaceAll("'", "''");
+              /* A wrapper default stays beneath postgresql.conf, ALTER SYSTEM, and caller settings. */
+              yield* fs
+                .writeFileString(
+                  configPath,
+                  `max_worker_processes = 17\ninclude = '${original}'\n`,
+                  { mode: 0o600 },
+                )
+                .pipe(Effect.mapError((cause) => errorFor("launch", cause)));
+            }
             // `context.scope` finalizes its direct children in parallel (it is forked "parallel"
             // in Service.ts), so registering the pin there directly would race its release
             // against the native process's own cleanup. A "sequential" child scope finalizes
@@ -886,7 +980,7 @@ export const makeDatabase = (
             const process = yield* nativeProcess(
               artifact,
               config,
-              { dataPath, socketPath, hbaPath, rootKeyPath },
+              { dataPath, socketPath, hbaPath, rootKeyPath, configPath },
               settings,
               launchScope,
               String(options.stackId),
@@ -898,6 +992,7 @@ export const makeDatabase = (
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),
               ),
+              fs,
             );
             const selectedEndpoint: BackendEndpoint = {
               kind: "unix",

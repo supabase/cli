@@ -9,6 +9,11 @@ Native PostgreSQL requires passwords for every role except `supabase_admin`. Its
 and password-reconciliation connection uses that administrative role, so a native
 `supabase_admin` connection is not password-checked.
 
+Native pg_cron runs jobs in background workers, so a job body cannot contain its own `BEGIN` or
+`COMMIT`. Jobs enforce the same `supautils` role policies as client sessions. Native databases
+default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
+`ALTER SYSTEM`, and `[db.settings]` values take precedence.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |

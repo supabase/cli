@@ -133,7 +133,14 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
       },
     },
     "bin/supabase-postgres-start",
-    ["bin/supabase-postgres-start", "bin/pg_dump", "bin/pg_dumpall", "bin/pg_prove", "bin/psql"],
+    [
+      "bin/supabase-postgres-start",
+      "bin/postgres",
+      "bin/pg_dump",
+      "bin/pg_dumpall",
+      "bin/pg_prove",
+      "bin/psql",
+    ],
     {
       "15.19.0.004": {
         upstreamVersion: "15.19.0.004",
@@ -237,23 +244,23 @@ const definitions: Readonly<Record<ArtifactKind, ArtifactDefinition>> = {
   storage: definition(
     "storage",
     {
-      upstreamVersion: "v1.79.38",
+      upstreamVersion: "v1.80.0",
       revision: 0,
       image:
-        "ghcr.io/supabase/cli/storage:v1.79.38-r0@sha256:66b8582c522ffe4d12d6a0dfe1efd233d13288c59ccdd0a06f389697ce11f213",
-      upstreamImage: "supabase/storage-api:v1.79.38",
+        "ghcr.io/supabase/cli/storage:v1.80.0-r0@sha256:255328dfeb0ddb60cf76eb609a4444fadac7f4b5f4d423cccff79930d0f264cf",
+      upstreamImage: "supabase/storage-api:v1.80.0",
       natives: {
         "darwin-arm64": {
-          archive: "0f0918bf0975a0f406206158dcbeaab13bbd060dc964313ee2e876bb23954008",
-          manifest: "32c7a347383c0c9b07013e73e75128870509f63aeeeddf767179d98948b22719",
+          archive: "006ab158f6b6a66ef731f67c4c38598380ab15e97843fb12ba0521ee9ff45484",
+          manifest: "8e2cdc1a3df0a334ca4d19cfa9dc5e795073f4cc66cf0063256a68cc80819860",
         },
         "linux-amd64": {
-          archive: "098ce84f89b486241147944c028f5d00a068079eee2cf0efcc3135c15ba2b737",
-          manifest: "38863e0f0b86f356129f212bd2eedbc1398d33704abc97b32ea34b1acc7e6c4d",
+          archive: "328cfdc8ec741ea4bb171bf2289cef019794901c0d51027d6a0058ffdadc1f7e",
+          manifest: "33efa68bb201959f89565e6451c6766dcd1e09d226ce03be73401a59716c30fe",
         },
         "linux-arm64": {
-          archive: "6a2d34e23d6e213821c6159ecbed7cf6dfa2ed9847c9c3011e18309750b37db9",
-          manifest: "0898c072b3d5f50ec8d4e6b8a00dfeabdd82c1d615a3fc69ee137741f18d5037",
+          archive: "85e38743bd48f87e35f4bc10624503d0c785d2b4537c01a2f40e0f90f7cc0970",
+          manifest: "ecf3aad6606aaa6865956b85e33a720ea11ce6f5e687e0fd9cda2d35a62742ba",
         },
       },
     },
