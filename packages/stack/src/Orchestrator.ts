@@ -182,6 +182,16 @@ export interface Interface<Entry extends RegisteredInstance = RegisteredInstance
     id: string,
     operation: Effect.Effect<A, ServiceError>,
   ) => Effect.Effect<A, OrchestratorError | ServiceError>;
+  /**
+   * Runs `effect` under the lifecycle gate once every listed instance is stopped with wake
+   * disabled, failing with `refuse` for the first that is not. Callers take the cross-process
+   * state lock first.
+   */
+  readonly whileStopped: <A, E, F>(
+    ids: Iterable<string>,
+    refuse: (id: string) => F,
+    effect: Effect.Effect<A, E>,
+  ) => Effect.Effect<A, OrchestratorError | E | F>;
   readonly startComposition: Effect.Effect<ReadonlyArray<Status>, OrchestratorError | ServiceError>;
   readonly stopComposition: Effect.Effect<ReadonlyArray<Status>, OrchestratorError | ServiceError>;
   readonly restartComposition: Effect.Effect<
@@ -1209,6 +1219,27 @@ export const make = Effect.fn("Orchestrator.make")(function* <Entry extends Regi
           yield* applyLocked([update]);
         }),
       ).pipe(Effect.withSpan("Orchestrator.configure")),
+    whileStopped: <A, E, F>(
+      ids: Iterable<string>,
+      refuse: (id: string) => F,
+      effect: Effect.Effect<A, E>,
+    ) =>
+      withGate(
+        Effect.gen(function* () {
+          const state = yield* SubscriptionRef.get(lifecycle);
+          for (const id of ids) {
+            yield* node(id);
+            if (
+              !isStoppedAndWakeDisabled({
+                lifecycle: lifecycleOf(state, id),
+                wakeEnabled: wakeEnabledOf(state, id),
+              })
+            )
+              return yield* Effect.fail(refuse(id));
+          }
+          return yield* effect;
+        }),
+      ).pipe(Effect.withSpan("Orchestrator.whileStopped")),
     start,
     ready,
     stop,

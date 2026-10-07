@@ -350,30 +350,6 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
         ),
       );
 
-  const requireStopped = (current: SavedStack) =>
-    Effect.forEach(
-      new Set([
-        ...current.composition.members.map(({ id }) => id),
-        ...current.composition.dependencies.flatMap(({ from, to }) => [from, to]),
-        ...current.instances
-          .filter(({ creation }) => consumesCredentials(creation))
-          .map(({ id }) => id),
-      ]),
-      (id) =>
-        orchestrator.status(id).pipe(
-          Effect.flatMap((status) =>
-            Orchestrator.isStoppedAndWakeDisabled(status)
-              ? Effect.void
-              : Effect.fail(
-                  new CredentialError({
-                    message: `Service ${id} must be stopped with wake disabled before stack credentials change`,
-                  }),
-                ),
-          ),
-        ),
-      { discard: true },
-    );
-
   const resolveStackCredentials = Effect.fn("Owner.resolveStackCredentials")(function* (
     overrides: Effect.Success<ReturnType<typeof credentialOverrides>>,
     keys?: StackKeysInput,
@@ -388,29 +364,42 @@ const makeOwner = Effect.fn("Owner.make")(function* (options: OwnerOptions) {
           yield* options.state.save({ ...current, credentials: next });
           return next;
         }
-        yield* requireStopped(current);
+        const consumers = current.instances.filter(({ creation }) => consumesCredentials(creation));
         const refreshed = new Map(
-          yield* Effect.forEach(
-            current.instances.filter(({ creation }) => consumesCredentials(creation)),
-            ({ id, creation }) =>
-              refreshCredentials(creation, previous, next).pipe(
-                Effect.map((refreshedCreation) => [id, refreshedCreation] as const),
-              ),
+          yield* Effect.forEach(consumers, ({ id, creation }) =>
+            refreshCredentials(creation, previous, next).pipe(
+              Effect.map((refreshedCreation) => [id, refreshedCreation] as const),
+            ),
           ),
         );
-        yield* options.state.save({
-          ...current,
-          credentials: next,
-          instances: current.instances.map((instance) => {
-            const creation = refreshed.get(instance.id);
-            return creation === undefined ? instance : { ...instance, creation };
+        yield* orchestrator.whileStopped(
+          new Set([
+            ...current.composition.members.map(({ id }) => id),
+            ...current.composition.dependencies.flatMap(({ from, to }) => [from, to]),
+            ...consumers.map(({ id }) => id),
+          ]),
+          (id) =>
+            new CredentialError({
+              message: `Service ${id} must be stopped with wake disabled before stack credentials change`,
+            }),
+          Effect.gen(function* () {
+            yield* options.state.save({
+              ...current,
+              credentials: next,
+              instances: current.instances.map((instance) => {
+                const creation = refreshed.get(instance.id);
+                return creation === undefined ? instance : { ...instance, creation };
+              }),
+            });
+            yield* Effect.forEach(
+              refreshed,
+              ([id, creation]) =>
+                orchestrator
+                  .get(id)
+                  .pipe(Effect.flatMap((entry) => Ref.set(entry.creation, creation))),
+              { discard: true },
+            );
           }),
-        });
-        yield* Effect.forEach(
-          refreshed,
-          ([id, creation]) =>
-            orchestrator.get(id).pipe(Effect.flatMap((entry) => Ref.set(entry.creation, creation))),
-          { discard: true },
         );
         yield* Effect.annotateCurrentSpan("refreshed_instances", refreshed.size);
         return next;
