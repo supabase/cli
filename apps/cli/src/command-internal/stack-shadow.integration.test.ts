@@ -160,7 +160,7 @@ describe("stack shadow databases", () => {
         yield* fs.makeDirectory(path.join(root, "supabase", "migrations"), { recursive: true });
         yield* fs.writeFileString(
           path.join(root, "supabase", "migrations", "20260919000000_shadow.sql"),
-          "CREATE TABLE public.shadow_probe(value text); INSERT INTO public.shadow_probe VALUES ('migrated');",
+          "CREATE TABLE public.shadow_probe(value text); INSERT INTO public.shadow_probe VALUES ('migrated'); CREATE TRIGGER shadow_probe_hook AFTER INSERT ON public.shadow_probe FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request('http://127.0.0.1:9', 'POST', '{}', '{}', '1000');",
         );
         const output = mockOutput();
         const roots: string[] = [];

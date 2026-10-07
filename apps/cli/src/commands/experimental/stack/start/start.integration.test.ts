@@ -83,6 +83,38 @@ const session: DbSession = {
   queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
 };
 
+/** A database without `supabase_functions` until a webhook template run creates the schema. */
+const webhookSchemaDatabase = () => {
+  let schemaExists = false;
+  let schemaCreations = 0;
+  const statements: Array<string> = [];
+  const record = (sql: string) => {
+    statements.push(sql);
+    if (!sql.includes("CREATE SCHEMA supabase_functions")) return;
+    schemaExists = true;
+    schemaCreations += 1;
+  };
+  const database: DbSession = {
+    ...session,
+    exec: (sql) => Effect.sync(() => record(sql)),
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql } of statements) record(sql);
+      }),
+    query: (sql) =>
+      Effect.sync(() =>
+        sql.includes("to_regnamespace('supabase_functions')") ? [{ missing: !schemaExists }] : [],
+      ),
+  };
+  return {
+    layer: Layer.succeed(DbConnection, { connect: () => Effect.scoped(Effect.succeed(database)) }),
+    get schemaCreations() {
+      return schemaCreations;
+    },
+    statements,
+  };
+};
+
 const instance = (
   creation: ServiceCreation,
   id: string,
@@ -983,6 +1015,34 @@ describe("experimental stack start", () => {
 
       expect(fixture.composed).toBe(2);
       expect(fixture.members.map(({ id }) => id)).toEqual(firstIds);
+      expect(fixture.catalogApplied).toBe(1);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("creates the supabase_functions schema once when restarting a stack without it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "stack-start-webhook-schema-" });
+      yield* fs.makeDirectory(`${root}/supabase`, { recursive: true });
+      yield* fs.writeFileString(`${root}/supabase/config.toml`, 'project_id = "webhook-schema"\n');
+      const fixture = fakeStack();
+      yield* stackStart(flags()).pipe(Effect.provide(layers(root, fixture)));
+      const database = webhookSchemaDatabase();
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture), database.layer)),
+      );
+      expect(database.schemaCreations).toBe(1);
+      const sql = database.statements.join("\n");
+      expect(sql).toContain("CREATE FUNCTION supabase_functions.http_request()");
+      expect(sql).not.toMatch(/function net\.|grant_pg_net_access|issue_pg_net_access/i);
+
+      yield* fixture.stack.composition.stop;
+      yield* stackStart(flags()).pipe(
+        Effect.provide(Layer.merge(layers(root, fixture), database.layer)),
+      );
+      expect(database.schemaCreations).toBe(1);
       expect(fixture.catalogApplied).toBe(1);
     }).pipe(Effect.provide(BunServices.layer)),
   );
