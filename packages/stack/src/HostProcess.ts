@@ -540,7 +540,11 @@ const spawnOwner = Effect.fn("HostProcess.spawnOwner")(function* (
                 }
                 return yield* line.reason === "lease-held" || line.reason === "exists"
                   ? error("startup", "Stack already exists; use open")
-                  : failure(line.message, line.reason);
+                  : error(
+                      "startup",
+                      `Stack owner failed to start: ${line.message} (owner log: ${log})`,
+                      line.reason,
+                    );
               }
               if (line.endpoint.stackId !== options.stackId)
                 return yield* failure(

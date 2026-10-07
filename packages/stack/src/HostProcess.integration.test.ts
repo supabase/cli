@@ -476,7 +476,7 @@ it.live("terminates a detached child when readiness is interrupted", () =>
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
 
-it.live("keeps the owner log tail in a start failure after the owner removed its log", () =>
+it.live("reports a structured owner startup error without the owner log tail", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -490,7 +490,8 @@ it.live("keeps the owner log tail in a start failure after the owner removed its
         register: savedStack(root, "failing"),
       }).pipe(Effect.flip);
       expect(failure.message).toContain("owner startup failed");
-      expect(failure.message).toContain("failing-owner-diagnostic");
+      expect(failure.message).toContain("owner log:");
+      expect(failure.message).not.toContain("failing-owner-diagnostic");
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp))),
 );
