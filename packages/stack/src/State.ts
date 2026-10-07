@@ -527,11 +527,16 @@ const makeState = (
         closeLock,
       ),
     );
-    /** Deletes the lease file of an unregistered stack; `false` means it is still in place. */
-    const removeLeaseFile = (id: string) =>
-      fs.exists(statePath(id)).pipe(
-        Effect.flatMap((registered) =>
-          registered ? Effect.void : fs.remove(leasePath(id), { force: true }),
+    /**
+     * Deletes an unregistered stack's lease file while it is still the file locked as `identity`;
+     * `false` means it is still in place.
+     */
+    const removeLeaseFile = (id: string, identity: string) =>
+      Effect.all([fs.exists(statePath(id)), fileIdentity(leasePath(id))]).pipe(
+        Effect.flatMap(([registered, current]) =>
+          registered || !Option.contains(current, identity)
+            ? Effect.void
+            : fs.remove(leasePath(id), { force: true }),
         ),
         Effect.as(true),
         Effect.orElseSucceed(() => false),
@@ -551,11 +556,11 @@ const makeState = (
       yield* checkId(id);
       const target = leasePath(id);
       const scope = yield* Scope.Scope;
-      let held = false;
+      let held: string | undefined;
       let unlinked = false;
       yield* Effect.addFinalizer(() =>
-        held
-          ? (unlinked ? Effect.void : removeLeaseFile(id)).pipe(
+        held !== undefined
+          ? (unlinked ? Effect.void : removeLeaseFile(id, held)).pipe(
               Effect.andThen(removeEmptyDirectory(stackRoot(id))),
               Effect.ignore,
             )
@@ -598,10 +603,10 @@ const makeState = (
         }
         const after = acquired === "moved" ? Option.none() : yield* fileIdentity(target);
         if (Option.isSome(before) && Option.isSome(after) && before.value === after.value) {
-          held = true;
+          held = after.value;
           yield* Scope.addFinalizer(
             attemptScope,
-            removeLeaseFile(id).pipe(
+            removeLeaseFile(id, after.value).pipe(
               Effect.map((removed) => {
                 unlinked = removed;
               }),

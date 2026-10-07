@@ -87,7 +87,7 @@ from **Issues → Labels** if it is missing.
 
 [`Live E2E`](./workflows/live-e2e.yml) exercises managed staging after every push
 to `develop`, daily at 06:23 UTC, and on manual dispatch. New `develop` pushes
-cancel superseded push runs; nightly and manual runs execute independently.
+replace only a queued push run; nightly and manual runs execute independently.
 Nightly runs do not depend on a new beta version: they also detect staging
 changes between CLI releases.
 

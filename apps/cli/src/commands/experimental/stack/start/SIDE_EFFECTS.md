@@ -132,9 +132,11 @@ reverting it or running the stack's exact `supabase stack destroy` command to re
 ## First startup and retries
 
 The first configured startup prepares the database catalog, temporarily runs configured schema-owning
-services, applies the database overlay, and runs project migrations and seeds. Membership changes
+services, creates the `supabase_functions` schema, which migrations must not recreate, applies the
+database overlay, and runs project migrations and seeds. Membership changes
 apply needed catalog and webhook setup without replaying project migrations or seeds. An unchanged
-composition reapplies the webhook setting before activation.
+composition reapplies the webhook setting before activation, first creating the
+`supabase_functions` schema when the database lacks it.
 
 When configured, initial Storage bucket seeding creates buckets and uploads their `objects_path`
 files using the service-role JWT, silently overwriting or pruning existing buckets without a
