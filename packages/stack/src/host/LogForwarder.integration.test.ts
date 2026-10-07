@@ -29,6 +29,7 @@ import { makeManualClock, type ManualClock } from "../../tests/manual-clock.ts";
 import type { ServiceObservation } from "../Service.ts";
 import type { LaunchOutput } from "../runtime/Session.ts";
 import { CatalogError } from "../services/Recipe.ts";
+import * as GatewayLog from "./GatewayLog.ts";
 import type { LogRecord } from "./LogRecord.ts";
 import * as LogForwarder from "./LogForwarder.ts";
 import * as LogStore from "./LogStore.ts";
@@ -190,7 +191,7 @@ const composition = Effect.succeed({
 const startForwarder = (
   store: LogStore.Interface,
   logflare: FakeLogflare,
-  instances: ReadonlyArray<LogForwarder.ForwardedInstance>,
+  instances: ReadonlyArray<LogForwarder.ForwardedInstance | LogForwarder.ForwardedStream>,
   clock?: Clock.Clock,
   stored?: LogForwarder.StoredEvents,
 ) =>
@@ -1186,6 +1187,43 @@ describe("LogForwarder", () => {
 
       expect(retained.map((record) => record.text)).not.toContain("second");
       expect(shipped).toEqual(retained.map((record) => record.text));
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("ships gateway lines to cloudflare.logs.prod", () =>
+    Effect.gen(function* () {
+      const { store, logflare, analytics } = yield* fixture({ logflare: {} });
+      const gateway = yield* GatewayLog.make;
+      yield* store.attach({
+        ...GatewayLog.gatewayLog,
+        logs: gateway.logs,
+        observation: gateway.observation,
+      });
+      yield* gateway.begin(1);
+      yield* analytics.set(true);
+      yield* startForwarder(store, logflare, [
+        analytics.instance,
+        { id: GatewayLog.gatewayLog.instanceId, service: GatewayLog.gatewayLog.service },
+      ]);
+
+      yield* gateway.record({
+        time: Date.parse("2026-10-01T09:25:23.000Z"),
+        client: "127.0.0.1",
+        method: "POST",
+        target: "/auth/v1/token?grant_type=password",
+        protocol: "HTTP/1.1",
+        status: 400,
+        bytes: 60,
+        durationMillis: 3,
+      });
+      const shipped = yield* logflare.next;
+      yield* logflare.apply();
+
+      expect(shipped.url).toBe("/api/logs?source_name=cloudflare.logs.prod");
+      expect(shipped.events).toEqual([expect.objectContaining({ appname: "gateway" })]);
+      expect(yield* logflare.storedIds("cloudflare.logs.prod", ids(shipped))).toEqual(
+        new Set(ids(shipped)),
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

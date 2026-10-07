@@ -41,6 +41,7 @@ import {
   mockRuntimeInfo,
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import { containerEngineSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import {
   DbConnection,
@@ -403,6 +404,7 @@ const fakeStack = (compositionStart?: Stack["composition"]["start"]) => {
       hostDestroyed += 1;
       return { runtimeCleanup: "complete" as const };
     }),
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("command not used") },
   };
   return {

@@ -33,6 +33,7 @@ import {
   mockTty,
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
+import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -489,6 +490,7 @@ describe("dbConfigResolver (db-url under the stack backend)", () => {
       },
       stop: unused,
       destroy: unused,
+      gateway: unusedGateway,
       commands: { run: () => unused },
     };
     return Layer.succeed(StackApi, {
