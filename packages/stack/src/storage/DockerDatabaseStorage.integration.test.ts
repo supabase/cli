@@ -1,6 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import { fileURLToPath } from "node:url";
 import {
+  Clock,
   ConfigProvider,
   Crypto,
   Data,
@@ -19,7 +21,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { fileURLToPath } from "node:url";
+import * as TestClock from "effect/testing/TestClock";
 import { postgresVersion, resolveArtifact } from "../Artifacts.ts";
 import { makeContainerRuntime, type EngineTarget } from "../runtime/Container.ts";
 import { makeDatabaseSnapshots } from "../services/DatabaseSnapshot.ts";
@@ -103,7 +105,7 @@ const fakeHelperEngine = (
         // Fires once the create command the claim must precede is observed, so the claim's
         // presence at this exact point is a deterministic fact, not a timing guess.
         yield* onRun();
-        return handle(0, "abcdef0123456789");
+        return handle(0, args.includes("-i") ? "supabase-helper-ready\n" : "abcdef0123456789");
       }
       if (args[0] === "exec" || args[0] === "rm") return handle(0, "done");
       return handle(1, "", `unexpected engine command: ${args[0] ?? ""}`);
@@ -148,12 +150,160 @@ const engine = Effect.fn("StorageTest.engine")((args: ReadonlyArray<string>) =>
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
+const awaitDestroyed = Effect.fn("DockerStorageTest.awaitDestroyed")((id: string, since: number) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const events = yield* spawner.spawn(
+        ChildProcess.make(
+          "docker",
+          [
+            "events",
+            "--since",
+            String(since),
+            "--filter",
+            `container=${id}`,
+            "--filter",
+            "event=destroy",
+            "--format",
+            "{{.Actor.ID}}",
+          ],
+          { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+        ),
+      );
+      const destroyed = yield* events.stdout.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filter((line) => line.trim() === id),
+        Stream.runHead,
+      );
+      if (Option.isNone(destroyed))
+        return yield* new DockerTestError({ message: "Docker event stream ended" });
+    }),
+  ),
+);
+
+const ownerDeathScenario = (shared: boolean) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const crypto = yield* Crypto.Crypto;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-owner-death-" });
+      const stackId = `storage-owner-death-${yield* crypto.randomUUIDv4}`;
+      const filter = `label=com.supabase.stack=${stackId}`;
+      // Pull before spawning so a cold image cache does not consume the owner's readiness timeout.
+      const container = yield* makeContainerRuntime({ target: dockerTarget, root });
+      yield* container.prepareImage(yield* postgresImage("17"));
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [
+            fileURLToPath(new URL("../../tests/helper-owner-fixture.ts", import.meta.url)),
+            stackId,
+            root,
+            ...(shared ? ["shared"] : []),
+          ],
+          { stdin: "ignore" },
+        ),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          const ids = yield* engine(["ps", "-aq", "--filter", filter]);
+          if (ids.length > 0) yield* engine(["rm", "-f", ...ids.split("\n")]);
+          if (!shared) return;
+          const markerText = yield* fs
+            .readFileString(`${root}/state/stack/data/database/.supabase-database-storage.json`)
+            .pipe(Effect.option);
+          if (Option.isNone(markerText)) return;
+          const marker = yield* Schema.decodeEffect(Schema.fromJsonString(Marker))(
+            markerText.value,
+          ).pipe(Effect.option);
+          if (Option.isSome(marker) && marker.value.volume !== undefined)
+            yield* engine(["volume", "rm", marker.value.volume]);
+        }).pipe(Effect.ignore),
+      );
+      const stderrOutput = yield* child.stderr.pipe(
+        Stream.decodeText,
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const ready = yield* child.stdout.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.runHead,
+        Effect.timeout("60 seconds"),
+        Effect.exit,
+      );
+      if (
+        Exit.isFailure(ready) ||
+        Option.isNone(ready.value) ||
+        ready.value.value !== "HELPER_READY"
+      ) {
+        yield* child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore);
+        const [stderr, exited] = yield* Effect.all(
+          [Fiber.join(stderrOutput), Effect.exit(child.exitCode)],
+          { concurrency: "unbounded" },
+        );
+        return yield* new DockerTestError({
+          message: `Owner exited before helper was ready (stdout: ${Exit.isSuccess(ready) && Option.isSome(ready.value) ? ready.value.value : "<empty>"}, stderr: ${stderr.trim() || "<empty>"}, exit: ${Exit.isSuccess(exited) ? exited.value : "killed by signal"}${Exit.isFailure(ready) ? `, cause: ${ready.cause}` : ""})`,
+        });
+      }
+      const id = yield* engine([
+        "ps",
+        "--filter",
+        filter,
+        "--no-trunc",
+        "--format",
+        "{{.ID}}",
+      ]).pipe(
+        Effect.flatMap((value) =>
+          value.length > 0
+            ? Effect.succeed(value)
+            : new DockerTestError({ message: "Owner helper was not running" }),
+        ),
+      );
+      if (shared)
+        expect(
+          yield* engine([
+            "inspect",
+            "--format",
+            '{{index .Config.Labels "com.supabase.stack-helper"}}',
+            id,
+          ]),
+        ).toBe("volume");
+      const since = Math.floor((yield* Clock.currentTimeMillis) / 1000) - 1;
+      const destroyed = yield* awaitDestroyed(id, since).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      expect(yield* child.isRunning).toBe(true);
+      yield* child.kill({ killSignal: "SIGKILL" });
+      yield* Fiber.join(destroyed).pipe(
+        Effect.timeoutOrElse({
+          duration: "1 minute",
+          orElse: () => new DockerTestError({ message: `Orphaned database helper: ${id}` }),
+        }),
+      );
+      expect(yield* engine(["ps", "-aq", "--filter", filter])).toBe("");
+    }),
+  ).pipe(Effect.provide(NodeServices.layer));
+
 // The volume backend, helper registry and volume-labelling contracts exist only on Docker; Podman
 // always stores data in host directories, covered by the host storage suite below.
 describe.runIf(testEngine === "docker")(
   "Docker volume database storage",
   { timeout: 120_000 },
   () => {
+    it.live.skipIf(process.platform === "win32")(
+      "removes a database helper when its owner is killed",
+      () => ownerDeathScenario(false),
+    );
+
+    it.live.skipIf(process.platform === "win32")(
+      "removes a shared volume helper when its owner is killed",
+      () => ownerDeathScenario(true),
+    );
+
     it.live("waits for helper creation to settle before cleaning up an interrupted operation", () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -172,7 +322,6 @@ describe.runIf(testEngine === "docker")(
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected command");
               const creating = command.args[0] === "run";
-              const identity = command.args[0] === "info";
               if (creating) yield* Deferred.succeed(started, undefined);
               if (command.args[0] === "rm") {
                 yield* Ref.update(removals, (count) => count + 1);
@@ -180,18 +329,18 @@ describe.runIf(testEngine === "docker")(
               }
               return ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(0),
-                exitCode: (creating
-                  ? Deferred.await(release).pipe(Effect.andThen(Ref.set(present, true)))
-                  : Effect.void
-                ).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
                 isRunning: Effect.succeed(false),
                 kill: () => Effect.void,
                 stdin: Sink.drain,
                 stdout: creating
-                  ? Stream.succeed(new TextEncoder().encode("a".repeat(64)))
-                  : identity
-                    ? Stream.succeed(new TextEncoder().encode('{"host":{"id":"fake-daemon-id"}}'))
-                    : Stream.empty,
+                  ? Stream.fromEffect(
+                      Deferred.await(release).pipe(
+                        Effect.andThen(Ref.set(present, true)),
+                        Effect.as(new TextEncoder().encode("supabase-helper-ready\n")),
+                      ),
+                    )
+                  : Stream.empty,
                 stderr: Stream.empty,
                 all: Stream.empty,
                 getInputFd: () => Sink.drain,
@@ -224,12 +373,81 @@ describe.runIf(testEngine === "docker")(
           yield* Deferred.await(started);
           yield* Effect.sync(() => operation.interruptUnsafe());
           yield* Effect.yieldNow;
+          expect(yield* Ref.get(removals)).toBe(0);
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.await(operation);
           expect(yield* Ref.get(removals)).toBe(1);
           expect(yield* Ref.get(present)).toBe(false);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("reports a helper readiness timeout alongside Docker warnings", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = yield* Crypto.Crypto;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "docker-helper-timeout-" });
+          const waiting = yield* Deferred.make<void>();
+          const warning =
+            "WARNING: The requested image's platform does not match the host platform";
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* Effect.die("Unexpected command");
+              const creating = command.args[0] === "run";
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(0),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                stdin: Sink.drain,
+                stdout: creating
+                  ? Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
+                      Stream.drain,
+                      Stream.concat(Stream.never),
+                    )
+                  : Stream.empty,
+                stderr: creating
+                  ? Stream.succeed(new TextEncoder().encode(`${warning}\n`))
+                  : Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              });
+            }),
+          );
+          const storage = yield* makeDockerDatabaseStorage({
+            runtime: "docker",
+            target: dockerTarget,
+            stackId: "helper-timeout",
+            instanceId: "database",
+            instanceRoot: root,
+            root,
+            cacheRoot: path.join(root, "cache"),
+            fs,
+            path,
+            crypto,
+            spawner,
+            container: {
+              prepare: () => Effect.void,
+              prepareImage: (image) => Effect.succeed(image),
+              launch: () => Effect.die("unused"),
+              launchCommand: () => Effect.die("unused"),
+            },
+          });
+          yield* storage.prepare("17");
+          const operation = yield* storage.removeData("17").pipe(Effect.flip, Effect.forkScoped);
+          yield* Deferred.await(waiting);
+          yield* TestClock.adjust("30 seconds");
+          const failure = yield* Fiber.join(operation);
+          expect(failure.message).toBe(
+            `Database helper did not become ready within 30 seconds: ${warning}`,
+          );
+        }),
+      ).pipe(Effect.provide([NodeServices.layer, TestClock.layer()])),
     );
 
     it.live("starts a storage helper with the mirror image selected during preparation", () => {
