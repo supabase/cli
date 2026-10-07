@@ -31,7 +31,7 @@ describe("stackDatabaseVersion", () => {
       stackDatabaseVersion({ major_version: 15, orioledb_version: "17.11.0.002" }, published),
     ).toEqual(
       Result.fail(
-        "db.orioledb_version = 17.11.0.002 requires db.major_version = 17 for the experimental stack",
+        "db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = 17.11.0.002 requires db.major_version (or SUPABASE_DB_MAJOR_VERSION) = 17 for the experimental stack",
       ),
     );
   });

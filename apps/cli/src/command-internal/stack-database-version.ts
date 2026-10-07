@@ -25,7 +25,7 @@ export const stackDatabaseVersion = (
   const major = postgresMajor(orioledb);
   if (major !== String(db.major_version))
     return Result.fail(
-      `db.orioledb_version = ${orioledb} requires db.major_version = ${major} for the experimental stack`,
+      `db.orioledb_version (or SUPABASE_DB_ORIOLEDB_VERSION) = ${orioledb} requires db.major_version (or SUPABASE_DB_MAJOR_VERSION) = ${major} for the experimental stack`,
     );
   return Result.succeed(orioledbPostgresVersion(orioledb));
 };
