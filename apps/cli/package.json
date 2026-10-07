@@ -100,6 +100,16 @@
         "name": "develop",
         "prerelease": "beta",
         "channel": "beta"
+      },
+      {
+        "name": "next",
+        "prerelease": "next",
+        "channel": "next"
+      },
+      {
+        "name": "v+([0-9]).x",
+        "range": "${name.slice(1)}",
+        "channel": "${name.replace('.x', '.stable')}"
       }
     ],
     "plugins": [

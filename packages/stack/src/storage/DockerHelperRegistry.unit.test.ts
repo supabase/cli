@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Ref } from "effect";
+import { Deferred, Effect, Exit, Fiber, Ref, Scope } from "effect";
 import { makeDockerHelperRegistry } from "./DockerHelperRegistry.ts";
 
 const counters = Effect.gen(function* () {
@@ -27,6 +27,32 @@ it.effect("opens a helper once and closes it with the host scope", () =>
       }),
     );
     expect(yield* Ref.get(closed)).toEqual(["helper-1"]);
+  }),
+);
+
+it.effect("keeps a scoped helper alive after the caller scope closes", () =>
+  Effect.gen(function* () {
+    const ownerScope = yield* Scope.make();
+    const registry = yield* makeDockerHelperRegistry("owner-one").pipe(
+      Effect.provideService(Scope.Scope, ownerScope),
+    );
+    const alive = yield* Ref.make(false);
+    const open = Effect.gen(function* () {
+      yield* Ref.set(alive, true);
+      yield* Effect.addFinalizer(() => Ref.set(alive, false));
+      return "helper";
+    });
+    yield* Effect.scoped(
+      registry.use(
+        "volume",
+        open,
+        () => Effect.void,
+        () => Effect.void,
+      ),
+    );
+    expect(yield* Ref.get(alive)).toBe(true);
+    yield* Scope.close(ownerScope, Exit.void);
+    expect(yield* Ref.get(alive)).toBe(false);
   }),
 );
 
