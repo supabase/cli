@@ -1,5 +1,6 @@
 import { Cause, Crypto, Data, Effect, Exit, Hash, Option, Scope } from "effect";
 import * as Net from "node:net";
+import type { StackFailureKind } from "./FailureKind.ts";
 import type * as State from "./State.ts";
 
 export const portBase = 20000;
@@ -8,11 +9,17 @@ export const portSpan = 12768;
 /** Co-prime with the span, so the scan visits every port once and steps past reserved ranges. */
 const portStride = 257;
 
+/** Without a `kind`, the failure is the stack's own allocation (`port-allocation`). */
 export class PortError extends Data.TaggedError("PortError")<{
   readonly key: string;
   readonly message: string;
   readonly cause?: unknown;
+  readonly kind?: StackFailureKind;
 }> {}
+
+/** Only a port the caller requested by number is the user's to change. */
+const takenKind = (request: PortRequest): StackFailureKind =>
+  request.port === "auto" ? "port-allocation" : "port-conflict";
 
 export interface PortRequest {
   readonly stackId: string;
@@ -72,17 +79,21 @@ const resolveRequest = (
       new PortError({
         key: request.key,
         message: "The requested listener differs from its saved assignment",
+        kind: "configuration",
       }),
     );
   const requested = saved?.port ?? request.port;
   if (requested === "auto") return Effect.succeed({ saved, requested });
   if (!Number.isInteger(requested) || requested < 1 || requested > 65535)
-    return Effect.fail(new PortError({ key: request.key, message: "Invalid public port" }));
+    return Effect.fail(
+      new PortError({ key: request.key, message: "Invalid public port", kind: "configuration" }),
+    );
   if (stack.ports.some((claim) => claim.key !== request.key && claim.port === requested))
     return Effect.fail(
       new PortError({
         key: request.key,
         message: `Public port ${requested} is claimed by another listener of this stack`,
+        ...(request.port === "auto" ? {} : { kind: "configuration" as const }),
       }),
     );
   return Effect.succeed({ saved, requested });
@@ -236,6 +247,7 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
       return yield* new PortError({
         key: request.key,
         message: `Public port ${requested} for ${request.key} at ${request.host}:${requested} is already in use${yield* claimedBy(yield* state.claims, request.stackId, requested)}`,
+        kind: takenKind(request),
       });
     });
 
@@ -248,7 +260,11 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
         Effect.gen(function* () {
           const stack = yield* state.read(request.stackId);
           if (stack === undefined)
-            return yield* new PortError({ key: request.key, message: "Stack is not registered" });
+            return yield* new PortError({
+              key: request.key,
+              message: "Stack is not registered",
+              kind: "state",
+            });
           const { saved, requested } = yield* resolveRequest(stack, request);
           const others = yield* state.claims;
           const claimed = new Set([
@@ -323,6 +339,7 @@ export const makePorts = (state: State.Interface, platform: NodeJS.Platform = pr
                 key: request.key,
                 message: `${error.value.message}${yield* claimedBy(others, request.stackId, requested)}`,
                 cause: error.value.cause,
+                kind: takenKind(request),
               });
             failures++;
             lastFailure = error.value;

@@ -30,6 +30,7 @@ import {
 } from "./HostProcess.ts";
 import * as Owner from "./Owner.ts";
 import { OrchestratorError } from "./Orchestrator.ts";
+import { ContainerError } from "./runtime/Container.ts";
 import { CommandEvent, StackError } from "./Rpc.ts";
 import * as State from "./State.ts";
 import { bindControl, makeRuntime } from "./StackHost.ts";
@@ -259,9 +260,15 @@ it.live("preserves composition outcomes over RPC", () =>
 
       expect("outcomes" in error).toBe(true);
       if (!("outcomes" in error)) return yield* Effect.die("Missing composition outcomes");
+      expect(error.kind).toBe("port-conflict");
       expect(error.outcomes).toEqual([
         { id: lazy.id, succeeded: true },
-        { id: blocked.id, succeeded: false, error: expect.stringContaining(String(port)) },
+        {
+          id: blocked.id,
+          succeeded: false,
+          error: expect.stringContaining(String(port)),
+          kind: "port-conflict",
+        },
       ]);
       yield* shutdownOwner(runtime.access, true);
     }),
@@ -335,6 +342,7 @@ it.live("reports destroy and fallback stop failures together", () =>
         message: string,
         id: string,
         reason: string,
+        cause: unknown,
       ) =>
         new OrchestratorError({
           operation,
@@ -342,7 +350,7 @@ it.live("reports destroy and fallback stop failures together", () =>
           outcomes: [
             {
               id,
-              result: Exit.fail(new OrchestratorError({ operation, message: reason })),
+              result: Exit.fail(new OrchestratorError({ operation, message: reason, cause })),
             },
           ],
         });
@@ -356,6 +364,7 @@ it.live("reports destroy and fallback stop failures together", () =>
               "Namespace destroy had failures",
               "database-destroy",
               "data removal refused",
+              new State.StateError({ operation: "remove", message: "data removal refused" }),
             ),
           ),
           stop: Effect.fail(
@@ -364,6 +373,7 @@ it.live("reports destroy and fallback stop failures together", () =>
               "Composition stop had failures",
               "database-stop",
               "process stop refused",
+              new ContainerError({ operation: "stop", message: "process stop refused" }),
             ),
           ),
         },
@@ -376,6 +386,7 @@ it.live("reports destroy and fallback stop failures together", () =>
       expect(failure.message).toContain("fallback stop failed: Composition stop had failures");
       expect(failure.message).toContain("database-stop:");
       expect(failure.message).toContain("process stop refused");
+      expect(failure.kind).toBe("state");
       expect("outcomes" in failure).toBe(true);
       if (!("outcomes" in failure)) return yield* Effect.die("shutdown outcomes were missing");
       expect(failure.outcomes).toEqual(
@@ -384,11 +395,13 @@ it.live("reports destroy and fallback stop failures together", () =>
             id: "database-destroy",
             succeeded: false,
             error: expect.stringContaining("data removal refused"),
+            kind: "state",
           },
           {
             id: "database-stop",
             succeeded: false,
             error: expect.stringContaining("process stop refused"),
+            kind: "engine-command",
           },
         ]),
       );

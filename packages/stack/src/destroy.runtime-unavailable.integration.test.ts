@@ -245,6 +245,7 @@ it.live.skipIf(process.getuid?.() === 0)(
       const destroyFailure = yield* Effect.flip(stack.destroy);
 
       expect(destroyFailure.message).toContain("start Docker and run destroy again");
+      expect(destroyFailure.kind).toBe("engine-unavailable");
       expect(yield* discover({ stateRoot })).toHaveLength(1);
       expect(yield* fs.exists(`${instanceRoot}/owned-file`)).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -269,6 +270,7 @@ it.live("keeps a stack registered when its container engine rejects the listing"
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     expect(destroyFailure.message).toContain("permission denied");
+    expect(destroyFailure.kind).toBe("engine-command");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),
@@ -305,6 +307,7 @@ it.live("keeps a stack registered when its container engine is reachable but cle
 
     const destroyFailure = yield* Effect.flip(stack.destroy);
     expect(destroyFailure.message).toContain("container removal failed");
+    expect(destroyFailure.kind).toBe("engine-command");
 
     expect(yield* discover({ stateRoot: options.stateRoot })).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(layer)),

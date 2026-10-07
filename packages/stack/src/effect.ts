@@ -43,6 +43,7 @@ import {
 import { listStackContainers, removeStackContainersCommand } from "./runtime/Container.ts";
 import { volumeDataCleanupCommands } from "./storage/DockerDatabaseStorage.ts";
 import { deriveStackId, resolveStackIdentity } from "./identity/Identity.ts";
+import { failureKind, isStackFailureKind, type StackFailureKind } from "./FailureKind.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import * as State from "./State.ts";
 import type { SavedStack, StackCredentials, StackKeysInput } from "./State.ts";
@@ -68,6 +69,7 @@ export { initialization, postgres } from "./Commands.ts";
 export { resolveNativePostgresUser } from "./runtime/postgres-user.ts";
 export { apiRoute } from "./host/Endpoints.ts";
 export { StackError } from "./Rpc.ts";
+export type { StackFailureKind } from "./FailureKind.ts";
 export type { ServiceCreation } from "./services/Catalog.ts";
 /** A service creation as `services.create` accepts it, before stack credentials fill its inputs. */
 export type ServiceCreationInput = CatalogServiceCreationInput;
@@ -123,22 +125,29 @@ const ownerAbsent = hasReason("not-running", "sweeping");
 /** The stack is no longer registered: it was destroyed or swept. */
 const stackGone = hasReason("unregistered");
 
-const failure = (operation: string, cause: unknown): StackError =>
-  Schema.is(StackError)(cause)
-    ? cause
-    : new StackError({
-        operation,
-        message: Schema.is(RpcClientError)(cause)
-          ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
-          : failureMessage(cause),
-        ...(ownerAbsent(cause) || stackGone(cause)
-          ? { reason: "owner-unavailable" as const }
-          : hasReason("release-mismatch")(cause)
-            ? { reason: "release-mismatch" as const }
-            : hasReason("runtime-unavailable")(cause)
-              ? { reason: "runtime-unavailable" as const }
-              : {}),
-      });
+/** Drops an outcome kind this release does not know, so it never re-emits one. */
+const knownOutcomeKind = <O extends { readonly kind?: string }>({ kind, ...outcome }: O) =>
+  isStackFailureKind(kind) ? { ...outcome, kind } : outcome;
+
+/** An explicit `kind` wins; otherwise the cause's typed chain is classified. */
+const failure = (operation: string, cause: unknown, kind?: StackFailureKind): StackError => {
+  if (Schema.is(StackError)(cause)) return cause;
+  const classified = kind ?? failureKind(cause);
+  return new StackError({
+    operation,
+    message: Schema.is(RpcClientError)(cause)
+      ? `Owner response unavailable; the request outcome is uncertain: ${cause.message}`
+      : failureMessage(cause),
+    ...(ownerAbsent(cause) || stackGone(cause)
+      ? { reason: "owner-unavailable" as const }
+      : hasReason("release-mismatch")(cause)
+        ? { reason: "release-mismatch" as const }
+        : hasReason("runtime-unavailable")(cause)
+          ? { reason: "runtime-unavailable" as const }
+          : {}),
+    ...(classified === undefined ? {} : { kind: classified }),
+  });
+};
 
 type Kind = ServiceCreation["service"];
 type ServiceCreationRestartInput<K extends Kind> =
@@ -357,6 +366,7 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
         return yield* failure(
           "destroy",
           "An owner for this stack started during destroy; run destroy again",
+          "lease-held",
         );
       yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
       yield* state.publishHolder(id, {
@@ -376,6 +386,7 @@ const destroyWithoutEngine = Effect.fn("Stack.destroyWithoutEngine")(function* (
         return yield* failure(
           "destroy",
           `Stack data at ${blocked} can only be removed by ${engineName}; start ${engineName} and run destroy again`,
+          "engine-unavailable",
         );
       }
       // Containers are labelled with the resolved data root the owner ran with.
@@ -587,7 +598,10 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
                   new StackError({
                     operation: "shutdown",
                     message: rejected.message,
-                    ...(rejected.outcomes === undefined ? {} : { outcomes: rejected.outcomes }),
+                    ...(rejected.outcomes === undefined
+                      ? {}
+                      : { outcomes: rejected.outcomes.map(knownOutcomeKind) }),
+                    ...(isStackFailureKind(rejected.kind) ? { kind: rejected.kind } : {}),
                   }),
                 ),
             }),
@@ -857,7 +871,7 @@ const makeHandle = Effect.fn("Stack.makeHandle")(function* (
   }
   const savedDefinition = Effect.gen(function* () {
     const current = yield* state.read(saved.id);
-    if (current === undefined) return yield* failure("definition", "Stack does not exist");
+    if (current === undefined) return yield* failure("definition", "Stack does not exist", "state");
     return current;
   }).pipe(Effect.mapError((cause) => failure("definition", cause)));
   const definitions = savedDefinition.pipe(Effect.map((current) => current.instances));
@@ -950,7 +964,7 @@ export const create = Effect.fn("Stack.create")(
     const session = saved.lifetime === "session";
     if (session || options.startOwner === true) {
       if ((yield* state.read(id)) !== undefined)
-        return yield* failure("create", "Stack already exists; use open");
+        return yield* failure("create", "Stack already exists; use open", "lease-held");
       // The owner registers the stack under its lease and removes it if its startup fails, so no
       // sweep sees a session stack unowned and a failed launch leaves no registration behind.
       const access = yield* launchHost(state, {
@@ -964,7 +978,7 @@ export const create = Effect.fn("Stack.create")(
     yield* state.withLock(
       Effect.gen(function* () {
         if ((yield* state.read(id)) !== undefined)
-          return yield* failure("create", "Stack already exists; use open");
+          return yield* failure("create", "Stack already exists; use open", "lease-held");
         yield* state.save(saved);
       }),
     );
@@ -978,7 +992,7 @@ export const open = Effect.fn("Stack.open")(
   function* (options: OpenOptions) {
     const state = yield* stateFor(options.stateRoot);
     const saved = yield* state.read(options.id);
-    if (saved === undefined) return yield* failure("open", "Stack does not exist");
+    if (saved === undefined) return yield* failure("open", "Stack does not exist", "state");
     const locations = { stateRoot: options.stateRoot, cacheRoot: options.cacheRoot };
     const access = !options.startOwner
       ? undefined
@@ -1093,28 +1107,38 @@ export const findDeleted = Effect.fn("Stack.findDeleted")(
     const [unlisted] = probes.flatMap(({ engine, listed }) =>
       Result.isFailure(listed)
         ? [
-            `Unable to list ${engine === "docker" ? "Docker" : "Podman"} containers while looking for stack ${options.id}'s leftovers: ${listed.failure.message}`,
+            {
+              message: `Unable to list ${engine === "docker" ? "Docker" : "Podman"} containers while looking for stack ${options.id}'s leftovers: ${listed.failure.message}`,
+              kind: failureKind(listed.failure),
+            },
           ]
         : [],
     );
     if (matched.length === 0) {
       if (unlisted === undefined) return Option.none<DeletedStack>();
-      return yield* failure("find", unlisted);
+      return yield* failure("find", unlisted.message, unlisted.kind);
     }
     const destroy = Effect.gen(function* () {
       for (const { engine } of matched) {
         const refusal = Match.value(yield* reclaimStack({ ...options, state, engine })).pipe(
           Match.when("reclaimed", () => undefined),
-          Match.when("held", () => "Another process holds this stack's lease; run destroy again"),
-          Match.when("registered", () => `Stack ${options.id} was registered again during destroy`),
+          Match.when("held", () => ({
+            message: "Another process holds this stack's lease; run destroy again",
+            kind: "lease-held" as const,
+          })),
+          Match.when("registered", () => ({
+            message: `Stack ${options.id} was registered again during destroy`,
+            kind: "state" as const,
+          })),
           Match.exhaustive,
         );
-        if (refusal !== undefined) return yield* failure("destroy", refusal);
+        if (refusal !== undefined) return yield* failure("destroy", refusal.message, refusal.kind);
       }
       if (unlisted !== undefined)
         return yield* failure(
           "destroy",
-          `Removed the ${matched.map(({ engine }) => (engine === "docker" ? "Docker" : "Podman")).join(" and ")} containers stack ${options.id} left behind. ${unlisted}`,
+          `Removed the ${matched.map(({ engine }) => (engine === "docker" ? "Docker" : "Podman")).join(" and ")} containers stack ${options.id} left behind. ${unlisted.message}`,
+          unlisted.kind,
         );
       return { runtimeCleanup: "complete" } as const;
     }).pipe(

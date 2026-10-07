@@ -29,7 +29,7 @@ const mapTargetError = (error: StackTargetError, detail?: string) =>
 
 const destroyError = (cause: StackError) =>
   new StackCommandDestroyError({
-    reason: "unknown",
+    reason: "stack",
     message: cause.message,
     cause,
   });

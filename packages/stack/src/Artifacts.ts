@@ -1,4 +1,5 @@
 import { Data, Effect, Path, Record } from "effect";
+import type { StackFailureKind } from "./FailureKind.ts";
 import { makeArtifactStore } from "./preparation/ArtifactStore.ts";
 import {
   makeSlimServicesSource,
@@ -32,6 +33,7 @@ export class ArtifactError extends Data.TaggedError("ArtifactError")<{
   readonly version?: string;
   readonly platform?: string;
   readonly cause?: unknown;
+  readonly kind?: StackFailureKind;
 }> {}
 
 /** Lowercase hexadecimal SHA-256 digest. */
@@ -552,7 +554,10 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
   readonly version?: string;
 }) {
   if (!Object.hasOwn(definitions, request.service))
-    return yield* new ArtifactError({ message: `Unknown service kind: ${request.service}` });
+    return yield* new ArtifactError({
+      message: `Unknown service kind: ${request.service}`,
+      kind: "configuration",
+    });
   const selected = definitions[request.service];
   const version = request.version ?? selected.defaultVersion;
   const pin = Object.entries(selected.pins).find(([candidate]) => candidate === version)?.[1];
@@ -561,6 +566,7 @@ export const resolveArtifact = Effect.fn("Artifacts.resolveArtifact")(function* 
       message: `Unsupported ${request.service} artifact version: ${version}`,
       service: request.service,
       version,
+      kind: "configuration",
     });
   return {
     service: request.service,
@@ -623,6 +629,7 @@ export const prepareNativeArtifact = Effect.fn("Artifacts.prepareNativeArtifact"
         service: request.service,
         version: resolved.version,
         platform: platformText(platform),
+        kind: "platform-unsupported",
       });
     const sourceArtifact = artifactFor(request.service, resolved, target);
     const key = artifactKey(sourceArtifact);

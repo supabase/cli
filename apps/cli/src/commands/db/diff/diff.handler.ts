@@ -303,6 +303,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
                       message: cause.message,
                       daemonDown: cause.daemonDown,
                       suggestion: cause.suggestion,
+                      cause,
                     }),
                 ),
               );

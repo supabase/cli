@@ -242,6 +242,7 @@ const awaitStartup = Effect.fn("ProcessRecipe.awaitStartup")(
                 `${service} startup timed out after ${startupTimeoutSeconds} seconds`,
                 result.output,
               ),
+              "health-timeout",
             )
           : Effect.succeed({ code: result.exitCode, output: result.output }),
       ),
@@ -255,6 +256,7 @@ const startupFailure = (
   serviceError(
     "launch",
     withRecentOutput(`${service} startup exited with ${result.code}`, result.output),
+    "process-exit",
   );
 
 const isAddressInUse = (line: string) =>
@@ -656,6 +658,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
                   : `${context.config.service} native listener bind was not confirmed`,
                 yield* recentOutput(attempt),
               ),
+              "health-timeout",
             );
           }
 
@@ -672,6 +675,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
           const failure = serviceError(
             "launch",
             withRecentOutput(exitMessage, yield* recentOutput(attempt)),
+            "process-exit",
           );
           const collided =
             Exit.isSuccess(observed.result) &&
@@ -693,6 +697,7 @@ export const makeProcessRecipe = <C extends RecipeCreation<ServiceKind, unknown>
             failure: serviceError(
               "launch",
               `${context.config.service} native port collision\n${failure.message}`,
+              "port-allocation",
             ),
           });
         });

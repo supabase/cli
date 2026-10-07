@@ -136,7 +136,7 @@ describe("stack stop", () => {
         Effect.provide(Layer.provideMerge(f.layer, failedApi)),
         Effect.flip,
       );
-      expect(error.reason).toBe("unknown");
+      expect(error.reason).toBe("stack");
       expect(error.detail).toContain(`${f.stack.id}: owner disconnected`);
       expect(f.output.stdoutText).toBe("");
       expect(f.telemetry.flushed).toBe(true);

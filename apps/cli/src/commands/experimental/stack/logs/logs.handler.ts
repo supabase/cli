@@ -32,7 +32,11 @@ const targetError = (cause: StackTargetError) =>
     cause,
   });
 const logsError = (cause: { readonly message: string }) =>
-  new StackCommandLogsError({ reason: "unknown", message: cause.message, cause });
+  new StackCommandLogsError({
+    reason: "stack",
+    message: cause.message,
+    cause,
+  });
 
 type SavedInstance = SavedStack["instances"][number];
 interface Selected {

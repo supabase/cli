@@ -90,23 +90,23 @@ const mapTargetError = (error: StackTargetError) =>
     cause: error,
   });
 
+const isStateOperation = (operation: string) =>
+  operation === "open" || operation === "discover" || operation === "definition";
+
 const mapStackError = (error: StackError) =>
-  new StackCommandStatusError({
-    reason:
-      error.operation === "open" ||
-      error.operation === "discover" ||
-      error.operation === "definition"
-        ? "invalid-config"
-        : "runtime",
-    message: error.message,
-    suggestion:
-      error.operation === "open" ||
-      error.operation === "discover" ||
-      error.operation === "definition"
-        ? "Inspect the saved stack state under $SUPABASE_HOME/stacks."
-        : "Retry the command and use --debug if the stack remains unavailable.",
-    cause: error,
-  });
+  isStateOperation(error.operation)
+    ? new StackCommandStatusError({
+        reason: "invalid-config",
+        message: error.message,
+        suggestion: "Inspect the saved stack state under $SUPABASE_HOME/stacks.",
+        cause: error,
+      })
+    : new StackCommandStatusError({
+        reason: "stack",
+        message: error.message,
+        suggestion: "Retry the command and use --debug if the stack remains unavailable.",
+        cause: error,
+      });
 
 const serviceReport = ({ instance, observation, error }: ObservedService): ServiceReport => ({
   id: instance.id,

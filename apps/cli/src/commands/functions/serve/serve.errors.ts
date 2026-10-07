@@ -1,12 +1,14 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
 export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeStackError")<{
-  readonly reason: "flags" | "invalid-config" | "lifecycle" | "runtime";
+  readonly reason: "flags" | "invalid-config" | "lifecycle" | "runtime" | "stack";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -14,13 +16,20 @@ export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeSt
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "flags":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
-        return actionability.invalidConfig;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
       case "lifecycle":
-        return actionability.startStack;
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.startStack,
+            fingerprint_suffix: "lifecycle",
+          }
+        );
       case "runtime":
-        return actionability.unknown;
+        return { ...actionability.runtimeCrash, fingerprint_suffix: "process_exit" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }

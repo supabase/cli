@@ -38,6 +38,7 @@ import {
   type HostEndpoint,
   type ShutdownFailure,
 } from "./HostProcess.ts";
+import { failureKind } from "./FailureKind.ts";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
@@ -99,6 +100,7 @@ const shutdownFailure = (cause: unknown): ShutdownFailure => {
   return {
     message: failure.message,
     ...(failure.outcomes === undefined ? {} : { outcomes: failure.outcomes }),
+    ...(failure.kind === undefined ? {} : { kind: failure.kind }),
   };
 };
 
@@ -270,11 +272,14 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                     if (Exit.isFailure(stopExit)) {
                       const describeCause = (cause: Cause.Cause<unknown>) => {
                         const error = Option.match(Cause.findErrorOption(cause), {
-                          onNone: () =>
-                            new StackError({
+                          onNone: () => {
+                            const kind = failureKind(cause);
+                            return new StackError({
                               operation: "shutdown",
                               message: Cause.pretty(cause),
-                            }),
+                              ...(kind === undefined ? {} : { kind }),
+                            });
+                          },
                           onSome: (value) => stackError("shutdown", value),
                         });
                         const failedOutcomes = error.outcomes
@@ -295,10 +300,12 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
                         ...(destroyFailure.error.outcomes ?? []),
                         ...(stopFailure.error.outcomes ?? []),
                       ];
+                      const kind = destroyFailure.error.kind ?? stopFailure.error.kind;
                       return yield* new StackError({
                         operation: "shutdown",
                         message: `${destroyFailure.message}; fallback stop failed: ${stopFailure.message}`,
                         ...(outcomes.length === 0 ? {} : { outcomes }),
+                        ...(kind === undefined ? {} : { kind }),
                       });
                     }
                     retiringAfterDestroyFailure = true;

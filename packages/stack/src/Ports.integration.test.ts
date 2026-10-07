@@ -1,6 +1,7 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { expect, it } from "@effect/vitest";
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, Ref, Scope } from "effect";
+import { failureKind } from "./FailureKind.ts";
 import { makePorts, portBase, portSpan, PortError, reserveNativePort } from "./Ports.ts";
 import * as State from "./State.ts";
 
@@ -76,6 +77,7 @@ it.live("reports an occupied saved port without moving its assignment", () =>
       expect(failure).toBeInstanceOf(PortError);
       expect(failure.message).toContain(`api at 127.0.0.1:${first.port}`);
       expect(failure.message).not.toContain("claims this port");
+      expect(failureKind(failure)).toBe("port-allocation");
       expect((yield* state.read("stack"))?.ports[0]?.port).toBe(first.port);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -284,6 +286,7 @@ it.live("names the stack claiming an explicit port that a live listener holds", 
       expect(failure).toBeInstanceOf(PortError);
       expect(failure.message).toContain(`db/sql at 127.0.0.1:${held.port}`);
       expect(failure.message).toContain(`stack "holder" on branch-holder in ${root}`);
+      expect(failureKind(failure)).toBe("port-conflict");
       expect((yield* state.read("current"))?.ports).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),

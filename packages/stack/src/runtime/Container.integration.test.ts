@@ -29,6 +29,7 @@ import {
   makeHostGateway,
   type ContainerProcess,
 } from "./Container.ts";
+import { failureKind } from "../FailureKind.ts";
 
 const image = await Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -81,7 +82,10 @@ describe("container process adapter", () => {
       );
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(pullAttempted)).toBe(true);
-      if (Exit.isFailure(result)) expect(Cause.pretty(result.cause)).toContain("pull rejected");
+      if (Exit.isFailure(result)) {
+        expect(Cause.pretty(result.cause)).toContain("pull rejected");
+        expect(failureKind(result.cause)).toBe("image-pull");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -716,6 +720,40 @@ describe("container process adapter", () => {
         const id = failure.value.process.id;
         yield* failure.value.process.remove;
         expect(yield* exists(id)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("classifies a container start that lost its host port as a port conflict", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const runtime = yield* makeContainerRuntime({ engine: "docker", root: "." });
+        yield* runtime.prepare(image);
+        const result = yield* makeContainerRuntime({ engine: "docker", root: "." }).pipe(
+          Effect.flatMap((rejecting) =>
+            rejecting.launch({
+              image,
+              stackId: "c".repeat(64),
+              instanceId: "port-allocated",
+              env: {},
+              args: ["-e", "process.exit(0)"],
+              ports: [8080],
+            }),
+          ),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makePortAllocatedStartSpawner(delegate),
+          ),
+          Effect.exit,
+        );
+        const failure = Exit.isFailure(result)
+          ? Option.getOrUndefined(Cause.findErrorOption(result.cause))
+          : undefined;
+        if (!(failure instanceof ContainerLaunchError))
+          return yield* Effect.die("port conflict did not retain cleanup authority");
+        yield* failure.process.remove;
+        expect(failureKind(failure)).toBe("port-allocation");
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -1358,6 +1396,27 @@ const makePullFailureSpawner = (
       });
     return delegate.spawn(command);
   });
+
+/** Fails `docker start` the way Docker reports a published host port another listener holds. */
+const makePortAllocatedStartSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
+  ChildProcessSpawner.make((command) =>
+    ChildProcess.isStandardCommand(command) &&
+    command.command === "docker" &&
+    command.args[0] === "start"
+      ? delegate.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [
+              "-e",
+              `console.error(${JSON.stringify(
+                "Error response from daemon: driver failed programming external connectivity on endpoint port-allocated: Bind for 127.0.0.1:54321 failed: port is already allocated",
+              )}); process.exit(1)`,
+            ],
+            { stdin: "ignore" },
+          ),
+        )
+      : delegate.spawn(command),
+  );
 
 const hostGatewayRejectionScript = `console.error(${JSON.stringify(
   'Error response from daemon: invalid IP address in add-host: "host-gateway"',

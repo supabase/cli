@@ -12,6 +12,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import type { Stream } from "effect";
+import type { StackFailureKind } from "./FailureKind.ts";
 
 type ServiceLifecycle = "stopped" | "starting" | "running" | "stopping";
 type ServiceHealth = "starting" | "healthy" | "unhealthy";
@@ -37,6 +38,8 @@ export class ServiceError extends Data.TaggedError("ServiceError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  /** Set where the failure site knows a cause its message alone describes. */
+  readonly kind?: StackFailureKind;
 }> {}
 
 export class ServiceDestroyed extends Data.TaggedError("ServiceDestroyed")<{

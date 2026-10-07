@@ -5,6 +5,7 @@ import { snapshotScopes } from "./services/DatabaseSnapshot.ts";
 import { causeMessage, CompositionConfig, OrchestratorError } from "./Orchestrator.ts";
 import { CommandInvocation } from "./Commands.ts";
 import { StackKeysInput } from "./State.ts";
+import { failureKind } from "./FailureKind.ts";
 import { failureMessage } from "./internal/failure-message.ts";
 import { LogPosition, LogRecord } from "./host/LogRecord.ts";
 
@@ -12,6 +13,8 @@ const Outcome = Schema.Struct({
   id: Schema.String,
   succeeded: Schema.Boolean,
   error: Schema.optionalKey(Schema.String),
+  /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+  kind: Schema.optionalKey(Schema.String),
 });
 
 /** A typed failure returned by the stack owner. */
@@ -27,7 +30,14 @@ export class StackError extends Schema.TaggedError<StackError>()("StackError", {
   reason: Schema.optionalKey(
     Schema.Literals(["owner-unavailable", "release-mismatch", "runtime-unavailable"]),
   ),
+  /** A `StackFailureKind`, kept an open string so an older release ignores newer kinds. */
+  kind: Schema.optionalKey(Schema.String),
 }) {}
+
+const kindOf = (cause: unknown) => {
+  const kind = failureKind(cause);
+  return kind === undefined ? {} : { kind };
+};
 
 /** Maps an owner failure to the RPC error, preserving per-member composition outcomes. */
 export const stackError = (operation: string, cause: unknown): StackError => {
@@ -39,10 +49,13 @@ export const stackError = (operation: string, cause: unknown): StackError => {
       outcomes: cause.outcomes.map(({ id, result }) => ({
         id,
         succeeded: Exit.isSuccess(result),
-        ...(Exit.isFailure(result) ? { error: causeMessage(result.cause) } : {}),
+        ...(Exit.isFailure(result)
+          ? { error: causeMessage(result.cause), ...kindOf(result.cause) }
+          : {}),
       })),
+      ...kindOf(cause),
     });
-  return new StackError({ operation, message: failureMessage(cause) });
+  return new StackError({ operation, message: failureMessage(cause), ...kindOf(cause) });
 };
 
 const ServiceErrorSchema = Schema.TaggedStruct("ServiceError", {

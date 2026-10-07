@@ -109,7 +109,7 @@ const stackError = (
     return service === undefined ? id : `${service} (${id})`;
   });
   return new StackCommandStartError({
-    reason: "unknown",
+    reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
     cause,

@@ -20,6 +20,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type { StackFailureKind } from "../FailureKind.ts";
 import { testRunLabelArgs as readTestRunLabelArgs } from "../internal/test-run-label.ts";
 import { identifyContainer } from "./ContainerName.ts";
 
@@ -27,7 +28,9 @@ export class ContainerError extends Data.TaggedError("ContainerError")<{
   readonly operation: string;
   readonly message: string;
   readonly cause?: unknown;
+  /** Set only where an unreachable engine changes the caller's recovery, such as stack sweeps. */
   readonly reason?: "engine-unavailable";
+  readonly kind?: StackFailureKind;
 }> {}
 
 interface ContainerSpec {
@@ -126,13 +129,33 @@ const engineUnreachable = (error: ContainerError) =>
     error.message,
   );
 
+/** The engine picks published host ports (`127.0.0.1::port`), so a refusal is its own allocation. */
+const portAllocated = (error: ContainerError) =>
+  /port is already allocated|address already in use/iu.test(error.message);
+
+const engineError = (operation: string, cause: unknown): ContainerError => {
+  const error = errorFor(operation, cause);
+  const kind =
+    cause instanceof ContainerError
+      ? cause.kind
+      : engineUnreachable(error)
+        ? "engine-unavailable"
+        : portAllocated(error)
+          ? "port-allocation"
+          : undefined;
+  return kind === undefined
+    ? error
+    : new ContainerError({ operation, message: error.message, cause, kind });
+};
+
 const markUnavailable = (error: ContainerError) =>
-  engineUnreachable(error)
+  error.kind === "engine-unavailable"
     ? new ContainerError({
         operation: error.operation,
         message: error.message,
         cause: error.cause,
         reason: "engine-unavailable",
+        kind: error.kind,
       })
     : error;
 
@@ -328,7 +351,7 @@ export const makeContainerRuntime = (options: {
           );
           yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
           if (Number(code) !== 0)
-            return yield* errorFor(
+            return yield* engineError(
               args[0] ?? "command",
               stderr.trim() || `Engine exited with ${code}`,
             );
@@ -339,7 +362,7 @@ export const makeContainerRuntime = (options: {
           commandOptions.timeout === undefined
             ? effect
             : effect.pipe(Effect.timeout(commandOptions.timeout)),
-        Effect.mapError((cause) => errorFor(args[0] ?? "command", cause)),
+        Effect.mapError((cause) => engineError(args[0] ?? "command", cause)),
       );
     });
 
@@ -601,6 +624,7 @@ export const makeContainerRuntime = (options: {
                       operation: error.operation,
                       message: `${error.message} (container name ${name})`,
                       cause: error,
+                      ...(error.kind === undefined ? {} : { kind: error.kind }),
                     }),
               ),
               Effect.catchTag("TimeoutError", () =>
@@ -609,10 +633,11 @@ export const makeContainerRuntime = (options: {
                     yield* run(["rm", "--force", name], { timeout: "10 seconds" }).pipe(
                       Effect.ignore,
                     );
-                    return yield* errorFor(
-                      "create",
-                      `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
-                    );
+                    return yield* new ContainerError({
+                      operation: "create",
+                      message: `Engine did not respond to container creation within ${CREATE_TIMEOUT} (container name ${name})`,
+                      kind: "engine-timeout",
+                    });
                   }),
                 ),
               ),
@@ -861,7 +886,10 @@ const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
       );
       yield* Effect.annotateCurrentSpan("process.exit_code", Number(code));
       if (Number(code) !== 0)
-        return yield* errorFor(args[0] ?? "cleanup", stderr.trim() || `Engine exited with ${code}`);
+        return yield* engineError(
+          args[0] ?? "cleanup",
+          stderr.trim() || `Engine exited with ${code}`,
+        );
       return stdout.trim();
     }),
   ).pipe(
@@ -869,14 +897,15 @@ const runCleanupCommand = Effect.fn("Container.runCleanupCommand")(function* (
       duration: "30 seconds",
       orElse: () =>
         Effect.fail(
-          errorFor(
-            args[0] ?? "cleanup",
-            `${engine} ${args[0] ?? "command"} did not respond within 30 seconds`,
-          ),
+          new ContainerError({
+            operation: args[0] ?? "cleanup",
+            message: `${engine} ${args[0] ?? "command"} did not respond within 30 seconds`,
+            kind: "engine-timeout",
+          }),
         ),
     }),
     Effect.mapError((cause) =>
-      cause instanceof ContainerError ? cause : errorFor(args[0] ?? "cleanup", cause),
+      cause instanceof ContainerError ? cause : engineError(args[0] ?? "cleanup", cause),
     ),
   );
 });

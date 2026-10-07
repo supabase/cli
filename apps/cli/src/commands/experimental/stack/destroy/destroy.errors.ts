@@ -1,19 +1,14 @@
 import { Data } from "effect";
 import {
   actionability,
+  causeDeclaration,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  unclassifiedStackFailureActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStackDestroyError")<{
-  readonly reason:
-    | "flags"
-    | "confirmation"
-    | "cancelled"
-    | "invalid-config"
-    | "runtime"
-    | "lifecycle"
-    | "unknown";
+  readonly reason: "flags" | "confirmation" | "cancelled" | "invalid-config" | "stack";
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
@@ -22,17 +17,15 @@ export class StackCommandDestroyError extends Data.TaggedError("ExperimentalStac
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     switch (this.reason) {
       case "flags":
+        return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "confirmation":
-        return actionability.provideFlags;
+        return { ...actionability.provideFlags, fingerprint_suffix: "confirmation" };
       case "cancelled":
-        return actionability.cancelled;
+        return { ...actionability.cancelled, fingerprint_suffix: "cancelled" };
       case "invalid-config":
-      case "lifecycle":
-        return actionability.invalidConfig;
-      case "runtime":
-        return actionability.dockerNotRunning;
-      case "unknown":
-        return actionability.unknown;
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "stack":
+        return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }
   }
 }
