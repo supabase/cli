@@ -1,0 +1,65 @@
+name: Collect flaky-check results
+
+description: >-
+  Gathers the JUnit files Vitest wrote under each workspace's `.flaky-junit/`
+  directory, records the run's metadata, and uploads both as one artifact for
+  the flaky-check report job.
+
+inputs:
+  name:
+    description: Artifact name; must match the name the plan job expects
+    required: true
+  suite:
+    description: Suite this run belongs to (unit, integration, focused, e2e, stack-e2e)
+    required: true
+  run:
+    description: Run number within the suite
+    required: true
+  executions:
+    description: Executions of each test in this run (1, or --repeats + 1)
+    required: false
+    default: "1"
+  exit-code:
+    description: Exit code of the test step; empty when the step did not finish
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Gather JUnit files
+      shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        SUITE: ${{ inputs.suite }}
+        RUN: ${{ inputs.run }}
+        EXECUTIONS: ${{ inputs.executions }}
+        EXIT_CODE: ${{ inputs.exit-code }}
+      run: |
+        set -euo pipefail
+        out="$RUNNER_TEMP/flaky-results/$NAME"
+        mkdir -p "$out"
+        # The report derives the package from the file name, so `apps/cli/.flaky-junit/unit.xml`
+        # becomes `apps__cli--unit.xml`.
+        while IFS= read -r -d '' file; do
+          pkg="${file%%/.flaky-junit/*}"
+          cp "$file" "$out/${pkg//\//__}--$(basename "$file")"
+        done < <(find apps packages -name node_modules -prune -o -path '*/.flaky-junit/*.xml' -print0)
+        jq -n \
+          --arg name "$NAME" \
+          --arg suite "$SUITE" \
+          --argjson run "$RUN" \
+          --argjson executions "$EXECUTIONS" \
+          --arg exitCode "$EXIT_CODE" \
+          '{name: $name, suite: $suite, run: $run, executions: $executions,
+            exitCode: (if $exitCode == "" then null else ($exitCode | tonumber) end)}' \
+          > "$out/meta.json"
+        ls -la "$out"
+
+    - name: Upload results
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ runner.temp }}/flaky-results/${{ inputs.name }}
+        retention-days: 14
+        if-no-files-found: error

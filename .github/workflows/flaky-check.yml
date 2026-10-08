@@ -1,0 +1,457 @@
+name: Flaky check
+
+# Runs the same commit on many fresh runners, with retries off, and reports every test that
+# both passed and failed. Nightly covers unit + integration on develop, weekly covers e2e, and
+# the `run-flaky-check` PR label covers unit + integration plus a `focused` suite that repeats
+# the tests affected by the PR. See .github/MAINTAINERS.md for usage.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+    - cron: "47 3 * * 0"
+  pull_request:
+    types:
+      - labeled
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or SHA to test (defaults to the branch this runs from)
+        type: string
+        default: ""
+      suites:
+        description: Comma-separated subset of unit,integration,focused,e2e,stack-e2e
+        type: string
+        default: unit,integration
+      runs:
+        description: Parallel runs per suite (1-30)
+        type: number
+        default: 10
+      repeats:
+        description: Extra executions of each test per focused run (vitest --repeats)
+        type: number
+        default: 4
+      filter:
+        description: >-
+          Space-separated vitest file filters for unit, integration, and focused. Focused
+          repeats these instead of the tests affected by changes when set.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Other label events still start a run; a unique group keeps them from cancelling a real one.
+concurrency:
+  group: >-
+    flaky-check-${{ github.event.pull_request.number || github.ref }}-${{ github.event.schedule || github.event_name }}${{
+      (github.event.action == 'labeled' && github.event.label.name != 'run-flaky-check'
+        && format('-noop-{0}', github.run_id))
+      || ''
+    }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: |
+      (github.event_name == 'schedule' && github.repository == 'supabase/cli') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'run-flaky-check')
+    name: Plan runs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      base: ${{ steps.plan.outputs.base }}
+      repeats: ${{ steps.plan.outputs.repeats }}
+      filter: ${{ steps.plan.outputs.filter }}
+      tests: ${{ steps.plan.outputs.tests }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      stack: ${{ steps.plan.outputs.stack }}
+      expected: ${{ steps.plan.outputs.expected }}
+    steps:
+      - name: Compute matrices
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SUITES: ${{ inputs.suites }}
+          INPUT_RUNS: ${{ inputs.runs }}
+          INPUT_REPEATS: ${{ inputs.repeats }}
+          INPUT_FILTER: ${{ inputs.filter }}
+        run: |
+          set -euo pipefail
+          repeats=4
+          filter=""
+          base=develop
+          case "$EVENT_NAME" in
+            schedule)
+              sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/develop" --jq .sha)"
+              if [ "$SCHEDULE" = "47 3 * * 0" ]; then
+                suites=e2e,stack-e2e
+                runs=3
+              else
+                suites=unit,integration
+                runs=10
+              fi
+              ;;
+            pull_request)
+              # github.sha is the PR merge commit, the same commit the Test workflow checks.
+              sha="$EVENT_SHA"
+              base="$PR_BASE_REF"
+              suites=unit,integration,focused
+              runs=10
+              ;;
+            workflow_dispatch)
+              ref="$(jq -rn --arg ref "${INPUT_REF:-$GITHUB_REF_NAME}" '$ref | @uri')"
+              sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ref" --jq .sha)"
+              suites="$INPUT_SUITES"
+              runs="$INPUT_RUNS"
+              repeats="$INPUT_REPEATS"
+              filter="$INPUT_FILTER"
+              ;;
+          esac
+
+          if ! [ "$runs" -ge 1 ] 2>/dev/null || [ "$runs" -gt 30 ]; then
+            echo "::error ::runs must be between 1 and 30, got '$runs'"
+            exit 1
+          fi
+          if ! [ "$repeats" -ge 0 ] 2>/dev/null || [ "$repeats" -gt 100 ]; then
+            echo "::error ::repeats must be between 0 and 100, got '$repeats'"
+            exit 1
+          fi
+          for suite in ${suites//,/ }; do
+            case "$suite" in
+              unit | integration | focused | e2e | stack-e2e) ;;
+              *)
+                echo "::error ::unknown suite '$suite'"
+                exit 1
+                ;;
+            esac
+          done
+
+          suites_json="$(jq -cn --arg s "$suites" '$s | split(",") | map(select(. != ""))')"
+          tests="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" --argjson repeats "$repeats" '
+            [$suites[] | select(. == "unit" or . == "integration" or . == "focused") as $s
+              | range(1; $runs + 1) as $r
+              | {suite: $s, run: $r, name: "flaky-\($s)-run\($r)",
+                 executions: (if $s == "focused" then $repeats + 1 else 1 end)}]')"
+          e2e="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" '
+            if ($suites | index("e2e")) then
+              [range(1; $runs + 1) as $r
+                | ((range(1; 5) as $s | {target: "cli", shard: $s, run: $r, name: "flaky-e2e-cli\($s)-run\($r)"}),
+                   {target: "cli-e2e", shard: 0, run: $r, name: "flaky-e2e-cli-e2e-run\($r)"})]
+            else [] end')"
+          stack="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" '
+            if ($suites | index("stack-e2e")) then
+              [range(1; $runs + 1) as $r
+                | ("native", "docker", "podman") as $runtime
+                | ("lifecycle", "idle-parallel") as $scenario
+                | {runtime: $runtime, scenario: $scenario, run: $r,
+                   name: "flaky-stack-e2e-\($runtime)-\($scenario)-run\($r)"}]
+            else [] end')"
+
+          if [ "$tests$e2e$stack" = "[][][]" ]; then
+            echo "::error ::no suites selected; choose from unit,integration,focused,e2e,stack-e2e"
+            exit 1
+          fi
+
+          matrix() { if [ "$1" = "[]" ]; then echo ""; else jq -c '{include: .}' <<< "$1"; fi; }
+          {
+            echo "sha=$sha"
+            echo "base=$base"
+            echo "repeats=$repeats"
+            echo "filter=$filter"
+            echo "tests=$(matrix "$tests")"
+            echo "e2e=$(matrix "$e2e")"
+            echo "stack=$(matrix "$stack")"
+            echo "expected=$(jq -cn --argjson a "$tests" --argjson b "$e2e" --argjson c "$stack" '$a + $b + $c | map(.name)')"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Flaky check plan"
+            echo
+            echo "Commit \`$sha\`, suites \`$suites\`, $runs runs each, focused repeats $repeats, base \`$base\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Removing the label lets a maintainer re-add it to start another run. Fork PRs get a
+      # read-only token, so the label stays there and must be removed by hand.
+      - name: Remove trigger label
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/run-flaky-check" >/dev/null \
+            || echo "::warning::Unable to remove the run-flaky-check label."
+
+  tests:
+    needs: plan
+    if: needs.plan.outputs.tests != ''
+    name: ${{ matrix.suite }} run ${{ matrix.run }}
+    runs-on: ${{ matrix.suite == 'unit' && 'blacksmith-4vcpu-ubuntu-2404' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    timeout-minutes: ${{ matrix.suite == 'focused' && 60 || 30 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.tests) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          # Focused runs diff against the merge base to find affected tests.
+          fetch-depth: ${{ matrix.suite != 'focused' && 1 || 0 }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Run tests
+        id: run
+        env:
+          SUITE: ${{ matrix.suite }}
+          BASE_REF: ${{ needs.plan.outputs.base }}
+          REPEATS: ${{ needs.plan.outputs.repeats }}
+          FILTER: ${{ needs.plan.outputs.filter }}
+        run: |
+          set -uo pipefail
+          read -ra filters <<< "$FILTER"
+          code=0
+          run_script() {
+            local script="$1" junit="$2"
+            shift 2
+            pnpm run "$script" --reporter=default --reporter=junit \
+              "--outputFile.junit=.flaky-junit/$junit.xml" --passWithNoTests "$@" || code=$?
+          }
+          case "$SUITE" in
+            unit) run_script test:unit unit "${filters[@]}" ;;
+            integration) run_script test:integration integration "${filters[@]}" ;;
+            focused)
+              if [ "${#filters[@]}" -gt 0 ]; then
+                select=("${filters[@]}")
+              else
+                select=(--changed "$(git merge-base HEAD "origin/$BASE_REF")")
+              fi
+              run_script test:unit unit --repeats="$REPEATS" "${select[@]}"
+              run_script test:integration integration --repeats="$REPEATS" "${select[@]}"
+              ;;
+          esac
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Collect results
+        if: always()
+        uses: ./.github/actions/flaky-collect
+        with:
+          name: ${{ matrix.name }}
+          suite: ${{ matrix.suite }}
+          run: ${{ matrix.run }}
+          executions: ${{ matrix.executions }}
+          exit-code: ${{ steps.run.outputs.exit-code }}
+
+  e2e:
+    needs: plan
+    if: needs.plan.outputs.e2e != ''
+    name: e2e ${{ matrix.target }}${{ matrix.shard > 0 && format(' {0}/4', matrix.shard) || '' }} run ${{ matrix.run }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.e2e) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Cache Go CLI binary
+        id: cache-go-binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: apps/cli-go/supabase-go
+          key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
+            'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
+
+      - name: Build Go CLI
+        if: steps.cache-go-binary.outputs.cache-hit != 'true'
+        run: go build -o supabase-go .
+        working-directory: apps/cli-go
+
+      - name: Build CLI
+        run: pnpm exec turbo run supabase#build
+
+      - name: Run tests
+        id: run
+        env:
+          TARGET: ${{ matrix.target }}
+          SHARD: ${{ matrix.shard }}
+          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
+        run: |
+          set -uo pipefail
+          args=(--reporter=default --reporter=junit --outputFile.junit=.flaky-junit/e2e.xml)
+          code=0
+          if [ "$TARGET" = cli ]; then
+            pnpm exec turbo run test:e2e:run --only --filter=supabase -- "${args[@]}" --shard="$SHARD/4" || code=$?
+          else
+            pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e -- "${args[@]}" || code=$?
+          fi
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Collect results
+        if: always()
+        uses: ./.github/actions/flaky-collect
+        with:
+          name: ${{ matrix.name }}
+          suite: e2e
+          run: ${{ matrix.run }}
+          exit-code: ${{ steps.run.outputs.exit-code }}
+
+  stack-e2e:
+    needs: plan
+    if: needs.plan.outputs.stack != ''
+    name: stack-e2e ${{ matrix.runtime }} ${{ matrix.scenario }} run ${{ matrix.run }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 45
+    env:
+      SUPABASE_STACK_TEST_ENGINE: ${{ matrix.runtime == 'podman' && 'podman' || 'docker' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.stack) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          go-cache: "false"
+
+      - name: Setup Podman
+        if: matrix.runtime == 'podman'
+        uses: ./.github/actions/setup-podman
+
+      - name: Run tests
+        id: run
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          set -uo pipefail
+          code=0
+          run_file() {
+            pnpm --filter @supabase/stack test:e2e:run "src/$1.e2e.test.ts" --passWithNoTests=false \
+              --reporter=default --reporter=junit "--outputFile.junit=.flaky-junit/$1.xml" || code=$?
+          }
+          run_file "whole-stack.$RUNTIME.$SCENARIO"
+          # test.yml runs the public API suite only in this combination.
+          if [ "$RUNTIME" = native ] && [ "$SCENARIO" = lifecycle ]; then
+            run_file public
+          fi
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Collect results
+        if: always()
+        uses: ./.github/actions/flaky-collect
+        with:
+          name: ${{ matrix.name }}
+          suite: stack-e2e
+          run: ${{ matrix.run }}
+          exit-code: ${{ steps.run.outputs.exit-code }}
+
+  report:
+    needs: [plan, tests, e2e, stack-e2e]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    name: Report flaky tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Install Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install: true
+          install_args: bun
+
+      - name: Download results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flaky-*-run*
+          path: results
+
+      - name: Build report
+        id: report
+        env:
+          EXPECTED: ${{ needs.plan.outputs.expected }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: bun .github/scripts/flaky-report.ts results flaky-report
+
+      - name: Upload report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flaky-check-report
+          path: flaky-report
+          retention-days: 30
+          overwrite: true
+
+      - name: Comment on PR
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          marker="<!-- flaky-check -->"
+          if ! comment_id="$(
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" \
+              | head -n 1
+          )"; then
+            echo "::warning::Unable to list PR comments; the report is in the flaky-check-report artifact."
+            exit 0
+          fi
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              --field "body=@flaky-report/report.md" >/dev/null \
+              || echo "::warning::Unable to update the flaky-check PR comment."
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --field "body=@flaky-report/report.md" >/dev/null \
+              || echo "::warning::Unable to create the flaky-check PR comment."
+          fi
+
+      - name: Fail on flaky tests
+        if: steps.report.outputs.clean != 'true'
+        run: |
+          echo "::error ::Flaky, failing, or missing runs found; see the job summary or the flaky-check-report artifact."
+          exit 1

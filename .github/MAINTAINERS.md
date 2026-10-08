@@ -83,6 +83,36 @@ the preview. This is independent of `run-ci` and `run-live-e2e-ci`.
 The `run-preview-packages` label must exist as a repository label; create it
 from **Issues → Labels** if it is missing.
 
+## `run-flaky-check`: repeat the suites to find flaky tests
+
+[`flaky-check.yml`](./workflows/flaky-check.yml) runs one commit on many fresh
+runners with retries off. A test that passes in some runs and fails in others is
+reported as flaky; one that fails in every run is reported as always failing.
+
+| Trigger                  | Commit          | Suites                                        |
+| ------------------------ | --------------- | --------------------------------------------- |
+| Nightly, 03:17 UTC       | `develop`       | unit, integration ×10                         |
+| Weekly, Sunday 03:47 UTC | `develop`       | CLI e2e, stack e2e ×3                         |
+| `run-flaky-check` label  | PR merge commit | unit, integration ×10, plus `focused`         |
+| Manual dispatch          | any ref         | chosen suites, runs, repeats, and file filter |
+
+`focused` repeats only the tests affected by the PR (`vitest --changed` against
+the merge base), five executions per run across ten runs. Use it to show that a
+flaky-test fix holds: ten clean full-suite runs still miss a test that fails one
+time in twenty. A PR that changes a `package.json` or Vitest config makes
+`--changed` select every test, so `focused` then repeats the whole suite. To
+target specific files instead, dispatch the workflow with `suites=focused` and
+a `filter`.
+
+The workflow removes the label when it starts, so add it again to re-run. It
+posts or updates one PR comment with the report; the job summary and the
+`flaky-check-report` artifact (`report.md`, `report.json`) hold the same data
+for every trigger. The report job fails when it finds flaky tests, always-failing
+tests, or runs that produced no results.
+
+The `run-flaky-check` label must exist as a repository label; create it from
+**Issues → Labels** if it is missing.
+
 ## Live e2e coverage and stable releases
 
 [`Live E2E`](./workflows/live-e2e.yml) exercises managed staging after every push
