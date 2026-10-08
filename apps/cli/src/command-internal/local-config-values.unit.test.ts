@@ -317,7 +317,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.serviceRoleKey).toBe("env-service-role");
     });
 
-    it("treats an empty env var as unset, matching Viper's default", () => {
+    it("treats an empty env var as unset", () => {
       process.env["SUPABASE_AUTH_JWT_SECRET"] = "";
       const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -457,7 +457,7 @@ describe("resolveLocalConfigValues", () => {
       expect(values.apiUrl).toBe("https://env-override.example");
     });
 
-    it("treats an empty non-auth env var as unset, matching Viper's default", () => {
+    it("treats an empty non-auth env var as unset", () => {
       process.env["SUPABASE_DB_PORT"] = "";
       const config = baseConfig({ db: { port: 54322 } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
@@ -646,7 +646,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty SUPABASE_DB_MAJOR_VERSION override as unset, matching Viper's default", () => {
+    it("treats an empty SUPABASE_DB_MAJOR_VERSION override as unset", () => {
       process.env["SUPABASE_DB_MAJOR_VERSION"] = "";
       const config = baseConfig({ db: { major_version: 17 } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
@@ -738,7 +738,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty SUPABASE_EDGE_RUNTIME_DENO_VERSION override as unset, matching Viper's default", () => {
+    it("treats an empty SUPABASE_EDGE_RUNTIME_DENO_VERSION override as unset", () => {
       process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "";
       const config = baseConfig({ edge_runtime: { deno_version: 2 } });
       expect(() => resolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
@@ -898,7 +898,7 @@ describe("resolveLocalConfigValues", () => {
       );
     });
 
-    it("treats an empty override as unset, matching Viper's default", () => {
+    it("treats an empty override as unset", () => {
       process.env["SUPABASE_API_TLS_ENABLED"] = "";
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
       const values = resolveLocalConfigValues(config, "127.0.0.1", WORKDIR);

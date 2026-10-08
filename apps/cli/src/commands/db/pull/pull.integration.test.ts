@@ -1893,7 +1893,7 @@ describe("db pull", () => {
   it.effect(
     "a repeated --experimental=false --experimental=true still exports (last Set() wins)",
     () => {
-      // pflag/viper bind one variable per flag: repeated occurrences collapse to
+      // Each flag binds one variable: repeated occurrences collapse to
       // whichever Set() call happened last, so a resolver must not get this ordering
       // backwards.
       const s = setup(tmp.current, {

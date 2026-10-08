@@ -1309,7 +1309,7 @@ describe("applySchemaFiles", () => {
   );
 
   it.effect(
-    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
+    "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (not '5M' == 5MiB)",
     () => {
       const dir = mkdtempSync(join(tmpdir(), "schema-files-scanner-garbage-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });

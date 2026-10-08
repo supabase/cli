@@ -391,7 +391,7 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   `SUPABASE_AUTH_ANON_KEY`/`SUPABASE_AUTH_SERVICE_ROLE_KEY` override the corresponding
   `config.toml` value at higher precedence — an empty env var
   is treated as unset. This is scoped to exactly the 5 auth fields `status` reads; it is not a
-  general `@supabase/config` port of Viper's `AutomaticEnv` (which applies to every config field).
+  general `SUPABASE_*` override of every config field.
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
   the old Go CLI hardcoded both (`"postgres"` and the S3 access key/secret/region seen above),
   reproduced identically in `local-config-values.ts`.

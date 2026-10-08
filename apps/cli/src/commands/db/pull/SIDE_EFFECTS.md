@@ -91,7 +91,7 @@ publishes only when the roles file is unchanged, and retention keeps three entri
 A falsy `SUPABASE_SHADOW_CACHE` bypasses this cache. A failed warm restore recreates the database;
 a failed cache export warns and continues with the live shadow.
 
-On by default; setting `SUPABASE_SHADOW_CACHE` to anything not viper-true (`false`/`0`/empty/garbage,
+On by default; setting `SUPABASE_SHADOW_CACHE` to anything not boolean-true (`false`/`0`/empty/garbage,
 honored from the ambient env AND the project's dotenv, e.g. `supabase/.env`) turns it off,
 restoring the documented uncached lifecycle. A warm hit
 skips the platform baseline, so the `Initialising schema...` progress line does not print —

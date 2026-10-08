@@ -205,7 +205,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("SUPABASE_DEBUG surfaces fetch failures without the --debug flag, like viper's AutomaticEnv", async () => {
+  it("SUPABASE_DEBUG surfaces fetch failures without the --debug flag", async () => {
     const ctx = setup({ fetchFails: true, project: false, env: { SUPABASE_DEBUG: "1" } });
     await runUpgradeNotice(ctx.deps);
     expect(ctx.stderr).toContain("Failed to fetch latest release");
@@ -444,7 +444,7 @@ describe("runUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("an explicit empty --workdir beats SUPABASE_WORKDIR and falls back to the walk, like viper", async () => {
+  it("an explicit empty --workdir beats SUPABASE_WORKDIR and falls back to the walk", async () => {
     const ctx = setup({});
     const envDir = join(workdir, "env-project");
     mkdirSync(join(envDir, "supabase"), { recursive: true });

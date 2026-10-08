@@ -2298,7 +2298,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("lets SUPABASE_DB_* env vars override the [db] config (viper AutomaticEnv)", () => {
+  it.effect("lets SUPABASE_DB_* env vars override the [db] config", () => {
     const prev = {
       PORT: process.env["SUPABASE_DB_PORT"],
       SHADOW: process.env["SUPABASE_DB_SHADOW_PORT"],
@@ -2525,7 +2525,7 @@ describe("readDbToml", () => {
     );
   });
 
-  it.effect("ignores an empty SUPABASE_DB_PORT override (viper AllowEmptyEnv=false)", () => {
+  it.effect("ignores an empty SUPABASE_DB_PORT override", () => {
     const prev = process.env["SUPABASE_DB_PORT"];
     process.env["SUPABASE_DB_PORT"] = "";
     const dir = withConfig(["[db]", "port = 55555", ""].join("\n"));
@@ -3241,7 +3241,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
     );
   });
 
-  it.effect("ignores an empty SUPABASE_PROJECT_ID (viper AllowEmptyEnv=false)", () => {
+  it.effect("ignores an empty SUPABASE_PROJECT_ID", () => {
     const previous = process.env["SUPABASE_PROJECT_ID"];
     process.env["SUPABASE_PROJECT_ID"] = "";
     const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));

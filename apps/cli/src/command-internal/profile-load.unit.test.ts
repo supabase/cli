@@ -39,7 +39,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails on an empty token with viper's search-mode error (Go `--profile=`)", () =>
+  it.effect("fails an empty --profile= token with the search-mode error", () =>
     Effect.gen(function* () {
       expect(yield* loadError("")).toBe(
         `failed to read profile: Config File "config" Not Found in "[]"`,
@@ -98,7 +98,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("accepts mixed-case keys like viper's insensitive decode (probed on go1.26)", () =>
+  it.effect("accepts mixed-case keys case-insensitively", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const file = writeProfile(
@@ -141,7 +141,7 @@ describe("loadProfile", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
+  it.effect("reports unknown keys LOWERCASED", () =>
     Effect.gen(function* () {
       const file = writeProfile(
         "bogus-upper.yml",
@@ -228,23 +228,21 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect(
-    "weakly stringifies scalars like viper, so `api_url: 123` fails http_url, not decoding",
-    () =>
-      Effect.gen(function* () {
-        const file = writeProfile(
-          "typebad.yml",
-          [
-            "name: t",
-            "api_url: 123",
-            "dashboard_url: http://127.0.0.1:44444/dashboard",
-            "project_host: supabase.co",
-          ].join("\n"),
-        );
-        expect(yield* loadError(file)).toBe(
-          "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'http_url' tag",
-        );
-      }),
+  it.effect("weakly stringifies scalars, so `api_url: 123` fails http_url, not decoding", () =>
+    Effect.gen(function* () {
+      const file = writeProfile(
+        "typebad.yml",
+        [
+          "name: t",
+          "api_url: 123",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: supabase.co",
+        ].join("\n"),
+      );
+      expect(yield* loadError(file)).toBe(
+        "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'http_url' tag",
+      );
+    }),
   );
 
   it.effect("validates the hostname_rfc1123 and http_url format tags", () =>
@@ -267,7 +265,7 @@ describe("loadProfile", () => {
     }),
   );
 
-  it.effect("fails a malformed YAML file closed with viper's parse prefix", () =>
+  it.effect("fails a malformed YAML file closed with the parse-error prefix", () =>
     Effect.gen(function* () {
       const file = writeProfile("malformed.yml", "name: [broken\n  api_url");
       const message = yield* loadError(file);

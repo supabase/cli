@@ -38,7 +38,7 @@ const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
 
 /**
  * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in argv (`undefined` if
- * absent), matching pflag/viper's last-`Set()`-wins semantics. A bare flag is true; an inline
+ * absent), last occurrence wins. A bare flag is true; an inline
  * value is false only when it matches pflag's boolean false set, otherwise truthy.
  */
 export function explicitBooleanLongFlag(

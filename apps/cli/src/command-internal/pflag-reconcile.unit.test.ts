@@ -206,7 +206,7 @@ describe("pflagWorkdirValue", () => {
     expect(pflagWorkdirValue(scan([]), Option.none(), "/env")).toEqual(Option.some("/env"));
   });
 
-  it("treats a changed-but-empty flag as the walk-up default, shadowing the env var (viper precedence)", () => {
+  it("treats a changed-but-empty flag as the walk-up default, shadowing the env var", () => {
     // --workdir=
     expect(pflagWorkdirValue(scan([["workdir", [""]]]), Option.none(), "/env")).toEqual(
       Option.none(),

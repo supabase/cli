@@ -152,7 +152,7 @@ describe("encodeEnv", () => {
     expect(lines).toContain("PHYSICAL_BACKUP_DATA_LATEST_PHYSICAL_BACKUP_DATE_UNIX=1700001000");
   });
 
-  it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
+  it("collapses arrays to a single empty leaf", () => {
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('BACKUPS=""');
@@ -187,7 +187,7 @@ describe("encodeEnv", () => {
     expect(out.split("\n")).toEqual(["A=2", "M=3", "Z=1"]);
   });
 
-  it("omits empty nested maps entirely (Go viper parity)", () => {
+  it("omits empty nested maps entirely", () => {
     expect(encodeEnv({ physical_backup_data: {} })).toBe("");
   });
 

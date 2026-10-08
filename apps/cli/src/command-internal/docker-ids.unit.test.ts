@@ -115,7 +115,7 @@ describe("resolveDockerNetworkMode composed with supabaseEnvStringWithProjectFal
     expect(resolve("", {})).toBe(localNetworkId("my-app"));
   });
 
-  it("an explicit-but-empty --network-id= skips the env var entirely (viper: a Changed pflag resolves before AutomaticEnv)", () => {
+  it("an explicit-but-empty --network-id= skips the env var entirely (an explicit flag beats the env var)", () => {
     process.env[KEY] = "env-network";
     expect(resolve("", { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
   });
