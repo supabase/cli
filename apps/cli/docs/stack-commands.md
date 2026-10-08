@@ -16,7 +16,7 @@ default `max_worker_processes` to 17 to leave room for those workers; `postgresq
 
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
-| `supabase stack destroy` | Permanently delete one stack and its data.                                        |
+| `supabase stack destroy` | Permanently delete stacks and their data.                                         |
 | `supabase stack list`    | List persisted managed local stacks.                                              |
 | `supabase stack prepare` | Download artifacts without starting services.                                     |
 | `supabase stack start`   | Create or resume the project's stack.                                             |
@@ -318,7 +318,9 @@ failures make the command fail and identify the affected stack IDs with their er
 success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
-confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.
+confirmation. Use `--yes` for unattended execution. Repeat `--stack-id` to destroy several stacks
+after one confirmation; every id must resolve before anything is destroyed, and a stack that fails
+to be destroyed does not stop the rest, though the command still fails.
 
 ## Storage and bucket seeding
 
