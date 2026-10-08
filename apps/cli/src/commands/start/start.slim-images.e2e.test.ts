@@ -254,7 +254,12 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
     { timeout: WGET_PROBE_TIMEOUT_MS },
   ).pipe(
     Effect.catchTag("DockerCommandError", (error) => {
-      const output = `${error.stdout}\n${error.stderr}`.trim();
+      const output = `${error.stdout}\n${error.stderr}`
+        .replace(
+          /^WARNING: The requested image's platform \([a-z0-9._/-]+\) does not match the detected host platform \([a-z0-9._/-]+\) and no specific platform was requested\r?$/gmu,
+          "",
+        )
+        .trim();
       return output === "wget: can't connect to remote host (127.0.0.1): Connection refused"
         ? Effect.succeed({ stdout: error.stdout, stderr: error.stderr })
         : Effect.fail(
@@ -267,16 +272,6 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
     Effect.onExit(() => removeContainer),
   );
 });
-
-function expectBusyBoxAccepted(
-  output: { readonly stdout: string; readonly stderr: string },
-  label: string,
-): void {
-  const text = `${output.stdout}\n${output.stderr}`;
-  expect(text, label).not.toMatch(
-    /Unable to find image|executable file not found|unrecognized option|invalid option|unknown option/i,
-  );
-}
 
 const pullLatestImage = Effect.fnUntraced(function* (image: string, deadline: number) {
   const now = yield* Clock.currentTimeMillis;
@@ -318,10 +313,10 @@ describe("supabase start slim images (e2e)", () => {
                   header: `Host:${REALTIME_TENANT_ID}`,
                 })
               : slimWgetHealthcheck("http://127.0.0.1:9/");
-          expectBusyBoxAccepted(yield* runWgetInImage(image, probe.test.slice(2)), image);
+          yield* runWgetInImage(image, probe.test.slice(2));
           if (entry.service === "vector") {
             const waitArgs = slimWgetWaitCommand("http://127.0.0.1:9/").split(" ").slice(1);
-            expectBusyBoxAccepted(yield* runWgetInImage(image, waitArgs), `${image} wait`);
+            yield* runWgetInImage(image, waitArgs);
           }
         }
       }).pipe(Effect.provide(Layer.merge(BunServices.layer, FetchHttpClient.layer))),
