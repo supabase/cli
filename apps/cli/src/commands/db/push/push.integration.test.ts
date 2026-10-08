@@ -267,6 +267,12 @@ const failSuggestion = (
 ): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
 
+const failError = (exit: Exit.Exit<unknown, unknown>): { _tag: string; message: string } =>
+  (Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined) as {
+    _tag: string;
+    message: string;
+  };
+
 const MIGRATION_DIR = "supabase/migrations";
 const migrationFile = (version: string, body = "create table t ();") => ({
   [`${MIGRATION_DIR}/${version}_test.sql`]: body,
@@ -670,11 +676,12 @@ describe("db push", () => {
         confirm?: ReadonlyArray<boolean>;
         migrations?: boolean;
         dryRun?: boolean;
+        remoteBlock?: string;
       } = {},
     ) =>
       setup(tmp.current, {
         includeSeed: true,
-        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
+        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n${opts.remoteBlock ?? ""}`,
         files: {
           "supabase/seed.sql": "insert into t values (1);",
           ...(opts.migrations === true ? migrationFile("20240101000000") : {}),
@@ -695,47 +702,92 @@ describe("db push", () => {
     const seeded = (conn: ReturnType<typeof mockConnection>) =>
       conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"));
 
-    it.live("asks first, defaulting to no, and seeds on yes", () => {
+    it.live("asks first, naming the ref, the remote and the files, defaulting to no", () => {
       const { layer, out, conn } = remoteSeed({ confirm: [true, true] });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
-        expect(out.promptConfirmCalls[0]?.message).toContain("[remotes.preview]");
+        expect(out.promptConfirmCalls[0]?.message).toBe(
+          `Project ${VALID_REF} matches [remotes.preview]. Run 1 seed file (supabase/seed.sql) against it?`,
+        );
         expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
         expect(seeded(conn)).toBe(true);
       });
     });
 
-    it.live("fails with context canceled before any write when declined", () => {
-      const { layer, conn } = remoteSeed({ confirm: [false], migrations: true });
+    it.live("cancels without a bare context canceled before any write when declined", () => {
+      const { layer, out, conn } = remoteSeed({ confirm: [false], migrations: true });
       return Effect.gen(function* () {
         const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failSuggestion(exit)).toContain("--yes");
+        expect(failError(exit).message).toBe("Seeding cancelled; nothing was changed.");
+        expect(failSuggestion(exit)).toBe(
+          "Pass --yes to seed, or drop --include-seed to push migrations only.",
+        );
+        expect(out.stderrText).not.toContain("context canceled");
         expect(conn.execs).not.toContain("BEGIN");
         expect(seeded(conn)).toBe(false);
       });
     });
 
-    it.live("proceeds without asking when --yes is passed", () => {
+    it.live("proceeds without asking when --yes is passed, naming what enabled seeding", () => {
       const { layer, out, conn } = remoteSeed({ yes: true });
       return Effect.gen(function* () {
         yield* dbPush(flags).pipe(Effect.provide(layer));
         expect(out.promptConfirmCalls.some((call) => call.message.includes("[remotes."))).toBe(
           false,
         );
+        expect(out.stderrText).toContain("Seeding enabled by --include-seed");
         expect(seeded(conn)).toBe(true);
       });
     });
 
-    it.live("fails before migrations apply when non-interactive without --yes", () => {
+    it.live("fails with SeedConsentRequiredError before any write when non-interactive", () => {
       const { layer, out, conn } = remoteSeed({ format: "json", migrations: true });
       return Effect.gen(function* () {
         const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)._tag).toBe("SeedConsentRequiredError");
+        expect(failError(exit).message).toBe(
+          `Seeding ${VALID_REF} ([remotes.preview]) needs confirmation and this run can't prompt. Nothing was changed.`,
+        );
         expect(failSuggestion(exit)).toContain("--yes");
         expect(out.promptConfirmCalls).toEqual([]);
         expect(conn.execs).not.toContain("BEGIN");
         expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live("does not ask when the matched remote block itself enables seeding", () => {
+      const { layer, out, conn } = remoteSeed({
+        format: "json",
+        remoteBlock: "\n[remotes.preview.db.seed]\nenabled = true\n",
+      });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(seeded(conn)).toBe(true);
+      });
+    });
+
+    it.live("--dry-run says a real run will ask, without prompting or writing", () => {
+      const { layer, out, conn } = remoteSeed({ migrations: true });
+      return Effect.gen(function* () {
+        yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          `A real run will ask before seeding ${VALID_REF} ([remotes.preview]).`,
+        );
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(conn.execs).not.toContain("BEGIN");
+      });
+    });
+
+    it.live("--dry-run says a real run needs --yes when nothing can prompt", () => {
+      const { layer, out } = remoteSeed({ format: "json", migrations: true });
+      return Effect.gen(function* () {
+        yield* dbPush({ ...flags, dryRun: true }).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain(
+          `A real run will need --yes to seed ${VALID_REF} ([remotes.preview]).`,
+        );
       });
     });
 

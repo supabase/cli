@@ -78,11 +78,10 @@ migration history table to match local migration files?` (default **NO**).
 - In `applied` mode, reads the matching `supabase/migrations/<version>_*.sql` file
   for the name + statements; a missing file exits non-zero.
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
-- **`--password`** is rejected with `--db-url` (and with `--local`): `if any flags in the group
-[<target> password] are set none of the others can be; [<target> password] were all set`,
+- **`--password`** is rejected with `--db-url` (`--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres`) and with `--local` (`--password can't be used with --local. The local database uses [db].password from supabase/config.toml.`),
   exit 1. For `--linked` the password resolves as flag > shell `SUPABASE_DB_PASSWORD` > project
   `.env*` > config; the env value is withheld when the target differs from `.temp/project-ref`
-  (stderr `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.`), and a
+  (stderr `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.`), and a
   temporary login role is minted instead (ADR 0031).
 - **`--project-ref`** overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:

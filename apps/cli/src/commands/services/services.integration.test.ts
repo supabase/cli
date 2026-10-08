@@ -674,6 +674,38 @@ major_version = 15
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
+  it.live.each([
+    ["legacy", undefined],
+    ["stack", "stack"],
+  ] as const)(
+    "fails naming the source when a config value is invalid (%s backend)",
+    ([, backend]) =>
+      Effect.gen(function* () {
+        const workdir = yield* makeProjectWithConfig('project_id = "demo"\n');
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", ".env"),
+          "SUPABASE_API_PORT=notaport\n",
+        );
+        const { layer } = setup({ workdir });
+
+        const exit = yield* services({}).pipe(
+          Effect.provide(
+            backend === undefined ? layer : Layer.mergeAll(layer, stackBackendLayer(backend)),
+          ),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("CliConfigValueError");
+          expect(causeText).toContain('Invalid SUPABASE_API_PORT="notaport"');
+        }
+      }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
+  );
+
   it.live("prints config load errors and falls back to the default matrix", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfig("[db]\nmajor_version = ");

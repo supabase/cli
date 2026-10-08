@@ -480,7 +480,11 @@ const runSquash = Effect.fnUntraced(function* (
         message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
       });
     }
-    yield* rejectPasswordWithDirectTarget(target.connType ?? "local", flags.password);
+    yield* rejectPasswordWithDirectTarget(
+      target.connType ?? "local",
+      flags.password,
+      target.connType === undefined ? { localByDefaultFor: "migration squash" } : {},
+    );
 
     const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     const connType = target.connType ?? "local";

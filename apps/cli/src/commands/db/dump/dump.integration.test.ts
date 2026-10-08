@@ -585,7 +585,7 @@ describe("db dump integration", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
-        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+        "--password can't be used with --db-url. Put the password in the connection string: postgres://USER:PASSWORD@HOST:PORT/postgres",
       );
       expect(resolver.calls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -599,7 +599,7 @@ describe("db dump integration", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
-        "if any flags in the group [local password] are set none of the others can be; [local password] were all set",
+        "--password can't be used with --local. The local database uses [db].password from supabase/config.toml.",
       );
       expect(resolver.calls).toHaveLength(0);
     }).pipe(Effect.provide(layer));

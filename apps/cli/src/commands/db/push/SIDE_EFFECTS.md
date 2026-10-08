@@ -55,19 +55,20 @@ before migrations unless `--skip-vault` is set.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                     |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success (including "up to date")                                                                                              |
-| `1`  | mutually exclusive target flags (`[db-url linked local]`)                                                                     |
-| `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                     |
-| `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                         |
-| `1`  | user declined a confirmation prompt (`context canceled`)                                                                      |
-| `1`  | seed consent for a `[remotes.*]` match declined or unattended without `--yes` (`context canceled`, suggests `--yes`)          |
-| `1`  | `--password` with `--db-url` or `--local` (`if any flags in the group [<target> password] are set none of the others can be`) |
-| `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                        |
-| `1`  | `config.toml` parse failure                                                                                                   |
-| `1`  | database connection / migration / seed / roles / vault apply failure                                                          |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                      |
+| Code | Condition                                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (including "up to date")                                                                                          |
+| `1`  | mutually exclusive target flags (`[db-url linked local]`)                                                                 |
+| `1`  | `ErrMissingLocal` — remote versions absent locally (suggests repair/pull)                                                 |
+| `1`  | `ErrMissingRemote` without `--include-all` (suggests `--include-all`)                                                     |
+| `1`  | user declined a confirmation prompt (`context canceled`)                                                                  |
+| `1`  | seed consent for a `[remotes.*]` match declined (`Seeding cancelled; nothing was changed.`)                               |
+| `1`  | seed consent for a `[remotes.*]` match needed but the run can't prompt and `--yes` is absent (`SeedConsentRequiredError`) |
+| `1`  | `--password` with `--db-url` or `--local` (`--password can't be used with --db-url. …` / `… with --local. …`)             |
+| `1`  | an invalid config value, including an unparsable `SUPABASE_*` override                                                    |
+| `1`  | `config.toml` parse failure                                                                                               |
+| `1`  | database connection / migration / seed / roles / vault apply failure                                                      |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                  |
 
 ## Output
 
@@ -112,21 +113,26 @@ stdout is payload-only. A single `result` object is emitted:
   front, so an invalid value fails the command before any connection.
 - **Credential scoping**: the linked-database password env (`SUPABASE_DB_PASSWORD`)
   is withheld when the target project differs from the one in
-  `.temp/project-ref`. The command prints `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.` to stderr and mints a
+  `.temp/project-ref`. The command prints `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` to stderr and mints a
   temporary login role instead. Unlinked workdirs use the env value.
 - **`--password`** is rejected with `--db-url` or `--local`, because those
   targets carry their own credentials.
 - **Seed consent**: when a `--linked`/`--project-ref` target matches a
-  `[remotes.<name>]` block and there are seeds to apply, the command asks
-  `The target matched [remotes.<name>]. Seed data into this database?`
-  (default no) before the roles prompt. `--yes`/`SUPABASE_YES` answers yes.
-  With a TTY stdin and non-interactive output it declines without prompting;
-  with piped stdin it reads one line and an empty answer declines. A decline
-  exits 1. Not asked on `--dry-run`.
-- **Seeding** still requires `--include-seed`. A matched remote that does not
-  declare `db.seed.enabled` seeds nothing; `--include-seed` or
-  `SUPABASE_DB_SEED_ENABLED=true` lifts that, but env alone does not make push
-  seed.
+  `[remotes.<name>]` block that does not itself declare `db.seed.enabled = true`,
+  and there are seeds to apply, the command asks
+  `Project <ref> matches [remotes.<name>]. Run <n> seed file(s) (<paths>) against it?`
+  (default no) before the roles prompt. `--yes`/`SUPABASE_YES` answers yes and
+  prints `Seeding enabled by <origin>` (e.g. `SUPABASE_DB_SEED_ENABLED (shell)`,
+  `--include-seed`). With a TTY stdin and non-interactive output, or machine
+  output on a TTY, the run can't prompt and fails with `SeedConsentRequiredError`
+  (`Seeding <ref> ([remotes.<name>]) needs confirmation and this run can't prompt.
+Nothing was changed.`) before any write; piped stdin is read for one line. An
+  answer of no exits 1 with `Seeding cancelled; nothing was changed.`
+  `--dry-run` prints whether a real run will ask or will need `--yes`.
+- **Seeding** requires `--include-seed`; `SUPABASE_DB_SEED_ENABLED=true` alone
+  does not make push seed. `--include-seed` beats `[db.seed] enabled = false`
+  in the base config, and the matched remote still asks for consent unless it
+  declares `enabled = true` itself.
 - **Prompt order**: seed consent (matched remote only) → custom roles →
   migrations → seeds; each defaults to "yes" and declining returns `context canceled`.
 - **`--dry-run`** prints the plan (roles / migrations / seeds) and applies nothing.

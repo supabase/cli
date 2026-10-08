@@ -180,7 +180,7 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from
-  `.temp/project-ref`, with a `WARN: ignoring SUPABASE_DB_PASSWORD ...` line on stderr and a
+  `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.

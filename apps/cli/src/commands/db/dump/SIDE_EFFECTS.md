@@ -85,7 +85,7 @@ shell inherits the suppressing variables and is missed.
 - **Config value precedence** (ADR 0031): explicit flag > shell env > project `.env*` > config
   (`config.json` over `config.toml`; a matched `[remotes.*]` block over the base document on
   `--linked`) > default. The linked-database password env is withheld when the target differs
-  from `.temp/project-ref`: stderr gets `WARN: ignoring SUPABASE_DB_PASSWORD because this directory is linked to project <linked>, not <target>. Pass --password to use a database password for <target>.` and a temporary login role is minted. `--password` is rejected with
+  from `.temp/project-ref`: stderr gets `Not sending SUPABASE_DB_PASSWORD to <target>: this directory is linked to <linked>. Using a temporary login role instead (needs supabase login or SUPABASE_ACCESS_TOKEN). Pass --password to use a password for <target>.` and a temporary login role is minted. `--password` is rejected with
   `--db-url` or `--local`, which carry their own credentials.
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.

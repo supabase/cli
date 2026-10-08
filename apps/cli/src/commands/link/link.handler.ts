@@ -220,13 +220,6 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
   // `link` itself writes `linked-project.json` on success (below), so `cache` only fires for
   // the failure / 404 paths.
   yield* Effect.gen(function* () {
-    if (Option.isSome(flags.password)) {
-      yield* output.raw(
-        "WARN: the --password flag is deprecated and ignored: link does not connect to the database.\n",
-        "stderr",
-      );
-    }
-
     // An empty-string positional or flag value is treated as absent, matching the resolver's
     // own treatment of an empty `--project-ref`.
     const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);

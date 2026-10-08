@@ -469,6 +469,7 @@ SecretsUnsetCancelledError
 SecretsUnsetNetworkError
 SecretsUnsetUnexpectedStatusError
 SeedConfigLoadError
+SeedConsentRequiredError
 SeedMissingProjectConfigError
 SeedMutuallyExclusiveFlagsError
 SeedWorkdirError

@@ -625,23 +625,6 @@ describe("link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
-    it.live("warns that --password is ignored without echoing the value", () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* link(flags({ password: Option.some("hunter2") }));
-        expect(out.stderrText).toContain("the --password flag is deprecated and ignored");
-        expect(out.stderrText).not.toContain("hunter2");
-      }).pipe(Effect.provide(layer));
-    });
-
-    it.live("does not warn about --password when the flag is absent", () => {
-      const { layer, out } = setup();
-      return Effect.gen(function* () {
-        yield* link(flags());
-        expect(out.stderrText).not.toContain("--password");
-      }).pipe(Effect.provide(layer));
-    });
-
     it.live("flushes telemetry and runs the linked-project cache via ensuring", () => {
       const { layer, telemetry, linkedCache } = setup();
       return Effect.gen(function* () {

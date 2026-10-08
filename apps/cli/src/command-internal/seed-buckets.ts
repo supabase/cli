@@ -12,6 +12,7 @@ import {
   describeConfigSnapshotFailure,
   loadConfigSnapshotContext,
 } from "./config-snapshot-context.ts";
+import { isConfigValueFailure } from "./config-value-passthrough.ts";
 import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {
@@ -184,7 +185,7 @@ export const seedBucketsRun = Effect.fnUntraced(function* (opts: {
               }),
           ),
           Effect.mapError((cause) =>
-            cause instanceof SeedConfigLoadError
+            cause instanceof SeedConfigLoadError || isConfigValueFailure(cause)
               ? cause
               : new SeedConfigLoadError({ message: describeConfigSnapshotFailure(cause) }),
           ),

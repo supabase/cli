@@ -204,7 +204,7 @@ transaction metadata.
   (`config.json` over `config.toml`) > default. The whole config is decoded up front, so an
   invalid value fails the command. A `--linked` target also applies a matching `[remotes.*]`
   block. The linked-database password env is withheld when the target differs from
-  `.temp/project-ref`, with a `WARN: ignoring SUPABASE_DB_PASSWORD ...` line on stderr and a
+  `.temp/project-ref`, with a `Not sending SUPABASE_DB_PASSWORD to <target>: ...` warning and a
   temporary login role instead. `--password` is rejected with `--db-url` or `--local`.
 - **pg-delta selection**: `--use-pg-delta` sets `[experimental.pgdelta].enabled` at the flag tier,
   so `--use-pg-delta=false` selects migra over env and config. The default is pg-delta when the
