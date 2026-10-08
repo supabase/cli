@@ -1,21 +1,24 @@
 # `supabase stack destroy`
 
-Permanently removes the selected managed namespace, its service registrations,
+Permanently removes each selected managed namespace, its service registrations,
 owned database data, port claims, and attached jobs. Caller-owned Storage upload
 files remain. The experimental feature flag controls command registration.
 
 ## Selection and confirmation
 
 Select the current project/branch/name, `--stack <name>`, or `--stack-id <id or unique prefix>`.
-The selectors are mutually exclusive; a missing target fails. Explicit legacy
-`-o/--output` is rejected in favor of `--output-format`.
+The selectors are mutually exclusive; a missing target fails. `--stack-id` repeats
+to select several stacks; every id resolves before confirmation, so ids that are not
+found fail together, each named, before anything is destroyed, and ids naming the
+same stack select it once.
+Explicit legacy `-o/--output` is rejected in favor of `--output-format`.
 
-Interactive text mode asks for confirmation and states that Storage uploads are
-preserved. Non-interactive and machine-output runs require `--yes`. With `--yes`
-the command prints no question; stderr states which stack and data are destroyed
-and that Storage uploads are preserved. Rejection or cancellation does not open or
-destroy a stack. Discovery may create/chmod the registry directory to 0700 but
-does not launch an owner.
+Interactive text mode asks one question for all selected stacks and states that
+Storage uploads are preserved. Non-interactive and machine-output runs require
+`--yes`. With `--yes` the command prints no question; stderr states which stacks and
+data are destroyed and that Storage uploads are preserved. Rejection or cancellation
+does not open or destroy a stack. Discovery may create/chmod the registry directory
+to 0700 but does not launch an owner.
 
 A full `--stack-id` that is not registered under the state root makes destroy
 list stack-labelled containers on Docker and Podman before confirming; an engine
@@ -36,9 +39,10 @@ cleanup holds the lease. The deleted stack's data in the state root's shared
 database volume stays, and containers of other state roots are never touched;
 for a deleted `SUPABASE_HOME`, run destroy with that `SUPABASE_HOME`.
 
-After confirmation the command opens the selected handle and destroys its entire
-namespace. Destruction may start an owner to clean up a stopped namespace.
-Cleanup failures remain errors; the command does not claim success on failure.
+After confirmation the command opens each selected handle in turn and destroys its
+entire namespace; a stack that fails to be destroyed does not stop the rest.
+Destruction may start an owner to clean up a stopped namespace. Cleanup failures
+remain errors; the command does not claim success on failure.
 Shutdown is one-way: a failed destroy leaves the stack registered and its
 owner exits; the next command retries.
 
@@ -83,9 +87,14 @@ deleting data; its configured ports are released with their listeners.
 
 Text prints `Stack <id> destroyed.` (`Removed the containers stack <id> left behind.`
 for a deleted stack's containers). JSON and stream-json success data contain
-`destroyed` (`true`) and `id`. Exit 0 on destruction, 1 on invalid flags, missing
-selection, rejected/cancelled confirmation, an unreachable engine, or cleanup
-failure, and 130 on interruption. A saved stack whose state cannot be decoded
+`destroyed` (`true`) and `id`. More than one `--stack-id` flag, even when they name
+one stack, instead reports `destroyed` (`true`) and `stacks`, one `id` entry per
+stack; when any of them fails, the command fails once with each failed stack in the
+error detail and a suggestion that retries them (after starting the engine when it
+was unreachable for all of them), and the JSON/stream-json error envelope lists the
+stacks it did destroy in `destroyed_stacks`. Exit 0 on destruction, 1 on invalid
+flags, missing selection, rejected/cancelled confirmation, an unreachable engine,
+or cleanup failure, and 130 on interruption. A saved stack whose state cannot be decoded
 (for example one saved by an older CLI with a service kind this CLI no longer
 knows) fails with an error naming its directory under the state root; removing
 that directory discards the stack. Its leftover containers are then removed

@@ -67,7 +67,7 @@ const fixture = Effect.fn("StackDestroyRuntimeUnavailableTest.fixture")(function
     stack,
     output,
     layer,
-    flags: { stack: Option.none<string>(), stackId: Option.some(stack.id) },
+    flags: { stack: Option.none<string>(), stackId: [stack.id] },
   };
 });
 
