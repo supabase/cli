@@ -1174,6 +1174,53 @@ describe("db reset", () => {
       });
     });
 
+    it.live("seeds on a local reset when SUPABASE_DB_SEED_ENABLED beats a disabled config", () => {
+      const { layer, conn } = setup(tmp.current, {
+        env: { SUPABASE_DB_SEED_ENABLED: "true" },
+        toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
+        files: { "supabase/seed.sql": "insert into t values (3);" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("insert into t values (3)"))).toBe(true);
+      });
+    });
+
+    it.live("skips seeding on a local reset when SUPABASE_DB_SEED_ENABLED is false", () => {
+      const { layer, conn } = setup(tmp.current, {
+        env: { SUPABASE_DB_SEED_ENABLED: "false" },
+        toml: 'project_id = "test"\n',
+        files: { "supabase/seed.sql": "insert into t values (4);" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("insert into t values (4)"))).toBe(false);
+      });
+    });
+
+    it.live("lets --sql-paths beat SUPABASE_DB_SEED_ENABLED=false on a local reset", () => {
+      const { layer, conn } = setup(tmp.current, {
+        env: { SUPABASE_DB_SEED_ENABLED: "false" },
+        sqlPaths: ["custom-seed.sql"],
+        toml: 'project_id = "test"\n',
+        files: { "supabase/custom-seed.sql": "insert into t values (5);" },
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* dbReset({
+          ...DEFAULT_FLAGS,
+          local: true,
+          sqlPaths: Option.some(["custom-seed.sql"]),
+        }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("insert into t values (5)"))).toBe(true);
+      });
+    });
+
     it.live("seeds from --sql-paths overriding config on a local reset", () => {
       const { layer, conn } = setup(tmp.current, {
         sqlPaths: ["custom-seed.sql"],

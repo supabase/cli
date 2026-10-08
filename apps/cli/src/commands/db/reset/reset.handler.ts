@@ -207,10 +207,7 @@ export const dbReset = Effect.fn("db.reset")(function* (flags: DbResetFlags) {
     // git-branch line) is hoisted into `resetLocalDatabase`, shared with `db schema declarative`'s
     // recovery reset; this call site keeps only version/seed-flags plumbing and the JSON envelope.
     if (cfg.isLocal) {
-      yield* resetLocalDatabase({
-        version: resolvedVersion,
-        seedFlags: { noSeed, sqlPaths },
-      });
+      yield* resetLocalDatabase({ version: resolvedVersion });
       if (output.format !== "text") {
         yield* output.success("Reset local database.", {
           target: "local",

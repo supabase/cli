@@ -1,8 +1,9 @@
 /**
  * Resets the local database in-process — shared by `db reset`'s handler and the `db schema
  * declarative`/`sync` local-reset paths, so neither needs to shell out to a separate process.
- * `db reset`'s own handler is the only caller that ever passes a non-empty
- * `version`/`seedFlags` override; the declarative callers always want the plain full reset.
+ * `db reset`'s own handler is the only caller that ever passes a non-empty `version`; the
+ * declarative callers always want the plain full reset. Seeding follows the config snapshot:
+ * `--no-seed`, `--sql-paths` and `SUPABASE_DB_SEED_ENABLED` all arrive through it.
  *
  * Always prints its own two stderr lines via `output.raw`, regardless of `output.format`, but
  * never the JSON `output.success(...)` envelope — that belongs to a top-level `db reset`
@@ -32,7 +33,6 @@ import { checkDbToml, loadProjectEnv, readDbToml } from "../db-config.toml-read.
 import { loadLocalProjectContext } from "../local-project-context.ts";
 import { hasConfiguredBuckets, seedBucketsRun } from "../seed-buckets.ts";
 import { awaitStorageReady } from "./await-storage-ready.ts";
-import { resolveResetSeedConfig } from "./db-setup.ts";
 import { buildLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { isLocalDbRunning } from "./local-db-running.ts";
 import { recreateLocalDatabase } from "./recreate-local-database.ts";
@@ -78,14 +78,9 @@ const toLogMessage = (version: string): string =>
 export interface ResetLocalDatabaseInput {
   /** The resolved reset migration version (`""` for every pending migration, `db reset`'s default). */
   readonly version: string;
-  /** `db reset`'s `--no-seed`/`--sql-paths` — see `resolveResetSeedConfig`. */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
 }
 
-const PLAIN_FULL_RESET: ResetLocalDatabaseInput = {
-  version: "",
-  seedFlags: { noSeed: false, sqlPaths: [] },
-};
+const PLAIN_FULL_RESET: ResetLocalDatabaseInput = { version: "" };
 
 const notRunning = () =>
   new ResetLocalDbNotRunningError({
@@ -180,7 +175,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       overlay: projectCatalogOverlay(toml, workdir),
       migrations: {
         workdir,
-        toml: { ...toml, seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path) },
+        toml,
         experimental,
         version: input.version,
       },
@@ -309,7 +304,6 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     version: input.version,
-    seedFlags: input.seedFlags,
     // `db reset` resolves `--experimental` earlier than this prelude does, via the nested-env
     // walk above; override the prelude's own `setup.experimental` with that value so the two
     // stay consistent.

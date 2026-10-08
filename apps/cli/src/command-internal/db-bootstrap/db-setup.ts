@@ -25,14 +25,14 @@ import {
 import { DbConnection, type DbSession } from "../db-connection.service.ts";
 import type { DbConnectError, DbExecError } from "../db-connection.errors.ts";
 import { DbConfigLoadError } from "../db-config.errors.ts";
-import { checkDbToml, resolveSeedSqlPath } from "../db-config.toml-read.ts";
+import { checkDbToml } from "../db-config.toml-read.ts";
 import { CLI_PROJECT_LABEL, localDbContainerId } from "../docker-ids.ts";
 import { DockerRun, type DockerRunOpts } from "../docker-run.service.ts";
 import { migrateAndSeed } from "../migrate-and-seed.ts";
 import { MigrationApplyError, execSqlFile } from "../migration-apply.ts";
 import { readMigrationTable } from "../migration-history.ts";
 import { statementInstallsPgNet } from "../pg-net-guidance.ts";
-import type { MigrationSeedError, SeedConfig } from "../seed.ts";
+import type { MigrationSeedError } from "../seed.ts";
 import { ramInBytes } from "../size-units.ts";
 import { MigrationVaultError, type VaultSecret, upsertVaultSecrets } from "../vault.ts";
 import { ensureImagesCached, type ImagePrepullError } from "./image-prepull.ts";
@@ -280,32 +280,6 @@ export interface StartSetupLocalDatabaseInput extends Omit<
    * `db reset`'s PG15 recreate passes its own resolved reset version instead.
    */
   readonly version: string;
-  /**
-   * `db reset`'s `--no-seed`/`--sql-paths` overrides. `db start` has neither flag, so its caller
-   * passes `{ noSeed: false, sqlPaths: [] }`, which {@link resolveResetSeedConfig} reduces to the
-   * loaded `[db.seed]` config unchanged.
-   */
-  readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
-}
-
-/**
- * Applies `db reset`'s `--no-seed`/`--sql-paths` overrides to an already-resolved `[db.seed]`
- * config: `--no-seed` disables seeding outright; otherwise a non-empty `--sql-paths` force-enables
- * seeding and overrides `sqlPaths` (each pattern resolved against `supabase/`); an empty
- * `--sql-paths` is a no-op. The two flags are mutually exclusive, validated by the caller before
- * this runs.
- */
-export function resolveResetSeedConfig(
-  seed: SeedConfig,
-  override: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> },
-  path: Path.Path,
-): SeedConfig {
-  if (override.noSeed) return { ...seed, enabled: false };
-  if (override.sqlPaths.length === 0) return seed;
-  return {
-    enabled: true,
-    sqlPaths: override.sqlPaths.map((pattern) => resolveSeedSqlPath(path, pattern)),
-  };
 }
 
 const errMessage = (e: unknown): string =>
@@ -907,7 +881,7 @@ export const startSetupLocalDatabase = (
     // env-overridden config, not re-read from the caller's raw `CliConfig`.
     yield* migrateAndSeed(session, fs, path, workdir, input.version, {
       migrationsEnabled: toml.migrationsEnabled,
-      seed: resolveResetSeedConfig(toml.seed, input.seedFlags, path),
+      seed: toml.seed,
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
@@ -1033,8 +1007,8 @@ export const runDatabaseWebhooksSetup = (input: {
 /**
  * Runs {@link startSetupLocalDatabase} against a freshly-provisioned local Postgres: dials the
  * host-facing session, resolves the {@link resolveDbSetupPrelude} prelude, then runs the setup
- * pipeline. `version`/`seedFlags` are the one difference between callers — `db start` always
- * passes `""`/a no-op override, `db reset` passes its own resolved reset version and flags.
+ * pipeline. `version` is the one difference between callers — `db start` always passes `""`,
+ * `db reset` passes its own resolved reset version.
  */
 export const runFreshDbSetup = <E>(
   spawner: Spawner,
@@ -1047,7 +1021,6 @@ export const runFreshDbSetup = <E>(
     readonly hostname: string;
     readonly dbPort: number;
     readonly version: string;
-    readonly seedFlags: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
     readonly setup: FreshDbSetupInput<E>;
   },
 ): Effect.Effect<
@@ -1094,7 +1067,6 @@ export const runFreshDbSetup = <E>(
         projectEnvValues: setup.projectEnvValues,
         debug: setup.debug,
         version: input.version,
-        seedFlags: input.seedFlags,
       });
     }),
   ).pipe(
