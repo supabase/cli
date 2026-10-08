@@ -231,7 +231,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
         interactive: false,
         yes,
         credentials,
-        resolvedConfig: { config: context.config, document: context.loaded?.document },
+        resolvedConfig: { config: context.config, document: context.snapshot.loaded.document },
         projectEnvValues: projectEnv,
         workdir,
       });
@@ -277,7 +277,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
     debug,
   );
   const {
-    context: { projectId, hostname, config, loaded },
+    context: { projectId, hostname, config, snapshot },
     values,
     bootstrapConfig,
     networkId,
@@ -332,7 +332,7 @@ export const resetLocalDatabase = Effect.fn("DbBootstrap.resetLocalDatabase")(fu
       // `SUPABASE_YES` set in `supabase/.env` auto-confirms the bucket overwrite/prune
       // prompts.
       yes,
-      resolvedConfig: { config, document: loaded?.document },
+      resolvedConfig: { config, document: snapshot.loaded.document },
       // The same nested-dotenv walk already resolved for `yes`/`experimental` above.
       projectEnvValues: projectEnv,
     }).pipe(

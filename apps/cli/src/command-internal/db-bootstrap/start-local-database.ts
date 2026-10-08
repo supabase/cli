@@ -104,7 +104,8 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // `preloadedContext`, since a second `loadCliConfig` call would double-print
   // deprecated-config-section warnings; that function returns the same context back verbatim.
   // `hostnameForValidation` here still feeds the discarded `resolveLocalConfigValues` call below.
-  const { config, loaded, hostname: hostnameForValidation } = context;
+  const { config, snapshot, hostname: hostnameForValidation } = context;
+  const document = snapshot.loaded.document ?? {};
 
   // Every duration config field is decoded in this same unconditional pass, before Docker is
   // touched or the already-running check runs. The parsed values are discarded; only the
@@ -138,9 +139,9 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   yield* wrapDbConfigOverride("auth.mfa.phone.max_frequency", () =>
     parseGoDuration(config.auth.mfa.phone.max_frequency),
   );
-  yield* wrapDbConfigOverride("auth.passkey", () => resolveGotruePasskeyWebauthn(loaded.document));
+  yield* wrapDbConfigOverride("auth.passkey", () => resolveGotruePasskeyWebauthn(document));
   yield* wrapDbConfigOverride("auth.external", () =>
-    resolveAuthExternalProviders(asRecord(loaded.document["auth"]), config.auth.external),
+    resolveAuthExternalProviders(asRecord(document["auth"]), config.auth.external),
   );
   yield* wrapDbConfigOverride("storage.file_size_limit", () =>
     ramInBytes(config.storage.file_size_limit),
@@ -177,7 +178,7 @@ export const startLocalDatabase = Effect.fn("DbBootstrap.startLocalDatabase")(fu
   // re-resolves the real values.
   yield* Effect.try({
     try: () =>
-      resolveLocalConfigValues(config, hostnameForValidation, cliSettings.workdir, loaded.document),
+      resolveLocalConfigValues(config, hostnameForValidation, cliSettings.workdir, document),
     catch: (cause) =>
       new DbConfigLoadError({
         message: cause instanceof Error ? cause.message : String(cause),

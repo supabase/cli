@@ -5,8 +5,7 @@ import { Effect, FileSystem, Option } from "effect";
 import { CliConfigKeys } from "../../src/config/cli-config-keys.ts";
 import { CliConfigValues } from "../../src/config/cli-config-values.service.ts";
 import { withConfigEnv, withEnvVar } from "./command-mocks.ts";
-import { cliConfigValuesTestLayer } from "./config-snapshot-layer.ts";
-import { dbCommandConfigValuesLayer } from "./db-command-config-values.ts";
+import { cliConfigValuesTestLayer, configValuesLayer } from "./config-snapshot-layer.ts";
 import { mockOutput } from "./mocks.ts";
 
 const STRAY_PORT = "11111";
@@ -44,9 +43,9 @@ describe("hermetic config test layers", () => {
     ),
   );
 
-  it.live("dbCommandConfigValuesLayer never reads a stray ambient SUPABASE_ variable", () =>
+  it.live("configValuesLayer never reads a stray ambient SUPABASE_ variable", () =>
     readDbPort.pipe(
-      Effect.provide(dbCommandConfigValuesLayer(mockOutput().layer)),
+      Effect.provide(configValuesLayer({ output: mockOutput().layer })),
       Effect.tap((port) =>
         Effect.sync(() => {
           expect(port.value).toBe(54322);
@@ -75,10 +74,10 @@ describe("hermetic config test layers", () => {
     ),
   );
 
-  it.live("dbCommandConfigValuesLayer sees only the env passed to it", () =>
+  it.live("configValuesLayer sees only the env passed to it", () =>
     readDbPort.pipe(
       Effect.provide(
-        dbCommandConfigValuesLayer(mockOutput().layer, { env: { [AMBIENT_NAME]: "44444" } }),
+        configValuesLayer({ output: mockOutput().layer, env: { [AMBIENT_NAME]: "44444" } }),
       ),
       Effect.tap((port) =>
         Effect.sync(() => {

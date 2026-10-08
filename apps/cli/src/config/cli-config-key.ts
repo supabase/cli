@@ -27,6 +27,7 @@ export type CliConfigKeyOrigin =
       readonly tier: "config";
       readonly origin: CliConfigValueOrigin;
       readonly remote?: string;
+      readonly file?: string;
     }
   | { readonly tier: "default" };
 
@@ -35,8 +36,6 @@ export interface CliConfigValue<A> {
   readonly origin: CliConfigKeyOrigin;
   /** The decoded value before the key's `normalize`; present only when the key normalizes. */
   readonly unnormalized?: A;
-  /** Set when the value came from a deprecated env alias, so the caller can warn. */
-  readonly deprecatedEnv?: { readonly used: string; readonly canonical: string };
 }
 
 export interface CliConfigKeyContext {
@@ -56,6 +55,8 @@ interface CliConfigConfigValue {
   readonly value: unknown;
   readonly origin: CliConfigValueOrigin;
   readonly remote?: string;
+  /** The absolute path of the config file the value was read from. */
+  readonly file?: string;
 }
 
 /** What `load(target)` offers each tier; a tier that is absent here simply cannot win. */
@@ -71,7 +72,7 @@ export interface CliConfigSources {
   readonly context: CliConfigKeyContext;
 }
 
-type CliConfigCodecKind = "bool" | "uint" | "port" | "string" | "commaList" | "literal" | "binary";
+type CliConfigCodecKind = "bool" | "uint" | "port" | "string" | "commaList" | "literal";
 
 export interface CliConfigCodec<X> {
   readonly kind: CliConfigCodecKind;
@@ -80,7 +81,8 @@ export interface CliConfigCodec<X> {
   readonly parse: (raw: string) => X | undefined;
   /** Decodes a typed document or flag value; `undefined` means invalid. */
   readonly fromConfig: (value: unknown) => X | undefined;
-  readonly describe: (path: string, raw: string, envName?: string) => string;
+  /** What a valid value is, completing "expected …" and "… is not …" in error messages. */
+  readonly expected: string;
   /** Per-entry failures of an invalid document value, reported together across keys. */
   readonly issues?: (path: string, value: unknown) => ReadonlyArray<string>;
 }
@@ -138,7 +140,7 @@ export const goBoolCodec: CliConfigCodec<boolean> = {
     if (typeof value === "number") return value !== 0;
     return typeof value === "string" ? parseGoBool(value) : undefined;
   },
-  describe: (path, raw) => `Invalid config for ${path}: cannot parse "${raw}" as a bool`,
+  expected: "true or false",
 };
 
 export const goUintCodec: CliConfigCodec<number> = {
@@ -148,24 +150,25 @@ export const goUintCodec: CliConfigCodec<number> = {
     typeof value === "string"
       ? parseUintUpTo(UINT_MAX)(value)
       : integerUpTo(Number.MAX_SAFE_INTEGER)(value),
-  describe: (path, raw) => `Failed reading config: Invalid ${path}: ${raw}.`,
+  expected: "a non-negative integer",
 };
+
+const parsePort = (raw: string) =>
+  /^0[0-9_]/.test(raw) ? undefined : parseUintUpTo(BigInt(MAX_PORT))(raw);
 
 export const portCodec: CliConfigCodec<number> = {
   kind: "port",
-  parse: parseUintUpTo(BigInt(MAX_PORT)),
+  parse: parsePort,
   fromConfig: (value) =>
-    typeof value === "string"
-      ? parseUintUpTo(BigInt(MAX_PORT))(value)
-      : integerUpTo(MAX_PORT)(value),
-  describe: (path, raw) => `Invalid config for ${path}: cannot parse "${raw}" as a port`,
+    typeof value === "string" ? parsePort(value) : integerUpTo(MAX_PORT)(value),
+  expected: "a port (0-65535)",
 };
 
 export const stringCodec: CliConfigCodec<string> = {
   kind: "string",
   parse: (raw) => raw,
   fromConfig: (value) => (typeof value === "string" ? value : undefined),
-  describe: (path, raw) => `Invalid config for ${path}: cannot parse "${raw}" as a string`,
+  expected: "a string",
 };
 
 /** Comma-separated list: no trimming, and an empty string is the empty list. */
@@ -179,7 +182,7 @@ export const commaListCodec: CliConfigCodec<ReadonlyArray<string>> = {
     }
     return undefined;
   },
-  describe: (path, raw) => `Invalid config for ${path}: cannot parse "${raw}" as a list`,
+  expected: "a comma-separated list",
 };
 
 /** A float rendered in fixed notation, with `+Inf`/`-Inf`/`NaN` and a signed zero spelled out. */
@@ -263,20 +266,8 @@ export const literalCodec = <const T extends string>(
     literals: values,
     parse: find,
     fromConfig: find,
-    describe: (path, raw) =>
-      `Invalid config for ${path}: cannot parse "${raw}" as one of ${quoted(values)}`,
+    expected: `one of ${quoted(values)}`,
   };
-};
-
-/** Strict `0`/`1`, as the experimental feature opt-ins accept. */
-export const binaryCodec: CliConfigCodec<boolean> = {
-  kind: "binary",
-  parse: (raw) => (raw === "1" ? true : raw === "0" ? false : undefined),
-  fromConfig: (value) => {
-    if (typeof value === "boolean") return value;
-    return typeof value === "string" ? binaryCodec.parse(value) : undefined;
-  },
-  describe: (_path, _raw, envName) => `${envName ?? "value"} must be 0 or 1 when set`,
 };
 
 export interface CliConfigKeySpec<X, F extends CliConfigFlagDeclaration = CliConfigNoFlags> {
@@ -430,9 +421,90 @@ const display = (value: unknown, secret: boolean): string => {
   return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
 };
 
+const displayFile = (ctx: Pick<CliConfigKeyContext, "workdir" | "path">, file: string): string =>
+  ctx.path.relative(ctx.workdir, file) || file;
+
+/** Where a value came from, in the words error and warning messages use. */
+export const describeCliConfigOrigin = (
+  origin: CliConfigKeyOrigin,
+  ctx: Pick<CliConfigKeyContext, "workdir" | "path">,
+): string => {
+  switch (origin.tier) {
+    case "flag":
+      return `--${origin.flag}`;
+    case "shell":
+      return `${origin.envName} (shell)`;
+    case "projectEnv":
+      return origin.file === undefined
+        ? `${origin.envName} (project env file)`
+        : `${origin.envName} (${displayFile(ctx, origin.file)})`;
+    case "config": {
+      const file = origin.file === undefined ? undefined : displayFile(ctx, origin.file);
+      if (origin.remote === undefined) return file ?? "config";
+      return file === undefined
+        ? `[remotes.${origin.remote}]`
+        : `[remotes.${origin.remote}] (${file})`;
+    }
+    case "default":
+      return "default";
+  }
+};
+
+interface CliConfigValueFailure {
+  readonly path: string;
+  readonly raw: string;
+  readonly expected: string;
+  readonly origin: Exclude<CliConfigKeyOrigin, { readonly tier: "default" }>;
+}
+
+/** The error for a value a codec rejected; the message names the source that supplied it. */
+const invalidCliConfigValue = (
+  failure: CliConfigValueFailure,
+  ctx: Pick<CliConfigKeyContext, "workdir" | "path">,
+): CliConfigValueError => {
+  const { path, raw, expected, origin } = failure;
+  const source = describeCliConfigOrigin(origin, ctx);
+  switch (origin.tier) {
+    case "flag":
+      return new CliConfigValueError({
+        path,
+        tier: "flag",
+        source,
+        flag: origin.flag,
+        message: `Invalid --${origin.flag}="${raw}" (sets ${path}): expected ${expected}.`,
+      });
+    case "shell":
+    case "projectEnv": {
+      const file =
+        origin.tier === "projectEnv" && origin.file !== undefined
+          ? ` in ${displayFile(ctx, origin.file)}`
+          : "";
+      return new CliConfigValueError({
+        path,
+        tier: origin.tier,
+        source,
+        envName: origin.envName,
+        message: `Invalid ${origin.envName}="${raw}"${file} (sets ${path}): expected ${expected}.`,
+      });
+    }
+    case "config": {
+      const where = describeCliConfigOrigin(origin, ctx);
+      return new CliConfigValueError({
+        path,
+        tier: "config",
+        source,
+        message:
+          where === "config"
+            ? `Invalid ${path}: "${raw}" is not ${expected}.`
+            : `Invalid ${path} in ${where}: "${raw}" is not ${expected}.`,
+      });
+    }
+  }
+};
+
 /**
  * The single precedence implementation: flag > shell > projectEnv > config > default. Pure; the
- * caller decides which sources exist and emits any deprecated-alias warning.
+ * caller decides which sources exist.
  */
 export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliConfigNoFlags>(
   key: CliConfigKey<A, X, F>,
@@ -442,18 +514,14 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
   const secret = key.secret === true;
 
   const failure = (
-    tier: CliConfigTier,
+    origin: Exclude<CliConfigKeyOrigin, { readonly tier: "default" }>,
     raw: unknown,
-    source?: { envName?: string; flag?: string },
   ) =>
     Result.fail(
-      new CliConfigValueError({
-        path: key.path,
-        tier,
-        message: key.codec.describe(key.path, display(raw, secret), source?.envName),
-        ...(source?.envName === undefined ? {} : { envName: source.envName }),
-        ...(source?.flag === undefined ? {} : { flag: source.flag }),
-      }),
+      invalidCliConfigValue(
+        { path: key.path, raw: display(raw, secret), expected: key.codec.expected, origin },
+        sources.context,
+      ),
     );
 
   const decrypt = (
@@ -473,18 +541,13 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
         );
   };
 
-  const settle = (
-    decoded: X,
-    origin: CliConfigKeyOrigin,
-    deprecatedEnv?: CliConfigValue<A>["deprecatedEnv"],
-  ): CliConfigValue<A> => {
+  const settle = (decoded: X, origin: CliConfigKeyOrigin): CliConfigValue<A> => {
     const normalized =
       key.normalize === undefined ? decoded : key.normalize(decoded, sources.context);
     return {
       value: key.wrap(normalized),
       origin,
       ...(key.normalize === undefined ? {} : { unnormalized: key.wrap(decoded) }),
-      ...(deprecatedEnv === undefined ? {} : { deprecatedEnv }),
     };
   };
 
@@ -496,9 +559,10 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
 
   const flag = sources.flags(key.path);
   if (flag !== undefined) {
+    const origin = { tier: "flag", flag: flag.flag } as const;
     const decoded = key.codec.fromConfig(flag.value);
-    if (decoded === undefined) return failure("flag", flag.value, { flag: flag.flag });
-    return Result.succeed(settle(decoded, { tier: "flag", flag: flag.flag }));
+    if (decoded === undefined) return failure(origin, flag.value);
+    return Result.succeed(settle(decoded, origin));
   }
 
   const envAllowed =
@@ -509,50 +573,45 @@ export const pickCliConfigKey = <A, X, F extends CliConfigFlagDeclaration = CliC
         const found = readEnv(tier, name);
         if (found === undefined || found.value === "") continue;
 
+        const file = "file" in found ? found.file : undefined;
+        const origin: CliConfigKeyOrigin =
+          file === undefined ? { tier, envName: name } : { tier, envName: name, file };
         const raw = expandCliConfigEnvReference(found.value, lookup);
         const plain = decrypt(tier, raw);
         if (Result.isFailure(plain)) return Result.fail(plain.failure);
         const decoded = key.codec.parse(typeof plain.success === "string" ? plain.success : raw);
-        if (decoded === undefined) return failure(tier, raw, { envName: name });
-
-        const file = "file" in found ? found.file : undefined;
-        const canonical = key.env[0];
-        return Result.succeed(
-          settle(
-            decoded,
-            file === undefined ? { tier, envName: name } : { tier, envName: name, file },
-            canonical !== undefined && name !== canonical ? { used: name, canonical } : undefined,
-          ),
-        );
+        if (decoded === undefined) return failure(origin, raw);
+        return Result.succeed(settle(decoded, origin));
       }
     }
   }
 
   const configured = key.document === false ? undefined : sources.config(key.path);
   if (configured !== undefined) {
+    const origin: CliConfigKeyOrigin = {
+      tier: "config",
+      origin: configured.origin,
+      ...(configured.remote === undefined ? {} : { remote: configured.remote }),
+      ...(configured.file === undefined ? {} : { file: configured.file }),
+    };
     const plain = decrypt("config", expandConfigValue(configured.value, lookup));
     if (Result.isFailure(plain)) return Result.fail(plain.failure);
     const decoded = key.codec.fromConfig(plain.success);
     if (decoded === undefined) {
       const issues = key.codec.issues?.(key.path, plain.success) ?? [];
       return issues.length === 0
-        ? failure("config", plain.success)
+        ? failure(origin, plain.success)
         : Result.fail(
             new CliConfigValueError({
               path: key.path,
               tier: "config",
+              source: describeCliConfigOrigin(origin, sources.context),
               message: decodingFailedMessage(issues),
               issues,
             }),
           );
     }
-    return Result.succeed(
-      settle(decoded, {
-        tier: "config",
-        origin: configured.origin,
-        ...(configured.remote === undefined ? {} : { remote: configured.remote }),
-      }),
-    );
+    return Result.succeed(settle(decoded, origin));
   }
 
   return Result.succeed({ value: key.defaultValue(sources.context), origin: { tier: "default" } });
@@ -566,12 +625,14 @@ export const pickCliEnvName = <X>(
   const raw = sources.shell(entry.name);
   if (raw === undefined || raw === "") return Result.succeed(Option.none());
   const decoded = entry.codec.parse(raw);
+  const path = entry.configKeyPath ?? entry.name;
   return decoded === undefined
     ? Result.fail(
         new CliConfigValueError({
-          path: entry.configKeyPath ?? entry.name,
+          path,
           tier: "shell",
-          message: entry.codec.describe(entry.configKeyPath ?? entry.name, raw, entry.name),
+          source: `${entry.name} (shell)`,
+          message: `Invalid ${entry.name}="${raw}" (sets ${path}): expected ${entry.codec.expected}.`,
           envName: entry.name,
         }),
       )

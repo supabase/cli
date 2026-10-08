@@ -15,7 +15,7 @@ import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
 import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
-import { DebugLogger } from "../debug-logger.service.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolveDockerDaemonEndpoint } from "../hostname.ts";
 

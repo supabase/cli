@@ -4,7 +4,7 @@ import { operationDefinitions } from "@supabase/api/effect";
 import { DateTime, Effect, FileSystem, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { lookupCliConfigEnv } from "../../../config/cli-config-key.ts";
+import { envReferenceNames } from "../../../config/cli-config-document.ts";
 import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -146,18 +146,21 @@ const loadPushConfig = Effect.fn("config.push.loadConfig")(
       projectRef: Option.some(ref),
       tolerateUnreadableLinkedRef: true,
     });
-    if (Option.isNone(snapshot.loaded)) {
+    if (!snapshot.hasConfigFile) {
       return yield* new ConfigPushLoadConfigError({
         message: yield* missingProjectConfigMessageEffect(cliSettings),
       });
     }
-    const loaded = snapshot.loaded.value;
+    const { loaded } = snapshot;
     yield* Effect.annotateCurrentSpan("config.remote_applied", loaded.appliedRemote !== undefined);
-    const projectYes = snapshot.sources.projectEnv("SUPABASE_YES")?.value;
+    const projectYes = snapshot.projectEnvValues["SUPABASE_YES"];
+    const referenced = yield* snapshot.envValues(
+      envReferenceNames(loaded.document, loaded.removedDeprecatedExternalProviders),
+    );
     return {
       loaded,
-      lookup: (name: string) => lookupCliConfigEnv(snapshot.sources, name),
-      dotenvPrivateKeys: snapshot.sources.dotenvPrivateKeys,
+      lookup: (name: string) => referenced[name],
+      dotenvPrivateKeys: snapshot.dotenvPrivateKeys,
       projectEnv: (projectYes === undefined ? {} : { SUPABASE_YES: projectYes }) as Record<
         string,
         string

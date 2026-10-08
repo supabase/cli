@@ -5,10 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
-import {
-  dbCommandConfigValuesLayer,
-  flagInput,
-} from "../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   VALID_REF,
   mockCommandSettings,
@@ -232,7 +229,8 @@ function setup(
   const layer = Layer.mergeAll(
     workdirLayer,
     out.layer,
-    dbCommandConfigValuesLayer(out.layer, {
+    configValuesLayer({
+      output: out.layer,
       flags: opts.includeSeed === true ? [flagInput("db.seed.enabled", "include-seed", true)] : [],
       env: opts.env,
     }),

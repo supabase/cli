@@ -12,7 +12,7 @@ import {
   useShadowCacheDisabled,
   useTempWorkdir,
 } from "../../../../tests/helpers/command-mocks.ts";
-import { dbCommandConfigValuesLayer } from "../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -148,7 +148,7 @@ function setup(
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
   const seam = declarativeSeamLayer.pipe(
-    Layer.provide(dbCommandConfigValuesLayer(out.layer, { env: opts.env })),
+    Layer.provide(configValuesLayer({ output: out.layer, env: opts.env })),
     Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),

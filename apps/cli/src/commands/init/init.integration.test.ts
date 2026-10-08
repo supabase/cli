@@ -374,7 +374,7 @@ describe("init", () => {
     });
   });
 
-  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not 0 or 1", () => {
+  it.live("fails closed when SUPABASE_EXPERIMENTAL_STACK is not a boolean", () => {
     const tempDir = tempRoot.current;
 
     return Effect.gen(function* () {
@@ -387,10 +387,12 @@ describe("init", () => {
 
       const error = findFailure(exit);
       expect(error["_tag"]).toBe("ExperimentalFeatureFlagError");
-      expect(error["message"]).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
+      expect(error["message"]).toBe(
+        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
+      );
 
       expect(yield* renderFailureToStderr(exit)).toEqual([
-        "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set\n",
+        'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.\n',
         "Try rerunning the command with --debug to troubleshoot the error.\n",
       ]);
     });

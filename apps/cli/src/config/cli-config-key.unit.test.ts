@@ -2,7 +2,6 @@ import { Effect, Option, Path, Result } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
-  binaryCodec,
   commaListCodec,
   goBoolCodec,
   globListCodec,
@@ -180,14 +179,14 @@ describe("pickCliConfigKey env expansion", () => {
       shell: { SUPABASE_DB_SEED_ENABLED: "env(A)", A: "env(B)", B: "true" },
     });
 
-    expect(failure.message).toContain('cannot parse "env(B)" as a bool');
+    expect(failure.message).toContain('Invalid SUPABASE_DB_SEED_ENABLED="env(B)"');
   });
 
   it("keeps an unresolved env() literal and reports it", () => {
     const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "env(MISSING)" } });
 
     expect(failure.tier).toBe("shell");
-    expect(failure.message).toContain('cannot parse "env(MISSING)" as a bool');
+    expect(failure.message).toContain('Invalid SUPABASE_DB_SEED_ENABLED="env(MISSING)"');
   });
 
   it("resolves a config-tier env() reference with a lowercase name", () => {
@@ -227,10 +226,7 @@ describe("pickCliConfigKey attributes", () => {
 
     expect(valueOf(pgdelta, { shell: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" } })).toMatchObject({
       value: true,
-      deprecatedEnv: {
-        used: "SUPABASE_EXPERIMENTAL_PG_DELTA",
-        canonical: "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
-      },
+      origin: { tier: "shell", envName: "SUPABASE_EXPERIMENTAL_PG_DELTA" },
     });
     const both = valueOf(pgdelta, {
       shell: {
@@ -239,7 +235,10 @@ describe("pickCliConfigKey attributes", () => {
       },
     });
     expect(both.value).toBe(false);
-    expect(both.deprecatedEnv).toBeUndefined();
+    expect(both.origin).toEqual({
+      tier: "shell",
+      envName: "SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
+    });
   });
 
   it("applies envRequiresSection only to the env tiers", () => {
@@ -349,18 +348,15 @@ describe("pickCliConfigKey attributes", () => {
 });
 
 describe("pickCliConfigKey failure text", () => {
-  const legacyUintMessage = (path: string, value: string) =>
-    `Failed reading config: Invalid ${path}: ${value}.`;
-
-  it("reproduces the bool message", () => {
+  it("names the env variable, the key and the expected bool", () => {
     const failure = failureOf(seed, { shell: { SUPABASE_DB_SEED_ENABLED: "maybe" } });
 
     expect(failure.message).toBe(
-      'Invalid config for db.seed.enabled: cannot parse "maybe" as a bool',
+      'Invalid SUPABASE_DB_SEED_ENABLED="maybe" (sets db.seed.enabled): expected true or false.',
     );
   });
 
-  it("reproduces the port message for a value out of range", () => {
+  it("names the expected range for a port out of range", () => {
     const port = requiredCliConfigKey({
       path: "api.port",
       env: ["SUPABASE_API_PORT"],
@@ -370,10 +366,12 @@ describe("pickCliConfigKey failure text", () => {
 
     const failure = failureOf(port, { shell: { SUPABASE_API_PORT: "70000" } });
 
-    expect(failure.message).toBe('Invalid config for api.port: cannot parse "70000" as a port');
+    expect(failure.message).toBe(
+      'Invalid SUPABASE_API_PORT="70000" (sets api.port): expected a port (0-65535).',
+    );
   });
 
-  it("reproduces the uint message and the Go base-zero grammar", () => {
+  it("rejects a malformed uint and keeps the base-prefix grammar", () => {
     const jwtExpiry = requiredCliConfigKey({
       path: "auth.jwt_expiry",
       env: ["SUPABASE_AUTH_JWT_EXPIRY"],
@@ -382,14 +380,14 @@ describe("pickCliConfigKey failure text", () => {
     });
 
     expect(failureOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "08" } }).message).toBe(
-      legacyUintMessage("auth.jwt_expiry", "08"),
+      'Invalid SUPABASE_AUTH_JWT_EXPIRY="08" (sets auth.jwt_expiry): expected a non-negative integer.',
     );
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "0x10" } }).value).toBe(16);
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "010" } }).value).toBe(8);
     expect(valueOf(jwtExpiry, { shell: { SUPABASE_AUTH_JWT_EXPIRY: "1_000" } }).value).toBe(1000);
   });
 
-  it("reproduces the enum message", () => {
+  it("lists the allowed values of an enum", () => {
     const backend = requiredCliConfigKey({
       path: "analytics.backend",
       env: ["SUPABASE_ANALYTICS_BACKEND"],
@@ -400,22 +398,7 @@ describe("pickCliConfigKey failure text", () => {
     const failure = failureOf(backend, { shell: { SUPABASE_ANALYTICS_BACKEND: "sqlite" } });
 
     expect(failure.message).toBe(
-      'Invalid config for analytics.backend: cannot parse "sqlite" as one of "postgres", "bigquery"',
-    );
-  });
-
-  it("names the variable for the strict 0/1 codec", () => {
-    const stack = optionalCliConfigKey({
-      path: "experimental.stack",
-      env: ["SUPABASE_EXPERIMENTAL_STACK"],
-      codec: binaryCodec,
-    });
-
-    const failure = failureOf(stack, { shell: { SUPABASE_EXPERIMENTAL_STACK: "true" } });
-
-    expect(failure.message).toBe("SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set");
-    expect(valueOf(stack, { shell: { SUPABASE_EXPERIMENTAL_STACK: "1" } }).value).toEqual(
-      Option.some(true),
+      'Invalid SUPABASE_ANALYTICS_BACKEND="sqlite" (sets analytics.backend): expected one of "postgres", "bigquery".',
     );
   });
 
@@ -431,6 +414,22 @@ describe("pickCliConfigKey failure text", () => {
     expect(
       failureOf(secretBool, { shell: { SUPABASE_X_SECRET: "hunter2" } }).message,
     ).not.toContain("hunter2");
+  });
+});
+
+describe("portCodec", () => {
+  it.each(["08080", "00", "0123", "070000"])("rejects the leading-zero decimal %s", (raw) => {
+    expect(portCodec.parse(raw)).toBeUndefined();
+  });
+
+  it.each([
+    ["0", 0],
+    ["8080", 8080],
+    ["0x1F90", 8080],
+    ["0o17", 15],
+    ["0b101", 5],
+  ])("accepts %s", (raw, port) => {
+    expect(portCodec.parse(raw)).toBe(port);
   });
 });
 

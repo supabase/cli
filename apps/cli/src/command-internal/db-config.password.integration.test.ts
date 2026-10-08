@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../tests/helpers/mocks.ts";
-import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { flagInput } from "../../tests/helpers/config-snapshot-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { resolveLinkedPassword } from "./db-config.layer.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 
 const LINKED = "linkedprojectrefabcd";
 const TARGET = "targetprojectrefabcd";
@@ -50,14 +51,11 @@ const run = <A, E>(
           ),
           Layer.succeed(
             CliConfigFlagInputs,
-            opts.flagPassword === undefined
-              ? new Map()
-              : new Map([
-                  [
-                    "linkedDb.password",
-                    { path: "linkedDb.password", flag: "password", value: opts.flagPassword },
-                  ],
-                ]),
+            makeCliConfigFlagInputs(
+              opts.flagPassword === undefined
+                ? []
+                : [flagInput("linkedDb.password", "password", opts.flagPassword)],
+            ),
           ),
         ),
       ),

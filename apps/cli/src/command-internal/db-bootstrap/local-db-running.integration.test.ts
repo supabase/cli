@@ -8,10 +8,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { dbCommandConfigValuesLayer } from "../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer } from "../../../tests/helpers/config-snapshot-layer.ts";
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
-import { DebugLogger } from "../debug-logger.service.ts";
+import { DebugLogger } from "../../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import {
   LocalDockerEngine,
@@ -416,7 +416,7 @@ describe("isLocalDbRunning", () => {
         Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
       );
     }).pipe(
-      Effect.provide(dbCommandConfigValuesLayer(mockOutput().layer)),
+      Effect.provide(configValuesLayer({ output: mockOutput().layer })),
       Effect.provide(spawnerLayer),
       Effect.provide(BunServices.layer),
     );

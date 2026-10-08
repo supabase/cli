@@ -151,7 +151,7 @@ export const status = Effect.fn("status")(function* (flags: StatusFlags) {
           context.hostname,
           cliSettings.workdir,
           context.projectEnvValues,
-          context.loaded?.document,
+          context.snapshot.loaded.document,
         ),
       catch: (cause) =>
         new StatusInvalidConfigError({

@@ -2,11 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
 import { mockOutput, processEnvLayer } from "../../tests/helpers/mocks.ts";
-import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
 import { sanitizeProjectId } from "../shared/config/project-id.ts";
@@ -42,7 +42,7 @@ const layerWithShellEnv = (env: Readonly<Record<string, string>> = {}) =>
           Layer.mergeAll(
             BunServices.layer,
             mockOutput().layer,
-            Layer.succeed(CliConfigFlagInputs, new Map()),
+            Layer.succeed(CliConfigFlagInputs, makeCliConfigFlagInputs()),
           ),
         ),
       ),
@@ -62,7 +62,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.loaded.appliedRemote).toBe("prod");
+        expect(context.snapshot.appliedRemote).toEqual(Option.some("prod"));
         expect(context.projectId).toBe("local");
       }),
       Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "local" })),
@@ -75,7 +75,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.loaded.appliedRemote).toBeUndefined();
+        expect(context.snapshot.appliedRemote).toEqual(Option.none());
         expect(context.projectId).toBe(sanitizeProjectId(basename(workdir)));
       }),
       Effect.provide(layerWithShellEnv()),
@@ -88,7 +88,7 @@ describe("loadLocalProjectContext", () => {
 
     return loadLocalProjectContext(workdir, (message) => new Error(message), REF).pipe(
       Effect.map((context) => {
-        expect(context.loaded.appliedRemote).toBeUndefined();
+        expect(context.snapshot.appliedRemote).toEqual(Option.none());
         expect(context.projectId).toBe("env-project");
       }),
       Effect.provide(layerWithShellEnv({ SUPABASE_PROJECT_ID: "env-project" })),

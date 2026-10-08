@@ -1,14 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Layer, Option } from "effect";
+import { Console, Context, Effect, Layer, Option } from "effect";
 import { CliOutput, Command, Flag } from "effect/unstable/cli";
 
+import { fakeConsole } from "../../tests/helpers/mocks.ts";
 import { unwrapParam } from "../command-internal/param-introspection.ts";
+import { jsonCliOutputFormatter } from "../shared/output/json-formatter.ts";
 import { textCliOutputFormatter } from "../shared/output/text-formatter.ts";
 import {
   CliConfigFlagBindings,
   CliConfigFlagInputs,
   cliConfigFlagBinding,
+  cliConfigFlagConflictError,
   withCliConfigFlags,
 } from "./cli-config-flags.ts";
 import { portCodec, requiredCliConfigKey } from "./cli-config-key.ts";
@@ -48,9 +51,9 @@ const config = {
   unrelated: Flag.string("unrelated").pipe(Flag.optional),
 } as const;
 
-const run = (args: ReadonlyArray<string>) =>
+const runInputs = (args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const seen: Array<ReadonlyMap<string, { readonly flag: string; readonly value: unknown }>> = [];
+    const seen: Array<CliConfigFlagInputs["Service"]> = [];
     const command = Command.make("probe", config).pipe(
       Command.withHandler(() =>
         Effect.gen(function* () {
@@ -64,8 +67,17 @@ const run = (args: ReadonlyArray<string>) =>
     );
     const inputs = seen[0];
     if (inputs === undefined) throw new Error("handler did not run");
-    return Object.fromEntries([...inputs].map(([path, assignment]) => [path, assignment.value]));
+    return inputs;
   }).pipe(Effect.scoped);
+
+const run = (args: ReadonlyArray<string>) =>
+  runInputs(args).pipe(
+    Effect.map((inputs) =>
+      Object.fromEntries(
+        [...inputs.assignments].map(([path, assignment]) => [path, assignment.value]),
+      ),
+    ),
+  );
 
 describe("key.flag", () => {
   it.effect("reports nothing when no bound flag is passed", () =>
@@ -92,14 +104,24 @@ describe("key.flag", () => {
     }),
   );
 
-  it.effect("rejects two flags that assign the same key, naming both", () =>
+  it.effect("records two flags that assign different values to one key as a conflict", () =>
     Effect.gen(function* () {
-      const error = yield* run(["--sql-paths", "a.sql", "--no-seed"]).pipe(Effect.flip);
+      const inputs = yield* runInputs(["--sql-paths", "a.sql", "--no-seed"]);
 
-      expect(error).toMatchObject({ _tag: "CliConfigValueError", path: "db.seed.enabled" });
-      expect(error instanceof Error && error.message).toBe(
+      expect(inputs.conflicts).toEqual([
+        { path: "db.seed.enabled", flags: ["no-seed", "sql-paths"] },
+      ]);
+      expect(cliConfigFlagConflictError(inputs.conflicts[0]!).message).toBe(
         "--no-seed and --sql-paths both set db.seed.enabled; pass only one",
       );
+    }),
+  );
+
+  it.effect("does not conflict when two flags agree on a key", () =>
+    Effect.gen(function* () {
+      const inputs = yield* runInputs(["--sql-paths", "a.sql", "--include-seed"]);
+
+      expect(inputs.conflicts).toEqual([]);
     }),
   );
 
@@ -125,6 +147,12 @@ describe("key.flag", () => {
   it.effect("binds a flag through its alias to a key without a document path", () =>
     Effect.gen(function* () {
       expect(yield* run(["-p", "s3cret"])).toEqual({ "linkedDb.password": "s3cret" });
+    }),
+  );
+
+  it.effect("treats an empty string flag value as unset", () =>
+    Effect.gen(function* () {
+      expect(yield* run(["-p", ""])).toEqual({});
     }),
   );
 
@@ -212,4 +240,31 @@ describe("flag typing", () => {
 
     expect(true).toBe(true);
   });
+});
+
+describe("config-bound flags in machine-readable help", () => {
+  it.effect("omits the binding annotation and marks a variadic flag optional", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      const command = Command.make("probe", config).pipe(
+        Command.withHandler(() => Effect.void),
+        withCliConfigFlags(config),
+      );
+
+      yield* Command.runWith(command, { version: "0.0.0-test" })(["--help"]).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            CliOutput.layer(jsonCliOutputFormatter()),
+            Layer.succeed(Console.Console, console),
+          ),
+        ),
+      );
+
+      const help = JSON.parse(calls[0]?.replace(/^log:/, "") ?? "{}");
+      const sqlPaths = help.doc.flags.find((flag: { name: string }) => flag.name === "sql-paths");
+      expect(help.doc).not.toHaveProperty("annotations");
+      expect(sqlPaths).toMatchObject({ required: false });
+    }).pipe(Effect.scoped),
+  );
 });

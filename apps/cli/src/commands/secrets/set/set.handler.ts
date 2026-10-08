@@ -6,15 +6,13 @@ import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { collectEnvReferences } from "../../../config/cli-config-document.ts";
-import { lookupCliConfigEnv } from "../../../config/cli-config-key.ts";
-import { isCliConfigEnvName } from "../../../config/cli-config-keys.ts";
 import {
   CliConfigValues,
   type CliConfigSnapshot,
 } from "../../../config/cli-config-values.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -99,17 +97,7 @@ interface ConfigSecretSource {
   readonly snapshot: CliConfigSnapshot | undefined;
 }
 
-const resolveEnvValues = (snapshot: CliConfigSnapshot, names: Iterable<string>) =>
-  Effect.gen(function* () {
-    const values: Record<string, string> = {};
-    for (const name of names) {
-      const value = isCliConfigEnvName(name)
-        ? lookupCliConfigEnv(snapshot.sources, name)
-        : yield* snapshot.lookupEnv(name);
-      if (value !== undefined) values[name] = value;
-    }
-    return values;
-  }).pipe(Effect.orDie);
+const noConfigSecrets: ConfigSecretSource = { edgeRuntime: undefined, snapshot: undefined };
 
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
@@ -134,7 +122,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     const merged = new Map<string, string>();
     // A malformed config.toml (or sibling .env/.env.local) is swallowed here (logged, not
     // fatal) and proceeds with empty config-sourced secrets — env-file and positional-arg
-    // secrets still work.
+    // secrets still work. An invalid value in an unrelated key is left out of the snapshot
+    // rather than failing it.
     //
     // Passing `ref` merges a matching `[remotes.*]` block over the base config before decode,
     // so a schema-decode error on a remote target recovers that remote's override, not the base
@@ -143,23 +132,29 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
       appliedRemote === undefined
         ? Effect.void
         : output.raw(`Loading config override: [remotes.${appliedRemote}]\n`, "stderr");
-    const fromSnapshot = (snapshot: CliConfigSnapshot): ConfigSecretSource => ({
-      edgeRuntime: snapshot.materialized.config.edge_runtime,
-      snapshot,
-    });
-    const recovered = (edgeRuntime: CliConfig["edge_runtime"] | undefined): ConfigSecretSource => ({
-      edgeRuntime,
-      snapshot: undefined,
-    });
-    const source = yield* configValues
-      .load({ workdir: cliSettings.workdir, projectRef: Option.some(ref) })
+    const snapshot = yield* configValues
+      .load({
+        workdir: cliSettings.workdir,
+        projectRef: Option.some(ref),
+        tolerateInvalid: true,
+      })
       .pipe(
-        Effect.flatMap((snapshot) =>
+        Effect.flatMap((loadedSnapshot) =>
           // Printed unconditionally as soon as a matching `[remotes.*]` block is found, ahead of
           // the (possibly failing) decode — other handlers surface this the same way, so this
           // path must not silently drop it.
-          reportRemote(Option.getOrUndefined(snapshot.appliedRemote)).pipe(
-            Effect.as(fromSnapshot(snapshot)),
+          reportRemote(Option.getOrUndefined(loadedSnapshot.appliedRemote)).pipe(
+            Effect.andThen(
+              loadedSnapshot.invalid.length === 0
+                ? Effect.void
+                : debugLogger.debug(
+                    "failed to parse supabase/config.toml: schema validation failed",
+                  ),
+            ),
+            Effect.as<ConfigSecretSource>({
+              edgeRuntime: loadedSnapshot.materialized.config.edge_runtime,
+              snapshot: loadedSnapshot,
+            }),
           ),
         ),
         Effect.catchTags({
@@ -179,42 +174,29 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
               Effect.andThen(
                 debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
               ),
-              Effect.as(recovered(recoverEdgeRuntimeConfig(cause)?.edge_runtime)),
+              Effect.as<ConfigSecretSource>({
+                edgeRuntime: recoverEdgeRuntimeConfig(cause)?.edge_runtime,
+                snapshot: undefined,
+              }),
             );
           },
-          // An invalid value in an unrelated key fails the snapshot before decode; recover from the
-          // merged document the failure carries, the same way a schema-decode error does.
-          CliConfigValueError: (cause) =>
-            reportRemote(cause.appliedRemote).pipe(
-              Effect.andThen(
-                debugLogger.debug("failed to parse supabase/config.toml: schema validation failed"),
-              ),
-              Effect.as(
-                recovered(
-                  cause.mergedDocument === undefined
-                    ? undefined
-                    : recoverEdgeRuntimeConfig({ document: Redacted.value(cause.mergedDocument) })
-                        ?.edge_runtime,
-                ),
-              ),
-            ),
           // A malformed dotenv file or `[remotes.*]` block (duplicate or malformed `project_id`)
           // has no parsed document to recover a subtree from — recover to `undefined`, not
           // `recoverEdgeRuntimeConfig`.
           CliConfigLoadError: (cause) =>
-            debugLogger.debug(cause.message).pipe(Effect.as(recovered(undefined))),
+            debugLogger.debug(cause.message).pipe(Effect.as(noConfigSecrets)),
           DuplicateRemoteProjectIdError: (cause) =>
-            debugLogger.debug(cause.message).pipe(Effect.as(recovered(undefined))),
+            debugLogger.debug(cause.message).pipe(Effect.as(noConfigSecrets)),
           InvalidRemoteProjectIdError: (cause) =>
-            debugLogger.debug(cause.message).pipe(Effect.as(recovered(undefined))),
+            debugLogger.debug(cause.message).pipe(Effect.as(noConfigSecrets)),
           ProjectRefReadError: (cause) =>
-            debugLogger.debug(cause.message).pipe(Effect.as(recovered(undefined))),
+            debugLogger.debug(cause.message).pipe(Effect.as(noConfigSecrets)),
         }),
       );
-    const { edgeRuntime } = source;
+    const { edgeRuntime } = snapshot;
     if (edgeRuntime !== undefined) {
       const envSnapshot =
-        source.snapshot ??
+        snapshot.snapshot ??
         (yield* configValues
           .load({
             workdir: cliSettings.workdir,
@@ -225,7 +207,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           .pipe(Effect.orElseSucceed(() => undefined)));
       const names = new Set<string>();
       collectEnvReferences(edgeRuntime, names);
-      const values = envSnapshot === undefined ? {} : yield* resolveEnvValues(envSnapshot, names);
+      const values =
+        envSnapshot === undefined ? {} : yield* envSnapshot.envValues(names).pipe(Effect.orDie);
       const resolved = yield* resolveCliConfigSubtree(edgeRuntime, { values }, "edge_runtime", {
         goViperCompat: true,
       });

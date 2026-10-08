@@ -4,7 +4,10 @@ import { cliErrorCode, formatCliErrorsForDisplay } from "../cli/subcommand-flag-
 
 export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
   return {
-    formatHelpDoc: (doc: HelpDoc.HelpDoc) => JSON.stringify({ _tag: "Help", doc }),
+    formatHelpDoc: (doc: HelpDoc.HelpDoc) => {
+      const { annotations: _annotations, ...serializable } = doc;
+      return JSON.stringify({ _tag: "Help", doc: serializable });
+    },
     formatCliError: (error) =>
       JSON.stringify({
         _tag: "Error",

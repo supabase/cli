@@ -1,14 +1,11 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Option } from "effect";
 
-import { withHermeticShellTier } from "../../tests/helpers/config-snapshot-layer.ts";
-import { mockOutput } from "../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../tests/helpers/config-snapshot-layer.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
-import { CliConfigFlagInputs } from "./cli-config-flags.ts";
 import { CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import { cliConfigFamilyKey, cliConfigRegistry, type AnyCliConfigKey } from "./cli-config-keys.ts";
-import { cliConfigValuesLayer } from "./cli-config-values.layer.ts";
 import { CliConfigValues } from "./cli-config-values.service.ts";
 
 const LINKED = "abcdefghijklmnopqrst";
@@ -108,22 +105,7 @@ const readKey = (scenario: Scenario, shell: Readonly<Record<string, string>>) =>
       `project_id = "base"\n${scenario.base}\n[remotes.staging]\nproject_id = "${LINKED}"\n${scenario.remote}`,
       { prefix: "supabase-cli-remote-precedence-", supabaseEnv: "GITHUB_SECRET=g\n" },
     );
-    const layer = Layer.effect(
-      CliConfigValues,
-      Effect.map(Effect.service(CliConfigValues), (real) => withHermeticShellTier(real, shell)),
-    ).pipe(
-      Layer.provide(
-        cliConfigValuesLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              BunServices.layer,
-              mockOutput().layer,
-              Layer.succeed(CliConfigFlagInputs, new Map()),
-            ),
-          ),
-        ),
-      ),
-    );
+    const layer = configValuesLayer({ env: shell });
     const snapshot = yield* CliConfigValues.use((values) =>
       values.load({ workdir: root, projectRef: Option.some(LINKED) }),
     ).pipe(Effect.provide(layer));

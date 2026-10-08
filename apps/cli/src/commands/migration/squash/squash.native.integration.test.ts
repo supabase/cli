@@ -20,7 +20,7 @@ import {
 } from "../../../command-internal/global-flags.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { dbConnectionLayer } from "../../../command-internal/db-connection.sql-pg.layer.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { DockerRun } from "../../../command-internal/docker-run.service.ts";
 import { StackApi, stackApiLayer } from "../../../command-internal/stack-api.ts";
 import { stackBackendLayer } from "../../../command-internal/stack-backend.ts";

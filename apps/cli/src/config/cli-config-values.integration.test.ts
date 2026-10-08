@@ -1,19 +1,29 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import type { CliConfig } from "@supabase/config";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { loadCliConfig } from "@supabase/config/internal";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
-import { withEnvVar } from "../../tests/helpers/command-mocks.ts";
-import { cliConfigValuesTestLayer } from "../../tests/helpers/config-snapshot-layer.ts";
+import { withConfigEnv } from "../../tests/helpers/command-mocks.ts";
+import { definedEnv } from "../../tests/helpers/config-env-pins.ts";
+import {
+  cliConfigValuesTestLayer,
+  configValuesLayer,
+  flagInput,
+} from "../../tests/helpers/config-snapshot-layer.ts";
 import { mockOutput } from "../../tests/helpers/mocks.ts";
 import { createStackConfigProject } from "../../tests/helpers/stack-config.ts";
 import { loadStackConfig } from "../command-internal/stack-config.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
-import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
-import { CliConfigFlagInputs } from "./cli-config-flags.ts";
+import type { CliConfigFlagAssignment } from "./cli-config-flags.ts";
 import { CLI_CONFIG_FAMILIES, type CliConfigFamilyId } from "./cli-config-key-annotations.ts";
-import { CliConfigKeys, cliConfigFamilyKey } from "./cli-config-keys.ts";
-import { cliConfigValuesLayer } from "./cli-config-values.layer.ts";
+import {
+  CliConfigKeys,
+  cliConfigDocumentOnlyPaths,
+  cliConfigFamilyKey,
+  cliConfigRegistry,
+} from "./cli-config-keys.ts";
 import { CliConfigValues } from "./cli-config-values.service.ts";
 
 const LINKED = "abcdefghijklmnopqrst";
@@ -26,31 +36,10 @@ const familyKey = (id: CliConfigFamilyId, name: string, field: string) => {
   return key;
 };
 
-const flagInput = (path: string, flag: string, value: unknown) =>
-  [path, { path, flag, value }] as const;
-
-const makeLayer = (flags: ReadonlyArray<ReturnType<typeof flagInput>> = []) => {
-  const output = mockOutput();
-  const layer = cliConfigValuesLayer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        BunServices.layer,
-        output.layer,
-        Layer.succeed(CliConfigFlagInputs, new Map(flags)),
-      ),
-    ),
-  );
-  return { layer, output };
-};
-
 const withShell = <A, E, R>(
   shell: Readonly<Record<string, string | undefined>>,
   body: Effect.Effect<A, E, R>,
-) =>
-  Object.entries(shell).reduce(
-    (effect, [name, value]) => withEnvVar(name, value, effect),
-    body.pipe(Effect.provide(cliConfigProviderLayer)),
-  );
+) => withConfigEnv(definedEnv(shell), body);
 
 const link = (root: string, ref: string) =>
   Effect.gen(function* () {
@@ -100,7 +89,7 @@ describe("CliConfigValues credential scoping", () => {
             supabaseEnv: "SUPABASE_DB_PASSWORD=from-file\n",
           });
           if (scenario.linkedTo !== undefined) yield* link(root, scenario.linkedTo);
-          const { layer } = makeLayer();
+          const layer = configValuesLayer();
 
           const snapshot = yield* CliConfigValues.use((values) =>
             values.load({ workdir: root, projectRef: scenario.target }),
@@ -109,7 +98,7 @@ describe("CliConfigValues credential scoping", () => {
 
           if (scenario.withheld) {
             expect(password.value).toEqual(Option.none());
-            expect(snapshot.sources.withheldEnv).toEqual([
+            expect(snapshot.withheldEnv).toEqual([
               {
                 path: "linkedDb.password",
                 envName: "SUPABASE_DB_PASSWORD",
@@ -121,7 +110,7 @@ describe("CliConfigValues credential scoping", () => {
           } else {
             expect(password.value).toEqual(Option.some("from-shell"));
             expect(password.origin).toMatchObject({ tier: "shell" });
-            expect(snapshot.sources.withheldEnv).toEqual([]);
+            expect(snapshot.withheldEnv).toEqual([]);
           }
         }).pipe(
           Effect.provide(BunServices.layer),
@@ -137,13 +126,13 @@ describe("CliConfigValues credential scoping", () => {
         supabaseEnv: "SUPABASE_DB_PASSWORD=from-file\n",
       });
       yield* link(root, LINKED);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
       ).pipe(Effect.provide(layer));
 
-      expect(snapshot.sources.withheldEnv).toMatchObject([
+      expect(snapshot.withheldEnv).toMatchObject([
         { envName: "SUPABASE_DB_PASSWORD", tier: "projectEnv" },
       ]);
     }).pipe(
@@ -157,7 +146,9 @@ describe("CliConfigValues credential scoping", () => {
     Effect.gen(function* () {
       const root = yield* project('project_id = "scoped"\n');
       yield* link(root, LINKED);
-      const { layer } = makeLayer([flagInput("linkedDb.password", "password", "explicit")]);
+      const layer = configValuesLayer({
+        flags: [flagInput("linkedDb.password", "password", "explicit")],
+      });
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
@@ -178,7 +169,7 @@ describe("CliConfigValues credential scoping", () => {
         'project_id = "scoped"\n[auth.captcha]\nenabled = true\nprovider = "hcaptcha"\nsecret = "from-config"\n',
       );
       yield* link(root, LINKED);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
@@ -212,7 +203,7 @@ major_version = 15
   it.live("merges the matching remote and keeps its implicit seed default in the config tier", () =>
     Effect.gen(function* () {
       const root = yield* project(remoteConfig);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(LINKED) }),
@@ -238,7 +229,9 @@ major_version = 15
   it.live("lets env and flags beat the matched remote, including its seed default", () =>
     Effect.gen(function* () {
       const root = yield* project(remoteConfig);
-      const { layer } = makeLayer([flagInput("db.seed.enabled", "include-seed", true)]);
+      const layer = configValuesLayer({
+        flags: [flagInput("db.seed.enabled", "include-seed", true)],
+      });
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(LINKED) }),
@@ -259,10 +252,58 @@ major_version = 15
     ),
   );
 
+  it.live("warns once for each env value that beats a value the matched remote declares", () =>
+    Effect.gen(function* () {
+      const root = yield* project(remoteConfig);
+      const output = mockOutput();
+      const layer = configValuesLayer({ output: output.layer });
+
+      yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+      ).pipe(Effect.provide(layer));
+
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "SUPABASE_DB_MAJOR_VERSION overrides db.major_version, which [remotes.staging] declares.",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_DB_MAJOR_VERSION: "17", SUPABASE_DB_PORT: "54400" }, effect),
+      Effect.scoped,
+    ),
+  );
+
+  it.live("logs where each non-default value came from under --debug", () =>
+    Effect.gen(function* () {
+      const root = yield* project(remoteConfig);
+      const lines: Array<string> = [];
+      const debugLogger = Layer.succeed(DebugLogger, {
+        debug: (message) => Effect.sync(() => void lines.push(message)),
+        http: () => Effect.void,
+      });
+      const layer = configValuesLayer({ debugLogger });
+
+      yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.some(LINKED) }),
+      ).pipe(Effect.provide(layer));
+
+      expect(lines).toContainEqual(expect.stringContaining("config: db.major_version from"));
+      expect(lines).toContainEqual(expect.stringContaining("SUPABASE_DB_PORT"));
+      expect(lines.some((line) => line.startsWith("config: api.port"))).toBe(false);
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      (effect) => withShell({ SUPABASE_DB_PORT: "54400" }, effect),
+      Effect.scoped,
+    ),
+  );
+
   it.live("selects the remote named by SUPABASE_REMOTES_<NAME>_PROJECT_ID", () =>
     Effect.gen(function* () {
       const root = yield* project(remoteConfig);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
@@ -279,7 +320,7 @@ major_version = 15
   it.live("applies no remote when the ref matches none", () =>
     Effect.gen(function* () {
       const root = yield* project(remoteConfig);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.some(OTHER) }),
@@ -298,7 +339,7 @@ major_version = 15
         `[remotes.a]\nproject_id = "${LINKED}"\n[remotes.b]\nproject_id = "${LINKED}"\n`,
       );
       const malformed = yield* project('[remotes.a]\nproject_id = "short"\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
       const load = (root: string) =>
         CliConfigValues.use((values) =>
           values.load({ workdir: root, projectRef: Option.none() }),
@@ -320,7 +361,7 @@ describe("CliConfigValues snapshots", () => {
       const root = yield* project("[db]\nport = 54399\n");
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       yield* Effect.gen(function* () {
         const values = yield* CliConfigValues;
@@ -343,10 +384,11 @@ describe("CliConfigValues snapshots", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
-  it.live("warns once on stderr when a deprecated alias supplies the value", () =>
+  it.live("warns once per load when a deprecated alias supplies the value", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "alias"\n');
-      const { layer, output } = makeLayer();
+      const output = mockOutput();
+      const layer = configValuesLayer({ output: output.layer });
 
       yield* Effect.gen(function* () {
         const values = yield* CliConfigValues;
@@ -357,9 +399,13 @@ describe("CliConfigValues snapshots", () => {
         expect(first.value).toBe(true);
       }).pipe(Effect.provide(layer));
 
-      expect(output.stderrText).toBe(
-        "WARN: SUPABASE_EXPERIMENTAL_PG_DELTA is deprecated. Please use SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED instead.\n",
-      );
+      expect(output.messages).toEqual([
+        {
+          type: "warn",
+          message:
+            "SUPABASE_EXPERIMENTAL_PG_DELTA is deprecated. Please use SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED instead. It now overrides config.toml, so false turns pg-delta off.",
+        },
+      ]);
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SUPABASE_EXPERIMENTAL_PG_DELTA: "true" }, effect),
@@ -370,7 +416,7 @@ describe("CliConfigValues snapshots", () => {
   it.live("fails the load with the env name, tier and key when an override does not decode", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "bad"\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const error = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -383,7 +429,7 @@ describe("CliConfigValues snapshots", () => {
         envName: "SUPABASE_API_PORT",
       });
       expect(error.message).toBe(
-        'Invalid config for api.port: cannot parse "not-a-port" as a port',
+        'Invalid SUPABASE_API_PORT="not-a-port" (sets api.port): expected a port (0-65535).',
       );
     }).pipe(
       Effect.provide(BunServices.layer),
@@ -395,7 +441,7 @@ describe("CliConfigValues snapshots", () => {
   it.live("names the flag when a flag value does not decode", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "bad"\n');
-      const { layer } = makeLayer([flagInput("api.port", "port", 70000)]);
+      const layer = configValuesLayer({ flags: [flagInput("api.port", "port", 70000)] });
 
       const error = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -405,10 +451,51 @@ describe("CliConfigValues snapshots", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live("fails the first load when two flags set one key to different values", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "bad"\n');
+      const layer = configValuesLayer({
+        flags: [
+          flagInput("db.seed.enabled", "no-seed", false),
+          flagInput("db.seed.enabled", "sql-paths", true),
+        ],
+      });
+
+      const error = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "CliConfigFlagConflictError",
+        path: "db.seed.enabled",
+        flags: ["no-seed", "sql-paths"],
+        message: "--no-seed and --sql-paths both set db.seed.enabled; pass only one",
+      });
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
+  it.live("loads when two flags set one key to the same value", () =>
+    Effect.gen(function* () {
+      const root = yield* project('project_id = "ok"\n');
+      const layer = configValuesLayer({
+        flags: [
+          flagInput("db.seed.enabled", "include-seed", true),
+          flagInput("db.seed.enabled", "sql-paths", true),
+        ],
+      });
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+
+      expect((yield* snapshot.get(CliConfigKeys.db.seed.enabled)).value).toBe(true);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("keeps package errors visible by their own tag", () =>
     Effect.gen(function* () {
       const root = yield* project("[db\nport = ");
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const error = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -421,7 +508,7 @@ describe("CliConfigValues snapshots", () => {
   it.live("fails the load when a config value does not decode", () =>
     Effect.gen(function* () {
       const root = yield* project("[db]\nport = 70000\n");
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const error = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -441,7 +528,7 @@ describe("CliConfigValues secrets", () => {
 
   const readCaptcha = (root: string) =>
     Effect.gen(function* () {
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
       ).pipe(Effect.provide(layer));
@@ -486,7 +573,7 @@ describe("CliConfigValues secrets", () => {
   it.live("fails the load instead of passing ciphertext through when decryption fails", () =>
     Effect.gen(function* () {
       const root = yield* project(captcha(CIPHERTEXT));
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const error = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -503,7 +590,7 @@ describe("CliConfigValues secrets", () => {
         'project_id = "scoped"\n[auth]\nsite_url = "env(SUPABASE_DB_PASSWORD)"\n',
       );
       yield* link(root, LINKED);
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
       const siteUrl = (ref: string) =>
         CliConfigValues.use((values) =>
           values.load({ workdir: root, projectRef: Option.some(ref) }),
@@ -528,7 +615,7 @@ describe("CliConfigValues reads", () => {
       const fs = yield* FileSystem.FileSystem;
       const empty = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-empty-" });
       const configured = yield* project('project_id = "seeded"\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
       const read = (workdir: string) =>
         CliConfigValues.use((values) =>
           Effect.flatMap(values.load({ workdir, projectRef: Option.none() }), (snapshot) =>
@@ -545,7 +632,7 @@ describe("CliConfigValues reads", () => {
   it.live("keeps the unnormalized value beside a normalized config value", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "seeded"\n[db.seed]\nsql_paths = ["./a.sql"]\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const read = yield* CliConfigValues.use((values) =>
         Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
@@ -569,7 +656,7 @@ describe("CliConfigValues reads", () => {
       const root = path.join(parent, "My Project");
       yield* fs.makeDirectory(path.join(root, "supabase"), { recursive: true });
       yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "[db]\nport = 54399\n");
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const read = yield* CliConfigValues.use((values) =>
         Effect.flatMap(
@@ -587,7 +674,7 @@ describe("CliConfigValues reads", () => {
       const root = yield* project(
         'project_id = "weak"\n[db.seed]\nenabled = "TRUE"\nsql_paths = "a.sql,b.sql"\n[db.pooler]\nenabled = "env(POOLER_ON)"\n',
       );
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -610,7 +697,7 @@ describe("CliConfigValues reads", () => {
   it.live("sanitizes project_id once, whichever tier supplies it", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "my app"\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
       const read = CliConfigValues.use((values) =>
         Effect.flatMap(values.load({ workdir: root, projectRef: Option.none() }), (snapshot) =>
           snapshot.get(CliConfigKeys.projectId),
@@ -628,7 +715,7 @@ describe("CliConfigValues reads", () => {
       const root = yield* project(
         'project_id = "agree"\n[api]\nport = 54399\n[auth.email.smtp]\nhost = "smtp.test"\nport = 587\nuser = "u"\npass = "p"\nadmin_email = "a@b.test"\n',
       );
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -647,12 +734,44 @@ describe("CliConfigValues reads", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live("resolves every registry key to the value the materialized config holds", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        'project_id = "parity"\n[api]\nport = 54399\n[db.seed]\nsql_paths = ["./a.sql"]\n[auth.email.smtp]\nhost = "smtp.test"\nport = 587\nuser = "u"\npass = "p"\nadmin_email = "a@b.test"\n[auth.hook.send_email]\nenabled = true\nuri = "pg-functions://postgres/public/send"\n',
+      );
+      const layer = configValuesLayer();
+
+      const snapshot = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.none() }),
+      ).pipe(Effect.provide(layer));
+
+      const mismatches: Array<string> = [];
+      let compared = 0;
+      for (const key of cliConfigRegistry.keys) {
+        if (key.document === false || cliConfigDocumentOnlyPaths.has(key.path)) continue;
+        compared += 1;
+        const resolved = key.toDocument((yield* snapshot.get(key)).value);
+        const materialized = key.path
+          .split(".")
+          .reduce<unknown>(
+            (node, segment) =>
+              typeof node === "object" && node !== null ? Reflect.get(node, segment) : undefined,
+            snapshot.materialized.config,
+          );
+        if (JSON.stringify(resolved) !== JSON.stringify(materialized)) mismatches.push(key.path);
+      }
+
+      expect(compared).toBeGreaterThan(100);
+      expect(mismatches).toEqual([]);
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("lists family entries from the registry and the merged document", () =>
     Effect.gen(function* () {
       const root = yield* project(
         'project_id = "families"\n[auth.email.template.invite]\nsubject = "Join"\n',
       );
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* CliConfigValues.use((values) =>
         values.load({ workdir: root, projectRef: Option.none() }),
@@ -667,27 +786,37 @@ describe("CliConfigValues reads", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
-  it.live("reads names the registry does not own and rejects names it does", () =>
-    Effect.gen(function* () {
-      const root = yield* project('project_id = "lookup"\n', {
-        supabaseEnv: "SUPABASE_UNOWNED_FROM_FILE=file\n",
-      });
-      const { layer } = makeLayer();
+  it.live(
+    "resolves env names with the shell before the project env file, omitting unset ones",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* project('project_id = "lookup"\n', {
+          supabaseEnv: "SUPABASE_UNOWNED_FROM_FILE=file\nSUPABASE_API_PORT=1111\n",
+        });
+        const layer = configValuesLayer();
 
-      const snapshot = yield* CliConfigValues.use((values) =>
-        values.load({ workdir: root, projectRef: Option.none() }),
-      ).pipe(Effect.provide(layer));
+        const snapshot = yield* CliConfigValues.use((values) =>
+          values.load({ workdir: root, projectRef: Option.none() }),
+        ).pipe(Effect.provide(layer));
 
-      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_FROM_SHELL")).toBe("shell");
-      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_FROM_FILE")).toBe("file");
-      expect(yield* snapshot.lookupEnv("SUPABASE_UNOWNED_UNSET")).toBeUndefined();
-      const exit = yield* snapshot.lookupEnv("SUPABASE_API_PORT").pipe(Effect.exit);
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      (effect) => withShell({ SUPABASE_UNOWNED_FROM_SHELL: "shell" }, effect),
-      Effect.scoped,
-    ),
+        expect(
+          yield* snapshot.envValues([
+            "SUPABASE_UNOWNED_FROM_SHELL",
+            "SUPABASE_UNOWNED_FROM_FILE",
+            "SUPABASE_UNOWNED_UNSET",
+            "SUPABASE_API_PORT",
+          ]),
+        ).toEqual({
+          SUPABASE_UNOWNED_FROM_SHELL: "shell",
+          SUPABASE_UNOWNED_FROM_FILE: "file",
+          SUPABASE_API_PORT: "2222",
+        });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        (effect) =>
+          withShell({ SUPABASE_UNOWNED_FROM_SHELL: "shell", SUPABASE_API_PORT: "2222" }, effect),
+        Effect.scoped,
+      ),
   );
 });
 
@@ -803,10 +932,10 @@ policy = "per_worker"
     root: string,
     options: {
       readonly ref?: string;
-      readonly flags?: ReadonlyArray<ReturnType<typeof flagInput>>;
+      readonly flags?: ReadonlyArray<CliConfigFlagAssignment>;
     } = {},
   ) => {
-    const { layer } = makeLayer(options.flags);
+    const layer = configValuesLayer({ flags: options.flags });
     return CliConfigValues.use((values) =>
       values.load({
         workdir: root,
@@ -950,10 +1079,10 @@ describe("CliConfigValues loaded document", () => {
   it.live("exposes the declared document without the defaults materialized for consumers", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
-      const loaded = Option.getOrThrow(snapshot.loaded);
+      const { loaded } = snapshot;
 
       expect(loaded.document).toEqual({ project_id: "declared", api: { max_rows: 10 } });
       expect(loaded.config.api.max_rows).toBe(10);
@@ -962,14 +1091,30 @@ describe("CliConfigValues loaded document", () => {
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
+  it.live("matches the package loader when no flag or env overrides anything", () =>
+    Effect.gen(function* () {
+      const root = yield* project(
+        '[db.seed]\nsql_paths = ["./a.sql", "./seeds/*.sql"]\n[auth.hook.send_email]\nenabled = true\nuri = "pg-functions://postgres/public/send"\n[api]\nmax_rows = 10\n',
+      );
+      const layer = configValuesLayer();
+
+      const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
+      const packaged = yield* loadCliConfig(root, { goViperCompat: true });
+
+      expect(packaged).not.toBeNull();
+      expect(snapshot.loaded).toEqual(packaged);
+      expect(snapshot.loaded.document).not.toHaveProperty("project_id");
+    }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
+  );
+
   it.live("applies an env override to the loaded config", () =>
     Effect.gen(function* () {
       const root = yield* project('project_id = "declared"\n[api]\nmax_rows = 10\n');
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
-      expect(Option.getOrThrow(snapshot.loaded).config.api.max_rows).toBe(25);
+      expect(snapshot.loaded.config.api.max_rows).toBe(25);
     }).pipe(
       Effect.provide(BunServices.layer),
       (effect) => withShell({ SUPABASE_API_MAX_ROWS: "25" }, effect),
@@ -977,15 +1122,15 @@ describe("CliConfigValues loaded document", () => {
     ),
   );
 
-  it.live("is none when the workdir has no config file", () =>
+  it.live("reports no config file when the workdir has none", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-cli-config-none-" });
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const snapshot = yield* load(root, Option.none()).pipe(Effect.provide(layer));
 
-      expect(snapshot.loaded).toEqual(Option.none());
+      expect(snapshot.hasConfigFile).toBe(false);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
@@ -997,7 +1142,7 @@ describe("CliConfigValues loaded document", () => {
       yield* fs.makeDirectory(path.join(root, "supabase", ".temp", "project-ref"), {
         recursive: true,
       });
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
       const strict = yield* load(root, Option.some(LINKED)).pipe(
         Effect.provide(layer),
@@ -1012,11 +1157,11 @@ describe("CliConfigValues loaded document", () => {
       ).pipe(Effect.provide(layer));
 
       expect(Exit.isFailure(strict)).toBe(true);
-      expect(tolerant.sources.withheldEnv).toEqual([]);
+      expect(tolerant.withheldEnv).toEqual([]);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 
-  it.live("carries the merged document and applied remote on an invalid value failure", () =>
+  it.live("names the source of an invalid value and leaves it out when tolerated", () =>
     Effect.gen(function* () {
       const root = yield* project(
         `project_id = "declared"
@@ -1026,16 +1171,24 @@ port = "not-a-port"
 project_id = "${LINKED}"
 `,
       );
-      const { layer } = makeLayer();
+      const layer = configValuesLayer();
 
-      const exit = yield* load(root, Option.some(LINKED)).pipe(Effect.provide(layer), Effect.exit);
+      const failure = yield* load(root, Option.some(LINKED)).pipe(
+        Effect.flip,
+        Effect.provide(layer),
+      );
+      const tolerated = yield* CliConfigValues.use((values) =>
+        values.load({ workdir: root, projectRef: Option.some(LINKED), tolerateInvalid: true }),
+      ).pipe(Effect.provide(layer));
 
-      const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
       expect(failure).toMatchObject({
         _tag: "CliConfigValueError",
-        appliedRemote: "staging",
+        path: "db.port",
+        source: "supabase/config.toml",
+        message: 'Invalid db.port in supabase/config.toml: "not-a-port" is not a port (0-65535).',
       });
-      expect((failure as { mergedDocument?: unknown } | undefined)?.mergedDocument).toBeDefined();
+      expect(tolerated.invalid.map((entry) => entry.path)).toEqual(["db.port"]);
+      expect(tolerated.materialized.config.db.port).toBe(54322);
     }).pipe(Effect.provide(BunServices.layer), (effect) => withShell({}, effect), Effect.scoped),
   );
 });

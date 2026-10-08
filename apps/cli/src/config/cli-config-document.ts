@@ -19,7 +19,7 @@ export const sameDocumentValue = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
 /** A deep copy of the plain-object and array structure of a parsed document. */
-export const cloneDocument = (value: unknown): unknown => {
+const cloneDocument = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(cloneDocument);
   if (isDocumentRecord(value)) {
     return Object.fromEntries(
@@ -27,6 +27,12 @@ export const cloneDocument = (value: unknown): unknown => {
     );
   }
   return value;
+};
+
+/** {@link cloneDocument} for a table; anything else clones to an empty table. */
+export const cloneDocumentRecord = (value: unknown): Record<string, unknown> => {
+  const copy = cloneDocument(value);
+  return isDocumentRecord(copy) ? copy : {};
 };
 
 /** Writes `value` at a dotted path, creating intermediate tables and replacing non-table values. */
@@ -99,25 +105,6 @@ export const pruneDocumentPaths = (
   }
 };
 
-/** A copy of `value` without the leaves at `paths`; only the tables along those paths are copied. */
-export const omitDocumentPaths = <T extends Record<string, unknown>>(
-  value: T,
-  paths: Iterable<string>,
-): T => {
-  const omit = (node: unknown, segments: ReadonlyArray<string>): unknown => {
-    const [head, ...rest] = segments;
-    if (head === undefined || !isDocumentRecord(node) || !Object.hasOwn(node, head)) return node;
-    if (rest.length === 0) {
-      const { [head]: _removed, ...remaining } = node;
-      return remaining;
-    }
-    return { ...node, [head]: omit(node[head], rest) };
-  };
-  let result: unknown = value;
-  for (const path of paths) result = omit(result, path.split("."));
-  return result as T;
-};
-
 /** Adds the name of every whole-value `env(NAME)` string in `value`, including inside `Redacted`. */
 export const collectEnvReferences = (value: unknown, out: Set<string>): void => {
   if (typeof value === "string") {
@@ -130,4 +117,11 @@ export const collectEnvReferences = (value: unknown, out: Set<string>): void => 
   } else if (isDocumentRecord(value)) {
     for (const item of Object.values(value)) collectEnvReferences(item, out);
   }
+};
+
+/** The names every whole-value `env(NAME)` string in `trees` refers to. */
+export const envReferenceNames = (...trees: ReadonlyArray<unknown>): ReadonlySet<string> => {
+  const names = new Set<string>();
+  collectEnvReferences(trees, names);
+  return names;
 };

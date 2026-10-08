@@ -108,11 +108,12 @@ export const buildLocalDbContainerInputs = (
 
     const context =
       preloadedContext ?? (yield* loadLocalProjectContext(workdir, mapError, projectRef));
-    const { config, projectEnvValues, loaded, hostname, projectId } = context;
+    const { config, projectEnvValues, snapshot, hostname, projectId } = context;
+    const document = snapshot.loaded.document ?? {};
     const experimental = yield* resolveExperimentalWithProjectEnv(projectEnvValues);
 
     const values = yield* Effect.try({
-      try: () => resolveLocalConfigValues(config, hostname, workdir, loaded.document),
+      try: () => resolveLocalConfigValues(config, hostname, workdir, document),
       catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
     });
 
@@ -206,7 +207,7 @@ export const buildLocalDbContainerInputs = (
         Effect.mapError((cause) => mapError(cause.message)),
       ),
       apiUrl: values.apiUrl,
-      authExternalUrl: resolveAuthExternalUrl(loaded.document),
+      authExternalUrl: resolveAuthExternalUrl(document),
       siteUrl: values.authSiteUrl,
       anonKey: values.anonKey,
       serviceRoleKey: values.serviceRoleKey,

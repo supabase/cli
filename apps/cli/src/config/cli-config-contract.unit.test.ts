@@ -44,11 +44,6 @@ const samplePair = (key: AnyCliConfigKey): readonly [Sample, Sample] => {
         { env: "true", typed: true },
         { env: "false", typed: false },
       ];
-    case "binary":
-      return [
-        { env: "1", typed: true },
-        { env: "0", typed: false },
-      ];
     case "uint":
       return [
         { env: "7", typed: 7 },
@@ -327,20 +322,20 @@ describe("config key contract", () => {
     expect(failures).toEqual([]);
   });
 
-  it("reports a deprecated alias as the winning env name with its canonical name", () => {
+  it("reports a deprecated alias as the winning env name", () => {
     const aliased = subjects.filter(({ key }) => key.env.length > 1);
     expect(aliased.map(({ key }) => key.path)).toEqual(Object.keys(CLI_CONFIG_ENV_ALIASES));
 
     for (const { key } of aliased) {
-      const [canonical, ...aliases] = key.env;
+      const [, ...aliases] = key.env;
       for (const alias of aliases) {
         const picked = pickCliConfigKey(
           key,
           sourcesFor(key, { winner: "shell", envName: alias, sectionPresent: true }),
         );
-        expect(Result.isSuccess(picked) && picked.success.deprecatedEnv).toEqual({
-          used: alias,
-          canonical,
+        expect(Result.isSuccess(picked) && picked.success.origin).toEqual({
+          tier: "shell",
+          envName: alias,
         });
       }
     }

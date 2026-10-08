@@ -87,9 +87,9 @@ import {
 import {
   describeConfigSnapshotFailure,
   loadLocalSnapshotContext,
-  snapshotEnvValues,
   type LocalSnapshotContext,
 } from "../../command-internal/config-snapshot-context.ts";
+import { envReferenceNames } from "../../config/cli-config-document.ts";
 import { CliConfigValueError } from "../../config/cli-config.errors.ts";
 import { seedBucketsRun } from "../../command-internal/seed-buckets.ts";
 import { cleanupStartSecrets } from "../../command-internal/start-secrets-cleanup.ts";
@@ -735,7 +735,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
     // Edge Runtime as the literal string `"env(API_KEY)"` instead of the real secret.
     const resolvedFunctions = yield* resolveCliConfigSubtree(
       config.functions,
-      { values: snapshotEnvValues(context.snapshot, config.functions) },
+      { values: yield* context.snapshot.envValues(envReferenceNames(config.functions)) },
       "functions",
       { goViperCompat: true },
     );
@@ -1291,7 +1291,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // dropped.
           const resolvedEdgeRuntime = yield* resolveCliConfigSubtree(
             config.edge_runtime,
-            { values: snapshotEnvValues(context.snapshot, config.edge_runtime) },
+            { values: yield* context.snapshot.envValues(envReferenceNames(config.edge_runtime)) },
             "edge_runtime",
             { goViperCompat: true },
           );
@@ -1302,7 +1302,7 @@ export const start = Effect.fn("start")(function* (flags: StartFlags) {
           // `checkDbToml` already validates every secret is decryptable, but discards the
           // decrypted plaintext there.
           const rawEdgeRuntimeSecrets = toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets;
-          const { dotenvPrivateKeys } = context.snapshot.sources;
+          const { dotenvPrivateKeys } = context.snapshot;
           const edgeRuntimeSecrets: Record<string, string> = {};
           for (const [secretName, secretValue] of Object.entries(rawEdgeRuntimeSecrets)) {
             if (!isEncryptedSecret(secretValue)) {

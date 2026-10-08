@@ -1,7 +1,7 @@
 import { ConfigProvider, Effect, FileSystem, Option, Path } from "effect";
 
 import { parseDotEnv } from "./dotenv.ts";
-import { CliConfigLoadError } from "./cli-config.errors.ts";
+import { CliConfigLoadError } from "./cli-config-load.errors.ts";
 
 const DEFAULT_SUPABASE_ENV = "development";
 

@@ -34,7 +34,7 @@ import {
 } from "../../tests/helpers/mocks.ts";
 import { VALID_TOKEN, mockCommandSettings } from "../../tests/helpers/command-mocks.ts";
 import { pinnedConfigProvider } from "../../tests/helpers/config-env-pins.ts";
-import { withHermeticShellTier } from "../../tests/helpers/config-snapshot-layer.ts";
+import { flagInput, withHermeticShellTier } from "../../tests/helpers/config-snapshot-layer.ts";
 import { unusedGateway } from "../../tests/helpers/unused-stack.ts";
 import {
   DebugFlag,
@@ -43,10 +43,10 @@ import {
   ProfileFlag,
   WorkdirFlag,
 } from "./global-flags.ts";
-import { CliConfigFlagInputs } from "../config/cli-config-flags.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../config/cli-config-values.layer.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { identityStitchLayer } from "./identity-stitch.ts";
 import { dbConfigLayer, dbConfigResolverLayer } from "./db-config.layer.ts";
 import { DbConfigResolver } from "./db-config.service.ts";
@@ -91,14 +91,11 @@ function buildResolver(
   const deps = Layer.mergeAll(
     Layer.succeed(
       CliConfigFlagInputs,
-      opts.flagPassword === undefined
-        ? new Map()
-        : new Map([
-            [
-              "linkedDb.password",
-              { path: "linkedDb.password", flag: "password", value: opts.flagPassword },
-            ],
-          ]),
+      makeCliConfigFlagInputs(
+        opts.flagPassword === undefined
+          ? []
+          : [flagInput("linkedDb.password", "password", opts.flagPassword)],
+      ),
     ),
     mockCommandSettings({
       workdir,

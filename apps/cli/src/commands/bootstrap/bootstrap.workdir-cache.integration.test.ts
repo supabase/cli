@@ -38,7 +38,8 @@ import { debugLoggerLayer } from "../../command-internal/debug-logger.layer.ts";
 import { identityStitchLayer } from "../../command-internal/identity-stitch.ts";
 import { commandSettingsLayer } from "../../config/command-settings.layer.ts";
 import { linkedProjectCacheLayer } from "../../telemetry/linked-project-cache.layer.ts";
-import { CliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { flagInput } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { TemplateService } from "./bootstrap.templates.ts";
 import { bootstrap } from "./bootstrap.handler.ts";
@@ -229,12 +230,7 @@ describe("bootstrap linked-project cache location", () => {
                 out.layer,
                 Layer.succeed(
                   CliConfigFlagInputs,
-                  new Map([
-                    [
-                      "linkedDb.password",
-                      { path: "linkedDb.password", flag: "password", value: "s3cret" },
-                    ],
-                  ]),
+                  makeCliConfigFlagInputs([flagInput("linkedDb.password", "password", "s3cret")]),
                 ),
               ),
             ),

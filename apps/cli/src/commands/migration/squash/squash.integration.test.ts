@@ -60,7 +60,7 @@ import {
   type DbSession,
   type PgConnInput,
 } from "../../../command-internal/db-connection.service.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { BundledPostgresClient } from "../../../command-internal/bundled-postgres-client.ts";
 import { DockerRun, type DockerRunOpts } from "../../../command-internal/docker-run.service.ts";
 import type { MigrationSquashFlags } from "./squash.command.ts";

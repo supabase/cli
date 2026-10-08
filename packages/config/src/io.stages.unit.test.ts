@@ -10,10 +10,19 @@ import {
   loadCliConfig,
   mergeParsedCliConfig,
   parseCliConfigDocumentFile,
-  parseMergeCliConfig,
+  type ParseMergeCliConfigOptions,
 } from "./io.ts";
 
 const roots: Array<string> = [];
+
+const parseMerge = (
+  cwd: string,
+  options: ParseMergeCliConfigOptions & { readonly search?: boolean; readonly tomlOnly?: boolean },
+) =>
+  Effect.gen(function* () {
+    const parsed = yield* parseCliConfigDocumentFile(cwd, options);
+    return parsed === null ? null : yield* mergeParsedCliConfig(parsed, options);
+  });
 
 async function makeProject(toml: string): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), "supabase-config-stages-"));
@@ -49,7 +58,7 @@ describe("config pipeline stages", () => {
     const cwd = await makeProject(toml);
     const staged = await run(
       Effect.gen(function* () {
-        const merged = yield* parseMergeCliConfig(cwd, {
+        const merged = yield* parseMerge(cwd, {
           search: false,
           selectRemote: () => "staging",
         });
@@ -84,9 +93,7 @@ describe("config pipeline stages", () => {
 
   test("a selector that matches nothing leaves the base document", async () => {
     const cwd = await makeProject(toml);
-    const merged = await run(
-      parseMergeCliConfig(cwd, { search: false, selectRemote: () => "missing" }),
-    );
+    const merged = await run(parseMerge(cwd, { search: false, selectRemote: () => "missing" }));
 
     expect(merged?.appliedRemote).toBeUndefined();
     expect(merged?.remoteLeafPaths).toEqual([]);
@@ -96,7 +103,7 @@ describe("config pipeline stages", () => {
     const cwd = await makeProject(toml);
     const decoded = await run(
       Effect.gen(function* () {
-        const merged = yield* parseMergeCliConfig(cwd, {
+        const merged = yield* parseMerge(cwd, {
           search: false,
           selectRemote: () => undefined,
         });
@@ -117,7 +124,7 @@ describe("config pipeline stages", () => {
     const cwd = await makeProject('project_id = "env(PROJECT_NAME)"\n');
     const decoded = await run(
       Effect.gen(function* () {
-        const merged = yield* parseMergeCliConfig(cwd, {
+        const merged = yield* parseMerge(cwd, {
           search: false,
           selectRemote: () => undefined,
         });
@@ -148,11 +155,11 @@ project_id = "abcdefghijklmnopqrst"
     const cwd = await makeProject(duplicateToml);
 
     const unvalidated = await run(
-      parseMergeCliConfig(cwd, { search: false, selectRemote: () => undefined }),
+      parseMerge(cwd, { search: false, selectRemote: () => undefined }),
     );
     const failure = await run(
       Effect.flip(
-        parseMergeCliConfig(cwd, {
+        parseMerge(cwd, {
           search: false,
           selectRemote: () => undefined,
           validateRemotes: true,
@@ -169,7 +176,7 @@ project_id = "abcdefghijklmnopqrst"
 
     const failure = await run(
       Effect.flip(
-        parseMergeCliConfig(cwd, {
+        parseMerge(cwd, {
           search: false,
           selectRemote: () => undefined,
           validateRemotes: true,
@@ -190,9 +197,7 @@ project_id = "abcdefghijklmnopqrst"
         return yield* mergeParsedCliConfig(parsed, { selectRemote: () => "staging" });
       }),
     );
-    const whole = await run(
-      parseMergeCliConfig(cwd, { search: false, selectRemote: () => "staging" }),
-    );
+    const whole = await run(parseMerge(cwd, { search: false, selectRemote: () => "staging" }));
 
     expect(composed).toEqual(whole);
     expect(composed?.appliedRemote).toBe("staging");

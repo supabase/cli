@@ -10,6 +10,7 @@ import { type ServiceCreationInput as ServiceCreationType } from "@supabase/stac
 import { Crypto, Effect, Data, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import { envReferenceNames } from "../config/cli-config-document.ts";
 import { CliConfigKeys, type AnyCliConfigKey } from "../config/cli-config-keys.ts";
 import type {
   CliConfigMaterialized,
@@ -21,7 +22,6 @@ import {
   describeConfigSnapshotFailure,
   loadConfigSnapshotContext,
   resolveSnapshotPasskeyWebauthn,
-  snapshotEnvValues,
 } from "./config-snapshot-context.ts";
 import { resolveAuthConfig } from "./stack-auth-config.ts";
 import { parseGoDuration } from "./go-duration.ts";
@@ -351,12 +351,13 @@ export const loadStackConfig = Effect.fn("StackConfig.load")(
       });
       const functionEnvironments = Object.fromEntries(
         yield* Effect.forEach(Object.entries(validatedConfig.functions), ([name, config]) =>
-          resolveCliConfigSubtree(
-            config.env,
-            { values: snapshotEnvValues(snapshot, config.env) },
-            `functions.${name}.env`,
-            { goViperCompat: true },
-          ).pipe(
+          snapshot.envValues(envReferenceNames(config.env)).pipe(
+            Effect.mapError((error) => new StackConfigError({ message: error.message })),
+            Effect.flatMap((values) =>
+              resolveCliConfigSubtree(config.env, { values }, `functions.${name}.env`, {
+                goViperCompat: true,
+              }),
+            ),
             Effect.map(
               (env) =>
                 [

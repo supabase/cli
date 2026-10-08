@@ -39,10 +39,7 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
-import {
-  dbCommandConfigValuesLayer,
-  flagInput,
-} from "../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -1003,7 +1000,7 @@ function setup(
   ];
   const layer = Layer.mergeAll(
     out.layer,
-    dbCommandConfigValuesLayer(out.layer, { flags: seedFlagInputs, env: opts.env }),
+    configValuesLayer({ output: out.layer, flags: seedFlagInputs, env: opts.env }),
     conn.layer,
     resolver.layer,
     mockCommandSettings({ workdir }),

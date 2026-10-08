@@ -185,7 +185,7 @@ describe("local container inputs precedence goldens", () => {
         const { context, setup, ...rest } = inputs;
         const golden = {
           ...rest,
-          appliedRemote: context.loaded?.appliedRemote,
+          appliedRemote: Option.getOrUndefined(context.snapshot.appliedRemote),
           projectEnvValues: configEnvOnly(context.projectEnvValues),
           projectId: context.projectId,
           setup: {

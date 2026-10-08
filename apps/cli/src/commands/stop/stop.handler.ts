@@ -68,7 +68,7 @@ const resolveSearchProjectIdFilter = Effect.fn("stop.resolveSearchProjectIdFilte
         context.config,
         context.hostname,
         cliSettings.workdir,
-        context.loaded?.document,
+        context.snapshot.loaded.document,
       ),
     catch: (cause) =>
       new StopConfigLoadError({

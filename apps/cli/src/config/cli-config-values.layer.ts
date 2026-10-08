@@ -15,45 +15,41 @@ import {
   Layer,
   Option,
   Path,
-  Redacted,
   Result,
 } from "effect";
 
-import type { LoadedCliConfig } from "@supabase/config";
 import { readProjectRefFile } from "../shared/config/temp-paths.ts";
 import { collectDotenvPrivateKeys } from "../shared/config/vault-decrypt.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
-import { CliConfigLoadError } from "../shared/config/cli-config.errors.ts";
+import { CliConfigLoadError } from "../shared/config/cli-config-load.errors.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { Output } from "../shared/output/output.service.ts";
-import { CLI_CONFIG_EMPTY_DEFAULTS, CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
+import { CLI_CONFIG_ENV_ALIAS_NOTES, CLI_CONFIG_FAMILIES } from "./cli-config-key-annotations.ts";
 import {
-  cloneDocument,
+  cloneDocumentRecord,
   collectEnvReferences,
   documentLeafPaths,
   getDocumentValue,
   isDocumentRecord,
-  omitDocumentPaths,
   pruneDocumentPaths,
   sameDocumentValue,
   setDocumentValue,
 } from "./cli-config-document.ts";
-import { CliConfigFlagInputs, type CliConfigFlagDeclaration } from "./cli-config-flags.ts";
+import { CliConfigFlagInputs, cliConfigFlagConflictError } from "./cli-config-flags.ts";
 import {
+  decodingFailedMessage,
+  describeCliConfigOrigin,
   lookupCliConfigEnv,
   pickCliConfigKey,
-  type CliConfigKey,
-  decodingFailedMessage,
   type CliConfigKeyOrigin,
   type CliConfigSources,
   type CliConfigValue,
 } from "./cli-config-key.ts";
 import {
-  cliConfigDocumentOnlyPaths,
   cliConfigFamilyEnvNames,
   cliConfigFamilyKey,
   cliConfigRegistry,
   cliRemoteProjectIdEnvName,
-  isCliConfigEnvName,
   staticCliConfigFamilyNames,
   type AnyCliConfigKey,
 } from "./cli-config-keys.ts";
@@ -71,6 +67,7 @@ class LoadKey extends Data.Class<{
   readonly projectRef: Option.Option<string>;
   readonly ignoreConfigFile: boolean;
   readonly tolerateUnreadableLinkedRef: boolean;
+  readonly tolerateInvalid: boolean;
 }> {}
 
 const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfigDocument => ({
@@ -84,24 +81,6 @@ const emptyMergedDocument = (workdir: string, separator: string): MergedCliConfi
   appliedRemote: undefined,
   remoteLeafPaths: [],
 });
-
-/** The package's decode without what `materialized` adds: defaults the overlay wrote are not declarations. */
-const declaredOnly = (
-  loaded: LoadedCliConfig,
-  defaultWrites: ReadonlyArray<string>,
-  declared: unknown,
-): LoadedCliConfig => {
-  const copy = loaded.document === undefined ? undefined : cloneDocument(loaded.document);
-  if (isDocumentRecord(copy)) pruneDocumentPaths(copy, defaultWrites, declared);
-  return {
-    ...loaded,
-    config: omitDocumentPaths(
-      loaded.config,
-      defaultWrites.filter((path) => CLI_CONFIG_EMPTY_DEFAULTS.test(path)),
-    ),
-    document: isDocumentRecord(copy) ? copy : loaded.document,
-  };
-};
 
 const registryEnvNames = cliConfigRegistry.keys.flatMap((key) => key.env);
 
@@ -127,22 +106,40 @@ const documentEnvNames = (rawDocument: Record<string, unknown>): ReadonlySet<str
 const needsCoercion = (key: AnyCliConfigKey, written: unknown, raw: unknown): boolean =>
   key.codec.kind !== "string" && !sameDocumentValue(written, raw);
 
-const writesToDraft = (
+const declaredWrite = (
   key: AnyCliConfigKey,
-  origin: CliConfigKeyOrigin,
-  written: unknown,
+  picked: CliConfigValue<unknown>,
   raw: unknown,
-): boolean => {
-  switch (origin.tier) {
+): unknown => {
+  const written = key.toDocument(picked.unnormalized ?? picked.value);
+  switch (picked.origin.tier) {
     case "flag":
     case "shell":
     case "projectEnv":
-      return true;
+      return written;
     case "config":
-      return key.secret === true || key.normalize !== undefined || needsCoercion(key, written, raw);
+      return key.secret === true || needsCoercion(key, written, raw) ? written : undefined;
     case "default":
-      return key.materializeDefault === true || key.normalize !== undefined;
+      return undefined;
   }
+};
+
+const materializedWrite = (
+  key: AnyCliConfigKey,
+  picked: CliConfigValue<unknown>,
+  declared: unknown,
+): unknown => {
+  if (picked.origin.tier === "default") {
+    return key.materializeDefault === true || key.normalize !== undefined
+      ? key.toDocument(picked.value)
+      : undefined;
+  }
+  return key.normalize === undefined ? declared : key.toDocument(picked.value);
+};
+
+const aliasWarning = (used: string, canonical: string): string => {
+  const note = CLI_CONFIG_ENV_ALIAS_NOTES[used];
+  return `${used} is deprecated. Please use ${canonical} instead.${note === undefined ? "" : ` ${note}`}`;
 };
 
 export const cliConfigValuesLayer = Layer.effect(
@@ -152,7 +149,7 @@ export const cliConfigValuesLayer = Layer.effect(
     const path = yield* Path.Path;
     const output = yield* Output;
     const flagInputs = yield* CliConfigFlagInputs;
-    const warnedAliases = new Set<string>();
+    const debugLogger = yield* Effect.serviceOption(DebugLogger);
 
     const withPlatform = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
       effect.pipe(
@@ -161,6 +158,9 @@ export const cliConfigValuesLayer = Layer.effect(
       );
 
     const loadSnapshot = Effect.fn("CliConfigValues.load")(function* (target: LoadKey) {
+      const [conflict] = flagInputs.conflicts;
+      if (conflict !== undefined) return yield* cliConfigFlagConflictError(conflict);
+
       const parsed = target.ignoreConfigFile
         ? null
         : yield* withPlatform(parseCliConfigDocumentFile(target.workdir, { search: false }));
@@ -239,17 +239,6 @@ export const cliConfigValuesLayer = Layer.effect(
       });
 
       const document = merged?.document;
-      const withMergedDocument = (failure: CliConfigValueError) =>
-        new CliConfigValueError({
-          path: failure.path,
-          tier: failure.tier,
-          message: failure.message,
-          ...(failure.envName === undefined ? {} : { envName: failure.envName }),
-          ...(failure.flag === undefined ? {} : { flag: failure.flag }),
-          ...(failure.issues === undefined ? {} : { issues: failure.issues }),
-          ...(document === undefined ? {} : { mergedDocument: Redacted.make(document) }),
-          ...(appliedRemote === undefined ? {} : { appliedRemote }),
-        });
       const remoteLeaves = new Set(merged?.remoteLeafPaths.map((leaf) => leaf.join(".")));
       const localLeaves = documentLeafPaths(merged?.rawDocument ?? {});
       const appliedRemote = merged?.appliedRemote;
@@ -261,7 +250,7 @@ export const cliConfigValuesLayer = Layer.effect(
       });
 
       const sources: CliConfigSources = {
-        flags: (flagPath) => flagInputs.get(flagPath),
+        flags: (flagPath) => flagInputs.assignments.get(flagPath),
         shell: shellFor,
         projectEnv: projectEnvFor,
         config: (configPath) => {
@@ -285,6 +274,7 @@ export const cliConfigValuesLayer = Layer.effect(
             ...(source === "remote" && appliedRemote !== undefined
               ? { remote: appliedRemote }
               : {}),
+            ...(merged === null ? {} : { file: merged.path }),
           };
         },
         dotenvPrivateKeys,
@@ -317,39 +307,55 @@ export const cliConfigValuesLayer = Layer.effect(
         }
       }
 
-      const draftSource = cloneDocument(document ?? {});
-      const draft = isDocumentRecord(draftSource) ? draftSource : {};
+      const declaredDraft = cloneDocumentRecord(document);
+      const materializedDraft = cloneDocumentRecord(declaredDraft);
       const origins = new Map<string, CliConfigKeyOrigin>();
-      const defaultWrites: Array<string> = [];
+      const invalid: Array<CliConfigValueError> = [];
       const entryFailures: Array<CliConfigValueError> = [];
+      const aliasWarnings: Array<string> = [];
+      const overrideWarnings: Array<string> = [];
       for (const key of enumerated.values()) {
         const picked = pickCliConfigKey(key, sources);
         if (Result.isFailure(picked)) {
-          if (picked.failure.issues === undefined) {
-            return yield* withMergedDocument(picked.failure);
+          if (target.tolerateInvalid) {
+            invalid.push(picked.failure);
+            pruneDocumentPaths(declaredDraft, [key.path], document);
+            pruneDocumentPaths(materializedDraft, [key.path], document);
+          } else if (picked.failure.issues === undefined) {
+            return yield* picked.failure;
+          } else {
+            entryFailures.push(picked.failure);
           }
-          entryFailures.push(picked.failure);
           continue;
         }
-        const { value, origin } = picked.success;
+        const { origin } = picked.success;
         origins.set(key.path, origin);
-        const written = key.toDocument(value);
-        if (!writesToDraft(key, origin, written, sources.config(key.path)?.value)) continue;
-        if (written === undefined) continue;
-        setDocumentValue(draft, key.path, written);
-        if (origin.tier === "default") defaultWrites.push(key.path);
+        if (origin.tier === "shell" || origin.tier === "projectEnv") {
+          const canonical = key.env[0];
+          if (canonical !== undefined && origin.envName !== canonical) {
+            aliasWarnings.push(aliasWarning(origin.envName, canonical));
+          }
+          if (appliedRemote !== undefined && remoteLeaves.has(key.path)) {
+            overrideWarnings.push(
+              `${origin.envName} overrides ${key.path}, which [remotes.${appliedRemote}] declares.`,
+            );
+          }
+        }
+        const declared = declaredWrite(key, picked.success, sources.config(key.path)?.value);
+        if (declared !== undefined) setDocumentValue(declaredDraft, key.path, declared);
+        const materialized = materializedWrite(key, picked.success, declared);
+        if (materialized !== undefined) setDocumentValue(materializedDraft, key.path, materialized);
       }
       const [firstFailure] = entryFailures;
       if (firstFailure !== undefined) {
         const issues = entryFailures.flatMap((failure) => failure.issues ?? []);
-        return yield* withMergedDocument(
-          new CliConfigValueError({
-            path: firstFailure.path,
-            tier: "config",
-            message: decodingFailedMessage(issues),
-            issues,
-          }),
-        );
+        return yield* new CliConfigValueError({
+          path: firstFailure.path,
+          tier: "config",
+          message: decodingFailedMessage(issues),
+          issues,
+          ...(firstFailure.source === undefined ? {} : { source: firstFailure.source }),
+        });
       }
 
       const envValues: Record<string, string> = {};
@@ -358,20 +364,29 @@ export const cliConfigValuesLayer = Layer.effect(
         if (value !== undefined) envValues[name] = value;
       }
 
+      const mergedForDecode = merged ?? emptyMergedDocument(target.workdir, path.sep);
       const loaded = yield* withPlatform(
-        decodeMergedCliConfig(merged ?? emptyMergedDocument(target.workdir, path.sep), {
+        decodeMergedCliConfig(mergedForDecode, {
           envValues,
           goViperCompat: true,
-          document: draft,
+          document: declaredDraft,
+        }),
+      );
+      const materializedLoaded = yield* withPlatform(
+        decodeMergedCliConfig(mergedForDecode, {
+          envValues,
+          goViperCompat: true,
+          document: materializedDraft,
+          silent: true,
         }),
       );
 
       const materialized: CliConfigMaterialized = {
-        config: loaded.config,
+        config: materializedLoaded.config,
         originAt: (configPath) => {
           const known = origins.get(configPath);
           if (known !== undefined) return known;
-          const decoded = loaded.valueOrigins?.find(
+          const decoded = materializedLoaded.valueOrigins?.find(
             (candidate) => candidate.path.join(".") === configPath,
           );
           return decoded === undefined
@@ -384,62 +399,51 @@ export const cliConfigValuesLayer = Layer.effect(
         },
       };
 
-      const decodedValue = <A, X, F extends CliConfigFlagDeclaration>(
-        key: CliConfigKey<A, X, F>,
-        origin: CliConfigKeyOrigin,
-      ): Result.Result<A, CliConfigValueError> => {
-        const raw = getDocumentValue(
-          cliConfigDocumentOnlyPaths.has(key.path) ? loaded.document : loaded.config,
-          key.path,
-        );
-        if (raw === undefined) return Result.succeed(key.defaultValue(sources.context));
-        const decoded = key.codec.fromConfig(raw);
-        return decoded === undefined
-          ? Result.fail(
-              new CliConfigValueError({
-                path: key.path,
-                tier: origin.tier,
-                message: key.codec.describe(key.path, String(raw)),
-              }),
-            )
-          : Result.succeed(key.wrap(decoded));
-      };
-
-      const get: CliConfigSnapshot["get"] = <A, X, F extends CliConfigFlagDeclaration>(
-        key: CliConfigKey<A, X, F>,
-      ) =>
+      const get: CliConfigSnapshot["get"] = (key) =>
         Effect.gen(function* () {
           const picked = pickCliConfigKey(key, sources);
           if (Result.isFailure(picked)) return yield* picked.failure;
-          const decoded = origins.has(key.path)
-            ? decodedValue(key, picked.success.origin)
-            : Result.succeed(picked.success.value);
-          if (Result.isFailure(decoded)) return yield* decoded.failure;
-          const deprecated = picked.success.deprecatedEnv;
-          if (deprecated !== undefined && !warnedAliases.has(deprecated.used)) {
-            warnedAliases.add(deprecated.used);
-            yield* output.raw(
-              `WARN: ${deprecated.used} is deprecated. Please use ${deprecated.canonical} instead.\n`,
-              "stderr",
-            );
-          }
-          return { ...picked.success, value: decoded.success } satisfies CliConfigValue<A>;
+          return picked.success;
         });
+
+      for (const message of new Set(aliasWarnings)) yield* output.warn(message);
+      for (const message of overrideWarnings) yield* output.warn(message);
+      if (Option.isSome(debugLogger)) {
+        for (const [originPath, origin] of origins) {
+          if (origin.tier === "default") continue;
+          yield* debugLogger.value.debug(
+            `config: ${originPath} from ${describeCliConfigOrigin(origin, sources.context)}`,
+          );
+        }
+      }
 
       return {
         appliedRemote: Option.fromNullishOr(appliedRemote),
-        sources: { ...sources, withheldEnv },
+        hasConfigFile: merged !== null,
         get,
+        loaded,
         materialized,
-        loaded:
-          merged === null
-            ? Option.none()
-            : Option.some(declaredOnly(loaded, defaultWrites, document)),
+        origins,
+        invalid,
         familyNames,
-        lookupEnv: (name) =>
-          isCliConfigEnvName(name)
-            ? Effect.die(new Error(`${name} is a config override; read it through its config key`))
-            : shell.load([name]).pipe(Effect.map(() => lookupEnv(name))),
+        declares: (configPath) => configAt(configPath) !== undefined,
+        declaredAt: configAt,
+        withheldEnv,
+        dotenvPrivateKeys,
+        projectEnvValues: { ...projectEnv.values },
+        envValues: (names) => {
+          const wanted = [...new Set(names)];
+          return shell.load(wanted).pipe(
+            Effect.map(() => {
+              const values: Record<string, string> = {};
+              for (const name of wanted) {
+                const value = lookupEnv(name);
+                if (value !== undefined) values[name] = value;
+              }
+              return values;
+            }),
+          );
+        },
       } satisfies CliConfigSnapshot;
     });
 
@@ -457,6 +461,7 @@ export const cliConfigValuesLayer = Layer.effect(
             projectRef: target.projectRef,
             ignoreConfigFile: target.ignoreConfigFile === true,
             tolerateUnreadableLinkedRef: target.tolerateUnreadableLinkedRef === true,
+            tolerateInvalid: target.tolerateInvalid === true,
           }),
         ),
       writeThrough: (write) => Effect.ensuring(write, Cache.invalidateAll(cache)),

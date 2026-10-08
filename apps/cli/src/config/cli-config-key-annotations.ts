@@ -7,7 +7,6 @@ import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
 import type { CliConfigFlagDeclaration } from "./cli-config-flags.ts";
 import {
-  binaryCodec,
   commaListCodec,
   globListCodec,
   goBoolCodec,
@@ -42,22 +41,22 @@ export const CLI_CONFIG_ENV_ALIASES: Readonly<Record<string, ReadonlyArray<strin
   "experimental.pgdelta.enabled": ["SUPABASE_EXPERIMENTAL_PG_DELTA"],
 };
 
+/** Extra warning text for a deprecated env alias whose behaviour changed. */
+export const CLI_CONFIG_ENV_ALIAS_NOTES: Readonly<Record<string, string>> = {
+  SUPABASE_EXPERIMENTAL_PG_DELTA: "It now overrides config.toml, so false turns pg-delta off.",
+};
+
 /** Schema leaves whose env decoding differs from the schema-derived codec. */
 export const CLI_CONFIG_CODEC_OVERRIDES: Readonly<Record<string, CliConfigCodec<unknown>>> = {
-  "experimental.stack": binaryCodec,
-  "experimental.compute": binaryCodec,
   "db.seed.sql_paths": globListCodec,
   "db.migrations.schema_paths": globListCodec,
   "edge_runtime.policy": literalCodec(["per_worker", "oneshot"]),
-  "auth.password_requirements": {
-    ...literalCodec([
-      "",
-      "letters_digits",
-      "lower_upper_letters_digits",
-      "lower_upper_letters_digits_symbols",
-    ]),
-    describe: (path, raw) => `Failed reading config: Invalid ${path}: ${raw}.`,
-  },
+  "auth.password_requirements": literalCodec([
+    "",
+    "letters_digits",
+    "lower_upper_letters_digits",
+    "lower_upper_letters_digits_symbols",
+  ]),
 };
 
 /**
@@ -73,14 +72,28 @@ export const CLI_CONFIG_ENV_EXCLUDED: Readonly<Record<string, string>> = {
   "experimental.orioledb_version": "deprecated; promoted to db.orioledb_version before resolution",
 };
 
-/** Optional schema leaves that consumers read as a plain value with a context default. */
+const emptyString = () => "";
+
+/**
+ * Optional schema leaves that consumers read as a plain value with a default: the project id and
+ * SMTP presence derive from the document, and each auth hook's `uri` and `secrets` read as `""`.
+ */
 export const CLI_CONFIG_CONTEXT_DEFAULTS = {
   project_id: (ctx) => ctx.path.basename(ctx.workdir),
   "auth.email.smtp.enabled": (ctx) => ctx.configAt("auth.email.smtp") !== undefined,
+  "auth.hook.mfa_verification_attempt.uri": emptyString,
+  "auth.hook.mfa_verification_attempt.secrets": emptyString,
+  "auth.hook.password_verification_attempt.uri": emptyString,
+  "auth.hook.password_verification_attempt.secrets": emptyString,
+  "auth.hook.custom_access_token.uri": emptyString,
+  "auth.hook.custom_access_token.secrets": emptyString,
+  "auth.hook.send_sms.uri": emptyString,
+  "auth.hook.send_sms.secrets": emptyString,
+  "auth.hook.send_email.uri": emptyString,
+  "auth.hook.send_email.secrets": emptyString,
+  "auth.hook.before_user_created.uri": emptyString,
+  "auth.hook.before_user_created.secrets": emptyString,
 } as const satisfies Readonly<Record<string, (ctx: CliConfigKeyContext) => unknown>>;
-
-/** Optional leaves the stack config always carries as strings, so an unset value reads as `""`. */
-export const CLI_CONFIG_EMPTY_DEFAULTS = /^auth\.hook\.[^.]+\.(uri|secrets)$/;
 
 /** Canonical flag names (and short aliases) that override a key; `key.flag` accepts only these. */
 export const CLI_CONFIG_FLAGS = {

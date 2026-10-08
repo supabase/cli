@@ -30,7 +30,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../../../tests/helpers/mocks.ts";
-import { dbCommandConfigValuesLayer } from "../../../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer } from "../../../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -315,7 +315,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const layer = Layer.mergeAll(
     out.layer,
-    dbCommandConfigValuesLayer(out.layer),
+    configValuesLayer({ output: out.layer }),
     telemetry.layer,
     cache.layer,
     seam,

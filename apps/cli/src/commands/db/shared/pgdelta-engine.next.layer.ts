@@ -9,7 +9,7 @@ import {
 } from "../../../command-internal/db-config.parse.ts";
 import { DbConnectError } from "../../../command-internal/db-connection.errors.ts";
 import { acquirePgPool } from "../../../command-internal/db-connection.sql-pg.layer.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import {
   filesForDeclarativeShadowLoad,
   prepareDeclarativeShadow,

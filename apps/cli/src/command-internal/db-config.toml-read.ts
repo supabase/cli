@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 import type { CliConfigFlagDeclaration } from "../config/cli-config-flags.ts";
 import type { CliConfigKey } from "../config/cli-config-key.ts";
+import { envReferenceNames } from "../config/cli-config-document.ts";
 import { CliConfigKeys, cliConfigRegistry } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigValueError } from "../config/cli-config.errors.ts";
@@ -323,11 +324,6 @@ export const assertDecryptableSecrets = (
 const nonEmpty = (value: string | undefined): string | undefined =>
   value === undefined || value.length === 0 ? undefined : value;
 
-const VALUE_IN_BOOL_MESSAGE = new Set([
-  "experimental.pgdelta.enabled",
-  "experimental.webhooks.enabled",
-]);
-
 /** Maps snapshot value errors onto the wording these keys have always failed with. */
 const valueErrorMessage = (error: CliConfigValueError): string => {
   const codec = cliConfigRegistry.keyAt(error.path)?.codec;
@@ -338,12 +334,7 @@ const valueErrorMessage = (error: CliConfigValueError): string => {
   if (kind === "port" && (error.path === "db.port" || error.path === "db.shadow_port")) {
     return `failed to load config: invalid ${error.path} value`;
   }
-  if (kind === "bool") {
-    const shown = /cannot parse "(.*)" as a bool$/s.exec(error.message)?.[1];
-    return VALUE_IN_BOOL_MESSAGE.has(error.path) && shown !== undefined
-      ? `failed to parse config: invalid ${error.path}: ${shown}.`
-      : `failed to parse config: invalid ${error.path}.`;
-  }
+  if (kind === "bool") return `failed to parse config: invalid ${error.path}.`;
   if (error.path === "api.schemas") return "failed to parse config: invalid api.schemas.";
   return error.message;
 };
@@ -408,9 +399,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const snapshot = yield* loadDbTomlSnapshot(workdir, ref, ignoreConfigFile);
   const { config } = snapshot.materialized;
-  const { sources } = snapshot;
-  const lookup: EnvLookup = (name) =>
-    nonEmpty(sources.shell(name)) ?? nonEmpty(sources.projectEnv(name)?.value);
   const fail = (message: string) => Effect.fail(new DbConfigLoadError({ message }));
   const getKey = <A, X, F extends CliConfigFlagDeclaration>(key: CliConfigKey<A, X, F>) =>
     snapshot.get(key).pipe(Effect.mapError(toDbConfigLoadError));
@@ -418,10 +406,14 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const secretDocument = Object.fromEntries(
     ["db", "auth", "studio", "edge_runtime", "remotes"].map((key) => [
       key,
-      sources.config(key)?.value,
+      snapshot.declaredAt(key),
     ]),
   );
-  const secretError = assertDecryptableSecrets(secretDocument, lookup, sources.dotenvPrivateKeys, {
+  const referenced = yield* snapshot
+    .envValues(envReferenceNames(secretDocument))
+    .pipe(Effect.mapError(toDbConfigLoadError));
+  const lookup: EnvLookup = (name) => referenced[name];
+  const secretError = assertDecryptableSecrets(secretDocument, lookup, snapshot.dotenvPrivateKeys, {
     includeVault: resolveVaultSecrets,
   });
   if (secretError !== undefined) return yield* fail(secretError);
@@ -460,7 +452,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const denoVersion = config.edge_runtime.deno_version;
 
-  const webhooksPresent = sources.config("experimental.webhooks") !== undefined;
+  const webhooksPresent = snapshot.declares("experimental.webhooks");
   const webhooksEnabled = config.experimental.webhooks?.enabled ?? false;
   const pgDeltaConfig = config.experimental.pgdelta;
   const declarativeSchemaPath = nonEmptyString(pgDeltaConfig?.declarative_schema_path);
@@ -517,7 +509,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     if ((yield* getKey(CliConfigKeys.auth.passkey.enabled)).value) {
       const rpOrigins = (yield* getKey(CliConfigKeys.auth.webauthn.rpOrigins)).value;
       passkeyInput = {
-        webauthnPresent: sources.config("auth.webauthn") !== undefined,
+        webauthnPresent: snapshot.declares("auth.webauthn"),
         rpId: (yield* getKey(CliConfigKeys.auth.webauthn.rpId)).value,
         rpOrigins: rpOrigins.length > 0 ? rpOrigins : undefined,
       };
@@ -553,7 +545,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
             section,
             name,
             contentPath: entry.content_path ?? "",
-            contentPresent: sources.config(`auth.email.${section}.${name}.content`) !== undefined,
+            contentPresent: snapshot.declares(`auth.email.${section}.${name}.content`),
             base: workdir,
           }),
         catch: (cause) => new DbConfigLoadError({ message: causeMessage(cause) }),
@@ -730,7 +722,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         continue;
       }
       if (isEncryptedSecret(value)) {
-        const decrypted = decryptSecret(value, sources.dotenvPrivateKeys);
+        const decrypted = decryptSecret(value, snapshot.dotenvPrivateKeys);
         if (!decrypted.ok) return yield* fail(`failed to parse config: ${decrypted.error}`);
         vault.push({ name, value: decrypted.value, resolved: true });
         continue;

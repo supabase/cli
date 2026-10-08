@@ -1632,7 +1632,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "failed to parse config: invalid experimental.pgdelta.enabled: maybe.",
+              "failed to parse config: invalid experimental.pgdelta.enabled.",
             );
           }
           if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -2383,7 +2383,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "Failed reading config: Invalid db.major_version: 17foo.",
+              'Invalid db.major_version in supabase/config.toml: \\"17foo\\" is not a non-negative integer.',
             );
           }
           rmSync(dir, { recursive: true, force: true });
@@ -2447,7 +2447,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "Failed reading config: Invalid edge_runtime.deno_version: 2foo.",
+              'Invalid edge_runtime.deno_version in supabase/config.toml: \\"2foo\\" is not a non-negative integer.',
             );
           }
           rmSync(dir, { recursive: true, force: true });

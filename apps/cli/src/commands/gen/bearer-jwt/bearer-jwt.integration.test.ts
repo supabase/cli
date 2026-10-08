@@ -26,7 +26,7 @@ import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../../../shared/output/debug-logger.service.ts";
 import { genBearerJwtCommand, type GenBearerJwtFlags } from "./bearer-jwt.command.ts";
 import { genBearerJwt } from "./bearer-jwt.handler.ts";
 

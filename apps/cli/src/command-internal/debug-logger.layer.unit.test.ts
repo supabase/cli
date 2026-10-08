@@ -4,7 +4,7 @@ import { afterEach, vi } from "vitest";
 
 import { DebugFlag } from "./global-flags.ts";
 import { debugLoggerLayer } from "./debug-logger.layer.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 
 function makeLayer(debug: boolean) {
   return debugLoggerLayer.pipe(Layer.provide(Layer.succeed(DebugFlag, debug)));

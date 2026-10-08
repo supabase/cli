@@ -1,8 +1,9 @@
-import { Context, Effect, Option } from "effect";
+import { Context, Option } from "effect";
 import { Command, Flag, type Param } from "effect/unstable/cli";
 
+import { sameDocumentValue } from "./cli-config-document.ts";
 import type { CliConfigCodec, CliConfigKey } from "./cli-config-key.ts";
-import { CliConfigValueError } from "./cli-config.errors.ts";
+import { CliConfigFlagConflictError } from "./cli-config.errors.ts";
 
 /** The flag names (and short aliases) a key declares; `key.flag` accepts only these. */
 export interface CliConfigFlagDeclaration {
@@ -65,12 +66,13 @@ const optionOf = <X>(value: X | undefined): Option.Option<X> =>
 const parsedFlag = <X>(
   flag: Flag.Flag<unknown>,
   codec: CliConfigCodec<X>,
+  name: string,
   path: string,
 ): Flag.Flag<Option.Option<X>> =>
   flag.pipe(
     Flag.filterMap(
       (value) => optionOf(codec.fromConfig(value)),
-      (value) => codec.describe(path, String(value)),
+      (value) => `Invalid --${name}="${String(value)}" (sets ${path}): expected ${codec.expected}.`,
     ),
     Flag.optional,
   );
@@ -82,20 +84,22 @@ const baseFlag = <X>(
 ): Flag.Flag<Option.Option<X>> => {
   switch (codec.kind) {
     case "bool":
-    case "binary":
-      return parsedFlag(Flag.boolean(name), codec, path);
+      return parsedFlag(Flag.boolean(name), codec, name, path);
     case "uint":
     case "port":
-      return parsedFlag(Flag.integer(name), codec, path);
+      return parsedFlag(Flag.integer(name), codec, name, path);
     case "literal":
-      return parsedFlag(Flag.choice(name, codec.literals ?? []), codec, path);
+      return parsedFlag(Flag.choice(name, codec.literals ?? []), codec, name, path);
     case "string":
-      return parsedFlag(Flag.string(name), codec, path);
+      return parsedFlag(Flag.string(name), codec, name, path);
     case "commaList":
       return Flag.string(name).pipe(
         Flag.atLeast(0),
+        Flag.optional,
         Flag.map((values) =>
-          values.length === 0 ? Option.none() : optionOf(codec.fromConfig(values)),
+          Option.flatMap(values, (list) =>
+            list.length === 0 ? Option.none() : optionOf(codec.fromConfig(list)),
+          ),
         ),
       );
   }
@@ -117,6 +121,7 @@ export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
     path: key.path,
     assignments: (parsed) => {
       if (!Option.isOption(parsed) || Option.isNone(parsed)) return undefined;
+      if (key.codec.kind === "string" && parsed.value === "") return undefined;
       const decoded = key.codec.fromConfig(parsed.value);
       if (decoded === undefined) return undefined;
       const value = options.map === undefined ? decoded : options.map(decoded);
@@ -134,11 +139,47 @@ export const makeCliConfigKeyFlag = <A, X, F extends CliConfigFlagDeclaration>(
   return flag;
 };
 
-/** The explicitly passed flags that bind to config keys, keyed by key path. */
+/** Two flags that assigned different values to one config key. */
+interface CliConfigFlagConflict {
+  readonly path: string;
+  readonly flags: readonly [string, string];
+}
+
+interface CliConfigFlagInputsValue {
+  /** The explicitly passed flags that bind to config keys, keyed by key path. */
+  readonly assignments: ReadonlyMap<string, CliConfigFlagAssignment>;
+  /** Raised as {@link CliConfigFlagConflictError} by the first `CliConfigValues.load`. */
+  readonly conflicts: ReadonlyArray<CliConfigFlagConflict>;
+}
+
 export class CliConfigFlagInputs extends Context.Service<
   CliConfigFlagInputs,
-  ReadonlyMap<string, CliConfigFlagAssignment>
+  CliConfigFlagInputsValue
 >()("supabase/cli/CliConfigFlagInputs") {}
+
+export const cliConfigFlagConflictError = (conflict: CliConfigFlagConflict) =>
+  new CliConfigFlagConflictError({
+    path: conflict.path,
+    flags: conflict.flags,
+    message: `--${conflict.flags[0]} and --${conflict.flags[1]} both set ${conflict.path}; pass only one`,
+  });
+
+/** The flag inputs for a set of assignments; two with different values for one path conflict. */
+export const makeCliConfigFlagInputs = (
+  assignments: Iterable<CliConfigFlagAssignment> = [],
+): CliConfigFlagInputsValue => {
+  const inputs = new Map<string, CliConfigFlagAssignment>();
+  const conflicts: Array<CliConfigFlagConflict> = [];
+  for (const assignment of assignments) {
+    const prior = inputs.get(assignment.path);
+    if (prior === undefined) {
+      inputs.set(assignment.path, assignment);
+    } else if (!sameDocumentValue(prior.value, assignment.value)) {
+      conflicts.push({ path: assignment.path, flags: [prior.flag, assignment.flag] });
+    }
+  }
+  return { assignments: inputs, conflicts };
+};
 
 /** Command annotation listing the bound flags, so a tree walk can find them. */
 export class CliConfigFlagBindings extends Context.Service<
@@ -191,26 +232,10 @@ export const withCliConfigFlags = <const C extends Command.Command.Config>(confi
     self: Command.Command<Name, Command.Command.Config.Infer<C>, ContextInput, E, R>,
   ) =>
     self.pipe(
-      Command.provideEffect(CliConfigFlagInputs, (input: Command.Command.Config.Infer<C>) =>
-        Effect.gen(function* () {
-          const inputs = new Map<string, CliConfigFlagAssignment>();
-          for (const entry of bound) {
-            for (const assignment of entry.binding.assignments(readAt(input, entry.accessor)) ??
-              []) {
-              const prior = inputs.get(assignment.path);
-              if (prior !== undefined) {
-                return yield* new CliConfigValueError({
-                  path: assignment.path,
-                  tier: "flag",
-                  flag: assignment.flag,
-                  message: `--${prior.flag} and --${assignment.flag} both set ${assignment.path}; pass only one`,
-                });
-              }
-              inputs.set(assignment.path, assignment);
-            }
-          }
-          return inputs;
-        }),
+      Command.provideSync(CliConfigFlagInputs, (input: Command.Command.Config.Infer<C>) =>
+        makeCliConfigFlagInputs(
+          bound.flatMap((entry) => entry.binding.assignments(readAt(input, entry.accessor)) ?? []),
+        ),
       ),
       Command.annotate(CliConfigFlagBindings, annotated),
     );

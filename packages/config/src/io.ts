@@ -626,10 +626,6 @@ export interface MergedCliConfigDocument {
  * Not covered by semver — exported from `@supabase/config/internal` only.
  */
 export interface ParseMergeCliConfigOptions {
-  /** See {@link FindCliProjectPathsOptions.search}. */
-  readonly search?: boolean;
-  /** Skip the `config.json`-over-`config.toml` preference and only ever load `config.toml`. */
-  readonly tomlOnly?: boolean;
   /** Picks the `[remotes.<name>]` block to merge from the raw `remotes` table. */
   readonly selectRemote: (remotes: Record<string, unknown>) => string | undefined;
   /**
@@ -674,6 +670,8 @@ export interface DecodeMergedCliConfigOptions {
   readonly envValues: Readonly<Record<string, string>>;
   readonly goViperCompat?: boolean;
   readonly document?: Record<string, unknown>;
+  /** Skips the deprecation warnings, for a caller that decodes the same document twice. */
+  readonly silent?: boolean;
 }
 
 export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(function* (
@@ -721,7 +719,7 @@ export const decodeMergedCliConfig = Effect.fn("CliConfig.decodeMerged")(functio
     removedProviders,
   } = normalizeDeprecatedExternalProviders(documentForDecode);
   // Pinned to the real console, same as the `[inbucket]` warning above.
-  if (goViperCompat) {
+  if (goViperCompat && options.silent !== true) {
     for (const ext of deprecatedProviders) {
       yield* Console.error(
         `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
@@ -953,24 +951,6 @@ export const mergeParsedCliConfig = Effect.fn("CliConfig.mergeParsed")(function*
     appliedRemote: resolved.appliedRemote,
     remoteLeafPaths: resolved.remoteLeafPaths,
   } satisfies MergedCliConfigDocument;
-});
-
-/**
- * Not covered by semver — exported from `@supabase/config/internal` only. Stage one of the
- * pipeline: discovers and parses the config file, then merges the `[remotes.*]` block chosen by
- * `options.selectRemote`. Returns `null` when no config file exists.
- */
-export const parseMergeCliConfig = Effect.fn("CliConfig.parseMerge")(function* (
-  cwd: string,
-  options: ParseMergeCliConfigOptions,
-) {
-  const parsed = yield* parseCliConfigDocumentFile(cwd, options);
-
-  if (parsed === null) {
-    return null;
-  }
-
-  return yield* mergeParsedCliConfig(parsed, options);
 });
 
 const resolveSaveFormat = Effect.fnUntraced(function* (

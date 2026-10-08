@@ -31,7 +31,6 @@ export {
   mergeParsedCliConfig,
   type MergedCliConfigDocument,
   parseCliConfigDocumentFile,
-  parseMergeCliConfig,
   type ParsedCliConfigDocument,
   type ParseMergeCliConfigOptions,
   remoteNameForProjectRef,

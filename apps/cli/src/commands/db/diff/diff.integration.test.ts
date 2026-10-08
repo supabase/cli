@@ -34,10 +34,7 @@ import {
   sequentialExecBatch,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
-import {
-  dbCommandConfigValuesLayer,
-  flagInput,
-} from "../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
@@ -408,7 +405,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
-    dbCommandConfigValuesLayer(out.layer, {
+    configValuesLayer({
+      output: out.layer,
       flags:
         opts.usePgDelta === undefined
           ? []

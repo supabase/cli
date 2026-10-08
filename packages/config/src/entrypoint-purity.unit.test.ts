@@ -499,7 +499,6 @@ describe("src/internal.ts export surface", () => {
         "mergeParsedCliConfig",
         "normalizeDeprecatedOrioleDBVersion",
         "parseCliConfigDocumentFile",
-        "parseMergeCliConfig",
         "projectConfigApiBlockKeys",
         "projectConfigMappingRows",
         "remoteNameForProjectRef",

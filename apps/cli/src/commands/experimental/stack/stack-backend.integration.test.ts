@@ -201,7 +201,7 @@ stack = true
           expect(Option.isSome(error)).toBe(true);
           if (Option.isSome(error)) {
             expect(error.value).toBeInstanceOf(StackRoutingError);
-            expect(String(error.value)).toContain("0 or 1");
+            expect(String(error.value)).toContain("expected true or false");
           }
         }
         expect(

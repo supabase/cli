@@ -8,7 +8,7 @@ import {
   type LoadedProfile,
   type ProfileLoadError,
 } from "../command-internal/profile-load.ts";
-import { DebugLogger, type DebugLoggerShape } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger, type DebugLoggerShape } from "../shared/output/debug-logger.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CliEnvNames } from "./cli-config-keys.ts";
 import { CommandSettings } from "./command-settings.service.ts";

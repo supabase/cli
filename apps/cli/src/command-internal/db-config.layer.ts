@@ -39,7 +39,7 @@ import { DbConfigResolver, type DbConfigError } from "./db-config.service.ts";
 import { loadProjectEnvValues, readDbToml } from "./db-config.toml-read.ts";
 import type { DbConfigFlags } from "./db-config.types.ts";
 import { rejectPasswordWithDirectTarget } from "./db-target-flags.ts";
-import { DebugLogger } from "./debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { getHostname } from "./hostname.ts";
 import { mapHttpError } from "./http-errors.ts";
 import { currentStackBackend } from "./stack-backend.ts";
@@ -252,7 +252,7 @@ export const resolveLinkedPassword = Effect.fn("DbConfig.resolveLinkedPassword")
   const resolved = yield* snapshot
     .get(CliConfigKeys.linkedDb.password)
     .pipe(Effect.mapError(loadFailureToDbConfigError));
-  const withheld = snapshot.sources.withheldEnv.find(
+  const withheld = snapshot.withheldEnv.find(
     (entry) => entry.path === CliConfigKeys.linkedDb.password.path,
   );
   if (

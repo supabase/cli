@@ -38,6 +38,7 @@ BranchesUnpauseNetworkError
 BranchesUnpauseUnexpectedStatusError
 BranchesUpdateNetworkError
 BranchesUpdateUnexpectedStatusError
+CliConfigFlagConflictError
 CliConfigLoadError
 CliConfigParseError
 CliConfigValueError

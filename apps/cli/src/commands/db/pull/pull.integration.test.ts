@@ -34,10 +34,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
-import {
-  dbCommandConfigValuesLayer,
-  flagInput,
-} from "../../../../tests/helpers/db-command-config-values.ts";
+import { configValuesLayer, flagInput } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   DebugFlag,
   DnsResolverFlag,
@@ -452,7 +449,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
-    dbCommandConfigValuesLayer(out.layer, {
+    configValuesLayer({
+      output: out.layer,
       flags:
         opts.usePgDelta === undefined
           ? []

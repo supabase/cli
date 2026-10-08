@@ -4,7 +4,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { CLI_VERSION } from "../shared/cli/version.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
-import { DebugLogger } from "../command-internal/debug-logger.service.ts";
+import { DebugLogger } from "../shared/output/debug-logger.service.ts";
 import { IdentityStitch } from "../command-internal/identity-stitch.ts";
 import { validateAccessToken } from "./access-token.ts";
 import { CommandCredentials } from "./command-credentials.service.ts";

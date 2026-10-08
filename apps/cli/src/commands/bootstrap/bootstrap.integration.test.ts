@@ -42,7 +42,8 @@ import {
   YesFlag,
   OutputFlag,
 } from "../../command-internal/global-flags.ts";
-import { CliConfigFlagInputs } from "../../config/cli-config-flags.ts";
+import { flagInput } from "../../../tests/helpers/config-snapshot-layer.ts";
+import { CliConfigFlagInputs, makeCliConfigFlagInputs } from "../../config/cli-config-flags.ts";
 import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { DbConnectError } from "../../command-internal/db-connection.errors.ts";
@@ -195,14 +196,9 @@ function setup(path: Path.Path, opts: SetupOpts = {}) {
         configProvider,
         Layer.succeed(
           CliConfigFlagInputs,
-          password === null
-            ? new Map()
-            : new Map([
-                [
-                  "linkedDb.password",
-                  { path: "linkedDb.password", flag: "password", value: password },
-                ],
-              ]),
+          makeCliConfigFlagInputs(
+            password === null ? [] : [flagInput("linkedDb.password", "password", password)],
+          ),
         ),
       ),
     ),
@@ -358,7 +354,7 @@ describe("bootstrap integration", () => {
         if (Exit.isFailure(exit)) {
           expect(Cause.pretty(exit.cause)).toContain("ExperimentalFeatureFlagError");
           expect(Cause.pretty(exit.cause)).toContain(
-            "SUPABASE_EXPERIMENTAL_STACK must be 0 or 1 when set",
+            'Invalid SUPABASE_EXPERIMENTAL_STACK="yes" (sets experimental.stack): expected true or false.',
           );
         }
         expect(yield* fs.exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
