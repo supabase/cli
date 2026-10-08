@@ -211,22 +211,18 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (Option.isSome(flags.linked)) targetSet.push("linked");
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
-      return yield* Effect.fail(
-        new DbPullTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new DbPullTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
+      });
     }
     for (const [flagName, present] of [
       ["declarative", Option.isSome(flags.declarative)],
       ["use-pg-delta", Option.isSome(flags.usePgDelta)],
     ] as const) {
       if (present && Option.isSome(flags.diffEngine)) {
-        return yield* Effect.fail(
-          new DbPullEngineConflictError({
-            message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
-          }),
-        );
+        return yield* new DbPullEngineConflictError({
+          message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
+        });
       }
     }
 
@@ -244,12 +240,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new DbPullTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new DbPullTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // Pre-load the ref and re-read config here, before `resolver.resolve()` below, so the
@@ -458,13 +452,11 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         );
         const sync = reconcileMigrations(remote, local, connType === "local");
         if (sync.kind === "conflict") {
-          return yield* Effect.fail(
-            new DbPullMigrationConflictError({
-              message:
-                "The remote database's migration history does not match local files in supabase/migrations directory.",
-              suggestion: sync.suggestion,
-            }),
-          );
+          return yield* new DbPullMigrationConflictError({
+            message:
+              "The remote database's migration history does not match local files in supabase/migrations directory.",
+            suggestion: sync.suggestion,
+          });
         }
         // Initial pull, migra engine: seed the migration file with a pg_dump of the remote
         // schema, then run the migra diff below as a second pass appended to the same file,
@@ -532,8 +524,8 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             seedWroteBytes = false;
             return fs
               .writeFile(migrationPath, new Uint8Array(0), { mode: MIGRATION_FILE_MODE })
-              .pipe(Effect.mapError(toDumpOpenError))
               .pipe(
+                Effect.mapError(toDumpOpenError),
                 Effect.andThen(
                   Effect.scoped(
                     Effect.gen(function* () {
@@ -590,14 +582,12 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             reprintOnRetry: Effect.void,
           });
           if (dumpResult.exitCode !== 0) {
-            return yield* Effect.fail(
-              new DbPullDumpError({
-                message: `error running container: exit ${dumpResult.exitCode}`,
-                ...(isIPv6ConnectivityError(dumpResult.stderr)
-                  ? { suggestion: ipv6Suggestion() }
-                  : {}),
-              }),
-            );
+            return yield* new DbPullDumpError({
+              message: `error running container: exit ${dumpResult.exitCode}`,
+              ...(isIPv6ConnectivityError(dumpResult.stderr)
+                ? { suggestion: ipv6Suggestion() }
+                : {}),
+            });
           }
         }
 
@@ -714,19 +704,15 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
         if (diffEmpty && !seededFromDump) {
           if (diffOutcome.debug?.directory !== undefined) {
             yield* output.raw(debugBundleMessage(diffOutcome.debug.directory), "stderr");
-            return yield* Effect.fail(
-              new DbPullInSyncError({
-                message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
-                suggestion: IN_SYNC_SUGGESTION,
-              }),
-            );
-          }
-          return yield* Effect.fail(
-            new DbPullInSyncError({
-              message: "No schema changes found",
+            return yield* new DbPullInSyncError({
+              message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
               suggestion: IN_SYNC_SUGGESTION,
-            }),
-          );
+            });
+          }
+          return yield* new DbPullInSyncError({
+            message: "No schema changes found",
+            suggestion: IN_SYNC_SUGGESTION,
+          });
         }
 
         // Build the list of migration files to record in the remote history. The
@@ -802,12 +788,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           // fetching empty remote history never deletes local files.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
             yield* fs.remove(migrationPath).pipe(Effect.ignore);
-            return yield* Effect.fail(
-              new DbPullInSyncError({
-                message: "No schema changes found",
-                suggestion: IN_SYNC_SUGGESTION,
-              }),
-            );
+            return yield* new DbPullInSyncError({
+              message: "No schema changes found",
+              suggestion: IN_SYNC_SUGGESTION,
+            });
           }
           writtenMigrations.push({ path: migrationPath, version: timestamp });
         }
