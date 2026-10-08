@@ -105,8 +105,8 @@ const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
 const declarativeBaselineNote = (displayPath: string) =>
   `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
-const declarativeFilesIgnoredNote = (displayPath: string) =>
-  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua("supabase db schema declarative sync")} to generate a migration from them, or set [experimental.pgdelta] enabled = false to diff them with migra.\n`;
+const declarativeFilesIgnoredNote = (displayPath: string, suggestMigra: boolean) =>
+  `Note: db diff compares supabase/migrations with the target database; declarative schema files in ${displayPath} are not read. Run ${aqua("supabase db schema declarative sync")} to generate a migration from them${suggestMigra ? `, or pass ${aqua("--use-migra")} to diff them with migra` : ""}.\n`;
 
 export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
   if (Option.isSome(flags.usePgSchema)) {
@@ -152,10 +152,11 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
       });
     }
-    if (Option.isSome(flags.useMigra) || Option.isSome(flags.usePgAdmin)) {
-      yield* stackRejectNativeDockerDiffEngine(
-        Option.isSome(flags.useMigra) ? "--use-migra" : "--use-pgadmin",
-      );
+    // `--use-migra=false` / `--use-pgadmin=false` keep the pg-delta default, which the stack
+    // backend supports, so only a true value is rejected there.
+    const useMigra = Option.getOrElse(flags.useMigra, () => false);
+    if (useMigra || Option.getOrElse(flags.usePgAdmin, () => false)) {
+      yield* stackRejectNativeDockerDiffEngine(useMigra ? "--use-migra" : "--use-pgadmin");
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base config
@@ -457,14 +458,15 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
 
     // Engine resolution: the pg-delta config/flag gate, read from the
     // (possibly remote-merged) config.
+    const onStackBackend = (yield* currentStackBackend).kind === "stack";
     const pgDeltaDefault =
-      (yield* currentStackBackend).kind === "stack" ||
+      onStackBackend ||
       shouldUsePgDelta({
         configEnabled: cfg.pgDelta.enabled,
         usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
       });
     const useDelta = resolveDiffEngine({
-      useMigra: Option.getOrElse(flags.useMigra, () => false),
+      useMigra,
       usePgAdmin,
       pgDeltaDefault,
     });
@@ -708,10 +710,13 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
           ? "the configured declarative schema directory"
           : declarativeDir.split("\\").join("/");
         ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
+        // Migra reads the configured declarative dir only while pg-delta stays enabled in config,
+        // and the stack backend rejects migra outright.
+        const suggestMigra = cfg.pgDelta.enabled && !onStackBackend;
         yield* output.raw(
           writesMigration
             ? declarativeBaselineNote(displayPath)
-            : declarativeFilesIgnoredNote(displayPath),
+            : declarativeFilesIgnoredNote(displayPath, suggestMigra),
           "stderr",
         );
       }

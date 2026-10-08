@@ -711,6 +711,22 @@ describe("db diff", () => {
       expect(stderr(s.out)).toContain("No schema changes found");
       expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
       expect(stderr(s.out)).toContain("supabase db schema declarative sync");
+      expect(stderr(s.out)).toContain("or pass --use-migra to diff them with migra");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("omits the migra suggestion when config disables pg-delta", () => {
+    const s = setup(tmp.current, {
+      files: {
+        "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n",
+        "supabase/schemas/public.sql": "create table declared ();\n",
+      },
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(stderr(s.out)).toContain("declarative schema files in supabase/schemas are not read");
+      expect(stderr(s.out)).not.toContain("--use-migra");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1853,17 +1869,14 @@ describe("db diff", () => {
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 
-  it.effect("rejects --use-migra=false on the stack backend", () => {
+  it.effect("does not reject --use-migra=false on the stack backend", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       const exit = yield* dbDiff(flags({ useMigra: Option.some(false) })).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (!Exit.isFailure(exit)) return;
-      const error = Option.getOrUndefined(Cause.findErrorOption(exit.cause));
-      expect(error).toBeInstanceOf(StackNativeEngineError);
-      if (!(error instanceof StackNativeEngineError)) return;
-      expect(error.message).toContain("The stack backend only supports the pg-delta engine.");
-      expect(error.message).toContain("--use-migra");
+      const error = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(error).not.toBeInstanceOf(StackNativeEngineError);
     }).pipe(Effect.provide(Layer.mergeAll(s.layer, stackBackendLayer("stack"))));
   });
 

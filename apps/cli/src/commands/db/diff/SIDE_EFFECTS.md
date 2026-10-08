@@ -171,7 +171,8 @@ the raw SQL. Bundled pg-delta reports the best-effort
 the diff either writes a non-empty `--file` migration or targets the local database.
 In text mode the same condition prints a stderr note: the `-f` baseline note for a
 written migration, otherwise a note that the files are not read, pointing to
-`supabase db schema declarative sync` and the `enabled = false` rollback.
+`supabase db schema declarative sync` and, when migra can read them (pg-delta enabled in
+config, not the stack backend), `--use-migra`.
 
 In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
 representation as text stdout; the machine envelope does not restore the per-unit
