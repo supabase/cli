@@ -102,8 +102,9 @@ const pullEngineUnreachable = (cause: unknown, message: string) =>
   (cause instanceof Object &&
     "cause" in cause &&
     cause.cause instanceof PlatformError.PlatformError &&
-    cause.cause.reason._tag === "NotFound") ||
-  /cannot connect to the docker daemon|error during connect|unable to connect to podman socket/iu.test(
+    cause.cause.reason._tag === "NotFound" &&
+    cause.cause.reason.method === "spawn") ||
+  /cannot connect to the docker daemon|connect: no such file or directory|error during connect:[^\n]*(?:docker daemon is not running|the system cannot find the file specified)|unable to connect to podman socket:[^\n]*the system cannot find the file specified/iu.test(
     message,
   );
 

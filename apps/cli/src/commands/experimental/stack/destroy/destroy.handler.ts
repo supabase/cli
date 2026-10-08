@@ -198,6 +198,7 @@ export const stackDestroy = Effect.fn("experimental.stack.destroy")(function* (
         suggestion: runtime
           ? `Start the container engine, then run ${retry} again; nothing was removed for those stacks.`
           : `Resolve each error, then run ${retry} to retry the stacks that failed.`,
+        // Telemetry classifies a batch by its first failure; `detail` lists every stack.
         cause: failure.error,
       });
     }

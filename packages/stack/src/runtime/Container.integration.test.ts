@@ -1730,11 +1730,11 @@ const makePullFailureSpawner = (
     return delegate.spawn(command);
   });
 
-/** Fails `docker start` the way Docker reports a published host port another listener holds. */
+/** Fails the engine's `start` the way Docker reports a published host port another listener holds. */
 const makePortAllocatedStartSpawner = (delegate: ChildProcessSpawnerService["Service"]) =>
   ChildProcessSpawner.make((command) =>
     ChildProcess.isStandardCommand(command) &&
-    command.command === "docker" &&
+    command.command === testEngine &&
     command.args[0] === "start"
       ? delegate.spawn(
           ChildProcess.make(

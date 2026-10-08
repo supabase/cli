@@ -131,6 +131,14 @@ describe("new stack error telemetry", () => {
     expect(
       classify(new FunctionsServeStackError({ reason: "runtime", message: "log stream ended" })),
     ).toMatchObject({ error_fingerprint: "tag:FunctionsServeStackError:runtime_stopped" });
+    expect(
+      classify(
+        new DbDumpRunError({
+          message: "x",
+          cause: new StackError({ operation: "status", message: "no kind" }),
+        }),
+      ),
+    ).toMatchObject({ error_fingerprint: "tag:DbDumpRunError", error_category: "db_connection" });
     expect(classify(new TestDbRunError({ message: "exit 1" }))).toMatchObject({
       error_fingerprint: "tag:TestDbRunError",
       error_category: "invalid_config",

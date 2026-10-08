@@ -962,13 +962,29 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
  * own declaration, else its external adapter.
  */
 export function causeDeclaration(cause: unknown): CliErrorActionabilityDeclaration | undefined {
-  const declared = readDeclaration(cause);
-  if (declared !== undefined) return declared;
-  const tag = readErrorTag(cause);
-  if (tag === undefined || !isErrorRecord(cause) || !Object.hasOwn(externalActionabilityByTag, tag))
-    return undefined;
-  return externalActionabilityByTag[tag]?.(cause);
+  // Wrapper getters call back into this, so nesting shares the classifier's depth budget.
+  if (causeDeclarationDepth >= MAX_CAUSE_DEPTH) return undefined;
+  causeDeclarationDepth++;
+  try {
+    const error = unwrapNativeFailure(cause);
+    const declared = readDeclaration(error);
+    if (declared !== undefined) return declared;
+    const tag = readErrorTag(error);
+    if (
+      tag === undefined ||
+      !isErrorRecord(error) ||
+      !Object.hasOwn(externalActionabilityByTag, tag)
+    )
+      return undefined;
+    const external = externalActionabilityByTag[tag]?.(error);
+    // An unclassified stack failure leaves the wrapper's own fallback in charge.
+    return external === unclassifiedStackFailureActionability ? undefined : external;
+  } finally {
+    causeDeclarationDepth--;
+  }
 }
+
+let causeDeclarationDepth = 0;
 
 function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
   const errors = error["errors"];

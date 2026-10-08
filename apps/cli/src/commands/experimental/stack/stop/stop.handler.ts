@@ -138,6 +138,7 @@ export const stackStop = Effect.fn("experimental.stack.stop")(function* (flags: 
         reason: "stack",
         message: `Failed to stop ${failures.length} managed stack(s).`,
         detail: failures.map(({ id, error }) => `${id}: ${error.message}`).join("\n"),
+        // Telemetry classifies a batch by its first failure; `detail` lists every stack.
         cause: firstFailure.error,
       });
     const stopped = results.flatMap(({ id, result }) =>
