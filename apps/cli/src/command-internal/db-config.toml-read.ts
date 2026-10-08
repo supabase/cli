@@ -2,9 +2,8 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import type { CliConfigFlagDeclaration } from "../config/cli-config-flags.ts";
 import type { CliConfigKey } from "../config/cli-config-key.ts";
 import { envReferenceNames } from "../config/cli-config-document.ts";
-import { CliConfigKeys, cliConfigRegistry } from "../config/cli-config-keys.ts";
+import { CliConfigKeys, cliConfigFamilyKey, cliConfigRegistry } from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
-import type { CliConfigValueError } from "../config/cli-config.errors.ts";
 import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import {
   type AnalyticsInput,
@@ -52,8 +51,8 @@ export interface DbTomlValues {
    * part of the config schema.
    */
   readonly poolerConnectionString: Option.Option<string>;
-  /** top-level `project_id`, used to name the local docker network. */
-  readonly projectId: Option.Option<string>;
+  /** The resolved, sanitized `project_id` (flag, env, config, then the workdir name). */
+  readonly projectId: string;
   /** `[db] major_version`, default 17. */
   readonly majorVersion: number;
   /**
@@ -171,18 +170,12 @@ function asRecord(value: unknown): RawDoc | undefined {
 
 const ENV_PATTERN = /^env\((.*)\)$/;
 
-/** The variable name inside an `env(VAR)` reference, or `undefined` for any other string. */
-export function envRefName(value: string): string | undefined {
+function envRefName(value: string): string | undefined {
   const matches = ENV_PATTERN.exec(value);
   return matches === null ? undefined : (matches[1] ?? "");
 }
 
-/**
- * The substitution rule for an `env(VAR)` reference: the resolved value wins only when it
- * is set and non-empty; otherwise the `env(VAR)` literal is preserved unchanged. Shared
- * with the inspect report reader, which resolves the name through Effect's `Config`.
- */
-export function envRefValue(literal: string, resolved: string | undefined): string {
+function envRefValue(literal: string, resolved: string | undefined): string {
   return resolved !== undefined && resolved.length > 0 ? resolved : literal;
 }
 
@@ -324,21 +317,6 @@ export const assertDecryptableSecrets = (
 const nonEmpty = (value: string | undefined): string | undefined =>
   value === undefined || value.length === 0 ? undefined : value;
 
-/** Maps snapshot value errors onto the wording these keys have always failed with. */
-const valueErrorMessage = (error: CliConfigValueError): string => {
-  const codec = cliConfigRegistry.keyAt(error.path)?.codec;
-  const kind = codec?.kind;
-  if (kind === "literal" && codec?.literals !== undefined) {
-    return `failed to parse config: decoding failed due to the following error(s):\n\n'${error.path}' must be one of [${codec.literals.join(" ")}]`;
-  }
-  if (kind === "port" && (error.path === "db.port" || error.path === "db.shadow_port")) {
-    return `failed to load config: invalid ${error.path} value`;
-  }
-  if (kind === "bool") return `failed to parse config: invalid ${error.path}.`;
-  if (error.path === "api.schemas") return "failed to parse config: invalid api.schemas.";
-  return error.message;
-};
-
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
@@ -354,8 +332,6 @@ type SnapshotLoadError = Effect.Error<ReturnType<CliConfigValues["Service"]["loa
 
 const toDbConfigLoadError = (error: SnapshotLoadError): DbConfigLoadError => {
   switch (error._tag) {
-    case "CliConfigValueError":
-      return new DbConfigLoadError({ message: valueErrorMessage(error) });
     case "CliConfigParseError":
       return new DbConfigLoadError({ message: parseErrorMessage(error.cause) });
     case "PlatformError":
@@ -396,18 +372,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   resolveVaultSecrets = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
-  const projectEnv = yield* loadProjectEnvValues(fs, path, workdir);
   const snapshot = yield* loadDbTomlSnapshot(workdir, ref, ignoreConfigFile);
+  const withheldNames = new Set(snapshot.withheldEnv.map((held) => held.envName));
+  const projectEnv = Object.fromEntries(
+    Object.entries(snapshot.projectEnvValues).filter(([name]) => !withheldNames.has(name)),
+  );
   const { config } = snapshot.materialized;
   const fail = (message: string) => Effect.fail(new DbConfigLoadError({ message }));
   const getKey = <A, X, F extends CliConfigFlagDeclaration>(key: CliConfigKey<A, X, F>) =>
     snapshot.get(key).pipe(Effect.mapError(toDbConfigLoadError));
 
+  const declaredDocument = snapshot.loaded.document ?? {};
   const secretDocument = Object.fromEntries(
-    ["db", "auth", "studio", "edge_runtime", "remotes"].map((key) => [
-      key,
-      snapshot.declaredAt(key),
-    ]),
+    ["db", "auth", "studio", "edge_runtime", "remotes"].map((key) => [key, declaredDocument[key]]),
   );
   const referenced = yield* snapshot
     .envValues(envReferenceNames(secretDocument))
@@ -424,12 +401,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
   const configuredProjectId = yield* getKey(CliConfigKeys.projectId);
-  const projectIdText =
-    configuredProjectId.origin.tier === "default"
-      ? undefined
-      : (configuredProjectId.unnormalized ?? configuredProjectId.value);
-  if (projectIdText === "") return yield* fail("Missing required field in config: project_id");
-  const projectId = nonEmptyString(projectIdText);
+  if (
+    configuredProjectId.origin.tier !== "default" &&
+    (configuredProjectId.unnormalized ?? configuredProjectId.value) === ""
+  ) {
+    return yield* fail("Missing required field in config: project_id");
+  }
+  const projectId = configuredProjectId.value;
 
   const { port, shadow_port: shadowPort, major_version: majorVersion } = config.db;
   if (port === 0) return yield* fail("Missing required field in config: db.port");
@@ -534,22 +512,31 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       verifyEnabled: auth.mfa[label].verify_enabled,
     }));
 
-    const emailContentPath = (
+    const emailContentPath = Effect.fnUntraced(function* (
       section: "template" | "notification",
       name: string,
       entry: { readonly content_path?: string },
-    ) =>
-      Effect.try({
+    ) {
+      const family = cliConfigRegistry.families.find(
+        (candidate) =>
+          candidate.id === (section === "template" ? "authEmailTemplate" : "authEmailNotification"),
+      );
+      const contentKey =
+        family === undefined ? undefined : cliConfigFamilyKey(family, name, "content");
+      const contentPresent =
+        contentKey !== undefined && (yield* getKey(contentKey)).origin.tier !== "default";
+      return yield* Effect.try({
         try: () =>
           resolveEmailTemplateContentPath({
             section,
             name,
             contentPath: entry.content_path ?? "",
-            contentPresent: snapshot.declares(`auth.email.${section}.${name}.content`),
+            contentPresent,
             base: workdir,
           }),
         catch: (cause) => new DbConfigLoadError({ message: causeMessage(cause) }),
       });
+    });
     for (const [name, template] of Object.entries(auth.email.template)) {
       const contentPath = yield* emailContentPath("template", name, template);
       if (contentPath === undefined) continue;

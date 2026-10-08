@@ -33,6 +33,8 @@ export const functionsGoConfigCompat: FunctionsGoConfigCompat = {
       });
       return {
         loaded: { config: context.config, document: context.snapshot.loaded.document },
+        snapshot: context.snapshot,
+        configPath: context.snapshot.hasConfigFile ? context.snapshot.loaded.path : undefined,
         projectEnvValues: context.projectEnvValues,
         // `context.projectId` is the id built for Docker naming/labels; `validated.projectId`
         // exists only to feed `validateResolvedConfig`'s emptiness check.

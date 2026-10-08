@@ -11,7 +11,7 @@ import {
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
 import { CliConfigValues } from "../../config/cli-config-values.service.ts";
 import { isContainerNotFoundMessage, spawnContainerCli } from "../container-cli.ts";
-import { resolveLocalProjectId, localDbContainerId } from "../docker-ids.ts";
+import { localDbContainerId } from "../docker-ids.ts";
 import { sanitizeProjectId } from "../../shared/config/project-id.ts";
 import { SUGGEST_DOCKER_INSTALL, isDockerDaemonUnreachable } from "../docker-suggest.ts";
 import { redactHttpUrl } from "../../auth/http-debug.layer.ts";
@@ -312,24 +312,26 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
  * Asks the Engine API first ({@link LocalDockerEngine}) so a stalled `docker` binary can't block
  * the probe, and falls back to the container-CLI spawn (Podman fallback, daemon-down
  * classification) only when the Engine gives no definitive answer. The project id is a
- * best-effort read of the config snapshot: an unreadable config falls back to the workdir basename.
+ * best-effort read of the config snapshot unless the caller passes its already-resolved id: an
+ * unreadable config falls back to the workdir basename.
  */
 export function isLocalDbRunning(
   spawner: Spawner,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-  configuredProjectId: string | undefined,
+  resolvedProjectId?: string,
 ): Effect.Effect<boolean, LocalDbRunningError, LocalDockerEngine | CliConfigValues> {
   return Effect.scoped(
     Effect.gen(function* () {
       const values = yield* CliConfigValues;
-      const snapshotProjectId = yield* values.load({ workdir, projectRef: Option.none() }).pipe(
-        Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
-        Effect.map(({ value }) => value),
-        Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
-      );
-      const projectId = resolveLocalProjectId(configuredProjectId, snapshotProjectId, workdir);
+      const projectId =
+        resolvedProjectId ??
+        (yield* values.load({ workdir, projectRef: Option.none() }).pipe(
+          Effect.flatMap((snapshot) => snapshot.get(CliConfigKeys.projectId)),
+          Effect.map(({ value }) => value),
+          Effect.orElseSucceed(() => sanitizeProjectId(path.basename(workdir))),
+        ));
       const containerId = localDbContainerId(projectId);
       // Engine probe first; `Option.none()` falls through to the CLI spawn below.
       const engine = yield* LocalDockerEngine;

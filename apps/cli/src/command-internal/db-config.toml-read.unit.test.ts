@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
 import { beforeEach, describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Ref } from "effect";
@@ -13,6 +13,7 @@ import {
   type DbTomlValues,
 } from "./db-config.toml-read.ts";
 import { resolveSeedSqlPath } from "../shared/config/seed-path.ts";
+import { sanitizeProjectId } from "../shared/config/project-id.ts";
 import type { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { processEnvPinsLayer } from "../../tests/helpers/config-env-pins.ts";
 import { useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
@@ -155,7 +156,7 @@ describe("read (lenient) vs check (throws) split", () => {
     ).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.projectId).toEqual(Option.some("lenientproj"));
+          expect(v.projectId).toBe("lenientproj");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -173,7 +174,7 @@ describe("readDbToml", () => {
           expect(v.shadowPort).toBe(54320);
           expect(v.password).toBe("postgres");
           expect(Option.isNone(v.poolerConnectionString)).toBe(true);
-          expect(Option.isNone(v.projectId)).toBe(true);
+          expect(v.projectId).toBe(sanitizeProjectId(basename(dir)));
           expect(v.denoVersion).toBe(2);
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -678,7 +679,9 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("invalid db.seed.enabled");
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Invalid db.seed.enabled in supabase/config.toml",
+            );
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1516,7 +1519,7 @@ describe("readDbToml", () => {
           if (Exit.isFailure(exit)) {
             const json = JSON.stringify(exit.cause);
             expect(json).toContain("DbConfigLoadError");
-            expect(json).toContain("failed to parse config: invalid api.auto_expose_new_tables.");
+            expect(json).toContain("Invalid api.auto_expose_new_tables in supabase/config.toml");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1632,7 +1635,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "failed to parse config: invalid experimental.pgdelta.enabled.",
+              "Invalid SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED",
             );
           }
           if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -1652,7 +1655,7 @@ describe("readDbToml", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain(
-              "failed to parse config: invalid storage.enabled.",
+              "Invalid storage.enabled in supabase/config.toml",
             );
           }
           rmSync(bad, { recursive: true, force: true });
@@ -1712,7 +1715,7 @@ describe("readDbToml", () => {
           expect(v.port).toBe(55555);
           expect(v.shadowPort).toBe(55556);
           expect(v.password).toBe("hunter2");
-          expect(Option.getOrNull(v.projectId)).toBe("my-project");
+          expect(v.projectId).toBe("my-project");
           expect(Option.getOrNull(v.poolerConnectionString)).toContain("postgres.ref");
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1732,7 +1735,7 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(v.port).toBe(55777);
           expect(v.shadowPort).toBe(55778);
-          expect(Option.getOrNull(v.projectId)).toBe("json-project");
+          expect(v.projectId).toBe("json-project");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1839,7 +1842,7 @@ describe("readDbToml", () => {
       return read(dir).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
-            expect(Option.getOrNull(v.projectId)).toBe("abcdefghijklmnopqrst");
+            expect(v.projectId).toBe("abcdefghijklmnopqrst");
             delete process.env["PROJECT_REF"];
             rmSync(dir, { recursive: true, force: true });
           }),
@@ -2153,7 +2156,7 @@ describe("readDbToml", () => {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
                 expect(JSON.stringify(exit.cause)).toContain("DbConfigLoadError");
-                expect(JSON.stringify(exit.cause)).toContain("invalid db.port");
+                expect(JSON.stringify(exit.cause)).toContain("Invalid db.port");
               }
               rmSync(dir, { recursive: true, force: true });
             }),
@@ -2171,7 +2174,7 @@ describe("readDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("invalid db.shadow_port");
+            expect(JSON.stringify(exit.cause)).toContain("Invalid db.shadow_port");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2834,6 +2837,13 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
       "Invalid config for auth.email.template.invite.content: please use content_path instead",
     ),
   );
+  it.effect("rejects an email template whose content comes from the shell environment", () => {
+    scrubAmbientEnv({ SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT: "<h1>hi</h1>" });
+    return failsWith(
+      ["[auth.email.template.invite]", 'subject = "Welcome"'],
+      "Invalid config for auth.email.template.invite.content: please use content_path instead",
+    );
+  });
   it.effect("rejects an email template whose content_path file is missing", () =>
     failsWith(
       ["[auth.email.template.invite]", 'content_path = "./missing.html"'],
@@ -2930,14 +2940,14 @@ describe("readDbToml auth.Enabled validation (Go config.Validate parity)", () =>
   it.effect("fails on a malformed auth boolean string instead of coercing to false", () =>
     failsWith(
       ["[auth.passkey]", 'enabled = "maybe"'],
-      "failed to parse config: invalid auth.passkey.enabled.",
+      "Invalid auth.passkey.enabled in supabase/config.toml",
     ),
   );
 
   it.effect("rejects an unknown captcha provider (Go enum, regardless of enabled)", () =>
     failsWith(
       ["[auth.captcha]", "enabled = false", 'provider = "cloudflare"'],
-      "'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+      "Invalid auth.captcha.provider in supabase/config.toml",
     ),
   );
 });
@@ -3035,7 +3045,7 @@ describe("readDbToml non-scalar config booleans (Go UnmarshalExact parity)", () 
       const exit = yield* read(dir).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(`failed to parse config: invalid ${field}.`);
+        expect(JSON.stringify(exit.cause)).toContain(`Invalid ${field} in supabase/config.toml`);
       }
       rmSync(dir, { recursive: true, force: true });
     });
@@ -3045,6 +3055,64 @@ describe("readDbToml non-scalar config booleans (Go UnmarshalExact parity)", () 
   it.effect("rejects an inline-table value for [db.seed] enabled", () =>
     failsInvalid(["[db.seed]", "enabled = {}"], "db.seed.enabled"),
   );
+});
+
+describe("readDbToml project env scoping", () => {
+  const LINKED = "linkedlinkedlinkedlin";
+  const OTHER = "otherotherotherother";
+
+  const withEnvFile = (config: string, dotEnv: string, linkedRef?: string) => {
+    const dir = withConfig(config);
+    writeFileSync(join(dir, "supabase", ".env"), dotEnv);
+    if (linkedRef !== undefined) {
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+    }
+    return dir;
+  };
+
+  it.effect("omits a linked project's .env credential when targeting another project", () => {
+    const dir = withEnvFile(
+      'project_id = "demo"\n',
+      "SUPABASE_DB_PASSWORD=linked-secret\nUNRELATED=kept\n",
+      LINKED,
+    );
+    return readRef(dir, OTHER).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectEnv).toEqual({ UNRELATED: "kept" });
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the .env credential when targeting the linked project", () => {
+    const dir = withEnvFile(
+      'project_id = "demo"\n',
+      "SUPABASE_DB_PASSWORD=linked-secret\n",
+      LINKED,
+    );
+    return readRef(dir, LINKED).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectEnv).toEqual({ SUPABASE_DB_PASSWORD: "linked-secret" });
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("lets an empty shell value shadow the .env value an env() secret refers to", () => {
+    scrubAmbientEnv({ SHADOWED_ROOT_KEY: "" });
+    const dir = withEnvFile(
+      '[db]\nroot_key = "env(SHADOWED_ROOT_KEY)"\n',
+      "SHADOWED_ROOT_KEY=encrypted:undecryptable\n",
+    );
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
 });
 
 describe("readDbToml empty project_id (Go config.Validate parity)", () => {
@@ -3099,7 +3167,7 @@ describe("readDbToml [analytics] validation (Go config.Validate parity)", () => 
   it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
     failsWith(
       ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
-      "'analytics.backend' must be one of [postgres bigquery]",
+      "Invalid analytics.backend in supabase/config.toml",
     ),
   );
   it.effect("rejects bigquery analytics missing gcp_project_id", () =>
@@ -3176,7 +3244,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(
@@ -3195,7 +3263,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(
@@ -3214,7 +3282,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(Option.getOrNull(v.projectId)).toBe("toml-project");
+          expect(v.projectId).toBe("toml-project");
         }),
       ),
       Effect.ensuring(
@@ -3237,7 +3305,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.appliedRemote).toBe("prod");
-          expect(Option.getOrNull(v.projectId)).toBe("local");
+          expect(v.projectId).toBe("local");
         }),
       ),
       Effect.ensuring(
@@ -3258,7 +3326,7 @@ describe("readDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () 
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.appliedRemote).toBeUndefined();
-          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+          expect(v.projectId).toBe("env-project");
         }),
       ),
       Effect.ensuring(

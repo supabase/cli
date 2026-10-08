@@ -20,10 +20,7 @@ import { rejectPasswordWithDirectTarget } from "../../../../../command-internal/
 import { LinkedProjectCache } from "../../../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../../../telemetry/telemetry-state.service.ts";
 import { listLocalMigrations } from "../../../../../command-internal/migration-list.ts";
-import {
-  isPgDeltaDebugEnabled,
-  resolvePgDeltaProjectId,
-} from "../../../../../command-internal/pgdelta.ts";
+import { isPgDeltaDebugEnabled } from "../../../../../command-internal/pgdelta.ts";
 import type { PgDeltaDatabaseEndpoint } from "../../../shared/pgdelta-engine.service.ts";
 import { DeclarativeWriteError } from "../../../shared/pgdelta.errors.ts";
 import {
@@ -144,11 +141,7 @@ export const dbSchemaDeclarativeGenerate = Effect.fn("db.schema.declarative.gene
 
     const run: DeclarativeRunContext = {
       pgDelta: {
-        // `resolvePgDeltaProjectId` resolves `SUPABASE_PROJECT_ID` env → config.toml's
-        // `project_id` → sanitized workdir basename — not `cliSettings.projectId` alone, which
-        // is env-only and would mount the wrong `supabase_edge_runtime_` Deno-cache volume for a
-        // project relying on config or the workdir-basename default.
-        projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+        projectId: toml.projectId,
         cwd: cliSettings.workdir,
         // Merged config's deno_version (re-loaded with the linked ref above on
         // `--linked`), so pg-delta runs under the remote-configured Deno image.

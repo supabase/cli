@@ -38,6 +38,7 @@ import {
   mockLinkedProjectCacheTracked,
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
+  withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import type { PgConnInput } from "../../../command-internal/db-connection.service.ts";
@@ -676,35 +677,6 @@ describe("gen types", () => {
   );
 
   it.live(
-    "a defaulted workdir still picks up an ancestor project's configured api schemas from a subdirectory",
-    () =>
-      Effect.gen(function* () {
-        const root = yield* makeWorkdir("supabase-gen-types-ancestor-");
-        yield* writeConfig(
-          root,
-          ['project_id = "demo"', "", "[api]", 'schemas = ["ancestor_only"]'].join("\n"),
-        );
-        const sub = path.join(root, "nested", "dir");
-        yield* makeDirectory(sub);
-        const { layer, api } = yield* setup({
-          workdir: sub,
-          skipConfig: true,
-          explicitWorkdir: false,
-          projectId: Option.some(VALID_REF),
-          projectTypes: "ok",
-        });
-        yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
-          Effect.provide(layer),
-        );
-
-        expect(api.requests[0]).toEqual({
-          method: "generateTypescriptTypes",
-          input: { ref: VALID_REF, included_schemas: "public,ancestor_only" },
-        });
-      }).pipe(Effect.provide(BunServices.layer)),
-  );
-
-  it.live(
     "an explicit --workdir naming a directory that does not exist at all fails before any config load",
     () =>
       Effect.gen(function* () {
@@ -853,6 +825,82 @@ describe("gen types", () => {
       });
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  describe("SUPABASE_API_SCHEMAS", () => {
+    const withApiSchemas = <A, E, R>(body: Effect.Effect<A, E, R>) =>
+      withEnvVar("SUPABASE_API_SCHEMAS", "auth,storage", body);
+
+    it.live("selects the schemas for --linked ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-linked-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, api } = yield* setup({
+            workdir,
+            projectId: Option.some(VALID_REF),
+            projectTypes: "ok",
+          });
+          yield* genTypes(defaultFlags({ linked: true })).pipe(Effect.provide(layer));
+          expect(api.requests[0]).toEqual({
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
+          });
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --project-id without a project config", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const { layer, api } = yield* setup({ skipConfig: true, projectTypes: "ok" });
+          yield* genTypes(defaultFlags({ projectId: Option.some(VALID_REF) })).pipe(
+            Effect.provide(layer),
+          );
+          expect(api.requests[0]).toEqual({
+            method: "generateTypescriptTypes",
+            input: { ref: VALID_REF, included_schemas: "public,auth,storage" },
+          });
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --local ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-local-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, generator } = yield* setup({ workdir });
+          yield* genTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+
+    it.live("selects the schemas for --db-url ahead of config.toml", () =>
+      withApiSchemas(
+        Effect.gen(function* () {
+          const dbUrl = "postgresql://postgres:postgres@127.0.0.1:5432/postgres";
+          const workdir = yield* makeWorkdir("supabase-gen-types-env-dburl-");
+          yield* writeConfig(
+            workdir,
+            ['project_id = "demo"', "[api]", 'schemas = ["other"]'].join("\n"),
+          );
+          const { layer, generator } = yield* setup({
+            workdir,
+            args: ["gen", "types", "--db-url", dbUrl],
+          });
+          yield* genTypes(defaultFlags({ dbUrl: Option.some(dbUrl) })).pipe(Effect.provide(layer));
+          expect(generator.calls[0]?.includedSchemas).toEqual(["public", "auth", "storage"]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
+  });
 
   it.live("silently ignores --query-timeout for implicit linked TypeScript generation", () =>
     Effect.gen(function* () {

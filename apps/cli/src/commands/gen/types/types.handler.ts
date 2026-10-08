@@ -1,5 +1,3 @@
-import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/internal";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { getDomain } from "tldts";
@@ -12,6 +10,8 @@ import {
   pflagArgvScan,
 } from "../../../shared/cli/cobra-flag-groups.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import {
   ProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
@@ -35,7 +35,6 @@ import {
   missingProjectConfigMessageEffect,
   relativeConfigPath,
 } from "../../../command-internal/workdir-project.ts";
-import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { validateWorkdirIsDirectory } from "../../../command-internal/workdir-validation.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
@@ -231,6 +230,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
   const projectRef = yield* ProjectRefResolver;
   const linkedProjectCache = yield* LinkedProjectCache;
   const dbConfig = yield* DbConfigResolver;
+  const configValues = yield* CliConfigValues;
   const generator = yield* GenTypesGenerator;
   const backend = yield* currentStackBackend;
 
@@ -252,42 +252,58 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
   // `projectRef` is passed only for the `--linked`/`--project-id` paths, so a matching
   // `[remotes.*]` overlay is merged in the same load; omitted for `--local`/`--db-url`.
-  const loadConfig = (projectRef?: string) =>
-    loadCliConfig(cliSettings.workdir, {
-      ...(projectRef === undefined ? {} : { projectRef }),
-      goViperCompat: true,
-      search: shouldSearchAncestors(cliSettings),
-    }).pipe(
-      // `cause.path` names the actual failed file; `loadCliConfig` probes `config.json`
-      // before falling back to `config.toml`, so hardcoding `.toml` here would mislabel it.
-      // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
-      // from the "no project here" case that guard handles.
-      Effect.catchTags({
-        CliConfigParseError: (cause) =>
-          new GenTypesParseConfigError({
-            message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
-          }),
-        DuplicateRemoteProjectIdError: (cause) =>
-          new GenTypesParseConfigError({ message: cause.message }),
-      }),
-      Effect.flatMap(requireProjectConfigWhenExplicit),
-      Effect.tap((loaded) => Effect.annotateCurrentSpan("config.found", loaded !== null)),
-    );
+  const loadApiSchemas = (projectRef?: string) =>
+    configValues
+      .load({
+        workdir: cliSettings.workdir,
+        projectRef: Option.fromNullishOr(projectRef),
+        tolerateUnreadableLinkedRef: true,
+      })
+      .pipe(
+        // `cause.path` names the actual failed file, which may be `config.json` or `config.toml`.
+        // Caught before `requireProjectConfigWhenExplicit`, since a parse failure is distinct
+        // from the "no project here" case that guard handles.
+        Effect.catchTags({
+          CliConfigParseError: (cause) =>
+            new GenTypesParseConfigError({
+              message: `failed to parse ${toRelativeConfigPath(cause.path)}: ${String(cause.cause)}`,
+            }),
+          DuplicateRemoteProjectIdError: (cause) =>
+            new GenTypesParseConfigError({ message: cause.message }),
+          CliConfigLoadError: (cause) => new GenTypesParseConfigError({ message: cause.message }),
+        }),
+        Effect.tap((snapshot) => requireProjectConfigWhenExplicit(snapshot.hasConfigFile)),
+        Effect.tap((snapshot) =>
+          Effect.annotateCurrentSpan("config.found", snapshot.hasConfigFile),
+        ),
+        Effect.flatMap((snapshot) =>
+          snapshot.get(CliConfigKeys.api.schemas).pipe(
+            // Without a project the embedded default applies, not the schema's default list.
+            Effect.map(({ value, origin }) =>
+              origin.tier === "default" && !snapshot.hasConfigFile ? [] : value,
+            ),
+          ),
+        ),
+      );
 
   // An explicit --workdir that holds no project must not silently resolve to the embedded
   // default schemas (dropping a declared [api].schemas and writing a public-only file at exit
   // 0). A defaulted workdir keeps the tolerant fallback.
-  const requireProjectConfigWhenExplicit = (loaded: LoadedCliConfig | null) =>
-    loaded === null && cliSettings.explicitWorkdir
+  const requireProjectConfigWhenExplicit = (configFound: boolean) =>
+    !configFound && cliSettings.explicitWorkdir
       ? Effect.gen(function* () {
           return yield* new GenTypesMissingProjectConfigError({
             message: yield* missingProjectConfigMessageEffect(cliSettings),
           });
         })
-      : Effect.succeed(loaded);
+      : Effect.void;
 
-  const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
-    defaultSchemas(apiSchemas);
+  // `--schema` skips the config load entirely, so a `--db-url --schema ...` invocation must not
+  // fail just because the workdir has no project config.
+  const resolveIncludedSchemas = (projectRef?: string) =>
+    schemas.length > 0
+      ? Effect.succeed(schemas)
+      : loadApiSchemas(projectRef).pipe(Effect.map(defaultSchemas));
 
   /**
    * Sets a session-level `statement_timeout` and connect timeout from `--query-timeout` on
@@ -610,9 +626,7 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
       const projectEnvValues = Object.fromEntries(
         Object.entries(config.projectEnv).filter(([key]) => key !== "SUPABASE_DB_PASSWORD"),
       );
-      const projectId = Option.getOrElse(config.projectId, () =>
-        path.basename(cliSettings.workdir),
-      );
+      const projectId = config.projectId;
 
       const paths = tempPaths(path, cliSettings.workdir);
       // Only forces v9 compat from the rest-version file's image tag when the database's
@@ -659,17 +673,12 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
 
     if (Option.isSome(flags.dbUrl)) {
       yield* Effect.annotateCurrentSpan("typegen.source", "db_url");
-      // Skips the config load entirely when `--schema` is explicit, since the load's only
-      // output here is the schema fallback — a `--db-url --schema ...` invocation must not
-      // fail just because the workdir has no project config.
-      const loaded = schemas.length > 0 ? null : yield* loadConfig();
+      const includedSchemas = yield* resolveIncludedSchemas();
       const resolved = yield* dbConfig.resolve({
         dbUrl: flags.dbUrl,
         connType: "db-url",
         dnsResolver,
       });
-      const includedSchemas =
-        schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas ?? []);
 
       // A DSN's own `sslmode`/`sslrootcert` is honored as-is; only a known Supabase host with
       // neither set gets the CA pinned, matching the project-ref/branch paths.
@@ -694,24 +703,14 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
     if (flags.linked) {
       yield* Effect.annotateCurrentSpan("typegen.source", "linked");
       const ref = yield* projectRef.resolve(Option.none());
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
-      yield* runProjectTypes(
-        ref,
-        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
-        false,
-      );
+      yield* runProjectTypes(ref, yield* resolveIncludedSchemas(ref), false);
       return;
     }
 
     if (Option.isSome(flags.projectId)) {
       yield* Effect.annotateCurrentSpan("typegen.source", "project_id");
       const ref = yield* projectRef.resolve(flags.projectId);
-      const loaded = schemas.length > 0 ? null : yield* loadConfig(ref);
-      yield* runProjectTypes(
-        ref,
-        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
-        true,
-      );
+      yield* runProjectTypes(ref, yield* resolveIncludedSchemas(ref), true);
       return;
     }
 
@@ -727,11 +726,6 @@ export const genTypes = Effect.fn("gen.types")(function* (flags: GenTypesFlags) 
         ),
       ),
     );
-    const loaded = schemas.length > 0 ? null : yield* loadConfig(resolvedRef);
-    yield* runProjectTypes(
-      resolvedRef,
-      schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
-      false,
-    );
+    yield* runProjectTypes(resolvedRef, yield* resolveIncludedSchemas(resolvedRef), false);
   }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

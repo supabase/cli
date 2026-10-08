@@ -2524,7 +2524,7 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   // `--debug=false` must resolve to `false` — a plain presence check would get that backwards
   // (same rule as `download.ts`'s own `--debug` read).
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
-  const deployConfig = context.loaded?.config;
+  const deployConfig = context.loaded.config;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
     context.denoVersion,
     dependencies.edgeRuntimeVersion,
@@ -2532,13 +2532,11 @@ export const deployFunctions = Effect.fn("functions.deploy")(function* <
   const configFunctions = yield* inferFunctionsManifest({
     cwd: dependencies.projectRoot,
     config: deployConfig,
-    // Matches `loadFunctionsCliConfig`'s own options above: no ancestor directory is searched
-    // past `dependencies.projectRoot` for either load, so they can never resolve two
-    // different projects.
-    search: dependencies.goConfigCompat === undefined,
+    // The config snapshot never searches ancestors, so manifest inference must not either.
+    search: false,
   });
-  const configDeclaredFunctions = deployConfig?.functions ?? {};
-  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+  const configDeclaredFunctions = deployConfig.functions;
+  const rawConfigFunctions = rawFunctionConfigRecord(context.loaded.document);
   yield* validateConfigFunctionSlugs(configDeclaredFunctions);
   const slugs =
     flags.functionNames.length > 0

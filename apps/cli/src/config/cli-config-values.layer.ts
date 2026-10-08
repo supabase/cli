@@ -427,7 +427,6 @@ export const cliConfigValuesLayer = Layer.effect(
         invalid,
         familyNames,
         declares: (configPath) => configAt(configPath) !== undefined,
-        declaredAt: configAt,
         withheldEnv,
         dotenvPrivateKeys,
         projectEnvValues: { ...projectEnv.values },

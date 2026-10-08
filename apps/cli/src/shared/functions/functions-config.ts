@@ -1,9 +1,8 @@
 import { Crypto, Effect, type FileSystem, Option, type Path } from "effect";
 import type { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import type { LoadedCliConfig } from "@supabase/config/effect";
-import { loadCliConfig } from "@supabase/config/effect";
 import { CliConfigKeys } from "../../config/cli-config-keys.ts";
-import { CliConfigValues } from "../../config/cli-config-values.service.ts";
+import { CliConfigValues, type CliConfigSnapshot } from "../../config/cli-config-values.service.ts";
 
 type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
 
@@ -12,10 +11,13 @@ type FunctionsLoadedConfig = Pick<LoadedCliConfig, "config" | "document">;
  * (`deploy`, `download`, `serve`). Callers that inject
  * {@link FunctionsGoConfigCompat} additionally run the config/dotenv
  * validation pipeline `start`/`stop`/`status` already share; callers that
- * omit it keep the plain `loadCliConfig` behavior.
+ * omit it read the config snapshot alone.
  */
 interface FunctionsCliConfigContext {
-  readonly loaded: FunctionsLoadedConfig | null;
+  readonly loaded: FunctionsLoadedConfig;
+  readonly snapshot: CliConfigSnapshot;
+  /** The config file's path; `undefined` when the project has none. */
+  readonly configPath: string | undefined;
   /** Merged env with ambient values winning; `undefined` when the hook is not injected. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** Sanitized project id, resolved after config validation. */
@@ -34,7 +36,9 @@ export interface FunctionsGoConfigCompat {
     readonly projectRef: string | undefined;
   }) => Effect.Effect<
     {
-      readonly loaded: FunctionsLoadedConfig | null;
+      readonly loaded: FunctionsLoadedConfig;
+      readonly snapshot: CliConfigSnapshot;
+      readonly configPath: string | undefined;
       readonly projectEnvValues: Readonly<Record<string, string>>;
       readonly projectId: string;
       readonly denoVersion: number;
@@ -47,7 +51,7 @@ export interface FunctionsGoConfigCompat {
 /**
  * Loads project config for a `functions` command. Callers that provide
  * `goConfigCompat` run its dotenv/config-validate pipeline before any
- * Docker/API work; callers that don't fall back to `loadCliConfig`.
+ * Docker/API work; the others read the config snapshot alone.
  */
 export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function* (input: {
   readonly projectRoot: string;
@@ -57,21 +61,21 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
   yield* Effect.annotateCurrentSpan({
     "config.go_compat": input.goConfigCompat !== undefined,
   });
+  const values = yield* CliConfigValues;
+  // Loaded first so a config failure reaches the caller as its own typed error, not as the
+  // validation hook's message-only wrapper; the hook's own load reuses this memoised snapshot.
+  const snapshot = yield* values.load({
+    workdir: input.projectRoot,
+    projectRef: Option.fromNullishOr(input.projectRef),
+  });
   if (input.goConfigCompat === undefined) {
-    const loaded = yield* loadCliConfig(
-      input.projectRoot,
-      input.projectRef === undefined ? {} : { projectRef: input.projectRef },
-    );
-    const values = yield* CliConfigValues;
-    const snapshot = yield* values.load({
-      workdir: input.projectRoot,
-      projectRef: Option.fromNullishOr(input.projectRef),
-    });
     return {
-      loaded,
+      loaded: { config: snapshot.materialized.config, document: snapshot.loaded.document },
+      snapshot,
+      configPath: snapshot.hasConfigFile ? snapshot.loaded.path : undefined,
       projectEnvValues: undefined,
       projectId: (yield* snapshot.get(CliConfigKeys.projectId)).value,
-      denoVersion: loaded?.config.edge_runtime.deno_version,
+      denoVersion: snapshot.materialized.config.edge_runtime.deno_version,
     } satisfies FunctionsCliConfigContext;
   }
 
@@ -81,6 +85,8 @@ export const loadFunctionsCliConfig = Effect.fn("FunctionsConfig.load")(function
   });
   return {
     loaded: context.loaded,
+    snapshot: context.snapshot,
+    configPath: context.configPath,
     projectEnvValues: context.projectEnvValues,
     projectId: context.projectId,
     denoVersion: context.denoVersion,

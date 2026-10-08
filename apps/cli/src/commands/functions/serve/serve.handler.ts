@@ -27,7 +27,6 @@ export const functionsServe = Effect.fn("functions.serve")(function* (flags: Fun
     debug,
     networkId,
     projectIdOverride: cliSettings.projectId,
-    goViperCompat: true,
     goConfigCompat: functionsGoConfigCompat,
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

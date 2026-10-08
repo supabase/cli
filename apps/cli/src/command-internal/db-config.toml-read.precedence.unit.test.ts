@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Option, Path, Result } from "effect";
+import { ConfigProvider, Effect, FileSystem, Path, Result } from "effect";
 
 import { ConfigEnvPins } from "../../tests/helpers/config-env-pins.ts";
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
@@ -230,11 +230,7 @@ describe("db toml reader precedence goldens", () => {
           : { error: { tag: outcome.failure._tag, message: outcome.failure.message } };
         if (fixture.expectedProjectId !== undefined) {
           ctx
-            .expect(
-              Result.isSuccess(outcome)
-                ? Option.getOrUndefined(outcome.success.projectId)
-                : undefined,
-            )
+            .expect(Result.isSuccess(outcome) ? outcome.success.projectId : undefined)
             .toBe(fixture.expectedProjectId);
         }
         yield* Effect.promise(() =>
