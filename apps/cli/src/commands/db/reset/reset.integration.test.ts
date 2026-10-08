@@ -3358,6 +3358,7 @@ describe("db reset", () => {
           sqlPaths?: ReadonlyArray<string>;
           remoteBlock?: string;
           interactive?: boolean;
+          pipedStdin?: string;
         } = {},
       ) =>
         setup(tmp.current, {
@@ -3373,6 +3374,9 @@ describe("db reset", () => {
           interactive: opts.interactive,
           confirm: opts.confirm,
           env: opts.env,
+          ...(opts.pipedStdin === undefined
+            ? {}
+            : { pipedStdin: opts.pipedStdin, stdinIsTty: false }),
         });
       const flags = { ...DEFAULT_FLAGS, linked: true, sqlPaths: Option.some(["custom-seed.sql"]) };
       const seeded = (out: { readonly stderrText: string }) =>
@@ -3436,6 +3440,48 @@ describe("db reset", () => {
           }
           expect(out.stderrText).not.toContain("Resetting remote database");
           expect(conn.execs).toEqual([]);
+        });
+      });
+
+      it.live(
+        "fails with SeedConsentRequiredError when piped stdin ends after the reset answer",
+        () => {
+          const { layer, out, conn } = remoteSeed({ pipedStdin: "y\n" });
+          return Effect.gen(function* () {
+            const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+                _tag: "SeedConsentRequiredError",
+                suggestion: "Pass --yes to seed, or --no-seed to reset without seeding.",
+              });
+            }
+            expect(out.stderrText).not.toContain("Resetting remote database");
+            expect(conn.execs).toEqual([]);
+          });
+        },
+      );
+
+      it.live("declines a piped n at the seed prompt without writing", () => {
+        const { layer, out, conn } = remoteSeed({ pipedStdin: "y\nn\n" });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              message: "Seeding cancelled; nothing was changed.",
+            });
+          }
+          expect(out.stderrText).not.toContain("Resetting remote database");
+          expect(conn.execs).toEqual([]);
+        });
+      });
+
+      it.live("seeds when piped y answers both prompts", () => {
+        const { layer, out } = remoteSeed({ pipedStdin: "y\ny\n" });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(seeded(out)).toBe(true);
         });
       });
 

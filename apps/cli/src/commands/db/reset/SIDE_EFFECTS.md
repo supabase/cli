@@ -283,7 +283,7 @@ to those defaults (the usual outcome for an interactive terminal).
   `SUPABASE_YES` answers yes and prints `Seeding enabled by <origin>` (for example `SUPABASE_DB_SEED_ENABLED (shell)`); a TTY stdin with
   non-interactive output, or machine output on a TTY, fails with `SeedConsentRequiredError`
   (`Seeding <ref> ([remotes.<name>]) needs confirmation and this run can't prompt. Nothing was changed.`, suggesting `--yes` or `--no-seed`);
-  piped stdin is read for one line. An answer of no exits 1 with `Seeding cancelled; nothing was changed.`
+  piped stdin is read for one line, and a pipe that ends without one fails the same way. An answer of no exits 1 with `Seeding cancelled; nothing was changed.`
 - `--no-seed` forces seeding off; on the
   local path it feeds `resolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override

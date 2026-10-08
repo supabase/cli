@@ -126,7 +126,8 @@ stdout is payload-only. A single `result` object is emitted:
   `--include-seed`). With a TTY stdin and non-interactive output, or machine
   output on a TTY, the run can't prompt and fails with `SeedConsentRequiredError`
   (`Seeding <ref> ([remotes.<name>]) needs confirmation and this run can't prompt.
-Nothing was changed.`) before any write; piped stdin is read for one line. An
+Nothing was changed.`) before any write; piped stdin is read for one line, and a pipe that ends
+  without one (for example `</dev/null`) fails the same way. An
   answer of no exits 1 with `Seeding cancelled; nothing was changed.`
   `--dry-run` prints whether a real run will ask or will need `--yes`.
 - **Seeding** requires `--include-seed`; `SUPABASE_DB_SEED_ENABLED=true` alone

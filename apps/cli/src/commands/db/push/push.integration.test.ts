@@ -674,6 +674,7 @@ describe("db push", () => {
         yes?: boolean;
         format?: OutputFormat;
         confirm?: ReadonlyArray<boolean>;
+        piped?: string;
         migrations?: boolean;
         dryRun?: boolean;
         remoteBlock?: string;
@@ -692,6 +693,7 @@ describe("db push", () => {
         yes: opts.yes,
         format: opts.format,
         confirm: opts.confirm,
+        piped: opts.piped,
       });
     const flags = {
       ...DEFAULT_FLAGS,
@@ -754,6 +756,43 @@ describe("db push", () => {
         expect(out.promptConfirmCalls).toEqual([]);
         expect(conn.execs).not.toContain("BEGIN");
         expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live("fails with SeedConsentRequiredError when piped stdin ends without an answer", () => {
+      const { layer, conn } = remoteSeed({ piped: "" });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)._tag).toBe("SeedConsentRequiredError");
+        expect(failError(exit).message).toBe(
+          `Seeding ${VALID_REF} ([remotes.preview]) needs confirmation and this run can't prompt. Nothing was changed.`,
+        );
+        expect(failSuggestion(exit)).toBe(
+          "Pass --yes to seed, or drop --include-seed to push migrations only.",
+        );
+        expect(conn.execs).not.toContain("BEGIN");
+        expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live.each(["n\n", "\n"])("declines a piped answer of %j without seeding", (piped) => {
+      const { layer, conn } = remoteSeed({ piped });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)._tag).toBe("DbPushCancelledError");
+        expect(failError(exit).message).toBe("Seeding cancelled; nothing was changed.");
+        expect(conn.execs).not.toContain("BEGIN");
+        expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live("seeds when a piped y answers the prompt", () => {
+      const { layer, conn } = remoteSeed({ piped: "y\n" });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(seeded(conn)).toBe(true);
       });
     });
 

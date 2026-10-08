@@ -6,7 +6,7 @@ import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { parseGoBool } from "../shared/config/config-bool.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { Tty } from "../shared/runtime/tty.service.ts";
-import { promptYesNo } from "./prompt-yes-no.ts";
+import { promptYesNoOutcome } from "./prompt-yes-no.ts";
 import { SeedConsentRequiredError } from "./seed-remote-consent.errors.ts";
 
 /** A seed run that needs consent because its target matched a `[remotes.*]` block. */
@@ -90,7 +90,8 @@ export const seedConsentDryRunNote = Effect.fnUntraced(function* (
 
 /**
  * Asks before seeding a project whose target matched a `[remotes.*]` block, defaulting to no.
- * Returns `false` when the answer is no; fails with `SeedConsentRequiredError` when nothing can ask.
+ * Returns `false` when the answer is no; fails with `SeedConsentRequiredError` when nothing can ask
+ * or piped stdin ends without an answer line.
  */
 export const confirmSeedIntoMatchedRemote = Effect.fnUntraced(function* (input: {
   readonly command: SeedConsentCommand;
@@ -102,7 +103,7 @@ export const confirmSeedIntoMatchedRemote = Effect.fnUntraced(function* (input: 
   const output = yield* Output;
   if (!yes && !(yield* canPromptForSeed())) return yield* requiredError(target, command);
   const noun = files.length === 1 ? "seed file" : "seed files";
-  const consented = yield* promptYesNo(
+  const outcome = yield* promptYesNoOutcome(
     output,
     yes,
     `Project ${target.ref} matches [remotes.${target.remote}]. Run ${files.length} ${noun} (${files.join(", ")}) against it?`,
@@ -110,8 +111,9 @@ export const confirmSeedIntoMatchedRemote = Effect.fnUntraced(function* (input: 
     true,
     { readMachineStdin: true },
   );
-  if (consented && yes) yield* output.raw(`Seeding enabled by ${target.enabledBy}\n`, "stderr");
-  return consented;
+  if (!outcome.answered) return yield* requiredError(target, command);
+  if (outcome.value && yes) yield* output.raw(`Seeding enabled by ${target.enabledBy}\n`, "stderr");
+  return outcome.value;
 });
 
 /** The cancelled message both commands use when the seed prompt is answered no. */
