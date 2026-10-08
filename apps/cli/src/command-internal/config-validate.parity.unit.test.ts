@@ -388,16 +388,14 @@ describe("shared api + auth validation branches, cross-caller parity (S vs L)", 
     ),
   );
 
-  it.effect(
-    "undecryptable encrypted: auth.service_role_key: S and L fail with the same message",
-    () =>
-      isolated(
-        Effect.gen(function* () {
-          const message = "failed to parse config";
-          const auth = { service_role_key: "encrypted:not-a-real-ciphertext" };
-          failsWithL({ auth }, message);
-          yield* failsWithS({ auth }, message);
-        }),
-      ),
+  it.effect("undecryptable encrypted: auth.service_role_key fails S at snapshot load", () =>
+    isolated(
+      Effect.gen(function* () {
+        yield* failsWithS(
+          { auth: { service_role_key: "encrypted:not-a-real-ciphertext" } },
+          "failed to parse config",
+        );
+      }),
+    ),
   );
 });

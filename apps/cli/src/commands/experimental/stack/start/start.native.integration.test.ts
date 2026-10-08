@@ -470,9 +470,12 @@ describe("experimental stack start native lifecycle", () => {
               expect(yield* stack.services.list).toHaveLength(0);
               expect((yield* stack.composition.describe).members).toHaveLength(0);
             }
+            // The config snapshot is memoised per runtime, so the rewritten file needs a fresh service.
             yield* fs.writeFileString(path.join(root, "supabase", "config.toml"), "project_id = [");
             activeAttempt = 2;
-            const invalidConfigStart = yield* Effect.scoped(Effect.exit(stackStart(flags([]))));
+            const invalidConfigStart = yield* Effect.scoped(
+              Effect.exit(stackStart(flags([]))),
+            ).pipe(Effect.provide(cliConfigValuesTestLayer));
             expect(Exit.isFailure(invalidConfigStart)).toBe(true);
             if (!Exit.isFailure(invalidConfigStart)) return;
             const configError = Cause.findErrorOption(invalidConfigStart.cause);

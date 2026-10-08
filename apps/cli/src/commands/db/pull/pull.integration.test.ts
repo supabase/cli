@@ -1,4 +1,3 @@
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import { unusedStackServices } from "../../../../tests/helpers/unused-stack.ts";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -452,7 +451,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // Listed first so the fake service layers below (`Layer.mergeAll` is last-wins)
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
-    cliConfigValuesTestLayer,
     out.layer,
     dbCommandConfigValuesLayer(out.layer, {
       flags:

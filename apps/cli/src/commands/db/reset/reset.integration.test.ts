@@ -28,6 +28,7 @@ import {
 import {
   VALID_REF,
   jsonResponse,
+  withConfigEnv,
   withEnvVar,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -88,7 +89,6 @@ import {
 } from "../../../command-internal/db-connection.service.ts";
 import { dbReset } from "./reset.handler.ts";
 import type { DbResetFlags } from "./reset.command.ts";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 const LIST_MIGRATIONS =
   "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
@@ -1007,7 +1007,6 @@ function setup(
     conn.layer,
     resolver.layer,
     mockCommandSettings({ workdir }),
-    cliConfigValuesTestLayer,
     BunServices.layer,
     child.layer,
     mockLocalDockerEngineUnavailableLayer,
@@ -1943,9 +1942,8 @@ describe("db reset", () => {
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
-      return withEnvVar(
-        "GITHUB_HEAD_REF",
-        "feature-x",
+      return withConfigEnv(
+        { GITHUB_HEAD_REF: "feature-x" },
         Effect.gen(function* () {
           yield* dbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
           expect(out.stderrText).toContain("on branch ");

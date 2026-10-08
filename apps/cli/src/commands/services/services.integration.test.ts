@@ -450,11 +450,11 @@ describe("services", () => {
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 
-  it.live("ignores config.json and reads legacy config.toml for local image selection", () =>
+  it.live("reads config.json over config.toml for local image selection", () =>
     Effect.gen(function* () {
       const workdir = yield* makeProjectWithConfigFiles({
-        toml: "[db]\nmajor_version = 15\n",
-        json: '{"db":{"major_version":14}}',
+        toml: "[db]\nmajor_version = 17\n",
+        json: '{"db":{"major_version":15}}',
       });
       const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 

@@ -61,7 +61,6 @@ import {
   type ServiceCreationInput,
   type Stack,
 } from "@supabase/stack/effect";
-import { cliConfigValuesTestLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 
 const DEFAULT_FLAGS: DbStartFlags = { fromBackup: Option.none() };
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
@@ -370,7 +369,6 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
-    cliConfigValuesTestLayer,
     BunServices.layer,
     out.layer,
     dbCommandConfigValuesLayer(out.layer),

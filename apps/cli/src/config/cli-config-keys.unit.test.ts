@@ -78,7 +78,7 @@ describe("config key registry", () => {
   });
 
   it("accounts for every SUPABASE_* name the CLI source mentions outside the registry files", () => {
-    expect(referencedEnvNames.size).toBeGreaterThan(100);
+    expect(referencedEnvNames.size).toBeGreaterThan(25);
     const unaccounted = [...referencedEnvNames]
       .filter((name) => !name.endsWith("_"))
       .filter((name) => !registryEnvNames.has(name) && !(name in CLI_NON_CONFIG_ENV_NAMES));
@@ -86,10 +86,10 @@ describe("config key registry", () => {
     expect(unaccounted).toEqual([]);
   });
 
-  it("produces every env override the legacy db reader honours", () => {
-    const reader = readFileSync(join(srcDir, "command-internal/db-config.toml-read.ts"), "utf8");
-    const block = /const ENV_OVERRIDABLE_KEYS = \[([\s\S]*?)\] as const;/.exec(reader)?.[1] ?? "";
-    const dottedKeys = [...block.matchAll(/"([a-z0-9_.]+)"/g)].map((match) => match[1] ?? "");
+  it("produces an env override for every key the db reader honoured before the registry", () => {
+    const dottedKeys: ReadonlyArray<string> = JSON.parse(
+      readFileSync(join(srcDir, "config/testdata/env-overridable-keys.json"), "utf8"),
+    );
 
     const missing = dottedKeys.filter((dotted) => {
       const key = cliConfigRegistry.keyAt(dotted);

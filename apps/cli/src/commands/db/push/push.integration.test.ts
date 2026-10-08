@@ -1167,10 +1167,7 @@ describe("db push", () => {
     }).pipe((body) => withEnvVar("SEED_ENABLED", "true", body));
   });
 
-  it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
-    // A matched [remotes.<ref>] block overrides the shell env, so
-    // `[remotes.preview.db.migrations] enabled = false` wins over
-    // `SUPABASE_DB_MIGRATIONS_ENABLED=true`.
+  it.live("the shell env override beats a matched remote block's migrations.enabled", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
@@ -1181,8 +1178,8 @@ describe("db push", () => {
     });
     return Effect.gen(function* () {
       yield* dbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("Skipping migrations because it is disabled");
-      expect(out.stderrText).not.toContain("Applying migration 20240101000000");
+      expect(out.stderrText).not.toContain("Skipping migrations because it is disabled");
+      expect(out.stderrText).toContain("Applying migration 20240101000000");
     }).pipe((body) => withEnvVar("SUPABASE_DB_MIGRATIONS_ENABLED", "true", body));
   });
 

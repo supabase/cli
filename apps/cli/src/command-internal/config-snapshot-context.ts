@@ -1,9 +1,15 @@
 import type { CliConfig } from "@supabase/config";
 import { ENV_CAPTURE_REGEX, resolveCliConfigSubtree } from "@supabase/config/internal";
-import { Effect, Option, Path, Redacted } from "effect";
+import { Effect, Option, Path, Redacted, Result } from "effect";
 
-import { lookupCliConfigEnv } from "../config/cli-config-key.ts";
-import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import { setDocumentValue } from "../config/cli-config-document.ts";
+import { lookupCliConfigEnv, pickCliConfigKey } from "../config/cli-config-key.ts";
+import {
+  CliConfigKeys,
+  cliConfigFamilyKey,
+  cliConfigRegistry,
+  type AnyCliConfigKey,
+} from "../config/cli-config-keys.ts";
 import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import type { CliConfigSnapshot } from "../config/cli-config-values.service.ts";
 import { loadCliProjectEnvFiles, readShellEnvironment } from "../shared/config/cli-config-env.ts";
@@ -17,7 +23,7 @@ interface ConfigSnapshotContext {
   readonly config: CliConfig;
   /** Values that came from `supabase/.env*` files only; a name the shell sets is never in here. */
   readonly projectEnvValues: Record<string, string>;
-  /** The merged `config.toml` sections with `env()` references resolved; `undefined` when absent. */
+  /** The merged `config.toml` sections with every winner written in; `undefined` when there are none. */
   readonly document: Record<string, unknown> | undefined;
 }
 
@@ -58,21 +64,49 @@ const revealSecrets = (value: unknown): unknown => {
   return value;
 };
 
-const resolvedDocument = (snapshot: CliConfigSnapshot) =>
+const documentKeys = (snapshot: CliConfigSnapshot): ReadonlyArray<AnyCliConfigKey> => [
+  ...cliConfigRegistry.keys.filter((key) => key.document !== false),
+  ...cliConfigRegistry.families.flatMap((family) =>
+    snapshot
+      .familyNames(family.id)
+      .flatMap((name) =>
+        family.fields.flatMap((field) => cliConfigFamilyKey(family, name, field.name) ?? []),
+      ),
+  ),
+];
+
+/**
+ * The merged config sections with `env()` references resolved and every flag, environment and
+ * decrypted-secret winner written in, so presence checks and unmodeled fields read what the
+ * snapshot resolved. Defaults are not written, which keeps absent sections absent.
+ */
+const effectiveDocument = (snapshot: CliConfigSnapshot) =>
   Effect.gen(function* () {
     const sections = Object.keys(snapshot.materialized.config).flatMap((name) => {
       const section = snapshot.sources.context.configAt(name);
       return name === "remotes" || section === undefined ? [] : [[name, section] as const];
     });
-    if (sections.length === 0) return undefined;
     const values = snapshotEnvValues(snapshot, sections);
-    const resolved: Record<string, unknown> = {};
+    const document: Record<string, unknown> = {};
     for (const [name, section] of sections) {
-      resolved[name] = revealSecrets(
+      document[name] = revealSecrets(
         yield* resolveCliConfigSubtree(section, { values }, name, { goViperCompat: true }),
       );
     }
-    return resolved;
+    for (const key of documentKeys(snapshot)) {
+      const picked = pickCliConfigKey(key, snapshot.sources);
+      if (Result.isFailure(picked)) return yield* picked.failure;
+      const { value, origin } = picked.success;
+      const winsDocument =
+        origin.tier === "flag" ||
+        origin.tier === "shell" ||
+        origin.tier === "projectEnv" ||
+        (origin.tier === "config" && key.secret === true);
+      if (!winsDocument) continue;
+      const written = key.toDocument(value);
+      if (written !== undefined) setDocumentValue(document, key.path, written);
+    }
+    return Object.keys(document).length === 0 ? undefined : document;
   });
 
 /** Loads the snapshot for a command that targets no project, so no `[remotes.*]` block applies. */
@@ -88,7 +122,7 @@ export const loadConfigSnapshotContext = Effect.fn("ConfigSnapshotContext.load")
     snapshot,
     config: snapshot.materialized.config,
     projectEnvValues: { ...projectEnv.values },
-    document: yield* resolvedDocument(snapshot),
+    document: yield* effectiveDocument(snapshot),
   } satisfies ConfigSnapshotContext;
 });
 

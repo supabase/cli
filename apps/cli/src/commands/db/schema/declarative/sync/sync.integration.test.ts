@@ -70,7 +70,6 @@ import { DeclarativeShadowDbError } from "../../../shared/pgdelta.errors.ts";
 import { DeclarativeSeam } from "../../../shared/pgdelta.seam.service.ts";
 import type { DbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { dbSchemaDeclarativeSync } from "./sync.handler.ts";
-import { cliConfigValuesTestLayer } from "../../../../../../tests/helpers/config-snapshot-layer.ts";
 
 interface SetupOpts {
   experimental?: boolean;
@@ -379,7 +378,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(CommandPlatformApiFactory, {
       make: CommandPlatformApi.pipe(Effect.provide(platformApi.layer)),
     }),
-    cliConfigValuesTestLayer,
     BunServices.layer,
     // `child.layer` must be listed after `BunServices.layer` — `Layer.mergeAll` resolves a
     // duplicate service tag to whichever layer is listed last, so this mock overrides Bun's
