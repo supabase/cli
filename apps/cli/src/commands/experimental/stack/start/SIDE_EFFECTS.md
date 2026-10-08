@@ -174,7 +174,8 @@ version fails before modifying the stopped composition, naming the `config.toml`
 reverting it or running the stack's exact `supabase stack destroy` command to recreate it.
 Switching between stock PostgreSQL and OrioleDB is an artifact version change, reported as
 `db.orioledb_version` (or `SUPABASE_DB_ORIOLEDB_VERSION`) with `unset` standing for stock.
-Initialized database data is reused only on its own release line (major plus stock or OrioleDB). A
+Initialized database data is reused only on its own release line (the PostgreSQL major for stock
+builds, the exact build for OrioleDB, since a newer OrioleDB build may refuse older data). A
 first start records the requested line before initializing data, so a first start interrupted
 before readiness resumes on that line; unmarked data without a recorded line can prove only its
 major, so it is never reused for OrioleDB.
