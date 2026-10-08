@@ -1,34 +1,39 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { relative } from "node:path";
+import type { JsonTestResults } from "vitest/node";
 
 export const COMMENT_MARKER = "<!-- flaky-check -->";
 const MAX_ROWS = 50;
 const MAX_MESSAGE = 200;
+const FILE_LEVEL_TITLE = "(file setup)";
+const SKIPPED = new Set(["skipped", "pending", "todo", "disabled"]);
 
-/** What one matrix job recorded next to its JUnit files in `meta.json`. */
+/** What one matrix job recorded next to its Vitest JSON reports in `meta.json`. */
 export type RunMeta = {
   name: string;
   suite: string;
   run: number;
   /** Executions of each test in this run: 1, or `--repeats` + 1. */
   executions: number;
-  /** `null` when the test step never finished, such as on a timeout or cancel. */
+  /** `null` when the test step did not run or finish, such as after a setup failure or timeout. */
   exitCode: number | null;
+  /** Checkout root the reports' absolute file paths are relative to. */
+  root: string;
 };
 
 export type TestCase = {
-  pkg: string;
   file: string;
-  name: string;
+  titles: string[];
   failures: number;
   skipped: boolean;
+  /** Set for file-level entries, which run once regardless of `--repeats`. */
+  executions?: number;
   message?: string;
 };
 
-/** `reports` names the JUnit files the run produced, one per workspace package that ran. */
+/** `reports` names the JSON reports the run produced, one per Vitest invocation. */
 export type RunResult = { meta: RunMeta; reports: string[]; cases: TestCase[] };
 
-export type TestVerdict = {
+type TestVerdict = {
   suite: string;
   file: string;
   name: string;
@@ -39,7 +44,7 @@ export type TestVerdict = {
   message?: string;
 };
 
-export type RunProblem = { name: string; problem: string };
+type RunProblem = { name: string; problem: string };
 
 export type Report = {
   flaky: TestVerdict[];
@@ -48,53 +53,46 @@ export type Report = {
   suites: { suite: string; runs: number; executions: number; tests: number }[];
 };
 
-const ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-};
-
-function unescapeXml(value: string): string {
-  return value.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (match, entity: string) => {
-    if (!entity.startsWith("#")) {
-      return ENTITIES[entity] ?? match;
-    }
-    const hex = entity[1] === "x" || entity[1] === "X";
-    const codePoint = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
-    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
-  });
-}
-
-function attribute(tag: string, name: string): string | undefined {
-  const match = new RegExp(`\\s${name}="([^"]*)"`).exec(tag);
-  return match?.[1] === undefined ? undefined : unescapeXml(match[1]);
+function firstLine(message: string): string {
+  return message.split("\n", 1)[0] ?? "";
 }
 
 /**
- * Parses Vitest's JUnit output. Each error adds a `<failure>` element, so one failed execution
- * can contribute several (a failing test and its failing `afterEach`, for example).
+ * Flattens one Vitest JSON report. Every failed execution adds a failure message, and one
+ * execution can add several (a failing test and its failing `afterEach`, for example). Each file
+ * also gets a file-level entry, because a failing `beforeAll` or import only marks the file failed.
  */
-export function parseJunit(xml: string, pkg: string): TestCase[] {
-  const cases: TestCase[] = [];
-  const testcase = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
-  for (const match of xml.matchAll(testcase)) {
-    const tag = match[1] ?? "";
-    const body = match[3] ?? "";
-    const failureTags = [...body.matchAll(/<(failure|error)\b([^>]*)>/g)];
-    const message =
-      failureTags[0] === undefined ? undefined : attribute(failureTags[0][2] ?? "", "message");
-    cases.push({
-      pkg,
-      file: attribute(tag, "classname") ?? "",
-      name: attribute(tag, "name") ?? "",
-      failures: failureTags.length,
-      skipped: /<skipped\b/.test(body),
-      ...(message === undefined ? {} : { message }),
+export function parseVitestJson(results: JsonTestResults, root: string): TestCase[] {
+  return results.testResults.flatMap((fileResult) => {
+    const file = relative(root, fileResult.name);
+    const tests = fileResult.assertionResults.map((assertion) => {
+      const failureMessages = assertion.failureMessages ?? [];
+      const message = failureMessages[0];
+      return {
+        file,
+        titles: [...assertion.ancestorTitles, assertion.title],
+        failures: failureMessages.length,
+        skipped: SKIPPED.has(assertion.status),
+        ...(message === undefined ? {} : { message: firstLine(message) }),
+      };
     });
-  }
-  return cases;
+    const fileFailed =
+      fileResult.status === "failed" &&
+      (fileResult.message !== "" || tests.every((test) => test.failures === 0));
+    return [
+      ...tests,
+      {
+        file,
+        titles: [FILE_LEVEL_TITLE],
+        failures: fileFailed ? 1 : 0,
+        skipped: false,
+        executions: 1,
+        ...(fileFailed
+          ? { message: firstLine(fileResult.message) || "failed outside any test (hook or setup)" }
+          : {}),
+      },
+    ];
+  });
 }
 
 function variantOf(meta: RunMeta): string {
@@ -110,8 +108,8 @@ export function aggregate(
   const verdicts = new Map<string, TestVerdict>();
   const runProblems: RunProblem[] = [];
   const suites = new Map<string, { runs: Set<number>; executions: number; tests: Set<string> }>();
-  // A package whose Vitest process crashes writes no report while the rest of the Turbo run may
-  // still fail normally, so each run is compared with the other runs of the same matrix variant.
+  // A Vitest process that crashes writes no report while the other commands of the run may still
+  // fail normally, so each run is compared with the other runs of the same matrix variant.
   const variantReports = new Map<string, Set<string>>();
   for (const { meta, reports } of results) {
     const known = variantReports.get(variantOf(meta)) ?? new Set();
@@ -135,20 +133,22 @@ export function aggregate(
     // Tests sharing a title in one file stay distinct by their order of appearance.
     const occurrences = new Map<string, number>();
     for (const testCase of cases) {
-      const file = `${testCase.pkg}/${testCase.file}`;
-      const occurrence = (occurrences.get(`${file}\0${testCase.name}`) ?? 0) + 1;
-      occurrences.set(`${file}\0${testCase.name}`, occurrence);
+      const title = testCase.titles.join(" > ");
+      const id = `${testCase.file}\0${testCase.titles.join("\0")}`;
+      const occurrence = (occurrences.get(id) ?? 0) + 1;
+      occurrences.set(id, occurrence);
       if (testCase.skipped) {
         continue;
       }
-      ranTests += 1;
-      const name = occurrence === 1 ? testCase.name : `${testCase.name} (#${occurrence})`;
-      const key = `${meta.suite}\0${file}\0${testCase.name}\0${occurrence}`;
-      suite.tests.add(key);
+      const key = `${meta.suite}\0${id}\0${occurrence}`;
+      if (testCase.executions === undefined) {
+        ranTests += 1;
+        suite.tests.add(key);
+      }
       const verdict = verdicts.get(key) ?? {
         suite: meta.suite,
-        file,
-        name,
+        file: testCase.file,
+        name: occurrence === 1 ? title : `${title} (#${occurrence})`,
         runs: 0,
         failedRuns: [],
         partialRuns: 0,
@@ -157,8 +157,8 @@ export function aggregate(
       if (testCase.failures > 0) {
         sawFailure = true;
         verdict.failedRuns.push(meta.run);
-        // Fewer error elements than executions proves at least one execution passed.
-        if (testCase.failures < meta.executions) {
+        // Fewer failure messages than executions proves at least one execution passed.
+        if (testCase.failures < (testCase.executions ?? meta.executions)) {
           verdict.partialRuns += 1;
         }
         verdict.message ??= testCase.message;
@@ -177,14 +177,14 @@ export function aggregate(
     } else if (reports.length === 0) {
       runProblems.push({
         name: meta.name,
-        problem: `exited ${meta.exitCode} without writing a JUnit report`,
+        problem: `exited ${meta.exitCode} without writing a report`,
       });
     } else if (missing.length > 0) {
-      runProblems.push({ name: meta.name, problem: `no JUnit report for ${missing.join(", ")}` });
+      runProblems.push({ name: meta.name, problem: `no report for ${missing.join(", ")}` });
     } else if (meta.exitCode !== 0 && !sawFailure) {
       runProblems.push({
         name: meta.name,
-        problem: `exited ${meta.exitCode} without a failing test (setup, unhandled error, or crash)`,
+        problem: `exited ${meta.exitCode} without a failing test (unhandled error or crash)`,
       });
     } else if (ranTests === 0 && !allowEmpty.includes(meta.suite)) {
       runProblems.push({ name: meta.name, problem: "ran no tests; check the filter" });
@@ -204,10 +204,10 @@ export function aggregate(
       (a, b) =>
         b.failedRuns.length / b.runs - a.failedRuns.length / a.runs || a.file.localeCompare(b.file),
     );
-  const alwaysFails = (v: TestVerdict) => v.failedRuns.length === v.runs && v.partialRuns === 0;
+  const failsEveryRun = (v: TestVerdict) => v.failedRuns.length === v.runs && v.partialRuns === 0;
   return {
-    flaky: failed.filter((v) => !alwaysFails(v)),
-    failing: failed.filter(alwaysFails),
+    flaky: failed.filter((v) => !failsEveryRun(v)),
+    failing: failed.filter(failsEveryRun),
     runProblems: runProblems.sort((a, b) => a.name.localeCompare(b.name)),
     suites: [...suites.entries()]
       .map(([suite, { runs, executions, tests }]) => ({
@@ -242,17 +242,17 @@ function testTable(title: string, verdicts: TestVerdict[]): string[] {
   if (verdicts.length === 0) {
     return [];
   }
+  const rows = verdicts.slice(0, MAX_ROWS).map((v) => {
+    const partial = v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : "";
+    const runs = [...v.failedRuns].sort((a, b) => a - b).join(", ");
+    return `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedRuns.length}/${v.runs}${partial} | ${runs} | ${cell(v.message ?? "")} |`;
+  });
   const lines = [
     `### ${title} (${verdicts.length})`,
     "",
     "| Suite | Test | File | Failed runs | Which runs | First failure |",
     "| --- | --- | --- | --- | --- | --- |",
-    ...verdicts
-      .slice(0, MAX_ROWS)
-      .map(
-        (v) =>
-          `| ${v.suite} | ${cell(v.name)} | ${codeCell(v.file)} | ${v.failedRuns.length}/${v.runs}${v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : ""} | ${[...v.failedRuns].sort((a, b) => a - b).join(", ")} | ${cell(v.message ?? "")} |`,
-      ),
+    ...rows,
   ];
   if (verdicts.length > MAX_ROWS) {
     lines.push("", `…and ${verdicts.length - MAX_ROWS} more in \`report.json\`.`);
@@ -292,7 +292,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
       "",
       "| Run | Problem |",
       "| --- | --- |",
-      ...report.runProblems.map((p) => `| \`${p.name}\` | ${p.problem} |`),
+      ...report.runProblems.map((p) => `| ${codeCell(p.name)} | ${p.problem} |`),
       "",
     );
   }
@@ -300,42 +300,4 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     "<sub>A run fails a test when any execution fails; with `--repeats`, a partial run also had passing executions, which makes the test flaky. The full data is in the `flaky-check-report` artifact.</sub>",
   );
   return `${lines.join("\n")}\n`;
-}
-
-function readResults(dir: string): RunResult[] {
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(dir, entry.name, "meta.json")))
-    .map((entry) => {
-      const runDir = join(dir, entry.name);
-      const meta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as RunMeta;
-      const reports = readdirSync(runDir).filter((file) => file.endsWith(".xml"));
-      const cases = reports.flatMap((file) => {
-        // Files are named `<package path with / as __>--<suite>.xml` by the collect action.
-        const pkg = file.split("--")[0]?.replaceAll("__", "/") ?? "";
-        return parseJunit(readFileSync(join(runDir, file), "utf8"), pkg);
-      });
-      return { meta, reports, cases };
-    });
-}
-
-if (import.meta.main) {
-  const [resultsDir = "results", outDir = "flaky-report"] = process.argv.slice(2);
-  const expected = JSON.parse(process.env.EXPECTED ?? "[]") as string[];
-  const results = existsSync(resultsDir) ? readResults(resultsDir) : [];
-  const report = aggregate(results, expected, process.env.FILTER ? [] : ["focused"]);
-  const markdown = renderMarkdown(report, {
-    sha: process.env.SHA ?? "",
-    runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
-  });
-
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-  writeFileSync(join(outDir, "report.md"), markdown);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, markdown, { flag: "a" });
-  }
-  if (process.env.GITHUB_OUTPUT) {
-    writeFileSync(process.env.GITHUB_OUTPUT, `clean=${isClean(report)}\n`, { flag: "a" });
-  }
-  console.log(markdown);
 }

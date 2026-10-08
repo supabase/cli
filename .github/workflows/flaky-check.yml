@@ -3,7 +3,8 @@ name: Flaky check
 # Runs the same commit on many fresh runners, with retries off, and reports every test that
 # both passed and failed. Nightly covers unit + integration on develop, weekly covers e2e, and
 # the `run-flaky-check` PR label covers unit + integration plus a `focused` suite that repeats
-# the tests affected by the PR. See .github/MAINTAINERS.md for usage.
+# the tests affected by the PR. The logic lives in .github/scripts/flaky-check; see
+# .github/MAINTAINERS.md for usage.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -49,6 +50,10 @@ concurrency:
     }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
+env:
+  # The CLI comes from this workflow's revision, so runs against older refs can use it.
+  FLAKY_CLI: .flaky-tooling/.github/scripts/flaky-check/cli.ts
+
 jobs:
   plan:
     if: |
@@ -70,7 +75,22 @@ jobs:
       stack: ${{ steps.plan.outputs.stack }}
       expected: ${{ steps.plan.outputs.expected }}
     steps:
-      - name: Compute matrices
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/scripts/flaky-check
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          version: 2026.9.0
+          install: true
+          install_args: bun
+          working_directory: .flaky-tooling
+
+      - name: Plan runs
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,100 +103,7 @@ jobs:
           INPUT_RUNS: ${{ inputs.runs }}
           INPUT_REPEATS: ${{ inputs.repeats }}
           INPUT_FILTER: ${{ inputs.filter }}
-        run: |
-          set -euo pipefail
-          repeats=4
-          filter=""
-          base=develop
-          case "$EVENT_NAME" in
-            schedule)
-              sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/develop" --jq .sha)"
-              if [ "$SCHEDULE" = "47 3 * * 0" ]; then
-                suites=e2e,stack-e2e
-                runs=3
-              else
-                suites=unit,integration
-                runs=10
-              fi
-              ;;
-            pull_request)
-              # github.sha is the PR merge commit, the same commit the Test workflow checks.
-              sha="$EVENT_SHA"
-              base="$PR_BASE_REF"
-              suites=unit,integration,focused
-              runs=10
-              ;;
-            workflow_dispatch)
-              ref="$(jq -rn --arg ref "${INPUT_REF:-$GITHUB_REF_NAME}" '$ref | @uri')"
-              sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$ref" --jq .sha)"
-              suites="$INPUT_SUITES"
-              runs="$INPUT_RUNS"
-              repeats="$INPUT_REPEATS"
-              filter="$INPUT_FILTER"
-              ;;
-          esac
-
-          suites="$(tr -d '[:space:]' <<< "$suites")"
-          if ! [ "$runs" -ge 1 ] 2>/dev/null || [ "$runs" -gt 30 ]; then
-            echo "::error ::runs must be between 1 and 30, got '$runs'"
-            exit 1
-          fi
-          if ! [ "$repeats" -ge 0 ] 2>/dev/null || [ "$repeats" -gt 100 ]; then
-            echo "::error ::repeats must be between 0 and 100, got '$repeats'"
-            exit 1
-          fi
-          for suite in ${suites//,/ }; do
-            case "$suite" in
-              unit | integration | focused | e2e | stack-e2e) ;;
-              *)
-                echo "::error ::unknown suite '$suite'"
-                exit 1
-                ;;
-            esac
-          done
-
-          suites_json="$(jq -cn --arg s "$suites" '$s | split(",") | map(select(. != ""))')"
-          tests="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" --argjson repeats "$repeats" '
-            [$suites[] | select(. == "unit" or . == "integration" or . == "focused") as $s
-              | range(1; $runs + 1) as $r
-              | {suite: $s, run: $r, name: "flaky-\($s)-run\($r)",
-                 executions: (if $s == "focused" then $repeats + 1 else 1 end)}]')"
-          e2e="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" '
-            if ($suites | index("e2e")) then
-              [range(1; $runs + 1) as $r
-                | ((range(1; 5) as $s | {target: "cli", shard: $s, run: $r, name: "flaky-e2e-cli\($s)-run\($r)"}),
-                   {target: "cli-e2e", shard: 0, run: $r, name: "flaky-e2e-cli-e2e-run\($r)"})]
-            else [] end')"
-          stack="$(jq -cn --argjson suites "$suites_json" --argjson runs "$runs" '
-            if ($suites | index("stack-e2e")) then
-              [range(1; $runs + 1) as $r
-                | ("native", "docker", "podman") as $runtime
-                | ("lifecycle", "idle-parallel") as $scenario
-                | {runtime: $runtime, scenario: $scenario, run: $r,
-                   name: "flaky-stack-e2e-\($runtime)-\($scenario)-run\($r)"}]
-            else [] end')"
-
-          if [ "$tests$e2e$stack" = "[][][]" ]; then
-            echo "::error ::no suites selected; choose from unit,integration,focused,e2e,stack-e2e"
-            exit 1
-          fi
-
-          matrix() { if [ "$1" = "[]" ]; then echo ""; else jq -c '{include: .}' <<< "$1"; fi; }
-          {
-            echo "sha=$sha"
-            echo "base=$base"
-            echo "repeats=$repeats"
-            echo "filter=$filter"
-            echo "tests=$(matrix "$tests")"
-            echo "e2e=$(matrix "$e2e")"
-            echo "stack=$(matrix "$stack")"
-            echo "expected=$(jq -cn --argjson a "$tests" --argjson b "$e2e" --argjson c "$stack" '$a + $b + $c | map(.name)')"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "### Flaky check plan"
-            echo
-            echo "Commit \`$sha\`, suites \`$suites\`, $runs runs each, focused repeats $repeats, base \`$base\`."
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: bun "$FLAKY_CLI" plan
 
       # Removing the label lets a maintainer re-add it to start another run. Fork PRs get a
       # read-only token, so the label stays there and must be removed by hand.
@@ -209,12 +136,11 @@ jobs:
           fetch-depth: ${{ matrix.suite != 'focused' && 1 || 0 }}
           persist-credentials: false
 
-      # The collector comes from this workflow's revision, so runs against older refs can use it.
       - name: Checkout flaky-check tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .flaky-tooling
-          sparse-checkout: .github/actions/flaky-collect
+          sparse-checkout: .github/scripts/flaky-check
           persist-credentials: false
 
       - name: Setup
@@ -230,53 +156,28 @@ jobs:
           BASE_REF: ${{ needs.plan.outputs.base }}
           REPEATS: ${{ needs.plan.outputs.repeats }}
           FILTER: ${{ needs.plan.outputs.filter }}
-        run: |
-          set -uo pipefail
-          read -ra filters <<< "$FILTER"
-          code=0
-          report=(--reporter=default --reporter=junit --passWithNoTests)
-          run_unit() {
-            pnpm run test:unit "${report[@]}" --outputFile.junit=.flaky-junit/unit.xml "$@" || code=$?
-          }
-          # packages/api chains a Node and a Bun Vitest run in one script and Turbo forwards
-          # arguments only to the last command, so its two projects run separately here.
-          run_integration() {
-            pnpm exec turbo run test:integration:run --continue=always --filter='!@supabase/api' -- \
-              "${report[@]}" --outputFile.junit=.flaky-junit/integration.xml "$@" || code=$?
-            pnpm --dir packages/api exec vitest run --project integration \
-              "${report[@]}" --outputFile.junit=.flaky-junit/integration-node.xml "$@" || code=$?
-            pnpm --dir packages/api exec bun --bun vitest run --project bun-integration \
-              "${report[@]}" --outputFile.junit=.flaky-junit/integration-bun.xml "$@" || code=$?
-          }
-          case "$SUITE" in
-            unit) run_unit "${filters[@]}" ;;
-            integration) run_integration "${filters[@]}" ;;
-            focused)
-              if [ "${#filters[@]}" -gt 0 ]; then
-                select=("${filters[@]}")
-              elif base="$(git merge-base HEAD "origin/$BASE_REF")"; then
-                select=(--changed "$base")
-              else
-                echo "::error ::Unable to find the merge base with origin/$BASE_REF."
-                echo "exit-code=1" >> "$GITHUB_OUTPUT"
-                exit 1
-              fi
-              run_unit --repeats="$REPEATS" "${select[@]}"
-              run_integration --repeats="$REPEATS" "${select[@]}"
-              ;;
-          esac
-          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-          exit "$code"
+        run: bun "$FLAKY_CLI" run
 
       - name: Collect results
+        id: collect
         if: always()
-        uses: ./.flaky-tooling/.github/actions/flaky-collect
+        env:
+          NAME: ${{ matrix.name }}
+          SUITE: ${{ matrix.suite }}
+          RUN: ${{ matrix.run }}
+          EXECUTIONS: ${{ matrix.executions }}
+          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+        run: bun "$FLAKY_CLI" collect
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
-          suite: ${{ matrix.suite }}
-          run: ${{ matrix.run }}
-          executions: ${{ matrix.executions }}
-          exit-code: ${{ steps.run.outputs.exit-code }}
+          path: ${{ steps.collect.outputs.dir }}
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
 
   e2e:
     needs: plan
@@ -295,12 +196,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # The collector comes from this workflow's revision, so runs against older refs can use it.
       - name: Checkout flaky-check tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .flaky-tooling
-          sparse-checkout: .github/actions/flaky-collect
+          sparse-checkout: .github/scripts/flaky-check
           persist-credentials: false
 
       - name: Setup
@@ -327,29 +227,31 @@ jobs:
       - name: Run tests
         id: run
         env:
+          SUITE: e2e
           TARGET: ${{ matrix.target }}
           SHARD: ${{ matrix.shard }}
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
-        run: |
-          set -uo pipefail
-          args=(--reporter=default --reporter=junit --outputFile.junit=.flaky-junit/e2e.xml)
-          code=0
-          if [ "$TARGET" = cli ]; then
-            pnpm exec turbo run test:e2e:run --only --filter=supabase -- "${args[@]}" --shard="$SHARD/4" || code=$?
-          else
-            pnpm exec turbo run test:e2e:run --only --filter=@supabase/cli-e2e -- "${args[@]}" || code=$?
-          fi
-          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-          exit "$code"
+        run: bun "$FLAKY_CLI" run
 
       - name: Collect results
+        id: collect
         if: always()
-        uses: ./.flaky-tooling/.github/actions/flaky-collect
+        env:
+          NAME: ${{ matrix.name }}
+          SUITE: e2e
+          RUN: ${{ matrix.run }}
+          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+        run: bun "$FLAKY_CLI" collect
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
-          suite: e2e
-          run: ${{ matrix.run }}
-          exit-code: ${{ steps.run.outputs.exit-code }}
+          path: ${{ steps.collect.outputs.dir }}
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
 
   stack-e2e:
     needs: plan
@@ -369,12 +271,11 @@ jobs:
           ref: ${{ needs.plan.outputs.sha }}
           persist-credentials: false
 
-      # The collector comes from this workflow's revision, so runs against older refs can use it.
       - name: Checkout flaky-check tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .flaky-tooling
-          sparse-checkout: .github/actions/flaky-collect
+          sparse-checkout: .github/scripts/flaky-check
           persist-credentials: false
 
       - name: Setup
@@ -390,31 +291,30 @@ jobs:
       - name: Run tests
         id: run
         env:
+          SUITE: stack-e2e
           RUNTIME: ${{ matrix.runtime }}
           SCENARIO: ${{ matrix.scenario }}
-        run: |
-          set -uo pipefail
-          code=0
-          run_file() {
-            pnpm --filter @supabase/stack test:e2e:run "src/$1.e2e.test.ts" --passWithNoTests=false \
-              --reporter=default --reporter=junit "--outputFile.junit=.flaky-junit/$1.xml" || code=$?
-          }
-          run_file "whole-stack.$RUNTIME.$SCENARIO"
-          # test.yml runs the public API suite only in this combination.
-          if [ "$RUNTIME" = native ] && [ "$SCENARIO" = lifecycle ]; then
-            run_file public
-          fi
-          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-          exit "$code"
+        run: bun "$FLAKY_CLI" run
 
       - name: Collect results
+        id: collect
         if: always()
-        uses: ./.flaky-tooling/.github/actions/flaky-collect
+        env:
+          NAME: ${{ matrix.name }}
+          SUITE: stack-e2e
+          RUN: ${{ matrix.run }}
+          EXIT_CODE: ${{ steps.run.outputs.exit-code }}
+        run: bun "$FLAKY_CLI" collect
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}
-          suite: stack-e2e
-          run: ${{ matrix.run }}
-          exit-code: ${{ steps.run.outputs.exit-code }}
+          path: ${{ steps.collect.outputs.dir }}
+          retention-days: 14
+          if-no-files-found: error
+          overwrite: true
 
   report:
     needs: [plan, tests, e2e, stack-e2e]
@@ -425,11 +325,12 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - name: Checkout
+      - name: Checkout flaky-check tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: .flaky-tooling
+          sparse-checkout: .github/scripts/flaky-check
           persist-credentials: false
-          sparse-checkout: .github/scripts
 
       - name: Install Bun
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
@@ -437,6 +338,7 @@ jobs:
           version: 2026.9.0
           install: true
           install_args: bun
+          working_directory: .flaky-tooling
 
       - name: Download results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -450,7 +352,7 @@ jobs:
           EXPECTED: ${{ needs.plan.outputs.expected }}
           SHA: ${{ needs.plan.outputs.sha }}
           FILTER: ${{ needs.plan.outputs.filter }}
-        run: bun .github/scripts/flaky-report.ts results flaky-report
+        run: bun "$FLAKY_CLI" report results flaky-report
 
       - name: Upload report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -467,26 +369,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          marker="$(head -n 1 flaky-report/report.md)"
-          if ! comment_id="$(
-            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
-              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" \
-              | sed -n 1p
-          )"; then
-            echo "::warning::Unable to list PR comments; the report is in the flaky-check-report artifact."
-            exit 0
-          fi
-          if [ -n "$comment_id" ]; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
-              --field "body=@flaky-report/report.md" >/dev/null \
-              || echo "::warning::Unable to update the flaky-check PR comment."
-          else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              --field "body=@flaky-report/report.md" >/dev/null \
-              || echo "::warning::Unable to create the flaky-check PR comment."
-          fi
+        run: bun "$FLAKY_CLI" comment flaky-report/report.md
 
       - name: Fail on flaky tests
         if: steps.report.outputs.clean != 'true'

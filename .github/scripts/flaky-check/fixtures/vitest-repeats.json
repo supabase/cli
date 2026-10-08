@@ -1,0 +1,112 @@
+{
+  "numTotalTestSuites": 6,
+  "numPassedTestSuites": 0,
+  "numFailedTestSuites": 6,
+  "numPendingTestSuites": 0,
+  "numTotalTests": 6,
+  "numPassedTests": 1,
+  "numFailedTests": 3,
+  "numPendingTests": 2,
+  "numTodoTests": 0,
+  "snapshot": {
+    "added": 0,
+    "failure": false,
+    "filesAdded": 0,
+    "filesRemoved": 0,
+    "filesRemovedList": [],
+    "filesUnmatched": 0,
+    "filesUpdated": 0,
+    "matched": 0,
+    "total": 0,
+    "unchecked": 0,
+    "uncheckedKeysByFile": [],
+    "unmatched": 0,
+    "updated": 0,
+    "didUpdate": false
+  },
+  "startTime": 1791470493665,
+  "success": false,
+  "testResults": [
+    {
+      "assertionResults": [
+        {
+          "ancestorTitles": ["mixed"],
+          "fullName": "mixed fails only on the second execution",
+          "status": "failed",
+          "title": "fails only on the second execution",
+          "duration": 48.13462499999997,
+          "failureMessages": ["Error: second"],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["two errors"],
+          "fullName": "two errors test and afterEach both fail once",
+          "status": "failed",
+          "title": "test and afterEach both fail once",
+          "duration": 2.0434170000000336,
+          "failureMessages": ["Error: test body", "Error: afterEach too"],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["hook"],
+          "fullName": "hook never runs",
+          "status": "skipped",
+          "title": "never runs",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api twin",
+          "status": "passed",
+          "title": "twin",
+          "duration": 1.190084000000013,
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api twin",
+          "status": "failed",
+          "title": "twin",
+          "duration": 1.0079999999999814,
+          "failureMessages": ["Error: second twin", "Error: second twin", "Error: second twin"],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        },
+        {
+          "ancestorTitles": ["@supabase/api"],
+          "fullName": "@supabase/api skipped",
+          "status": "skipped",
+          "title": "skipped",
+          "failureMessages": [],
+          "meta": {},
+          "tags": [],
+          "benchmarks": []
+        }
+      ],
+      "startTime": 1791470494020,
+      "endTime": 1791470494076.008,
+      "status": "failed",
+      "message": "",
+      "name": "/repo/packages/api/src/probe.unit.test.ts"
+    },
+    {
+      "assertionResults": [],
+      "startTime": 1791470493665,
+      "endTime": 1791470493665,
+      "status": "failed",
+      "message": "import failure",
+      "name": "/repo/packages/api/src/import-error.unit.test.ts"
+    }
+  ]
+}
