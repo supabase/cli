@@ -661,13 +661,14 @@ it.live("a pinned port that fails to bind is not left reserved", () =>
       const { ports, registry, stateRoot, a } = yield* twoProjects;
       const port = pinnedPort();
 
-      yield* ports
+      const failure = yield* ports
         .acquire({ stackId: a, key: "db:sql", host: "127.0.0.1", port }, () =>
           Effect.fail(new PortError({ key: "db:sql", message: "bind failed" })),
         )
         .pipe(Effect.flip);
 
       expect(yield* registry.find(stateRoot, a, "db:sql")).toBeUndefined();
+      expect(failureKind(failure)).toBe("configuration");
     }),
   ).pipe(withRegistry),
 );

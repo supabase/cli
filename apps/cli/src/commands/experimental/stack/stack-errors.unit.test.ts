@@ -133,6 +133,18 @@ describe("new stack error telemetry", () => {
     ).toMatchObject({ error_fingerprint: "tag:FunctionsServeStackError:runtime_stopped" });
     expect(
       classify(
+        new FunctionsServeStackError({
+          reason: "lifecycle",
+          message: "x",
+          cause: new LocalDbRunningError({ message: "not running" }),
+        }),
+      ),
+    ).toMatchObject({
+      error_fingerprint: "tag:FunctionsServeStackError:lifecycle",
+      error_category: "invalid_config",
+    });
+    expect(
+      classify(
         new DbDumpRunError({
           message: "x",
           cause: new StackError({ operation: "status", message: "no kind" }),

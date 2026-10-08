@@ -91,25 +91,33 @@ describe("container process adapter", { timeout: 120_000 }, () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("classifies a pull through a refused Podman socket as an unreachable engine", () =>
-    Effect.gen(function* () {
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const token = yield* (yield* Crypto.Crypto).randomUUIDv4;
-      const spawner = makePullFailureSpawner(
-        delegate,
-        yield* Ref.make(false),
-        "Error: unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: connection refused",
-      );
-      const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
-        Effect.flatMap((runtime) =>
-          runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
-        ),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
-      expect(failureKind(result.cause)).toBe("engine-unavailable");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
+  for (const [engine, stderr] of [
+    [
+      "Podman socket",
+      "Error: unable to connect to Podman socket: dial unix /run/user/1000/podman/podman.sock: connect: connection refused",
+    ],
+    [
+      "Docker TCP daemon",
+      'error during connect: Head "http://127.0.0.1:2375/_ping": dial tcp 127.0.0.1:2375: connect: connection refused',
+    ],
+  ] as const)
+    it.live(
+      `classifies a pull through a refused ${engine} connection as an unreachable engine`,
+      () =>
+        Effect.gen(function* () {
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const token = yield* (yield* Crypto.Crypto).randomUUIDv4;
+          const spawner = makePullFailureSpawner(delegate, yield* Ref.make(false), stderr);
+          const result = yield* makeContainerRuntime({ target: containerTarget, root: "." }).pipe(
+            Effect.flatMap((runtime) =>
+              runtime.prepare(`supabase-prepare-regression:${token}`).pipe(Effect.exit),
+            ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+          if (Exit.isSuccess(result)) return yield* Effect.die("pull unexpectedly succeeded");
+          expect(failureKind(result.cause)).toBe("engine-unavailable");
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
 
   it.live("keeps missing image pull failures observable", () =>
     Effect.gen(function* () {

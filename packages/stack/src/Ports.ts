@@ -470,7 +470,12 @@ export const makePorts = (state: StackNamespace.Interface) =>
               message: error.value.message,
               ...(error.value.cause === undefined ? {} : { cause: error.value.cause }),
               ...(error.value.conflict === undefined ? {} : { conflict: error.value.conflict }),
-              kind: request.port === "auto" ? "port-allocation" : "port-conflict",
+              kind:
+                request.port === "auto"
+                  ? "port-allocation"
+                  : error.value.conflict !== undefined
+                    ? "port-conflict"
+                    : (error.value.kind ?? "configuration"),
             });
           }
 
