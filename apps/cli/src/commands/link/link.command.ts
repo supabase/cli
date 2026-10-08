@@ -28,6 +28,7 @@ const config = {
     name: "password",
     alias: "p",
     description: "Password to your remote Postgres database.",
+    hidden: true,
   }),
   skipPooler: Flag.boolean("skip-pooler").pipe(
     Flag.withDescription("Use direct connection instead of pooler."),

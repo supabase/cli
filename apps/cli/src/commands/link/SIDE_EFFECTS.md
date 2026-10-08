@@ -106,7 +106,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SUPABASE_PROJECT_ID`   | link-target resolution: `[ref-or-branch]` positional → `--project-ref` → env → TTY prompt (CLI-2167 adds the positional ahead of the flag). Also the 1st parent-project candidate for a TS-only branch-name lookup (CLI-2167). |
 | `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                                                                                                                        |
-| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                                              |
+| `SUPABASE_DB_PASSWORD`  | bound to the hidden `--password`; **accepted but ignored**: `link` never connects to the database, and an explicit `--password` prints a deprecation warning                                                                   |
 
 ## Exit Codes
 
