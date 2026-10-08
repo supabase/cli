@@ -1,3 +1,4 @@
+require-commit-hash: true # actions, reusable workflows and docker:// must be pinned to a full SHA / @sha256 digest
 self-hosted-runner:
   labels:
     - arm-runner
@@ -6,4 +7,5 @@ self-hosted-runner:
     - blacksmith-32vcpu-ubuntu-2404
     - blacksmith-8vcpu-ubuntu-2404
     - blacksmith-6vcpu-macos-latest
+    - blacksmith-8vcpu-ubuntu-2404
     - blacksmith-8vcpu-windows-2025
