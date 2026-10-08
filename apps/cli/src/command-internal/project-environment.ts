@@ -1,8 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { CliProjectEnvironment } from "@supabase/config";
+import { Config, Data, Effect, FileSystem, Option, Path } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../shared/telemetry/error-actionability.ts";
 import { parseDotEnv } from "./dotenv.ts";
 
 /**
@@ -18,26 +22,42 @@ export function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
+export class ProjectEnvironmentError extends Data.Error<{ readonly message: string }> {
+  static readonly [ErrorActionabilityFingerprintId] = "ProjectEnvironmentError";
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
 /**
  * Reads and parses a dotenv file, or `undefined` if it doesn't exist. Delegates to
  * {@link parseDotEnv} rather than a hand-rolled line scanner, so a quoted value spanning
  * physical lines (a PEM/private key) parses correctly.
  *
- * @throws on a malformed line (not blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
+ * Fails on a malformed line (not blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
  * assignment) — the caller must fail rather than silently skip it.
  */
-function readDotEnvFile(path: string): Record<string, string> | undefined {
-  if (!existsSync(path)) return undefined;
+const readDotEnvFile = Effect.fnUntraced(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)))) return undefined;
 
-  const contents = readFileSync(path, "utf8");
-  try {
-    return parseDotEnv(contents);
-  } catch (cause) {
-    throw new Error(
-      `failed to parse environment file: ${path} (${cause instanceof Error ? cause.message : String(cause)})`,
-    );
-  }
-}
+  const bytes = yield* fs.readFile(path).pipe(
+    Effect.mapError(
+      ({ reason }) =>
+        new ProjectEnvironmentError({
+          message: reason.cause instanceof Error ? reason.cause.message : reason.message,
+        }),
+    ),
+  );
+  const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  return yield* Effect.try({
+    try: () => parseDotEnv(contents),
+    catch: (cause) =>
+      new ProjectEnvironmentError({
+        message: `failed to parse environment file: ${path} (${cause instanceof Error ? cause.message : String(cause)})`,
+      }),
+  });
+});
 
 /**
  * Merged env-var map for `stop`/`status` to read `SUPABASE_*` overrides from, covering the
@@ -52,16 +72,20 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
  * that — fall back to deriving `<workdir>/supabase` and `workdir` directly, with `process.env`
  * as the ambient layer.
  */
-export function resolveProjectEnvironmentValues(
+export const resolveProjectEnvironmentValues = Effect.fnUntraced(function* (
   projectEnv: CliProjectEnvironment | null,
   workdir: string,
   supabaseEnv?: string,
-): Record<string, string> {
-  const env = supabaseEnv || process.env["SUPABASE_ENV"] || "development";
+) {
+  const path = yield* Path.Path;
+  const env =
+    supabaseEnv ||
+    Option.getOrUndefined(yield* Config.option(Config.string("SUPABASE_ENV")).pipe(Effect.orDie)) ||
+    "development";
   const filenames = candidateDotenvFilenames(env);
   const merged: Record<string, string> = {};
 
-  const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");
+  const supabaseDir = projectEnv?.paths.supabaseDir ?? path.join(workdir, "supabase");
   const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
 
   // supabase/ dir first, then its parent (the project root). Within a directory,
@@ -69,7 +93,7 @@ export function resolveProjectEnvironmentValues(
   // already present reproduces both orderings at once.
   for (const dir of [supabaseDir, projectRoot]) {
     for (const filename of filenames) {
-      const parsed = readDotEnvFile(join(dir, filename));
+      const parsed = yield* readDotEnvFile(path.join(dir, filename));
       if (parsed === undefined) continue;
       for (const [key, value] of Object.entries(parsed)) {
         if (!(key in merged)) merged[key] = value;
@@ -93,4 +117,4 @@ export function resolveProjectEnvironmentValues(
   }
 
   return { ...merged, ...ambientOverrides };
-}
+});

@@ -30,6 +30,7 @@ import {
   mockCommandPlatformApiService,
   mockTelemetryStateTracked,
   useTempWorkdir,
+  withConfigEnv,
   withEnvVar,
 } from "../../../../tests/helpers/command-mocks.ts";
 import { toDockerPath } from "../../../shared/functions/functions-docker.ts";
@@ -3781,7 +3782,10 @@ describe("functions serve integration", () => {
           projectId: "root-env-project",
         },
       ]);
-    }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
+    }).pipe(
+      (body) => withEnvVar("SUPABASE_ENV", "development", body),
+      (body) => withConfigEnv({ SUPABASE_ENV: "development" }, body),
+    );
   });
 
   it.live(
@@ -3836,7 +3840,10 @@ describe("functions serve integration", () => {
 
         const envs = yield* extractDockerEnvEntries(dockerRun);
         expect(envs).toContain("SUPABASE_INTERNAL_HOST_PORT=5544");
-      }).pipe((body) => withEnvVar("SUPABASE_ENV", "development", body));
+      }).pipe(
+        (body) => withEnvVar("SUPABASE_ENV", "development", body),
+        (body) => withConfigEnv({ SUPABASE_ENV: "development" }, body),
+      );
     },
   );
 

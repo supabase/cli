@@ -5,7 +5,7 @@ import {
   type CliConfig,
 } from "@supabase/config/effect";
 import { loadCliConfig } from "@supabase/config/internal";
-import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
+import { Config, Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { recordOrioleDbTelemetry } from "./db-image.ts";
 import { resolveLocalProjectId, sanitizeProjectId } from "./docker-ids.ts";
@@ -38,6 +38,9 @@ export const loadLocalProjectContext = <E>(
   FileSystem.FileSystem | Path.Path | RuntimeInfo | Crypto.Crypto
 > =>
   Effect.gen(function* () {
+    const supabaseEnv = Option.getOrUndefined(
+      yield* Config.option(Config.string("SUPABASE_ENV")).pipe(Effect.orDie),
+    );
     // `workdir` is already the fully-resolved chdir target, so `search: false` stops
     // `@supabase/config` from climbing ancestors and picking up an unrelated project's
     // config.toml when `workdir` has none of its own.
@@ -47,7 +50,7 @@ export const loadLocalProjectContext = <E>(
       search: false,
       // Omits `.env.local` when `SUPABASE_ENV=test`, matching
       // `resolveProjectEnvironmentValues`'s gating for the project-root pass.
-      skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
+      skipEnvLocal: (supabaseEnv || "development") === "test",
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
@@ -55,10 +58,9 @@ export const loadLocalProjectContext = <E>(
     // Must resolve before `loadCliConfig` decodes config.toml: an `env(...)`-valued `project_id`
     // needs these values available to the decoder already. `workdir` is passed through so dotenv
     // files under `<workdir>/supabase` are still discovered even when `projectEnv` is `null`.
-    const projectEnvValues = yield* Effect.try({
-      try: () => resolveProjectEnvironmentValues(projectEnv, workdir),
-      catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
-    });
+    const projectEnvValues = yield* resolveProjectEnvironmentValues(projectEnv, workdir).pipe(
+      Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
+    );
 
     // An absent config.toml is not a failure — a project id still resolves from the workdir
     // basename default. Only a malformed file is a hard error.
@@ -90,7 +92,10 @@ export const loadLocalProjectContext = <E>(
       resolveLocalProjectId(
         loaded?.appliedRemote !== undefined
           ? undefined
-          : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
+          : (projectEnvValues["SUPABASE_PROJECT_ID"] ??
+              Option.getOrUndefined(
+                yield* Config.option(Config.string("SUPABASE_PROJECT_ID")).pipe(Effect.orDie),
+              )),
         config.project_id,
         workdir,
         projectRef,

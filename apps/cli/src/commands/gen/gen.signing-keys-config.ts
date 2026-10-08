@@ -340,10 +340,11 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   }).pipe(
     Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
   );
-  const projectEnvValues = yield* Effect.try({
-    try: () => resolveProjectEnvironmentValues(projectEnv, cwd, supabaseEnvValue),
-    catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
-  });
+  const projectEnvValues = yield* resolveProjectEnvironmentValues(
+    projectEnv,
+    cwd,
+    supabaseEnvValue,
+  ).pipe(Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)));
   const loaded = yield* loadCliConfig(cwd, {
     cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
