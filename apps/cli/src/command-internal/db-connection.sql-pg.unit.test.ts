@@ -507,7 +507,8 @@ describe("acquireProbedPool", () => {
   it.effect("ends the pool when the connect probe times out (black-holed host)", () =>
     Effect.gen(function* () {
       const context = yield* Effect.context<never>();
-      const fake = makeFakePool(() => Effect.runPromiseWith(context)(Effect.never));
+      const signal = yield* Effect.abortSignal;
+      const fake = makeFakePool(() => Effect.runPromiseWith(context)(Effect.never, { signal }));
       const fiber = yield* acquireProbedPool(() => fake.pool, 0.05).pipe(
         Effect.scoped,
         Effect.exit,
