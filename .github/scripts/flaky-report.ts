@@ -32,9 +32,10 @@ export type TestVerdict = {
   suite: string;
   file: string;
   name: string;
-  executions: number;
-  failed: number;
+  runs: number;
   failedRuns: number[];
+  /** Failed runs in which other executions of the test passed (only possible with `--repeats`). */
+  partialRuns: number;
   message?: string;
 };
 
@@ -57,13 +58,12 @@ const ENTITIES: Record<string, string> = {
 
 function unescapeXml(value: string): string {
   return value.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (match, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X")) {
-      return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
+    if (!entity.startsWith("#")) {
+      return ENTITIES[entity] ?? match;
     }
-    if (entity.startsWith("#")) {
-      return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
-    }
-    return ENTITIES[entity] ?? match;
+    const hex = entity[1] === "x" || entity[1] === "X";
+    const codePoint = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
   });
 }
 
@@ -72,7 +72,10 @@ function attribute(tag: string, name: string): string | undefined {
   return match?.[1] === undefined ? undefined : unescapeXml(match[1]);
 }
 
-/** Parses Vitest's JUnit output, where each failed repeat adds its own `<failure>` element. */
+/**
+ * Parses Vitest's JUnit output. Each error adds a `<failure>` element, so one failed execution
+ * can contribute several (a failing test and its failing `afterEach`, for example).
+ */
 export function parseJunit(xml: string, pkg: string): TestCase[] {
   const cases: TestCase[] = [];
   const testcase = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
@@ -80,7 +83,8 @@ export function parseJunit(xml: string, pkg: string): TestCase[] {
     const tag = match[1] ?? "";
     const body = match[3] ?? "";
     const failureTags = [...body.matchAll(/<(failure|error)\b([^>]*)>/g)];
-    const message = failureTags[0] === undefined ? undefined : attribute(failureTags[0][2] ?? "", "message");
+    const message =
+      failureTags[0] === undefined ? undefined : attribute(failureTags[0][2] ?? "", "message");
     cases.push({
       pkg,
       file: attribute(tag, "classname") ?? "",
@@ -113,42 +117,61 @@ export function aggregate(results: RunResult[], expected: string[]): Report {
   }
 
   for (const { meta, reports, cases } of results) {
-    const suite = suites.get(meta.suite) ?? { runs: new Set(), executions: meta.executions, tests: new Set() };
+    const suite = suites.get(meta.suite) ?? {
+      runs: new Set(),
+      executions: meta.executions,
+      tests: new Set(),
+    };
     suite.runs.add(meta.run);
     suites.set(meta.suite, suite);
 
     let sawFailure = false;
+    // Tests sharing a title in one file stay distinct by their order of appearance.
+    const occurrences = new Map<string, number>();
     for (const testCase of cases) {
       if (testCase.skipped) {
         continue;
       }
       const file = `${testCase.pkg}/${testCase.file}`;
-      const key = `${meta.suite}\0${file}\0${testCase.name}`;
+      const occurrence = (occurrences.get(`${file}\0${testCase.name}`) ?? 0) + 1;
+      occurrences.set(`${file}\0${testCase.name}`, occurrence);
+      const name = occurrence === 1 ? testCase.name : `${testCase.name} (#${occurrence})`;
+      const key = `${meta.suite}\0${file}\0${name}`;
       suite.tests.add(key);
       const verdict = verdicts.get(key) ?? {
         suite: meta.suite,
         file,
-        name: testCase.name,
-        executions: 0,
-        failed: 0,
+        name,
+        runs: 0,
         failedRuns: [],
+        partialRuns: 0,
       };
-      verdict.executions += meta.executions;
-      const failed = Math.min(testCase.failures, meta.executions);
-      if (failed > 0) {
+      verdict.runs += 1;
+      if (testCase.failures > 0) {
         sawFailure = true;
-        verdict.failed += failed;
         verdict.failedRuns.push(meta.run);
+        // Fewer error elements than executions proves at least one execution passed.
+        if (testCase.failures < meta.executions) {
+          verdict.partialRuns += 1;
+        }
         verdict.message ??= testCase.message;
       }
       verdicts.set(key, verdict);
     }
 
-    const missing = [...(variantReports.get(variantOf(meta)) ?? [])].filter((r) => !reports.includes(r)).sort();
+    const missing = [...(variantReports.get(variantOf(meta)) ?? [])]
+      .filter((r) => !reports.includes(r))
+      .sort();
     if (meta.exitCode === null) {
-      runProblems.push({ name: meta.name, problem: "test step did not finish (timeout or cancelled)" });
+      runProblems.push({
+        name: meta.name,
+        problem: "test step did not run or finish (setup failure, timeout, or cancel)",
+      });
     } else if (reports.length === 0) {
-      runProblems.push({ name: meta.name, problem: `exited ${meta.exitCode} without writing a JUnit report` });
+      runProblems.push({
+        name: meta.name,
+        problem: `exited ${meta.exitCode} without writing a JUnit report`,
+      });
     } else if (missing.length > 0) {
       runProblems.push({ name: meta.name, problem: `no JUnit report for ${missing.join(", ")}` });
     } else if (meta.exitCode !== 0 && !sawFailure) {
@@ -166,21 +189,32 @@ export function aggregate(results: RunResult[], expected: string[]): Report {
     }
   }
 
-  const all = [...verdicts.values()].sort(
-    (a, b) => b.failed / b.executions - a.failed / a.executions || a.file.localeCompare(b.file),
-  );
+  const failed = [...verdicts.values()]
+    .filter((v) => v.failedRuns.length > 0)
+    .sort(
+      (a, b) =>
+        b.failedRuns.length / b.runs - a.failedRuns.length / a.runs || a.file.localeCompare(b.file),
+    );
+  const alwaysFails = (v: TestVerdict) => v.failedRuns.length === v.runs && v.partialRuns === 0;
   return {
-    flaky: all.filter((v) => v.failed > 0 && v.failed < v.executions),
-    failing: all.filter((v) => v.failed > 0 && v.failed === v.executions),
+    flaky: failed.filter((v) => !alwaysFails(v)),
+    failing: failed.filter(alwaysFails),
     runProblems: runProblems.sort((a, b) => a.name.localeCompare(b.name)),
     suites: [...suites.entries()]
-      .map(([suite, { runs, executions, tests }]) => ({ suite, runs: runs.size, executions, tests: tests.size }))
+      .map(([suite, { runs, executions, tests }]) => ({
+        suite,
+        runs: runs.size,
+        executions,
+        tests: tests.size,
+      }))
       .sort((a, b) => a.suite.localeCompare(b.suite)),
   };
 }
 
 export function isClean(report: Report): boolean {
-  return report.flaky.length === 0 && report.failing.length === 0 && report.runProblems.length === 0;
+  return (
+    report.flaky.length === 0 && report.failing.length === 0 && report.runProblems.length === 0
+  );
 }
 
 function cell(value: string): string {
@@ -196,13 +230,13 @@ function testTable(title: string, verdicts: TestVerdict[]): string[] {
   const lines = [
     `### ${title} (${verdicts.length})`,
     "",
-    "| Suite | Test | File | Failed | Failing runs | First failure |",
+    "| Suite | Test | File | Failed runs | Which runs | First failure |",
     "| --- | --- | --- | --- | --- | --- |",
     ...verdicts
       .slice(0, MAX_ROWS)
       .map(
         (v) =>
-          `| ${v.suite} | ${cell(v.name)} | \`${cell(v.file)}\` | ${v.failed}/${v.executions} | ${[...new Set(v.failedRuns)].sort((a, b) => a - b).join(", ")} | ${cell(v.message ?? "")} |`,
+          `| ${v.suite} | ${cell(v.name)} | \`${cell(v.file)}\` | ${v.failedRuns.length}/${v.runs}${v.partialRuns > 0 ? ` (${v.partialRuns} partial)` : ""} | ${[...v.failedRuns].sort((a, b) => a - b).join(", ")} | ${cell(v.message ?? "")} |`,
       ),
   ];
   if (verdicts.length > MAX_ROWS) {
@@ -248,7 +282,7 @@ export function renderMarkdown(report: Report, { sha, runUrl }: RenderContext): 
     );
   }
   lines.push(
-    "<sub>A run counts once per test unless it used `--repeats`, in which case each failed repeat counts. The full data is in the `flaky-check-report` artifact.</sub>",
+    "<sub>A run fails a test when any execution fails; with `--repeats`, a partial run also had passing executions, which makes the test flaky. The full data is in the `flaky-check-report` artifact.</sub>",
   );
   return `${lines.join("\n")}\n`;
 }

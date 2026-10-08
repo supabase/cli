@@ -7,7 +7,8 @@ function junit(cases: { name: string; failures?: number; skipped?: boolean }[]):
       const inner = [
         ...Array.from(
           { length: failures },
-          () => `<failure message="expected 1 to be 2 &amp; &lt;more&gt;" type="AssertionError">\nAssertionError\n</failure>`,
+          () =>
+            `<failure message="expected 1 to be 2 &amp; &lt;more&gt;" type="AssertionError">\nAssertionError\n</failure>`,
         ),
         skipped ? "<skipped/>" : "",
       ].join("\n");
@@ -40,7 +41,7 @@ describe("parseJunit", () => {
       junit([
         { name: "group &gt; fails &quot;twice&quot;", failures: 2 },
         { name: "group &gt; skipped", skipped: true },
-        { name: "group &gt; passes" },
+        { name: "group &gt; passes &#x110000;" },
       ]),
       "apps/cli",
     );
@@ -54,14 +55,26 @@ describe("parseJunit", () => {
         skipped: false,
         message: "expected 1 to be 2 & <more>",
       },
-      { pkg: "apps/cli", file: "src/a.unit.test.ts", name: "group > skipped", failures: 0, skipped: true },
-      { pkg: "apps/cli", file: "src/a.unit.test.ts", name: "group > passes", failures: 0, skipped: false },
+      {
+        pkg: "apps/cli",
+        file: "src/a.unit.test.ts",
+        name: "group > skipped",
+        failures: 0,
+        skipped: true,
+      },
+      {
+        pkg: "apps/cli",
+        file: "src/a.unit.test.ts",
+        name: "group > passes &#x110000;",
+        failures: 0,
+        skipped: false,
+      },
     ]);
   });
 });
 
 describe("aggregate", () => {
-  test("separates flaky, always-failing, and stable tests and reports runs without results", () => {
+  test("classifies tests per run, keeps same-title tests apart, and reports runs without results", () => {
     const cli = "apps__cli--unit.xml";
     const stack = "packages__stack--unit.xml";
     const report = aggregate(
@@ -69,14 +82,32 @@ describe("aggregate", () => {
         run(
           "unit",
           1,
-          { [cli]: junit([{ name: "sometimes", failures: 1 }, { name: "never" }, { name: "always", failures: 1 }]), [stack]: empty },
+          {
+            [cli]: junit([
+              { name: "sometimes", failures: 1 },
+              { name: "never" },
+              { name: "always", failures: 1 },
+              { name: "twin" },
+              { name: "twin", failures: 1 },
+            ]),
+            [stack]: empty,
+          },
           1,
           1,
         ),
         run(
           "unit",
           2,
-          { [cli]: junit([{ name: "sometimes" }, { name: "never" }, { name: "always", failures: 1 }]), [stack]: empty },
+          {
+            [cli]: junit([
+              { name: "sometimes" },
+              { name: "never" },
+              { name: "always", failures: 1 },
+              { name: "twin" },
+              { name: "twin", failures: 1 },
+            ]),
+            [stack]: empty,
+          },
           1,
           1,
         ),
@@ -88,15 +119,21 @@ describe("aggregate", () => {
       ["1", "2", "3", "4", "5", "6"].map((n) => `flaky-unit-run${n}`).concat("flaky-focused-run1"),
     );
 
-    expect(report.flaky.map((v) => [v.suite, v.name, `${v.failed}/${v.executions}`])).toEqual([
-      ["unit", "sometimes", "1/2"],
-      ["focused", "repeated", "2/5"],
-    ]);
-    expect(report.failing.map((v) => [v.name, `${v.failed}/${v.executions}`, v.failedRuns])).toEqual([
-      ["always", "3/3", [1, 2, 5]],
+    expect(report.flaky.map((v) => [v.suite, v.name, v.failedRuns, v.runs, v.partialRuns])).toEqual(
+      [
+        ["focused", "repeated", [1], 1, 1],
+        ["unit", "sometimes", [1], 2, 0],
+      ],
+    );
+    expect(report.failing.map((v) => [v.name, v.failedRuns, v.runs])).toEqual([
+      ["always", [1, 2, 5], 3],
+      ["twin (#2)", [1, 2], 2],
     ]);
     expect(report.runProblems).toEqual([
-      { name: "flaky-unit-run3", problem: "exited 1 without a failing test (setup, unhandled error, or crash)" },
+      {
+        name: "flaky-unit-run3",
+        problem: "exited 1 without a failing test (setup, unhandled error, or crash)",
+      },
       { name: "flaky-unit-run4", problem: "no results uploaded" },
       { name: "flaky-unit-run5", problem: `no JUnit report for ${stack}` },
       { name: "flaky-unit-run6", problem: "exited 0 without writing a JUnit report" },
@@ -113,7 +150,10 @@ describe("aggregate", () => {
       ["flaky-unit-run1", "flaky-unit-run2"],
     );
 
-    const markdown = renderMarkdown(report, { sha: "0123456789abcdef", runUrl: "https://example.test/run" });
+    const markdown = renderMarkdown(report, {
+      sha: "0123456789abcdef",
+      runUrl: "https://example.test/run",
+    });
 
     expect(isClean(report)).toBe(true);
     expect(markdown.split("\n").slice(0, 4)).toEqual([

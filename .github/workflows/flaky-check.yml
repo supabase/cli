@@ -46,7 +46,7 @@ concurrency:
       (github.event.action == 'labeled' && github.event.label.name != 'run-flaky-check'
         && format('-noop-{0}', github.run_id))
       || ''
-    }}
+    }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -116,6 +116,7 @@ jobs:
               ;;
           esac
 
+          suites="$(tr -d '[:space:]' <<< "$suites")"
           if ! [ "$runs" -ge 1 ] 2>/dev/null || [ "$runs" -gt 30 ]; then
             echo "::error ::runs must be between 1 and 30, got '$runs'"
             exit 1
@@ -208,6 +209,14 @@ jobs:
           fetch-depth: ${{ matrix.suite != 'focused' && 1 || 0 }}
           persist-credentials: false
 
+      # The collector comes from this workflow's revision, so runs against older refs can use it.
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/actions/flaky-collect
+          persist-credentials: false
+
       - name: Setup
         uses: ./.github/actions/setup
         with:
@@ -225,23 +234,31 @@ jobs:
           set -uo pipefail
           read -ra filters <<< "$FILTER"
           code=0
-          run_script() {
-            local script="$1" junit="$2"
-            shift 2
-            pnpm run "$script" --reporter=default --reporter=junit \
-              "--outputFile.junit=.flaky-junit/$junit.xml" --passWithNoTests "$@" || code=$?
+          report=(--reporter=default --reporter=junit --passWithNoTests)
+          run_unit() {
+            pnpm run test:unit "${report[@]}" --outputFile.junit=.flaky-junit/unit.xml "$@" || code=$?
+          }
+          # packages/api chains a Node and a Bun Vitest run in one script and Turbo forwards
+          # arguments only to the last command, so its two projects run separately here.
+          run_integration() {
+            pnpm exec turbo run test:integration:run --continue=always --filter='!@supabase/api' -- \
+              "${report[@]}" --outputFile.junit=.flaky-junit/integration.xml "$@" || code=$?
+            pnpm --dir packages/api exec vitest run --project integration \
+              "${report[@]}" --outputFile.junit=.flaky-junit/integration-node.xml "$@" || code=$?
+            pnpm --dir packages/api exec bun --bun vitest run --project bun-integration \
+              "${report[@]}" --outputFile.junit=.flaky-junit/integration-bun.xml "$@" || code=$?
           }
           case "$SUITE" in
-            unit) run_script test:unit unit "${filters[@]}" ;;
-            integration) run_script test:integration integration "${filters[@]}" ;;
+            unit) run_unit "${filters[@]}" ;;
+            integration) run_integration "${filters[@]}" ;;
             focused)
               if [ "${#filters[@]}" -gt 0 ]; then
                 select=("${filters[@]}")
               else
                 select=(--changed "$(git merge-base HEAD "origin/$BASE_REF")")
               fi
-              run_script test:unit unit --repeats="$REPEATS" "${select[@]}"
-              run_script test:integration integration --repeats="$REPEATS" "${select[@]}"
+              run_unit --repeats="$REPEATS" "${select[@]}"
+              run_integration --repeats="$REPEATS" "${select[@]}"
               ;;
           esac
           echo "exit-code=$code" >> "$GITHUB_OUTPUT"
@@ -249,7 +266,7 @@ jobs:
 
       - name: Collect results
         if: always()
-        uses: ./.github/actions/flaky-collect
+        uses: ./.flaky-tooling/.github/actions/flaky-collect
         with:
           name: ${{ matrix.name }}
           suite: ${{ matrix.suite }}
@@ -272,6 +289,14 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      # The collector comes from this workflow's revision, so runs against older refs can use it.
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/actions/flaky-collect
           persist-credentials: false
 
       - name: Setup
@@ -315,7 +340,7 @@ jobs:
 
       - name: Collect results
         if: always()
-        uses: ./.github/actions/flaky-collect
+        uses: ./.flaky-tooling/.github/actions/flaky-collect
         with:
           name: ${{ matrix.name }}
           suite: e2e
@@ -338,6 +363,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+
+      # The collector comes from this workflow's revision, so runs against older refs can use it.
+      - name: Checkout flaky-check tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .flaky-tooling
+          sparse-checkout: .github/actions/flaky-collect
           persist-credentials: false
 
       - name: Setup
@@ -372,7 +405,7 @@ jobs:
 
       - name: Collect results
         if: always()
-        uses: ./.github/actions/flaky-collect
+        uses: ./.flaky-tooling/.github/actions/flaky-collect
         with:
           name: ${{ matrix.name }}
           suite: stack-e2e

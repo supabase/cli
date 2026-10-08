@@ -63,3 +63,4 @@ runs:
         path: ${{ runner.temp }}/flaky-results/${{ inputs.name }}
         retention-days: 14
         if-no-files-found: error
+        overwrite: true
