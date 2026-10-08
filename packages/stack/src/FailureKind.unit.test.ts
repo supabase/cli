@@ -68,13 +68,13 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
     "engine-timeout",
   ],
   [
-    "a pull that timed out as engine-timeout rather than image-pull",
+    "a pull that hit its download deadline as image-pull",
     new ContainerError({
       operation: "pull",
       message: "timed out",
       cause: new Cause.TimeoutError(),
     }),
-    "engine-timeout",
+    "image-pull",
   ],
   [
     "any other engine failure as engine-command",
@@ -164,13 +164,27 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
     "artifact-integrity",
   ],
   [
-    "a local cache write failure inside artifact preparation as filesystem",
+    "a local cache permission failure inside artifact preparation as filesystem-permission",
     new ArtifactError({ message: "Unable to prepare auth artifact", cause: fileFailure }),
-    "filesystem",
+    "filesystem-permission",
   ],
   [
-    "a file failure with no enclosing domain as filesystem",
+    "a permission failure with no enclosing domain as filesystem-permission",
     new ServiceError({ operation: "launch", message: "denied", cause: fileFailure }),
+    "filesystem-permission",
+  ],
+  [
+    "a non-permission file failure as filesystem",
+    new ServiceError({
+      operation: "launch",
+      message: "exists",
+      cause: PlatformError.systemError({
+        _tag: "AlreadyExists",
+        module: "FileSystem",
+        method: "makeDirectory",
+        pathOrDescriptor: "/tmp/stack",
+      }),
+    }),
     "filesystem",
   ],
   [

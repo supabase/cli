@@ -116,7 +116,9 @@ const engineKind = (
   cause instanceof ContainerError
     ? cause.kind
     : Cause.isTimeoutError(cause)
-      ? "engine-timeout"
+      ? operation === "pull"
+        ? "image-pull"
+        : "engine-timeout"
       : (operation === "pull" ? pullEngineUnreachable(cause, message) : engineUnreachable(cause))
         ? "engine-unavailable"
         : portAllocated(message)

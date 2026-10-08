@@ -18,7 +18,7 @@ const withSuffix = (
     : { ...declared, fingerprint_suffix: declared.fingerprint_suffix ?? suffix };
 
 export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeStackError")<{
-  readonly reason: "flags" | "invalid-config" | "lifecycle" | "runtime" | "stack";
+  readonly reason: "flags" | "invalid-config" | "state" | "lifecycle" | "runtime" | "stack";
   readonly message: string;
   readonly suggestion?: string;
   readonly cause?: unknown;
@@ -29,6 +29,8 @@ export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeSt
         return { ...actionability.provideFlags, fingerprint_suffix: "flags" };
       case "invalid-config":
         return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "state":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "state_file" };
       case "lifecycle":
         return withSuffix(causeDeclaration(this.cause), actionability.startStack, "lifecycle");
       case "runtime":

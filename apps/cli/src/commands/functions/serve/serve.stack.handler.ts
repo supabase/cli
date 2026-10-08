@@ -35,13 +35,14 @@ const runtimeError = (cause: { readonly message: string }) =>
         })
       : new FunctionsServeStackError({
           reason:
-            cause instanceof StackFunctionsEnvError ||
-            cause instanceof StackConfigError ||
-            Schema.isSchemaError(cause)
+            cause instanceof StackFunctionsEnvError || cause instanceof StackConfigError
               ? "invalid-config"
-              : cause instanceof LocalDbRunningError
-                ? "lifecycle"
-                : "runtime",
+              : // The session only decodes the stack's saved credentials.
+                Schema.isSchemaError(cause)
+                ? "state"
+                : cause instanceof LocalDbRunningError
+                  ? "lifecycle"
+                  : "runtime",
           message: cause.message,
           cause,
         });

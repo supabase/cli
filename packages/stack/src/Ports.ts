@@ -400,6 +400,7 @@ export const makePorts = (state: StackNamespace.Interface) =>
                     key: request.key,
                     message: `Cannot bind ${request.key} at ${request.host}:${port}: ${cause.message}`,
                     cause: cause.cause,
+                    ...(cause.kind === undefined ? {} : { kind: cause.kind }),
                     conflict:
                       cause.conflict ??
                       (isAddressInUse(cause.cause)

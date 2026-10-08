@@ -22,6 +22,7 @@ const stackFailureKinds = [
   "database-bootstrap",
   "configuration",
   "state",
+  "filesystem-permission",
   "filesystem",
   "owner-startup",
   "owner-connection",
@@ -43,7 +44,12 @@ export const isStackFailureKind = (value: unknown): value is StackFailureKind =>
   typeof value === "string" && knownKinds.has(value);
 
 /** Kinds that only describe the mechanism, so an enclosing domain error names the failure better. */
-const generalKinds = new Set<StackFailureKind>(["filesystem", "timeout", "configuration"]);
+const generalKinds = new Set<StackFailureKind>([
+  "filesystem-permission",
+  "filesystem",
+  "timeout",
+  "configuration",
+]);
 
 const maxDepth = 32;
 
@@ -120,12 +126,8 @@ const classify = (
       return value.reason === "runtime-unavailable" ? "engine-unavailable" : undefined;
     case "ContainerError": {
       const inner = visit(value.cause, "engine");
-      if (
-        value.operation === "pull" &&
-        inner !== "engine-unavailable" &&
-        inner !== "engine-timeout"
-      )
-        return "image-pull";
+      // A pull's own deadline is the registry download, not a stalled engine.
+      if (value.operation === "pull" && inner !== "engine-unavailable") return "image-pull";
       return inner ?? "engine-command";
     }
     case "ContainerLaunchError":
@@ -197,9 +199,8 @@ const classify = (
       return undefined;
     }
     case "PlatformError":
-      return isRecord(value.reason) && value.reason.module === "FileSystem"
-        ? "filesystem"
-        : undefined;
+      if (!isRecord(value.reason) || value.reason.module !== "FileSystem") return undefined;
+      return value.reason._tag === "PermissionDenied" ? "filesystem-permission" : "filesystem";
     default:
       return nested();
   }
