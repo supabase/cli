@@ -8,8 +8,8 @@ import {
 import type { DeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
- * Declarative commands were invoked without `--experimental` and without
- * `[experimental.pgdelta] enabled = true`; message text and suggestion are an established
+ * Declarative commands were invoked without `--experimental` while config sets
+ * `[experimental.pgdelta] enabled = false`; message text and suggestion are an established
  * output contract.
  */
 export class DeclarativeNotEnabledError extends Data.TaggedError("DeclarativeNotEnabledError")<{
