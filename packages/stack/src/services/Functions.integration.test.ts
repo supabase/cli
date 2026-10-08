@@ -168,6 +168,7 @@ describe("service catalog", () => {
             ...options(root),
             stackId,
             instanceId,
+            cacheRoot: testArtifactCacheRoot,
           },
         );
         const config = recipe.creation;
