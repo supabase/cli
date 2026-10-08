@@ -17,11 +17,13 @@ import {
   containerEngineSpawner,
   type ContainerEngineState,
 } from "../../../../../tests/helpers/child-process-spawner.ts";
+import { unusedGateway } from "../../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockTelemetryStateTracked,
 } from "../../../../../tests/helpers/command-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
+import { CommandTelemetryAttributes } from "../../../../telemetry/command-telemetry-attributes.ts";
 import { StackApi, StackTargetResolver } from "../stack.shared.ts";
 import { stackPrepare } from "./prepare.handler.ts";
 import type { StackPrepareFlags } from "./prepare.command.ts";
@@ -62,6 +64,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     options.engines ?? { docker: "missing", podman: "missing" },
   );
   const createdRuntimes: Array<StackRuntime> = [];
+  const recordedRuntimes: Array<unknown> = [];
   let openCount = 0;
   let prepareCount = 0;
   let startCount = 0;
@@ -102,13 +105,9 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       lifecycle: "stopped" as const,
       health: undefined,
       error: undefined,
-      cleanupError: undefined,
       exit: undefined,
       currentOperation: undefined,
-      launchId: undefined,
-      intentRevision: 0,
       wakeEnabled: false,
-      registered: true,
     }),
     followStatus: Stream.empty,
     readLogs: () => Stream.empty,
@@ -156,7 +155,8 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
       restart: Effect.succeed([]),
     },
     stop: Effect.void,
-    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    destroy: Effect.void,
+    gateway: unusedGateway,
     commands: { run: () => Effect.die("unused") },
   };
   const output = mockOutput();
@@ -168,6 +168,12 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
     mockCommandSettings({ workdir: root, supabaseHome: root }),
     output.layer,
     telemetry.layer,
+    Layer.succeed(CommandTelemetryAttributes, {
+      record: (values) =>
+        Effect.sync(() => {
+          if (values.stack_runtime !== undefined) recordedRuntimes.push(values.stack_runtime);
+        }),
+    }),
     Layer.succeed(StackTargetResolver, {
       resolve: (input) =>
         Effect.succeed({
@@ -193,12 +199,16 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
         }),
       discover: () => Effect.succeed([]),
       find: () => Effect.die("unused"),
+      findDeleted: () => Effect.die("unused"),
     }),
   );
   return {
     layer,
     get createdRuntimes() {
       return createdRuntimes;
+    },
+    get recordedRuntimes() {
+      return recordedRuntimes;
     },
     get openCount() {
       return openCount;
@@ -211,7 +221,7 @@ const makeFixture = (root: string, options: FixtureOptions = {}) => {
         .map(({ message }) => message);
     },
     get probes() {
-      return engines.spawned.map(({ command }) => command);
+      return [...new Set(engines.spawned.map(({ command }) => command))];
     },
     get prepareCount() {
       return prepareCount;
@@ -442,7 +452,7 @@ describe("stack prepare automatic runtime selection", () => {
     ),
   );
 
-  it.live("honors an explicit runtime without probing any engine", () =>
+  it.live("honors an explicit runtime without probing any engine and records it on telemetry", () =>
     makeProject(databaseOnlyConfig).pipe(
       Effect.flatMap((root) => {
         const fixture = makeFixture(root, { engines: { docker: "running", podman: "running" } });
@@ -451,6 +461,7 @@ describe("stack prepare automatic runtime selection", () => {
           Effect.tap(() =>
             Effect.sync(() => {
               expect(fixture.createdRuntimes).toEqual(["podman"]);
+              expect(fixture.recordedRuntimes).toEqual(["podman"]);
               expect(fixture.probes).toEqual([]);
               expect(fixture.runtimeNotices).toEqual([]);
             }),

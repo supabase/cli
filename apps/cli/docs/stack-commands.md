@@ -9,6 +9,11 @@ Native PostgreSQL requires passwords for every role except `supabase_admin`. Its
 and password-reconciliation connection uses that administrative role, so a native
 `supabase_admin` connection is not password-checked.
 
+Native pg_cron runs jobs in background workers, so a job body cannot contain its own `BEGIN` or
+`COMMIT`. Jobs enforce the same `supautils` role policies as client sessions. Native databases
+default `max_worker_processes` to 17 to leave room for those workers; `postgresql.conf`,
+`ALTER SYSTEM`, and `[db.settings]` values take precedence.
+
 | Command                  | Purpose                                                                           |
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `supabase stack destroy` | Permanently delete one stack and its data.                                        |
@@ -27,8 +32,8 @@ when its engine answers, and otherwise native on Linux x64/arm64 and macOS arm64
 platforms without a reachable engine, the command fails and asks you to start Docker or Podman. The
 selected runtime is saved with the stack and reused without probing; when auto selection skips
 Docker, the command prints a notice saying so. To switch, destroy the stack or choose a different
-`--stack` name. When an explicit `--runtime docker` or a saved Docker stack cannot reach Docker,
-the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
+`--stack` name. When an explicit `--runtime docker` or `--runtime podman`, or a saved container
+stack, cannot reach its engine, the failure asks you to install or start it, and also suggests `--runtime native` for a new stack
 on platforms that support native. Project stacks created by database commands, and shadow stacks
 created without a project stack, use the same selection.
 
@@ -212,8 +217,8 @@ env-precedence rule as `start`/`stop`/`status`. See
 `--project-ref` remote targeting for these commands is unaffected by the flag either way.
 
 `db start` brings up a postgres-only project stack on first create. An existing stack resumes its
-primary database without changing other services (webhooks setup only; no second overlay or
-migrate-and-seed).
+primary database without changing other services (webhooks setup only, creating a missing
+`supabase_functions` schema; no second overlay or migrate-and-seed).
 `supabase start` while that postgres-only stack is running stops it and starts the full
 configured stack, keeping data. `--from-backup` is not supported on the stack path.
 `db reset --local` and declarative resets rebuild the existing database while retaining stack
@@ -238,13 +243,14 @@ lint transaction (always rolled back). It does not launch a client binary.
 
 ## Reading stack logs
 
-`supabase stack logs` prints the retained stdout/stderr of composition members and
-exits; `-f/--follow` then streams new lines until interrupted. Select `--stack <name>`
-or `--stack-id <id>`; the repeatable `--service <kind-or-instance-id>` can include
-standalone services too. History is read from the persisted log files, so it works
-while the stack is stopped; `--follow` requires a running owner and fails before
-printing anything without one. Neither mode starts an owner or service, and Ctrl-C
-leaves services running.
+`supabase stack logs` prints the retained stdout/stderr of composition members, plus
+the `gateway` request lines of the shared API port, and exits; `-f/--follow` then
+streams new lines until interrupted. Select `--stack <name>` or `--stack-id <id>`; the
+repeatable `--service <kind-or-instance-id>` can include standalone services too, and
+`--service gateway` reads only the request lines. History is read from the persisted
+log files, so it works while the stack is stopped; `--follow` requires a running owner
+and fails before printing anything without one. Neither mode starts an owner or
+service, and Ctrl-C leaves services running.
 
 `--tail N` (default 200) keeps the newest lines across the selected services and
 `--since` takes a duration (`10m`, `1h30m`), an ISO-8601 time, or `start` for each
@@ -307,7 +313,7 @@ retained in stack state, so starting without `--exclude` restores the project's 
 cannot be read or decoded are skipped with a warning on stderr; only a failure to read the stacks
 directory itself fails discovery, before any stop is attempted. Individual stop
 failures make the command fail and identify the affected stack IDs with their error details; no
-success or unavailable summary is emitted when a stop fails.
+success or not-running summary is emitted when a stop fails.
 
 `supabase stack destroy --stack feature-a` permanently removes exactly that stack and its data after
 confirmation. Use `--yes` for unattended execution. There is no bulk destroy option.

@@ -77,7 +77,8 @@ export interface AttachedInstance {
   readonly service: string;
   readonly instanceId: string;
   readonly logs: CatalogLogs;
-  readonly observation: Stream.Stream<{ readonly launchId: number | undefined }>;
+  /** The launch the instance is in, or `undefined` once that launch has ended. */
+  readonly launches: Stream.Stream<number | undefined>;
 }
 
 export interface Interface {
@@ -97,7 +98,7 @@ export interface Interface {
   }) => Effect.Effect<void, LogStoreError>;
   /** Deletes log directories of instances that are not attached; failures are logged. */
   readonly removeOrphans: Effect.Effect<void, LogStoreError>;
-  /** The highest launch id at the end of an instance's newest segment, if one is readable. */
+  /** The highest launch id at the end of the newest segment that holds a record, if readable. */
   readonly latestLaunchId: (instance: {
     readonly service: string;
     readonly instanceId: string;
@@ -259,42 +260,43 @@ const makeReader = (fs: FileSystem.FileSystem, path: Path.Path) => {
       Effect.mapError(storeError("read")),
     );
 
-  /** Reads only the last chunk of the newest segment, skipping its first, possibly cut, line. */
-  const latestLaunchId = (directory: string) =>
-    generations(directory).pipe(
-      Effect.flatMap((listed) => {
-        const newest = listed.at(-1);
-        if (newest === undefined) return Effect.succeed(Option.none<number>());
-        const file = path.join(directory, segmentName(newest));
-        return fs.stat(file).pipe(
-          Effect.mapError(storeError("read")),
-          Effect.flatMap((info) => {
-            const offset = Math.max(0, Number(info.size) - readChunkBytes);
-            return readChunk(file, offset).pipe(
-              Effect.map(
-                Option.match({
-                  onNone: () => Option.none<number>(),
-                  onSome: (bytes) => {
-                    let latest: number | undefined;
-                    for (const line of decoder
-                      .decode(bytes)
-                      .split("\n")
-                      .slice(offset > 0 ? 1 : 0, -1)) {
-                      const launchId = parseRecord(line, {
-                        generation: newest,
-                        byteOffset: 0,
-                      })?.launchId;
-                      if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
-                    }
-                    return Option.fromNullishOr(latest);
-                  },
-                }),
-              ),
-            );
-          }),
+  /** Highest launch id in the last chunk of one segment, skipping its first, possibly cut, line. */
+  const segmentLaunchId = (directory: string, generation: number) => {
+    const file = path.join(directory, segmentName(generation));
+    return fs.stat(file).pipe(
+      Effect.mapError(storeError("read")),
+      Effect.flatMap((info) => {
+        const offset = Math.max(0, Number(info.size) - readChunkBytes);
+        return readChunk(file, offset).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => Option.none<number>(),
+              onSome: (bytes) => {
+                let latest: number | undefined;
+                for (const line of decoder
+                  .decode(bytes)
+                  .split("\n")
+                  .slice(offset > 0 ? 1 : 0, -1)) {
+                  const launchId = parseRecord(line, { generation, byteOffset: 0 })?.launchId;
+                  if (launchId !== undefined) latest = Math.max(latest ?? 0, launchId);
+                }
+                return Option.fromNullishOr(latest);
+              },
+            }),
+          ),
         );
       }),
     );
+  };
+
+  /** Newest launch id on disk; a crash can leave the newest segment empty, so older ones are walked. */
+  const latestLaunchId = Effect.fnUntraced(function* (directory: string) {
+    for (const generation of (yield* generations(directory)).toReversed()) {
+      const launchId = yield* segmentLaunchId(directory, generation);
+      if (Option.isSome(launchId)) return launchId;
+    }
+    return Option.none<number>();
+  });
 
   const guarded = <A, E>(live: Live | undefined, effect: Effect.Effect<A, E>) =>
     live === undefined ? effect : live.passes.withPermits(1)(effect);
@@ -968,8 +970,7 @@ export const make = Effect.fn("LogStore.make")(function* (options: LogStoreOptio
 
     const flushLaunches = Effect.gen(function* () {
       const previous = yield* Ref.make<number | undefined>(undefined);
-      yield* instance.observation.pipe(
-        Stream.map(({ launchId }) => launchId),
+      yield* instance.launches.pipe(
         Stream.changes,
         Stream.runForEach((launchId) =>
           Ref.getAndSet(previous, launchId).pipe(

@@ -1,9 +1,16 @@
 import { expect } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Option, Predicate, Stream } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Option, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { fileURLToPath } from "node:url";
 import { discover, type StackLocations } from "../src/effect.ts";
-import { HostProcessError, shutdownHost, type HostAccess } from "../src/HostProcess.ts";
+import {
+  hasReason,
+  HostProcessError,
+  ownerExitProbe,
+  shutdownHost,
+  waitForOwnerExit,
+  type HostAccess,
+} from "../src/HostProcess.ts";
 
 /** Requests shutdown through the owner's stable endpoint, failing with the owner's refusal. */
 export const shutdownOwner = Effect.fn("Test.shutdownOwner")(function* (
@@ -72,17 +79,12 @@ export const captureOwnerPid = Effect.fn("Test.captureOwnerPid")(function* (
   return owner.pid;
 });
 
+/** Waits for the owner to leave the process table: its lease is released before it exits. */
 export const assertOwnerExited = Effect.fn("Test.assertOwnerExited")(function* (pid: number) {
-  const exists = yield* Effect.try({
-    try: () => process.kill(pid, 0),
-    catch: (cause) =>
-      new HostProcessError({ operation: "test-owner", message: String(cause), cause }),
-  }).pipe(
+  const fs = yield* FileSystem.FileSystem;
+  const exited = yield* waitForOwnerExit(pid, ownerExitProbe(fs)).pipe(
     Effect.as(true),
-    Effect.catchIf(
-      ({ cause }) => Predicate.hasProperty(cause, "code") && cause.code === "ESRCH",
-      () => Effect.succeed(false),
-    ),
+    Effect.catchIf(hasReason("owner-exit-pending"), () => Effect.succeed(false)),
   );
-  expect(exists, `Owner process ${pid} survived successful teardown`).toBe(false);
+  expect(exited, `Owner process ${pid} survived successful teardown`).toBe(true);
 });

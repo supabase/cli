@@ -15,25 +15,25 @@ import {
 import { PgClient } from "@effect/sql-pg";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
-import { tmpdir } from "node:os";
-import * as State from "../State.ts";
-import type { SavedStack } from "../State.ts";
+import * as StackNamespace from "../StackNamespace.ts";
+import type { SavedStack } from "../StackNamespace.ts";
 import { ownerFor } from "../../tests/owner-rpc.ts";
 import {
   makeSupabaseComposition,
   SupabaseCompositionError,
   type SupabaseCompositionOperations,
 } from "./Supabase.ts";
+import { testArtifactCacheRoot } from "../../tests/artifact-cache.ts";
 
-const cacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const cacheRoot = testArtifactCacheRoot;
 // Below every OS ephemeral range, so another test's outbound socket cannot already hold them.
 const FIXED_STUDIO_PORT = 24_391;
 const FIXED_MAIL_PORT = 24_392;
 
 const stateFor = (root: string) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(State.layer({ root }));
-    return Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root }));
+    return Context.get(context, StackNamespace.Service);
   });
 
 const query = (url: string, statement: string) =>
@@ -60,7 +60,6 @@ const initial = (id: string): SavedStack => ({
   instances: [],
   lifetime: "detached",
   composition: { members: [], dependencies: [] },
-  ports: [],
 });
 
 it.live("reports the failed binding and cleanup reason with the retained instance ID", () =>

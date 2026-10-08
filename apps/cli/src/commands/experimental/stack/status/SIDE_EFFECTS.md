@@ -31,8 +31,7 @@ available while the owner is unavailable. It reports `config_drift.status` as `u
 loading failure or unreadable saved state keeps the saved stack report available and is shown as
 `config_drift.status: "unavailable"` with a message in JSON. Status does not apply current configuration. The `services` list may include
 saved standalone instances; composition members identify the services used for
-primary database, environment export, and drift comparisons. Vector instances saved by earlier
-releases are omitted without rewriting saved state.
+primary database, environment export, and drift comparisons.
 
 Text output starts with one line naming the stack, its readiness, runtime, and
 project directory, noting when the owner is unavailable. It then prints the

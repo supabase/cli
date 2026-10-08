@@ -2,7 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Crypto, DateTime, Effect, FileSystem, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { runDocker } from "./docker-fixture.ts";
+import { runEngine } from "./docker-fixture.ts";
 import {
   encodeRunMarker,
   markerDirectory,
@@ -12,12 +12,12 @@ import {
 } from "./docker-volume-run.ts";
 
 const volumeExists = Effect.fn("DockerVolumeRunTest.volumeExists")((name: string) =>
-  runDocker(["volume", "inspect", name]).pipe(Effect.map((result) => result.code === 0)),
+  runEngine(["volume", "inspect", name]).pipe(Effect.map((result) => result.code === 0)),
 );
 
 const createVolume = Effect.fn("DockerVolumeRunTest.createVolume")(
   (name: string, labels: ReadonlyArray<string>) =>
-    runDocker(["volume", "create", ...labels.flatMap((label) => ["--label", label]), name]).pipe(
+    runEngine(["volume", "create", ...labels.flatMap((label) => ["--label", label]), name]).pipe(
       Effect.flatMap((result) =>
         result.code === 0
           ? Effect.void
@@ -27,7 +27,7 @@ const createVolume = Effect.fn("DockerVolumeRunTest.createVolume")(
 );
 
 const removeVolume = Effect.fn("DockerVolumeRunTest.removeVolume")((name: string) =>
-  runDocker(["volume", "rm", name]).pipe(
+  runEngine(["volume", "rm", name]).pipe(
     Effect.flatMap((result) =>
       result.code === 0 || /no such volume/iu.test(result.output)
         ? Effect.void
@@ -38,17 +38,17 @@ const removeVolume = Effect.fn("DockerVolumeRunTest.removeVolume")((name: string
 );
 
 const containerExists = Effect.fn("DockerVolumeRunTest.containerExists")((name: string) =>
-  runDocker(["inspect", name]).pipe(Effect.map((result) => result.code === 0)),
+  runEngine(["inspect", name]).pipe(Effect.map((result) => result.code === 0)),
 );
 
 const createContainer = Effect.fn("DockerVolumeRunTest.createContainer")(
   (name: string, labels: ReadonlyArray<string>) =>
-    runDocker([
+    runEngine([
       "create",
       "--name",
       name,
       ...labels.flatMap((label) => ["--label", label]),
-      "busybox:1.36",
+      "docker.io/library/busybox:1.36",
       "true",
     ]).pipe(
       Effect.flatMap((result) =>
@@ -60,7 +60,7 @@ const createContainer = Effect.fn("DockerVolumeRunTest.createContainer")(
 );
 
 const removeContainer = Effect.fn("DockerVolumeRunTest.removeContainer")((name: string) =>
-  runDocker(["rm", "--force", "--volumes", name]).pipe(
+  runEngine(["rm", "--force", "--volumes", name]).pipe(
     Effect.flatMap((result) =>
       result.code === 0 || /no such container/iu.test(result.output)
         ? Effect.void
