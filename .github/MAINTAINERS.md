@@ -155,7 +155,7 @@ Fast-forward PRs are the deploy PR (`develop` → `main`), the major cut
 
 **Dispatch guards.** `release.yml` refuses `channel=next` off `next`,
 `channel=maintenance` off `v<N>.x`, `beta`/`stable` on `next` or `v<N>.x`, a
-non-dry-run `stable` outside `main` and `hotfix/*`, and a `version` that is not
+non-dry-run `stable` outside `main`, and a `version` that is not
 `X.Y.Z[-prerelease]`.
 
 **`release-major` label.** The deploy fast-forward refuses a major version bump
