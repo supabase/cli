@@ -14,6 +14,7 @@ import {
   Scope,
   Sink,
   Stream,
+  Tracer,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { copyDirectory } from "./DirectoryCopy.ts";
@@ -188,6 +189,44 @@ describe("copyDirectory", () => {
           yield* fs.chmod(nested, 0o755);
           yield* fs.chmod(path.join(destination, "nested"), 0o755);
         }
+      }),
+    ),
+  );
+
+  it.live("records each host process on its own span", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "directory-copy-spans-" });
+        const source = path.join(root, "source");
+        yield* fs.makeDirectory(source);
+        yield* fs.writeFileString(path.join(source, "file.txt"), "file\n");
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+
+        yield* copyDirectory(source, path.join(root, "destination")).pipe(
+          Effect.withTracer(tracer),
+          Effect.withTracerEnabled(true),
+        );
+
+        const execs = spans
+          .filter((span) => span.name === "DirectoryCopy.exec")
+          .map((span) => Object.fromEntries(span.attributes));
+        expect(execs.map((attributes) => attributes["process.executable.name"])).toEqual(
+          process.platform === "win32" ? ["robocopy"] : ["find", "cp"],
+        );
+        expect(
+          execs.every((attributes) => typeof attributes["process.exit_code"] === "number"),
+        ).toBe(true);
+        const copy = spans.find((span) => span.name === "DirectoryCopy.copyDirectory");
+        expect(copy?.attributes.has("process.executable.name")).toBe(false);
       }),
     ),
   );

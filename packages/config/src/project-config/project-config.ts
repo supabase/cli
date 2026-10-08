@@ -369,7 +369,7 @@ export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
   readonly dropKeys?: ReadonlyArray<string>;
 }> = [
-  // `api.enabled` derives from `schemas.length > 0`; `extra_search_path`/`max_rows` configure a
+  // `api.enabled` and `schemas` share one `db_schema`; `extra_search_path`/`max_rows` configure a
   // PostgREST that isn't exposed while the Data API is off.
   { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
   // `enabled` here means "manage network restrictions", a management opt-out — the platform has

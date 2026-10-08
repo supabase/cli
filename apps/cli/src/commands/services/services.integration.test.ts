@@ -277,9 +277,7 @@ describe("services", () => {
           TelemetryRuntime,
           TelemetryRuntime.of({
             configDir: path.join(workdir, ".supabase"),
-            tracesDir: path.join(workdir, ".supabase", "traces"),
             consent: "granted",
-            showDebug: false,
             deviceId: "test-device-id",
             sessionId: "test-session-id",
             identity: makeTelemetryIdentity(undefined),
@@ -355,7 +353,7 @@ describe("services", () => {
 
       const rows = yield* decodeServiceRows(out.stdoutText);
       expect(out.stderrText).toBe("");
-      expect(rows).toHaveLength(13);
+      expect(rows).toHaveLength(12);
       expect(rows).toContainEqual(
         expect.objectContaining({
           name: "ghcr.io/supabase/cli/postgres",
@@ -370,13 +368,11 @@ describe("services", () => {
       );
       expect(rows).toContainEqual(
         expect.objectContaining({
-          name: "ghcr.io/supabase/cli/vector",
-          local: catalogUpstreamVersion("vector"),
+          name: "ghcr.io/supabase/cli/storage",
+          local: catalogUpstreamVersion("storage"),
         }),
       );
-      expect(rows).toContainEqual(
-        expect.objectContaining({ name: "ghcr.io/supabase/cli/storage", local: "v1.79.28" }),
-      );
+      expect(rows.map((row) => row.name)).not.toContain("ghcr.io/supabase/cli/vector");
     }).pipe(Effect.scoped, Effect.provide(BunServices.layer)),
   );
 

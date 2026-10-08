@@ -28,7 +28,7 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    container is created on this path.
 4. Print `Starting database...` (fresh volume) or `Starting database from backup...`
    (existing volume — despite the wording, unrelated to `--from-backup`; see
-   `command-internal/db-bootstrap/messages.ts`).
+   `command-internal/db-bootstrap/start-database.ts`).
 5. Resolve the Postgres image (version-pin-aware) and create + start the container.
    `--from-backup` set: a THIRD entrypoint variant (`buildPostgresStartContainerSpec`'s
    `fromBackup` branch) — schema.sql + `_supabase.sql` (no `webhook.sql`), a ported
@@ -184,11 +184,13 @@ Emits a single result object to stdout: `{ status: "already-running" }` or
 Same result object as the terminal `result` event; progress on stderr.
 
 When `[experimental].stack` is on, this command creates or resumes a postgres-only project
-stack instead of a Compose container. First create runs schema init, overlay, and
+stack instead of a Compose container. First create runs schema init (including the
+`supabase_functions` schema, which migrations must not recreate), overlay, and
 migrate-and-seed. It briefly starts configured Auth, Storage, and Realtime instances while
 applying the database catalog, then destroys those temporary instances. An existing cluster
-applies webhooks only. Durable state lives under `$SUPABASE_HOME/stacks/<stackId>/`, including
-the selected runtime and service identities. Postgres-only first create skips analytics and
+applies webhooks only, first creating the `supabase_functions` schema when it is missing. Durable
+state lives under `$SUPABASE_HOME/stacks/<stackId>/`, including the selected runtime and
+service identities. Postgres-only first create skips analytics and
 pooler artifact downloads. If first initialization fails after the database is created, the
 new database is destroyed so the command can be retried after fixing the cause. If cleanup itself
 fails, stderr identifies the incomplete instance and recommends `supabase stack destroy`.

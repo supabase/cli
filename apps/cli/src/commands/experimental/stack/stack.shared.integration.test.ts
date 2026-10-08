@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Ref } from "effect";
 import {
   StackApi,
   StackTargetError,
@@ -9,6 +9,10 @@ import {
   stackTargetResolverLayer,
 } from "./stack.shared.ts";
 import { mockCommandSettings } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  CommandTelemetryAttributes,
+  type CommandTelemetryAttributeValues,
+} from "../../../telemetry/command-telemetry-attributes.ts";
 
 type TargetInput = {
   readonly projectRoot: string;
@@ -78,6 +82,53 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("rejects an id prefix that several readable or unreadable saved stacks share", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+      const twin = `${id.slice(0, 8)}${id.slice(8).replace(/./gu, (c) => (c === "0" ? "1" : "0"))}`;
+      const saved = yield* fs.readFileString(path.join(home, "stacks", id, "state.json"));
+      yield* fs.makeDirectory(path.join(home, "stacks", twin));
+      yield* fs.writeFileString(
+        path.join(home, "stacks", twin, "state.json"),
+        saved.replaceAll(id, twin),
+      );
+      const broken = `${id.slice(0, 8)}${"f".repeat(56)}`;
+      yield* fs.makeDirectory(path.join(home, "stacks", broken));
+      yield* fs.writeFileString(path.join(home, "stacks", broken, "state.json"), "{broken");
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 8),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain(`Stack id prefix ${id.slice(0, 8)} matches 3 stacks`);
+      expect(failure.message).toContain(id);
+      expect(failure.message).toContain(twin);
+      expect(failure.message).toContain(broken);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("rejects a stack id shorter than four characters", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 3),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("flags");
+      expect(failure.message).toContain("prefix of at least 4 characters");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("rejects an explicit id when its saved runtime differs", () =>
     Effect.gen(function* () {
       const { root, register, resolve } = yield* workspace;
@@ -109,6 +160,22 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.live("records the saved stack's runtime on the command event", () =>
+    Effect.gen(function* () {
+      const { root, register, resolve } = yield* workspace;
+      yield* register({ projectRoot: root, runtime: "docker" });
+      const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
+
+      yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
+        }),
+      );
+
+      expect((yield* Ref.get(recorded)).stack_runtime).toBe("docker");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.live("reports no id when the project has no saved stack", () =>
     Effect.gen(function* () {
       const { root, resolve } = yield* workspace;
@@ -119,14 +186,19 @@ describe("stack target resolver", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  it.live("carries an explicit Podman runtime onto a new stack target", () =>
+  it.live("carries an explicit Podman runtime onto a new stack target and records it", () =>
     Effect.gen(function* () {
       const { root, resolve } = yield* workspace;
+      const recorded = yield* Ref.make<CommandTelemetryAttributeValues>({});
 
-      const target = yield* resolve({ projectRoot: root, runtime: "podman" });
+      const target = yield* resolve({ projectRoot: root, runtime: "podman" }).pipe(
+        Effect.provideService(CommandTelemetryAttributes, {
+          record: (values) => Ref.update(recorded, (current) => ({ ...current, ...values })),
+        }),
+      );
 
-      expect(target).toMatchObject({ runtime: "podman", hostRunning: false });
-      expect(target.id).toBeUndefined();
+      expect(target).toEqual({ projectRoot: root, runtime: "podman", hostRunning: false });
+      expect((yield* Ref.get(recorded)).stack_runtime).toBe("podman");
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
@@ -158,6 +230,57 @@ describe("stack target resolver", () => {
       expect(failure).toBeInstanceOf(StackTargetError);
       expect(failure.reason).toBe("invalid-config");
       expect(failure.message).toContain(id);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live(
+    "tells the user to remove the directory of a saved stack with an unknown service kind",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, home, register, resolve } = yield* workspace;
+        const id = yield* register({ projectRoot: root });
+        const statePath = path.join(home, "stacks", id, "state.json");
+        const saved = yield* fs.readFileString(statePath);
+        yield* fs.writeFileString(
+          statePath,
+          saved.replace('"instances":[]', '"instances":[{"id":"logs","service":"vector"}]'),
+        );
+
+        const byProject = yield* resolve({ projectRoot: root, runtime: "auto" }).pipe(Effect.flip);
+        const byPrefix = yield* resolve({
+          projectRoot: root,
+          id: id.slice(0, 8),
+          runtime: "auto",
+        }).pipe(Effect.flip);
+
+        for (const failure of [byProject, byPrefix]) {
+          expect(failure.reason).toBe("invalid-config");
+          expect(failure.message).toContain(`Stack ${id} could not be read`);
+          expect(failure.message).toContain(
+            `Remove its directory ${path.join(home, "stacks", id)}`,
+          );
+        }
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("surfaces an unreadable saved stack that an id prefix selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, home, register, resolve } = yield* workspace;
+      const id = yield* register({ projectRoot: root });
+      yield* fs.writeFileString(path.join(home, "stacks", id, "state.json"), "{broken");
+
+      const failure = yield* resolve({
+        projectRoot: root,
+        id: id.slice(0, 8),
+        runtime: "auto",
+      }).pipe(Effect.flip);
+
+      expect(failure.reason).toBe("invalid-config");
+      expect(failure.message).toContain(`Stack ${id} could not be read`);
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });

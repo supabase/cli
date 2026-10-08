@@ -71,7 +71,7 @@ const resolveSoftLinkedRef = Effect.fnUntraced(function* () {
  *   from `SUPABASE_PROJECT_ID` the cache may not describe it, so the branch claim needs the
  *   lookup to confirm it and otherwise degrades to the plain shape.
  */
-export const resolveLinkedState = Effect.fnUntraced(function* () {
+export const resolveLinkedState = Effect.fn("LinkedState.resolve")(function* () {
   const cliSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -79,8 +79,14 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
   const soft = yield* resolveSoftLinkedRef();
   const linkedRef = soft.ref;
   if (Option.isNone(linkedRef)) {
+    yield* Effect.annotateCurrentSpan("linked_state.kind", "unlinked");
     return { linked: false } as const;
   }
+  yield* Effect.annotateCurrentSpan({
+    "linked_state.kind": "project",
+    "linked_state.ref_source": soft.source,
+    "project.ref": linkedRef.value,
+  });
 
   const paths = tempPaths(path, cliSettings.workdir);
   const cached = yield* fs.readFileString(paths.linkedProjectCache).pipe(
@@ -114,6 +120,7 @@ export const resolveLinkedState = Effect.fnUntraced(function* () {
     }
     // File-sourced, or env-sourced with a confirmed lookup: always render
     // the branch-linked shape, degrading only the `branch` name.
+    yield* Effect.annotateCurrentSpan("linked_state.kind", "branch");
     return {
       linked: true,
       projectRef: linkedRef.value,

@@ -99,6 +99,7 @@ export const scopedPosthogClient = Effect.fnUntraced(function* (apiKey: string, 
         // The SDK drain can continue after the Effect deadline; aborting its
         // fetches lets that background drain settle without active requests.
         Effect.ensuring(Effect.sync(() => shutdown.abort())),
+        Effect.withSpan("Analytics.flush"),
       ),
   );
   return client;

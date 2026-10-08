@@ -1,9 +1,10 @@
 import { Context, Data, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect";
 import { DOCKER_HOST_ALIAS } from "./runtime/Container.ts";
-import * as State from "./State.ts";
-import { makePorts, PortError } from "./Ports.ts";
+import * as PortReservations from "./namespace/PortReservations.ts";
+import * as StackNamespace from "./StackNamespace.ts";
+import { makePorts, probeVacant } from "./Ports.ts";
 import { bindTcp, serveTcp, type BackendAddress, type ProxyError } from "./Proxy.ts";
-import { makeHttpProxy, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
+import { makeHttpProxy, type HttpAccessSink, type HttpProxy, type HttpRoute } from "./HttpProxy.ts";
 
 export type NetworkRuntime = "native" | "docker" | "podman";
 
@@ -42,7 +43,10 @@ export interface NetworkNamespace {
   readonly bindings: Effect.Effect<ReadonlyArray<NetworkBinding>>;
   readonly bind: Effect.Effect<ReadonlyArray<NetworkBinding>, NetworkError>;
   readonly close: Effect.Effect<void, NetworkError>;
+  /** Closes the endpoints for good once the instance is stopped; saved port assignments stay. */
   readonly release: Effect.Effect<void, NetworkError>;
+  /** Deletes the saved port assignments of this instance's dedicated endpoints. */
+  readonly releasePorts: Effect.Effect<void, NetworkError>;
   readonly address: (
     name: string,
     from: "host" | "runtime",
@@ -50,7 +54,8 @@ export interface NetworkNamespace {
 }
 
 export interface Interface {
-  readonly release: Effect.Effect<void, NetworkError>;
+  /** Releases every reservation this stack holds, dedicated and shared alike, in one step. */
+  readonly releaseStack: Effect.Effect<void, NetworkError>;
   readonly register: (options: {
     readonly id: string;
     readonly endpoints: Readonly<Record<string, NetworkEndpoint>>;
@@ -66,15 +71,27 @@ const errorFor = (operation: string, cause: unknown) =>
     cause,
   });
 
+/** A later claimant reuses the open shared listener, so it never touches the port registry. */
+const joinClaim = (
+  existing: { readonly claim: number; readonly proxy: HttpProxy },
+  port: number | "auto",
+) =>
+  port !== "auto" && port !== existing.claim
+    ? Effect.fail(errorFor("bind", "Shared API port differs from existing claim"))
+    : Effect.succeed({ port: existing.claim, listener: { proxy: existing.proxy } });
+
 const makeNetwork = (options: {
   readonly stackId: string;
   readonly runtime: NetworkRuntime;
-  readonly state: State.Interface;
+  readonly state: StackNamespace.Interface;
+  readonly platform?: NodeJS.Platform;
+  readonly onAccess?: HttpAccessSink;
 }) =>
   Effect.gen(function* () {
     const ports = yield* makePorts(options.state).pipe(
       Effect.mapError((cause) => errorFor("ports", cause)),
     );
+    const probe = probeVacant(options.platform ?? process.platform);
     const owner = yield* Scope.Scope;
     const gate = yield* Semaphore.make(1);
     const shared = yield* Ref.make<
@@ -91,12 +108,7 @@ const makeNetwork = (options: {
 
     const listenHost = options.runtime === "native" ? "127.0.0.1" : "0.0.0.0";
     const hostAddress = "127.0.0.1";
-    const runtimeAddress =
-      options.runtime === "native"
-        ? "127.0.0.1"
-        : options.runtime === "docker"
-          ? DOCKER_HOST_ALIAS
-          : "host.containers.internal";
+    const runtimeAddress = options.runtime === "native" ? "127.0.0.1" : DOCKER_HOST_ALIAS;
 
     const routeKey = (route: Pick<HttpRoute, "id" | "prefix">) => `${route.id}:${route.prefix}`;
 
@@ -158,49 +170,54 @@ const makeNetwork = (options: {
                 Effect.gen(function* () {
                   const endpointScope = yield* Scope.fork(owner, "sequential");
                   const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
+                  const claimed =
+                    endpoint.shared === undefined ? undefined : yield* Ref.get(shared);
                   const result = yield* restore(
-                    ports
-                      .acquire<{ readonly proxy?: HttpProxy }, Scope.Scope>(
-                        { stackId: options.stackId, key, host: listenHost, port: endpoint.port },
-                        (host, port) =>
-                          Effect.gen(function* () {
-                            if (endpoint.shared !== undefined) {
-                              const current = yield* Ref.get(shared);
-                              if (current !== undefined) {
-                                if (current.claim !== port)
-                                  return yield* new PortError({
-                                    key: "api",
-                                    message: "Shared API port differs from existing claim",
+                    claimed !== undefined
+                      ? joinClaim(claimed, endpoint.port)
+                      : ports
+                          .acquire<{ readonly proxy?: HttpProxy }, Scope.Scope>(
+                            {
+                              stackId: options.stackId,
+                              key,
+                              host: listenHost,
+                              port: endpoint.port,
+                            },
+                            (host, port) =>
+                              Effect.gen(function* () {
+                                if (endpoint.shared !== undefined) {
+                                  yield* probe(key, host, port);
+                                  const proxy = yield* makeHttpProxy({
+                                    host,
+                                    port,
+                                    onAccess: options.onAccess,
                                   });
-                                return { proxy: current.proxy };
-                              }
-                              return { proxy: yield* makeHttpProxy({ host, port }) };
-                            }
-                            if (endpoint.protocol === "http") {
-                              const proxy = yield* makeHttpProxy({ host, port });
-                              yield* proxy.setRoutes([
-                                { id, prefix: "/", target: endpoint.backend },
-                              ]);
-                              return { proxy };
-                            }
-                            const listener = yield* bindTcp(host, port);
-                            yield* Effect.forkIn(
-                              serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
-                                Effect.provideService(Scope.Scope, endpointScope),
-                                Effect.catch((cause) =>
-                                  Effect.logWarning("Public listener failed", cause),
-                                ),
-                              ),
-                              endpointScope,
-                              { startImmediately: true },
-                            );
-                            return {};
-                          }),
-                      )
-                      .pipe(
-                        Effect.provideService(Scope.Scope, endpointScope),
-                        Effect.mapError((cause) => errorFor("bind", cause)),
-                      ),
+                                  return { proxy };
+                                }
+                                if (endpoint.protocol === "http") {
+                                  yield* probe(key, host, port);
+                                  const proxy = yield* makeHttpProxy({ host, port });
+                                  yield* proxy.setRoutes([
+                                    { id, prefix: "/", target: endpoint.backend },
+                                  ]);
+                                  return { proxy };
+                                }
+                                yield* probe(key, host, port);
+                                const listener = yield* bindTcp(host, port);
+                                yield* Effect.forkIn(
+                                  serveTcp(listener, endpoint.backend, `${id}:${name}`).pipe(
+                                    Effect.provideService(Scope.Scope, endpointScope),
+                                  ),
+                                  endpointScope,
+                                  { startImmediately: true },
+                                );
+                                return {};
+                              }),
+                          )
+                          .pipe(
+                            Effect.provideService(Scope.Scope, endpointScope),
+                            Effect.mapError((cause) => errorFor("bind", cause)),
+                          ),
                   ).pipe(
                     Effect.onExit((exit) =>
                       Exit.isFailure(exit) ? Scope.close(endpointScope, exit) : Effect.void,
@@ -292,33 +309,38 @@ const makeNetwork = (options: {
                     "Stop the instance before releasing its endpoints",
                   );
               yield* Ref.set(closed, true);
-              for (const name of Object.keys(endpoints)) {
-                const endpoint = endpoints[name];
-                if (endpoint?.shared === undefined)
-                  yield* ports
-                    .release(options.stackId, `${id}:${name}`)
-                    .pipe(Effect.mapError((cause) => errorFor("release", cause)));
-              }
             }),
           ),
+        ),
+      );
+      const releasePorts = Effect.fn("Network.releasePorts")(() =>
+        Effect.forEach(
+          Object.entries(endpoints).filter(([, endpoint]) => endpoint.shared === undefined),
+          ([name]) =>
+            ports
+              .release(options.stackId, `${id}:${name}`)
+              .pipe(Effect.mapError((cause) => errorFor("release", cause))),
+          { discard: true },
         ),
       );
       const address = Effect.fn("Network.address")((name: string, from: "host" | "runtime") =>
         Effect.gen(function* () {
           const endpoint = endpoints[name];
           if (endpoint === undefined) return yield* errorFor("address", `Unknown endpoint ${name}`);
-          const saved = yield* options.state
-            .read(options.stackId)
-            .pipe(Effect.mapError((cause) => errorFor("address", cause)));
           const key = endpoint.shared === undefined ? `${id}:${name}` : "api";
-          const claim = saved?.ports.find((value) => value.key === key);
-          if (claim === undefined)
+          const port =
+            endpoint.port === "auto"
+              ? yield* ports
+                  .assigned(options.stackId, key)
+                  .pipe(Effect.mapError((cause) => errorFor("address", cause)))
+              : endpoint.port;
+          if (port === undefined)
             return yield* errorFor("address", `Endpoint ${name} is not assigned`);
           return {
             name,
             protocol: endpoint.protocol,
             host: from === "host" ? hostAddress : runtimeAddress,
-            port: claim.port,
+            port,
           };
         }),
       );
@@ -326,26 +348,33 @@ const makeNetwork = (options: {
         bind: bind(),
         close: close(),
         release: release(),
+        releasePorts: releasePorts(),
         address,
         bindings: Ref.get(bound).pipe(Effect.map((values) => [...values.values()])),
       } satisfies NetworkNamespace;
     });
 
-    const release = Effect.fn("Network.releaseNamespace")(() =>
-      gate.withPermits(1)(
-        ports
-          .release(options.stackId, "api")
-          .pipe(Effect.mapError((cause) => errorFor("release", cause))),
-      ),
+    const releaseStack = Effect.fn("Network.releaseStack")(() =>
+      ports
+        .releaseStack(options.stackId)
+        .pipe(Effect.mapError((cause) => errorFor("release", cause))),
     );
-    return { register, release: release() } satisfies Interface;
+    return {
+      register,
+      releaseStack: releaseStack(),
+    } satisfies Interface;
   });
 
-export const layer = (options: { readonly stackId: string; readonly runtime: NetworkRuntime }) =>
+export const layer = (options: {
+  readonly stackId: string;
+  readonly runtime: NetworkRuntime;
+  /** Receives the shared API listener's completed requests. */
+  readonly onAccess?: HttpAccessSink;
+}) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
-      const state = yield* State.Service;
+      const state = yield* StackNamespace.Service;
       return yield* makeNetwork({ ...options, state });
     }).pipe(Effect.map(Service.of)),
-  );
+  ).pipe(Layer.provide(PortReservations.layer));

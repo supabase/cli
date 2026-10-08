@@ -38,6 +38,14 @@ The skill is authoritative for Effect coding practices when repository instructi
 Effect linting uses oxlint via `.oxlintrc.effect.json`; run `pnpm lint:effect:check` or
 `pnpm lint:effect:fix` from the repository root.
 
+Instrument by default: when you add or change code that does I/O (HTTP, SQL, filesystem beyond a
+small read, child processes, containers, waits) or millisecond-scale work, give it a named span
+(`Effect.fn("Area.operation")`, or `Effect.withSpan("<command>.<phase>")` for handler phases) and
+annotate outcomes that help debugging, such as counts, cache hits, attempts, and exit codes. Keep
+`Effect.fnUntraced` for pure helpers and per-item loop bodies. Follow the
+[tracing conventions ADR](docs/adr/0027-cli-tracing-conventions.md) for naming, attribute rules,
+and what never to record.
+
 ## Commands, validation, and workflows
 
 Package scripts are the source of truth for leaf workspaces; root-owned Turbo coordinates build,
@@ -121,6 +129,15 @@ internal metrics (percentages, ratios, or relative changes are fine), vendor/leg
 details, and competitor names; protocol identifiers such as user-agent strings are fine. Keep
 internal context in Linear.
 
+## Branches and releases
+
+Non-breaking PRs target `develop`. Breaking PRs target `next` with a `type(scope)!:` title; the PR
+title lint rejects `!` titles on any other base. `v*.x` maintenance branches take only security
+fixes and fixes for fundamentally broken behaviour, through `hotfix/*` or `backport/*` PRs. If a
+change touches release infrastructure and a `v*.x` branch exists, flag that it needs a cherry-pick
+to each active `v*.x`; the paths are listed in the runbook. For any release, major cut, or
+maintenance task, follow [the release process](apps/cli/docs/release-process.md).
+
 ## Refactoring
 
 Internal unreleased APIs may be simplified or reshaped; move responsibility to the correct owner
@@ -137,7 +154,10 @@ limitations over speculative machinery while preserving required safeguards.
 - Assert behavior that matters to consumers, not implementation details. Prefer real parsers and observable outcomes over source-text or registry checks. Exercise shared contracts across supported implementations.
 - Make assertions meaningful: establish prerequisites, check specific failures, and choose matchers that express the intended contract.
 - Keep setup concise with small fixtures. Accept some duplication rather than introducing unnecessary test abstractions.
-- Remove redundant coverage. Push back on review suggestions that add assertions without protecting meaningful behavior.
+
+Follow the [test-audit skill](.agents/skills/test-audit/SKILL.md) whenever a test is written,
+changed, or reviewed: it gates new tests before they land and audits existing ones for redundant,
+mock-driven, or implementation-coupled coverage.
 
 Name tests `*.unit.test.ts`, `*.integration.test.ts`, or `*.e2e.test.ts`; colocate them with source.
 Use `tests/` for shared helpers. For CLI commands, unit-test complex pure logic, integration-test

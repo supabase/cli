@@ -82,7 +82,7 @@ const readManagedDeclarativeSqlFiles = Effect.fnUntraced(function* (
  * files were preserved (see {@link warnPreservedUnmanagedDeclarativeFiles}). Never touches
  * `[db.migrations] schema_paths`; `db pull --declarative` handles that separately.
  */
-export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
+export const writeDeclarativeSchemas = Effect.fn("PgDelta.writeDeclarativeSchemas")(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   declarativeDir: string,
@@ -147,6 +147,11 @@ export const writeDeclarativeSchemas = Effect.fnUntraced(function* (
 
   yield* fs.makeDirectory(declarativeDir, { recursive: true });
   const changed = new Set([...classification.created, ...classification.updated]);
+  yield* Effect.annotateCurrentSpan({
+    "file.count": proposed.length,
+    "file.changed_count": changed.size,
+    "file.removed_count": classification.removed.length,
+  });
   for (const file of proposed) {
     if (!changed.has(file.name)) continue;
     const targetPath = path.join(declarativeDir, file.name);
@@ -253,7 +258,9 @@ const SCHEMA_PATHS_PATTERN = /\nschema_paths = \[[\s\S]*?\]\n/g;
  * literal byte-edit, not a TOML re-serialize, so the rest of the file's comments and
  * formatting are preserved exactly.
  */
-export const updateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (
+export const updateDeclarativeSchemaPathsConfig = Effect.fn(
+  "PgDelta.updateDeclarativeSchemaPathsConfig",
+)(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,

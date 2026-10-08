@@ -19,7 +19,10 @@ import {
   PropExitCode,
   PropOutputFormat,
 } from "../shared/telemetry/event-catalog.ts";
-import { standaloneAnalyticsConfigLayer } from "../shared/telemetry/standalone-analytics-config.layer.ts";
+import { cliProjectContextLayer } from "../shared/config/cli-project-context.layer.ts";
+import { cliSettingsLayer } from "../shared/config/cli-settings.layer.ts";
+import { runtimeInfoLayer } from "../shared/runtime/runtime-info.layer.ts";
+import { ttyLayer } from "../shared/runtime/tty.layer.ts";
 import { cliConfigProviderLayer } from "../shared/config/cli-config-provider.layer.ts";
 import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { formatCliError, normalizeCliError } from "../shared/output/normalize-error.ts";
@@ -1113,11 +1116,16 @@ export function captureCompleteTelemetryEffect(
 
 const COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 
-// `analyticsLayer` needs `CliSettings`/`RuntimeInfo`/`Tty` plus a platform layer;
-// `standaloneAnalyticsConfigLayer` packages that small set for a caller outside the full
-// CLI runtime tree.
+// Completion telemetry fires before `runCli` builds its layer tree, so the
+// `CliSettings`/`RuntimeInfo`/`Tty` set that `analyticsLayer` needs is resolved here.
 const completeAnalyticsLayer = analyticsLayer.pipe(
-  Layer.provide(standaloneAnalyticsConfigLayer),
+  Layer.provide(
+    Layer.mergeAll(
+      cliSettingsLayer.pipe(Layer.provide(cliProjectContextLayer), Layer.provide(runtimeInfoLayer)),
+      runtimeInfoLayer,
+      ttyLayer,
+    ),
+  ),
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(cliConfigProviderLayer),
   Layer.provide(BunServices.layer),

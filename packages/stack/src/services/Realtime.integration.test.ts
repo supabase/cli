@@ -2,10 +2,12 @@ import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Redacted } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
-import { makeService } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
 
 const options = (root: string) => ({
   stackId: "catalog-realtime",
@@ -17,7 +19,8 @@ const options = (root: string) => ({
 
 const dockerOptions = (root: string) => ({
   ...options(root),
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 describe("service catalog", () => {
@@ -41,7 +44,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const database = yield* makeService(databaseRecipe.definition, {
+          const database = yield* makeStandaloneService(databaseRecipe.definition, {
             id: "database",
             config: databaseRecipe.creation,
           });
@@ -54,7 +57,7 @@ describe("service catalog", () => {
             { service: "realtime", config: { databaseUrl, jwtSecret: secret } },
             dockerOptions(root),
           );
-          const realtime = yield* makeService(realtimeRecipe.definition, {
+          const realtime = yield* makeStandaloneService(realtimeRecipe.definition, {
             id: "realtime",
             config: realtimeRecipe.creation,
           });
@@ -63,7 +66,7 @@ describe("service catalog", () => {
           const realtimeEndpoint = yield* realtimeRecipe.endpoint("http");
           const realtimeResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${realtimeEndpoint.host}:${realtimeEndpoint.port}/healthcheck`,
+              `http://${httpHost(realtimeEndpoint)}:${realtimeEndpoint.port}/healthcheck`,
             ),
           );
           expect(realtimeResponse.status).toBe(200);
@@ -72,7 +75,7 @@ describe("service catalog", () => {
             { service: "pgmeta", config: { databaseUrl } },
             dockerOptions(root),
           );
-          const pgmeta = yield* makeService(pgmetaRecipe.definition, {
+          const pgmeta = yield* makeStandaloneService(pgmetaRecipe.definition, {
             id: "pgmeta",
             config: pgmetaRecipe.creation,
           });
@@ -81,7 +84,9 @@ describe("service catalog", () => {
           const pgmetaEndpoint = yield* pgmetaRecipe.endpoint("http");
           const pgmetaRelay = yield* makeDockerHttpRelay(pgmetaRecipe.endpoint("http"));
           const schemasResponse = yield* client.execute(
-            HttpClientRequest.get(`http://${pgmetaEndpoint.host}:${pgmetaEndpoint.port}/schemas`),
+            HttpClientRequest.get(
+              `http://${httpHost(pgmetaEndpoint)}:${pgmetaEndpoint.port}/schemas`,
+            ),
           );
           expect(schemasResponse.status).toBe(200);
           expect(yield* schemasResponse.text).toContain("public");
@@ -100,7 +105,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const studio = yield* makeService(studioRecipe.definition, {
+          const studio = yield* makeStandaloneService(studioRecipe.definition, {
             id: "studio",
             config: studioRecipe.creation,
           });
@@ -109,13 +114,13 @@ describe("service catalog", () => {
           const studioEndpoint = yield* studioRecipe.endpoint("http");
           const profileResponse = yield* client.execute(
             HttpClientRequest.get(
-              `http://${studioEndpoint.host}:${studioEndpoint.port}/api/platform/profile`,
+              `http://${httpHost(studioEndpoint)}:${studioEndpoint.port}/api/platform/profile`,
             ),
           );
           expect(profileResponse.status).toBe(200);
           const queryResponse = yield* client.execute(
             HttpClientRequest.post(
-              `http://${studioEndpoint.host}:${studioEndpoint.port}/api/platform/pg-meta/default/query`,
+              `http://${httpHost(studioEndpoint)}:${studioEndpoint.port}/api/platform/pg-meta/default/query`,
             ).pipe(HttpClientRequest.bodyJsonUnsafe({ query: "select current_user" })),
           );
           expect(queryResponse.status).toBe(200);

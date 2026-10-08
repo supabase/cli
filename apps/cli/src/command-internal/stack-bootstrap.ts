@@ -1,7 +1,7 @@
 import { Data, Effect, FileSystem, Path } from "effect";
 import type { DatabaseInstance } from "@supabase/stack/effect";
 import { Output } from "../shared/output/output.service.ts";
-import { applyDatabaseWebhooks } from "./db-bootstrap/db-setup.ts";
+import { applyDatabaseWebhooks, ensureStackWebhookSchema } from "./db-bootstrap/db-setup.ts";
 import { parseConnectionString } from "./db-config.parse.ts";
 import { DbConnection, type DbSession } from "./db-connection.service.ts";
 import type { DbTomlValues } from "./db-config.toml-read.ts";
@@ -64,7 +64,10 @@ const withDatabaseSession = <A, E, R>(
     }),
   );
 
-/** Applies only the webhook configuration to an already initialized database. */
+/**
+ * Applies only the webhook setup to an already initialized database, creating the
+ * `supabase_functions` schema first when it is missing.
+ */
 export const applyStackWebhooksOnly = (
   database: DatabaseInstance,
   webhooksEnabled: boolean,
@@ -74,6 +77,7 @@ export const applyStackWebhooksOnly = (
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-webhooks-" });
+      yield* ensureStackWebhookSchema(session, fs, path, tmpDir);
       yield* applyDatabaseWebhooks(session, fs, path, tmpDir, webhooksEnabled);
     }),
   );

@@ -212,6 +212,29 @@ describe("config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("a disabled Data API diffs clean against a declared enabled = false", () => {
+    const { layer, out, processControl } = setup({
+      toml: 'project_id = "test"\n[api]\nenabled = false\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            api: {
+              ...(attributes["api"] as Record<string, unknown>),
+              db_schema: "pg_pgrst_no_exposed_schemas",
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* configDiff({ ...noFlags, exitCode: true });
+      expect(out.stdoutText).toContain("No config differences found.");
+      expect(processControl.exitCode).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("a configured provider still diffs clean", () => {
     const { layer, out } = setup({
       toml: [

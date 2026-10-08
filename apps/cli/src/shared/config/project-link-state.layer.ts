@@ -84,4 +84,7 @@ const makeProjectLinkState = Effect.gen(function* () {
   });
 });
 
-export const projectLinkStateLayer = Layer.effect(ProjectLinkState, makeProjectLinkState);
+export const projectLinkStateLayer = Layer.effect(
+  ProjectLinkState,
+  makeProjectLinkState.pipe(Effect.withSpan("ProjectLinkState.load")),
+);

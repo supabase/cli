@@ -204,6 +204,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     const fromSet = from.length > 0;
     const toSet = to.length > 0;
     if (fromSet || toSet) {
+      yield* Effect.annotateCurrentSpan({ "diff.mode": "explicit", "diff.engine": "pg-delta" });
       if (!fromSet || !toSet) {
         return yield* new DbDiffExplicitFlagsError({
           message: "must set both --from and --to when using explicit diff mode",
@@ -570,91 +571,93 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       );
     });
 
-    let diffResult: {
+    const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
+    yield* Effect.annotateCurrentSpan("diff.engine", engine);
+    const diffResult: {
       readonly sql: string;
       readonly files: ReadonlyArray<PgDeltaRenderedFile> | undefined;
       readonly hazards?: PgDeltaDiffResult["hazards"];
-    };
-    if (usePgAdmin) {
-      // The running-db check runs after the config load + target resolve above, and — unlike
-      // every other engine on this command — runs for `--linked`/`--db-url` too, not just the
-      // local target. Uses `ctx.projectId` (already remote-merge-resolved), not the raw
-      // `cliSettings.projectId` env reader, so it reflects a resolved remote merge.
-      const running = yield* isLocalDbRunning(
-        spawner,
-        fs,
-        path,
-        cliSettings.workdir,
-        ctx.projectId,
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DbDiffDbNotRunningError({
-              message: cause.message,
-              daemonDown: cause.daemonDown,
-              suggestion: cause.suggestion,
+    } = yield* Effect.gen(function* () {
+      if (usePgAdmin) {
+        // The running-db check runs after the config load + target resolve above, and — unlike
+        // every other engine on this command — runs for `--linked`/`--db-url` too, not just the
+        // local target. Uses `ctx.projectId` (already remote-merge-resolved), not the raw
+        // `cliSettings.projectId` env reader, so it reflects a resolved remote merge.
+        const running = yield* isLocalDbRunning(
+          spawner,
+          fs,
+          path,
+          cliSettings.workdir,
+          ctx.projectId,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DbDiffDbNotRunningError({
+                message: cause.message,
+                daemonDown: cause.daemonDown,
+                suggestion: cause.suggestion,
+              }),
+          ),
+        );
+        if (!running) {
+          return yield* new DbDiffDbNotRunningError({
+            message: `${aqua("supabase start")} is not running.`,
+          });
+        }
+        yield* emitStatus("Creating shadow database...");
+        const shadowBase = yield* resolveShadowRunInput();
+        const shadowConnConfig: PgConnInput = {
+          host: shadowBase.hostname,
+          port: shadowBase.shadowPort,
+          user: "postgres",
+          password: shadowBase.password,
+          database: "postgres",
+        };
+        // Register cleanup atomically with shadow creation; preparation stays interruptible.
+        const sql = yield* Effect.acquireUseRelease(
+          createShadowDatabase(spawner, shadowBase),
+          (handle) =>
+            Effect.gen(function* () {
+              yield* waitForHealthyServices(spawner, [handle.containerId], {
+                timeoutSeconds: shadowBase.healthTimeoutSeconds,
+              });
+              yield* migrateShadowDatabase(spawner, {
+                fs,
+                path,
+                workdir: cliSettings.workdir,
+                projectId: shadowBase.projectId,
+                container: handle.containerId,
+                networkId: shadowBase.networkId,
+                connConfig: shadowConnConfig,
+                setup: shadowBase.setup,
+              });
+              yield* emitStatus("Diffing local database with current migrations...");
+              const differHost = (host: string) =>
+                toolContainerUsesHostNetwork(shadowBase.networkId)
+                  ? host
+                  : rewriteDumpHostForToolContainer(host, {
+                      platform: runtimeInfo.platform,
+                      usesHostNetwork: false,
+                    });
+              return yield* diffSchemaPgAdmin({
+                // `source`/`target` are inverted relative to the migra/pg-delta path below:
+                // `source` is the user's db, `target` is the shadow.
+                source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
+                // Hardcoded, not built via `toPostgresURL`: this ignores
+                // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
+                target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
+                schema: flags.schema,
+                projectEnvValues: cfg.projectEnv,
+                projectId: shadowBase.projectId,
+                networkId: shadowBase.networkId,
+                extraHosts: shadowBase.extraHosts,
+                emitStatus,
+              });
             }),
-        ),
-      );
-      if (!running) {
-        return yield* new DbDiffDbNotRunningError({
-          message: `${aqua("supabase start")} is not running.`,
-        });
+          (handle) => removeShadowDatabase(spawner, handle.containerId),
+        );
+        return { sql, files: undefined };
       }
-      yield* emitStatus("Creating shadow database...");
-      const shadowBase = yield* resolveShadowRunInput();
-      const shadowConnConfig: PgConnInput = {
-        host: shadowBase.hostname,
-        port: shadowBase.shadowPort,
-        user: "postgres",
-        password: shadowBase.password,
-        database: "postgres",
-      };
-      // Register cleanup atomically with shadow creation; preparation stays interruptible.
-      const sql = yield* Effect.acquireUseRelease(
-        createShadowDatabase(spawner, shadowBase),
-        (handle) =>
-          Effect.gen(function* () {
-            yield* waitForHealthyServices(spawner, [handle.containerId], {
-              timeoutSeconds: shadowBase.healthTimeoutSeconds,
-            });
-            yield* migrateShadowDatabase(spawner, {
-              fs,
-              path,
-              workdir: cliSettings.workdir,
-              projectId: shadowBase.projectId,
-              container: handle.containerId,
-              networkId: shadowBase.networkId,
-              connConfig: shadowConnConfig,
-              setup: shadowBase.setup,
-            });
-            yield* emitStatus("Diffing local database with current migrations...");
-            const differHost = (host: string) =>
-              toolContainerUsesHostNetwork(shadowBase.networkId)
-                ? host
-                : rewriteDumpHostForToolContainer(host, {
-                    platform: runtimeInfo.platform,
-                    usesHostNetwork: false,
-                  });
-            return yield* diffSchemaPgAdmin({
-              // `source`/`target` are inverted relative to the migra/pg-delta path below:
-              // `source` is the user's db, `target` is the shadow.
-              source: toPostgresURL({ ...resolved.conn, host: differHost(resolved.conn.host) }),
-              // Hardcoded, not built via `toPostgresURL`: this ignores
-              // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design, not a bug to fix.
-              target: `postgresql://postgres:postgres@${differHost("127.0.0.1")}:${shadowBase.shadowPort}/postgres`,
-              schema: flags.schema,
-              projectEnvValues: cfg.projectEnv,
-              projectId: shadowBase.projectId,
-              networkId: shadowBase.networkId,
-              extraHosts: shadowBase.extraHosts,
-              emitStatus,
-            });
-          }),
-        (handle) => removeShadowDatabase(spawner, handle.containerId),
-      );
-      diffResult = { sql, files: undefined };
-    } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
       const migrationMode: "legacy" | "pgdelta-next" = useDelta ? "pgdelta-next" : "legacy";
       const shadowInput = {
@@ -719,7 +722,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
       // `prepareShadowSource` selects for this mode (legacy migrate forces `pg_net` on,
       // next follows config), or the two engines could restore each other's tars.
       const stackBackend = (yield* currentStackBackend).kind === "stack";
-      diffResult = stackBackend
+      return stackBackend
         ? yield* stackWithShadowDatabase(shadowInput, (handle) =>
             stackPrepareShadowSource(handle, shadowInput).pipe(Effect.flatMap(runDiff)),
           )
@@ -733,7 +736,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
               }),
             { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
           );
-    }
+    }).pipe(Effect.withSpan("db.diff.shadowDatabase"));
     const out = diffResult.sql;
 
     // The pgAdmin path skips the branch banner and drop-statement scan below entirely.
@@ -749,13 +752,16 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
     }
 
     // The file-write + drop-statement warning below is bypassed by the pgadmin path.
-    const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
     const drops: ReadonlyArray<string> = usePgAdmin
       ? []
       : diffResult.hazards !== undefined
         ? diffResult.hazards.dataLoss.map((action) => action.sql)
         : findDropStatements(out);
     const writtenFiles: Array<string> = [];
+    yield* Effect.annotateCurrentSpan({
+      "schema.count": flags.schema.length,
+      "diff.drop_statement_count": drops.length,
+    });
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
     if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
       // This is an informational, best-effort probe only. Declarative files are

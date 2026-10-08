@@ -8,7 +8,7 @@ import { analyticsLayer } from "../telemetry/analytics.layer.ts";
 import { defaultCompleteDeps, tryComplete } from "./complete.ts";
 import { resolveStackBackend } from "../command-internal/stack-backend.ts";
 import { resolveComputeEnabled } from "../commands/experimental/compute/compute-backend.ts";
-import { rootCommandForFeatures } from "./root.ts";
+import { cliEntrypointForFeatures } from "./root.ts";
 
 const args = await Effect.runPromise(
   Effect.gen(function* () {
@@ -28,10 +28,11 @@ const selectionExit = await Effect.runPromiseExit(
     return { stackBackend, computeEnabled };
   }).pipe(Effect.provide(BunServices.layer)),
 );
-const selectedRoot = rootCommandForFeatures(
+const { rootCommand: selectedRoot, agentDefaultOutputFormat } = cliEntrypointForFeatures(
   Exit.isSuccess(selectionExit)
     ? selectionExit.value
     : { stackBackend: "legacy", computeEnabled: false },
+  args,
 );
 const selectionCause = Exit.isFailure(selectionExit) ? selectionExit.cause : undefined;
 
@@ -40,9 +41,12 @@ if (
     defaultCompleteDeps(Exit.isSuccess(selectionExit) ? selectedRoot : undefined, selectionCause),
   ))
 ) {
-  await runCli(selectedRoot, {
-    analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
-    afterSuccess: upgradeNoticeHook,
-    ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
-  });
+  await Effect.runPromise(
+    runCli(selectedRoot, {
+      analyticsLayer: analyticsLayer.pipe(Layer.provide(FetchHttpClient.layer)),
+      agentDefaultOutputFormat,
+      afterSuccess: upgradeNoticeHook,
+      ...(selectionCause ? { beforeParse: Effect.failCause(selectionCause) } : {}),
+    }),
+  );
 }

@@ -52,7 +52,9 @@ export function loadProfile(
     // Built-in names are all ASCII lower-case, so case-insensitive matching is plain
     // lower-casing.
     const folded = token.toLowerCase();
-    if (isBuiltinProfileName(folded)) {
+    const builtin = isBuiltinProfileName(folded);
+    yield* Effect.annotateCurrentSpan("profile.source", builtin ? "builtin" : "file");
+    if (builtin) {
       return {
         apiUrl: apiUrl(folded),
         name: folded,
@@ -159,7 +161,7 @@ export function loadProfile(
       poolerHost: values.get("pooler_host") ?? "",
       dashboardUrl: values.get("dashboard_url") ?? "",
     };
-  });
+  }).pipe(Effect.withSpan("Profile.load"));
 }
 
 const fail = (message: string) => Effect.fail(new ProfileLoadError({ message }));

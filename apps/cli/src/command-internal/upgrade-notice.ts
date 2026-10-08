@@ -1,12 +1,14 @@
 /**
  * Post-command upgrade notice: checks GitHub's latest release against the
  * running version and prints a notice to stderr, honoring
- * `SUPABASE_NO_UPDATE_NOTIFIER`. A failed fetch writes an empty cache as an
- * offline backoff.
+ * `SUPABASE_NO_UPDATE_NOTIFIER`. The tag is cached in the project's
+ * `supabase/.temp/cli-latest`, else `<SUPABASE_HOME>/cli-latest`. A failed
+ * fetch writes an empty cache as an offline backoff.
  */
 
 import { lstat, mkdir, open, readFile } from "node:fs/promises";
 import { constants as fsConstants, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
@@ -14,11 +16,11 @@ import { Effect } from "effect";
 
 import {
   hasRootHelpOrVersionFlag,
-  hasRootVersionFlag,
   lastGlobalFlagValue,
   rootFlagTokens,
 } from "../shared/cli/run.ts";
 import { CLI_UPGRADE_GUIDE_URL, CLI_VERSION, parseSemver } from "../shared/cli/version.ts";
+import { resolveSupabaseHome } from "../shared/config/supabase-home.ts";
 import { bold, yellow } from "./colors.ts";
 import { parseDotEnv } from "./dotenv.ts";
 import { candidateDotenvFilenames } from "./project-environment.ts";
@@ -26,7 +28,7 @@ import { candidateDotenvFilenames } from "./project-environment.ts";
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** Bounds this pre-exit hook's latency. */
-const FETCH_TIMEOUT_MS = 3000;
+const FETCH_TIMEOUT_MS = 800;
 
 /** Recognized "true" spellings; anything else, including garbage, leaves the notifier on. */
 const PARSE_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
@@ -214,12 +216,23 @@ export interface UpgradeNoticeDeps {
   readonly cwd: string;
   readonly resolvedCwd?: string;
   readonly currentVersion: string;
+  /** The cache directory when `<base>/supabase` is not a real directory. */
+  readonly supabaseHome: string;
   readonly now: () => number;
   readonly fetchLatestTag: () => Promise<string>;
   readonly writeStderr: (text: string) => void;
 }
 
-export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
+/** The release-tag cache a check used, recorded on its trace span. */
+export interface UpgradeCheckOutcome {
+  readonly cache: "project" | "user" | "disabled";
+  readonly cacheFresh: boolean;
+}
+
+/** Resolves to `undefined` when the notifier is opted out. */
+export async function runUpgradeNotice(
+  deps: UpgradeNoticeDeps,
+): Promise<UpgradeCheckOutcome | undefined> {
   if (updateNotifierDisabled(deps.env["SUPABASE_NO_UPDATE_NOTIFIER"])) return;
 
   // `--help`/`--version` and a bare group's clean ShowHelp resolve the cache
@@ -240,8 +253,10 @@ export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
   if (updateNotifierDisabled(effectiveEnv("SUPABASE_NO_UPDATE_NOTIFIER"))) return;
   const debug = debugEnabled(deps, builtin, effectiveEnv("SUPABASE_DEBUG"));
   const supabaseDir = join(base, "supabase");
-  const tempDir = join(supabaseDir, ".temp");
-  const cacheFile = join(tempDir, "cli-latest");
+  const inProject = (await lstat(supabaseDir).catch(() => undefined))?.isDirectory() === true;
+  // `resolve` drops a trailing `/` or `/.`, which would make `lstat` follow a symlinked home.
+  const cacheDir = inProject ? join(supabaseDir, ".temp") : resolve(deps.supabaseHome);
+  const cacheFile = join(cacheDir, "cli-latest");
 
   // A hostile checkout can commit a symlink at any level of this well-known
   // path to clobber an arbitrary user-writable file (CWE-59), so a symlink
@@ -250,29 +265,25 @@ export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
   // `writeCacheFileNoFollow` for the write-time guarantee.
   const cacheLstat = await lstat(cacheFile).catch(() => undefined);
   const cachePathIsSafe =
-    cacheLstat?.isSymbolicLink() !== true &&
-    (await isRealDirOrAbsent(supabaseDir)) &&
-    (await isRealDirOrAbsent(tempDir));
+    cacheLstat?.isSymbolicLink() !== true && (await isRealDirOrAbsent(cacheDir));
 
-  // A subcommand's own `--version` must not bypass the cache.
-  const forceFetch = hasRootVersionFlag(deps.args, deps.isValueTakingFlagToken);
   const cacheFresh =
     cachePathIsSafe &&
     cacheLstat !== undefined &&
     deps.now() <= cacheLstat.mtime.getTime() + CACHE_TTL_MS;
 
   let latestTag: string;
-  if (forceFetch || !cacheFresh) {
+  if (!cacheFresh) {
     let notifyError: Error | undefined;
     latestTag = await deps.fetchLatestTag().catch((error: unknown) => {
       notifyError = new Error(`Failed to fetch latest release: ${errorMessage(error)}`);
       return "";
     });
-    // The offline-backoff write's result overwrites the fetch error when
-    // inside a project, so a successful write silences the diagnostic; only a
-    // missing project (no backoff) or a failing write leaves an error to log.
-    if (cachePathIsSafe && existsSync(supabaseDir)) {
-      notifyError = await mkdir(tempDir, { recursive: true, mode: 0o755 }).then(
+    // The offline-backoff write's result overwrites the fetch error, so a
+    // successful write silences the diagnostic; only an unsafe cache path (no
+    // backoff) or a failing write leaves an error to log.
+    if (cachePathIsSafe) {
+      notifyError = await mkdir(cacheDir, { recursive: true, mode: 0o755 }).then(
         () =>
           writeCacheFileNoFollow(cacheFile, latestTag).then(
             () => undefined,
@@ -299,6 +310,7 @@ export async function runUpgradeNotice(deps: UpgradeNoticeDeps): Promise<void> {
   if (isNewerCliVersion(latestTag, deps.currentVersion)) {
     deps.writeStderr(`${formatUpgradeNotice(latestTag, deps.currentVersion)}\n`);
   }
+  return { cache: cachePathIsSafe ? (inProject ? "project" : "user") : "disabled", cacheFresh };
 }
 
 async function fetchLatestReleaseTag(): Promise<string> {
@@ -331,22 +343,39 @@ export const upgradeNoticeHook = (
     readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
+  fetchLatestTag: () => Promise<string> = fetchLatestReleaseTag,
 ): Effect.Effect<void> =>
   info.delegatedToGo
     ? Effect.void
-    : Effect.promise(() =>
-        runUpgradeNotice({
-          env: process.env,
-          args,
-          cleanShowHelp: info.cleanShowHelp,
-          isValueTakingFlagToken: info.isValueTakingFlagToken,
-          cwd: process.cwd(),
-          resolvedCwd: info.workingDirectory,
-          currentVersion: CLI_VERSION,
-          now: Date.now,
-          fetchLatestTag: fetchLatestReleaseTag,
-          writeStderr: (text) => {
-            process.stderr.write(text);
-          },
-        }),
-      ).pipe(Effect.ignoreCause);
+    : Effect.gen(function* () {
+        const context = yield* Effect.context();
+        const outcome = yield* Effect.promise(() =>
+          runUpgradeNotice({
+            env: process.env,
+            args,
+            cleanShowHelp: info.cleanShowHelp,
+            isValueTakingFlagToken: info.isValueTakingFlagToken,
+            cwd: process.cwd(),
+            resolvedCwd: info.workingDirectory,
+            currentVersion: CLI_VERSION,
+            supabaseHome: resolveSupabaseHome({ join }, process.env, homedir()),
+            now: Date.now,
+            // Runs under the check span's context so the fetch is its child span.
+            fetchLatestTag: () =>
+              Effect.runPromiseWith(context)(
+                Effect.tryPromise({ try: fetchLatestTag, catch: (error) => error }).pipe(
+                  Effect.withSpan("UpgradeNotice.fetch"),
+                ),
+              ),
+            writeStderr: (text) => {
+              process.stderr.write(text);
+            },
+          }),
+        );
+        if (outcome !== undefined) {
+          yield* Effect.annotateCurrentSpan({
+            "cache.location": outcome.cache,
+            "cache.hit": outcome.cacheFresh,
+          });
+        }
+      }).pipe(Effect.withSpan("UpgradeNotice.check"), Effect.ignoreCause);

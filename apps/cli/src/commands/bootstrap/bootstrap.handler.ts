@@ -129,6 +129,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       );
       starter = allTemplates.find((t) => t.name === choice) ?? SCRATCH_TEMPLATE;
     }
+    yield* Effect.annotateCurrentSpan("template.name", starter.name);
 
     const experimentalStack =
       starter.url.length === 0
@@ -181,7 +182,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
         withVscodeSettings: false,
         withIntellijSettings: false,
         experimentalStack,
-      });
+      }).pipe(Effect.withSpan("bootstrap.initProject"));
     }
 
     yield* ensureLogin({ openBrowser: tty.stdinIsTty });
@@ -205,6 +206,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     });
     const projectRef = created.ref;
     createdRef = projectRef.length > 0 ? projectRef : undefined;
+    yield* Effect.annotateCurrentSpan("project.ref", projectRef);
 
     // A fresh notifier per retry block keeps this step's "Retry (n/8)" counter independent of
     // the health-poll and push retries below.
@@ -212,14 +214,18 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
       return yield* getProjectApiKeys(projectRef);
-    }).pipe(apiKeysNotify, Effect.retry(retry));
+    }).pipe(apiKeysNotify, Effect.retry(retry), Effect.withSpan("bootstrap.fetchApiKeys"));
     const { anon } = extractServiceKeys(keys);
 
     // Config load must run before link/health/`.env` steps: a malformed config.toml aborts here
     // rather than after side effects start.
-    const projectEnv = yield* loadProjectEnv(fs, path, workdir);
-    const pushYes = yield* resolveYesWithProjectEnv(projectEnv);
-    const toml = yield* checkDbToml(fs, path, workdir, projectRef);
+    const { pushYes, toml } = yield* Effect.gen(function* () {
+      const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+      return {
+        pushYes: yield* resolveYesWithProjectEnv(projectEnv),
+        toml: yield* checkDbToml(fs, path, workdir, projectRef),
+      };
+    }).pipe(Effect.withSpan("bootstrap.loadConfig"));
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -247,7 +253,12 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           });
         }
       }
-    }).pipe(healthNotify, Effect.retry(retry));
+    }).pipe(
+      Effect.withTracerEnabled(false),
+      healthNotify,
+      Effect.retry(retry),
+      Effect.withSpan("bootstrap.waitHealthy"),
+    );
 
     // Uses a naive direct-host db config with no IPv6/pooler fallback, since `.env` is written
     // for reference only and, unlike the push connection below, is never used to actually connect.
@@ -281,6 +292,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
           );
         }),
       ),
+      Effect.withSpan("bootstrap.writeDotEnv"),
     );
 
     // `resolveLinkedConn` doesn't attach a suggestionContext like the full resolver does; build
@@ -323,7 +335,7 @@ export const bootstrap = Effect.fn("bootstrap")(function* (
       toml,
       yes: pushYes,
       emitStructuredResult: false,
-    }).pipe(pushNotify, Effect.retry(retry));
+    }).pipe(pushNotify, Effect.retry(retry), Effect.withSpan("bootstrap.pushMigrations"));
 
     if (isText) {
       const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, aqua);

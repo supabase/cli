@@ -3,6 +3,7 @@ import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "./release-channels.ts";
 
 const root = path.resolve(import.meta.dir, "../../..");
 
@@ -17,8 +18,6 @@ const PLATFORM_PACKAGES = [
   "cli-windows-x64",
 ];
 
-const VALID_TAGS = new Set(["latest", "alpha", "beta"]);
-
 const { values } = parseArgs({
   options: {
     "dry-run": { type: "boolean", default: false },
@@ -28,9 +27,9 @@ const { values } = parseArgs({
 
 const dryRun = values["dry-run"];
 const tag = values.tag;
-if (!VALID_TAGS.has(tag)) {
+if (!isPublishableNpmTag(tag)) {
   console.error(
-    `Invalid --tag value: ${String(tag)}. Expected one of: ${[...VALID_TAGS].join(", ")}.`,
+    `Invalid --tag value: ${String(tag)}. Expected one of: ${PUBLISHABLE_NPM_TAGS_HINT}.`,
   );
   process.exit(1);
 }

@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { isPublishableNpmTag, PUBLISHABLE_NPM_TAGS_HINT } from "../scripts/release-channels.ts";
 import { verifyMacSignature } from "./helpers/macos-signature.ts";
 import { createTmpDir, describeError, runNpmTest } from "./helpers/npm-registry.ts";
 import { verifyExpectedShell } from "./helpers/release-shell.ts";
@@ -17,8 +18,8 @@ const { values } = parseArgs({
 
 const version = values.version!;
 const tag = values.tag;
-if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
+if (!isPublishableNpmTag(tag)) {
+  console.error(`Invalid --tag value: ${String(tag)}. Expected ${PUBLISHABLE_NPM_TAGS_HINT}.`);
   process.exit(1);
 }
 const root = path.resolve(import.meta.dir, "../../..");

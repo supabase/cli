@@ -15,8 +15,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   ArtifactError,
   postgresVersion,
-  prepareNativeArtifact,
   resolveArtifact,
+  useNativeArtifact,
 } from "@supabase/stack/internal/artifacts";
 
 import { DockerRun, type DockerRunOpts } from "./docker-run.service.ts";
@@ -26,6 +26,7 @@ import { ProcessControl } from "../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
+import { withProcessSpanScoped } from "../shared/telemetry/spans.ts";
 
 const BUNDLED_CLIENT_SUGGESTION =
   "Re-download the Postgres artifact, or create a new stack that uses a container runtime.";
@@ -141,20 +142,23 @@ const nativeRun = Effect.fn("BundledPostgresClient.nativeRun")(function* <E>(
     ...options.env,
     PATH: `${path.join(artifactRoot, "bin")}:${Option.getOrElse(inheritedPath, () => "")}`,
   };
-  const child = yield* spawner
-    .spawn(
-      ChildProcess.make(tool, args, {
-        cwd: options.cwd,
-        env,
-        extendEnv: true,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        killSignal: command === "pg_prove" ? "SIGKILL" : undefined,
-        forceKillAfter: "5 seconds",
-      }),
-    )
-    .pipe(Effect.mapError(mapSpawnError));
+  const child = yield* withProcessSpanScoped(
+    "BundledPostgresClient.spawn",
+    { executable: tool, argCount: args.length },
+    (traceEnv) =>
+      spawner.spawn(
+        ChildProcess.make(tool, args, {
+          cwd: options.cwd,
+          env: { ...env, ...traceEnv },
+          extendEnv: true,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          killSignal: command === "pg_prove" ? "SIGKILL" : undefined,
+          forceKillAfter: "5 seconds",
+        }),
+      ),
+  ).pipe(Effect.mapError(mapSpawnError));
   let stderr = "";
   const stderrDecoder = new TextDecoder();
   yield* Effect.all(
@@ -245,7 +249,9 @@ export const bundledPostgresClientLayer: Layer.Layer<
             );
             return yield* dockerRun(options, resolved.image, docker);
           }
-          const prepared = yield* prepareNativeArtifact(
+          // Pins the generation for the life of this scope, before the spawn inside `nativeRun`:
+          // the client child always exits before this scope closes, so the pin covers it fully.
+          const prepared = yield* useNativeArtifact(
             { service: "database", version },
             path.join(settings.supabaseHome, "cache", "stack"),
             { os: runtimeInfo.platform, arch: runtimeInfo.arch },

@@ -23,4 +23,7 @@ export const dropUserSchemas = <E>(
       .exec(dropObjectsSql)
       .pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
     yield* session.exec("COMMIT");
-  }).pipe(Effect.mapError((error: DbExecError) => mapError(error.message)));
+  }).pipe(
+    Effect.mapError((error: DbExecError) => mapError(error.message)),
+    Effect.withSpan("DropSchemas.dropUserSchemas"),
+  );

@@ -235,6 +235,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       : Option.isSome(flags.local)
         ? "local"
         : "linked";
+    yield* Effect.annotateCurrentSpan({
+      "db.conn_type": connType,
+      "db.pull.mode": useDeclarativeExport ? "declarative" : "migration",
+    });
 
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on a non-linked target — see push.handler.ts's identical guard
@@ -375,6 +379,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
       yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
     }
+    const diffEngine = usePgDeltaDiff ? "pg-delta" : "migra";
 
     // Connectivity check, run before dialing.
     return yield* Effect.scoped(
@@ -407,6 +412,9 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
             });
           const exported = yield* withPoolerFallback(targetEndpoint, (target) =>
             exportSchema(target),
+          ).pipe(
+            Effect.tap((result) => Effect.annotateCurrentSpan("file.count", result.files.length)),
+            Effect.withSpan("db.pull.exportDeclarative"),
           );
           const written = yield* writeDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new DbPullWriteError({ message: cause.message })),
@@ -554,6 +562,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                     }),
                   ),
                 ),
+                Effect.withSpan("db.pull.dumpSchema"),
               );
           };
           // Prints this once, before the pooler-fallback retry.
@@ -687,7 +696,15 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
                   { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
                 );
           });
-        const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);
+        const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff).pipe(
+          Effect.tap((outcome) =>
+            Effect.annotateCurrentSpan({
+              "diff.empty": outcome.sql.trim().length === 0,
+              "migration.count": outcome.files?.length ?? (outcome.sql.trim().length === 0 ? 0 : 1),
+            }),
+          ),
+          Effect.withSpan("db.pull.plan", { attributes: { "db.pull.engine": diffEngine } }),
+        );
 
         const out = diffOutcome.sql;
         const diffEmpty = out.trim().length === 0;
@@ -840,7 +857,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
           // string field from its first entry.
           schemaFiles: writtenMigrations.map((written) => written.path),
           remoteHistoryUpdated,
-          engine: usePgDeltaDiff ? "pg-delta" : "migra",
+          engine: diffEngine,
         } as const;
       }),
     );

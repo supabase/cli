@@ -3,24 +3,27 @@ import { afterAll, beforeAll, describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Redacted, Schema, Scope } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { SignJWT } from "jose";
-import { makeService, type ServiceInstance } from "../Service.ts";
+import { makeStandaloneService } from "../../tests/standalone-service.ts";
 import { makeServiceRecipe } from "./Catalog.ts";
 import { makeDockerHttpRelay, makeDockerTcpRelay } from "../../tests/docker-relay.ts";
 import { makeDockerDatabaseRoot } from "../../tests/docker-fixture.ts";
+import { httpHost } from "../../tests/helpers/endpoint.ts";
+import { engineTarget, testEngine } from "../../tests/engine-target.ts";
 
 const dockerOptions = (root: string) => ({
   stackId: "catalog-auth-storage",
   instanceId: "instance",
   root,
   cacheRoot: `${root}/cache`,
-  runtime: "docker" as const,
+  runtime: testEngine,
+  engineTarget,
 });
 
 const secret = "catalog-auth-storage-secret-with-at-least-32-chars";
 
 let scope: Scope.Closeable;
 let root: string;
-let database: ServiceInstance<any> | undefined;
+let stopDatabase: Effect.Effect<void> | undefined;
 let databaseUrl: string;
 
 describe("service catalog", () => {
@@ -40,15 +43,15 @@ describe("service catalog", () => {
         },
         dockerOptions(databaseRoot),
       );
-      const databaseService = yield* makeService(databaseRecipe.definition, {
+      const database = yield* makeStandaloneService(databaseRecipe.definition, {
         id: "database",
         config: databaseRecipe.creation,
       });
-      yield* databaseService.start;
-      yield* databaseService.ready;
+      yield* database.start;
+      yield* database.ready;
       const databaseRelay = yield* makeDockerTcpRelay(databaseRecipe.endpoint("sql"));
       root = databaseRoot;
-      database = databaseService;
+      stopDatabase = database.stop.pipe(Effect.asVoid, Effect.orDie);
       databaseUrl = `postgresql://supabase_admin:postgres@${databaseRelay.host}:${databaseRelay.port}/postgres`;
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
@@ -59,7 +62,7 @@ describe("service catalog", () => {
 
   afterAll(
     () =>
-      Effect.suspend(() => (database === undefined ? Effect.void : database.stop)).pipe(
+      Effect.suspend(() => stopDatabase ?? Effect.void).pipe(
         Effect.ensuring(Scope.close(scope, Exit.void)),
         Effect.runPromise,
       ),
@@ -79,7 +82,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const auth = yield* makeService(authRecipe.definition, {
+          const auth = yield* makeStandaloneService(authRecipe.definition, {
             id: "auth",
             config: authRecipe.creation,
           });
@@ -89,7 +92,7 @@ describe("service catalog", () => {
           const email = "catalog@example.test";
           const password = "catalog-password-123";
           const signupRequest = yield* HttpClientRequest.bodyJson({ email, password })(
-            HttpClientRequest.post(`http://${authEndpoint.host}:${authEndpoint.port}/signup`),
+            HttpClientRequest.post(`http://${httpHost(authEndpoint)}:${authEndpoint.port}/signup`),
           );
           const signup = yield* client.execute(signupRequest);
           expect(signup.status).toBe(200);
@@ -103,7 +106,7 @@ describe("service catalog", () => {
             password,
           })(
             HttpClientRequest.post(
-              `http://${authEndpoint.host}:${authEndpoint.port}/token?grant_type=password`,
+              `http://${httpHost(authEndpoint)}:${authEndpoint.port}/token?grant_type=password`,
             ),
           );
           const login = yield* client.execute(loginRequest);
@@ -126,13 +129,18 @@ describe("service catalog", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const client = yield* HttpClient.HttpClient;
-          const storageRoot = `${root}/storage`;
+          // Ownership is by location: Storage's filePath is a caller path and must live outside
+          // the stack's data root, not merely outside the service's own instance root.
+          const callerRoot = yield* fs.makeTempDirectoryScoped({
+            prefix: "catalog-auth-storage-caller-",
+          });
+          const storageRoot = `${callerRoot}/storage`;
           yield* fs.makeDirectory(storageRoot, { recursive: true });
           const imgproxyRecipe = yield* makeServiceRecipe(
             { service: "imgproxy", config: { filePath: storageRoot } },
             dockerOptions(root),
           );
-          const imgproxy = yield* makeService(imgproxyRecipe.definition, {
+          const imgproxy = yield* makeStandaloneService(imgproxyRecipe.definition, {
             id: "imgproxy",
             config: imgproxyRecipe.creation,
           });
@@ -151,7 +159,7 @@ describe("service catalog", () => {
             },
             dockerOptions(root),
           );
-          const storage = yield* makeService(storageRecipe.definition, {
+          const storage = yield* makeStandaloneService(storageRecipe.definition, {
             id: "storage",
             config: storageRecipe.creation,
           });
@@ -168,7 +176,7 @@ describe("service catalog", () => {
           );
           const bucketRequest = yield* HttpClientRequest.bodyJson({ name: "catalog" })(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/bucket`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/bucket`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -178,7 +186,7 @@ describe("service catalog", () => {
           expect(bucket.status).toBe(200);
           const uploadRequest = HttpClientRequest.bodyText(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/hello.txt`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/hello.txt`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -196,7 +204,7 @@ describe("service catalog", () => {
           );
           const imageRequest = HttpClientRequest.bodyUint8Array(
             HttpClientRequest.post(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/object/catalog/source.png`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/object/catalog/source.png`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),
@@ -208,7 +216,7 @@ describe("service catalog", () => {
           expect(imageUpload.status).toBe(200);
           const transformedImage = yield* client.execute(
             HttpClientRequest.get(
-              `http://${storageEndpoint.host}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
+              `http://${httpHost(storageEndpoint)}:${storageEndpoint.port}/render/image/authenticated/catalog/source.png?width=1&height=1`,
             ).pipe(
               HttpClientRequest.setHeader("Authorization", `Bearer ${serviceToken}`),
               HttpClientRequest.setHeader("apikey", serviceToken),

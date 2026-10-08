@@ -25,6 +25,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import semanticRelease from "semantic-release";
+import { channelForTag, releaseBranchForTag } from "./release-channels.ts";
 
 const { values } = parseArgs({
   options: {
@@ -95,8 +96,6 @@ if (tagCheck.exitCode !== 0) {
   process.exit(1);
 }
 
-const branch = tag.includes("-beta.") ? "develop" : "main";
-
 const work = await mkdtemp(path.join(tmpdir(), "backfill-release-notes."));
 const clone = path.join(work, "repo");
 
@@ -124,11 +123,32 @@ try {
   await $`git -C ${clone} fetch --no-tags --quiet ${originUrl} +refs/notes/*:refs/notes/*`
     .nothrow()
     .quiet();
-  await $`git -C ${clone} fetch --no-tags --quiet ${originUrl} +refs/heads/main:refs/remotes/origin/main +refs/heads/develop:refs/remotes/origin/develop`
-    .nothrow()
-    .quiet();
+  // One fetch per branch: git aborts a multi-ref fetch when any named ref is missing, and `next`
+  // may not exist. The `v*.x` glob matches zero or more branches without failing.
+  for (const branchSpec of ["main", "develop", "next", "v*.x"]) {
+    await $`git -C ${clone} fetch --no-tags --quiet ${originUrl} +refs/heads/${branchSpec}:refs/remotes/origin/${branchSpec}`
+      .nothrow()
+      .quiet();
+  }
 
   const sha = (await $`git -C ${clone} rev-list -n 1 ${tag}`.text()).trim();
+  const onMain =
+    (
+      await $`git -C ${clone} merge-base --is-ancestor ${sha} refs/remotes/origin/main`
+        .nothrow()
+        .quiet()
+    ).exitCode === 0;
+  const branch = releaseBranchForTag(tag, onMain);
+  if (
+    branch !== "main" &&
+    branch !== "develop" &&
+    branch !== "next" &&
+    (await $`git -C ${clone} rev-parse --verify -q refs/remotes/origin/${branch}`.nothrow().quiet())
+      .exitCode !== 0
+  ) {
+    console.error(`${tag} belongs to ${branch}, but origin/${branch} does not exist.`);
+    process.exit(1);
+  }
   // Delete the target tag and any other local tag pointing at the same commit:
   // when a stable and a beta share a commit, semantic-release picks the
   // higher-semver one as lastRelease (which becomes HEAD itself, leaving "no
@@ -144,9 +164,9 @@ try {
   await $`git -C ${clone} checkout -B ${branch} ${sha} --quiet`;
 
   // The clone only carries refs/heads/$BRANCH locally; seed the other
-  // configured branch from origin's tracking ref so semantic-release's
-  // branch validator sees both.
-  for (const cfg of ["main", "develop"]) {
+  // configured branches from origin's tracking refs so semantic-release's
+  // branch validator sees them. A maintenance branch needs main present to compute its range.
+  for (const cfg of ["main", "develop", "next"]) {
     if (cfg === branch) continue;
     const refSha = await $`git -C ${clone} rev-parse --verify -q refs/remotes/origin/${cfg}`
       .nothrow()
@@ -168,12 +188,7 @@ try {
       .nothrow()
       .quiet();
     if (noteCheck.exitCode === 0) continue;
-    const channel = prevTag.includes("-beta.")
-      ? "beta"
-      : prevTag.includes("-alpha.")
-        ? "alpha"
-        : "latest";
-    const payload = JSON.stringify({ channels: [channel] });
+    const payload = JSON.stringify({ channels: [channelForTag(prevTag)] });
     await $`git -C ${clone} notes --ref semantic-release add -f -m ${payload} ${prevTag}^{commit}`.quiet();
   }
 

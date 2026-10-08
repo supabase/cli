@@ -277,10 +277,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   let edgeRunCount = 0;
   const edgeCalls: EdgeRuntimeRunOpts[] = [];
+  const spawnedBeforeEdgeRun: Array<ReadonlyArray<ReadonlyArray<string>>> = [];
   const edge = Layer.succeed(EdgeRuntimeScript, {
     run: (runOpts: EdgeRuntimeRunOpts) => {
       edgeRunCount += 1;
       edgeCalls.push(runOpts);
+      spawnedBeforeEdgeRun.push(shadowSpawner.spawned.map((call) => call.args));
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new EdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
       }
@@ -513,6 +515,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return edgeRunCount;
     },
     edgeCalls,
+    spawnedBeforeEdgeRun,
     cache,
   };
 }
@@ -842,6 +845,54 @@ describe("db pull", () => {
         `Schema written to ${path.join("supabase", "migrations", file ?? "")}\n`,
       );
       expect(err).not.toContain(tmp.current);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("creates the labeled Deno-cache volume before the migra run mounts it", () => {
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags());
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(s.edgeCalls[0]?.binds).toEqual(["supabase_edge_runtime_test:/root/.cache/deno:rw"]);
+      expect(s.spawnedBeforeEdgeRun[0]).toContainEqual([
+        "volume",
+        "create",
+        "--label",
+        "com.supabase.cli.project=test",
+        "--label",
+        "com.docker.compose.project=test",
+        "supabase_edge_runtime_test",
+      ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("skips creating the Deno-cache volume under Bitbucket Pipelines", () => {
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+      files: { "supabase/.env": "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n" },
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags());
+      expect(s.edgeCalls).toHaveLength(1);
+      expect(
+        s.shadowSpawned.filter(
+          (call) => call.args[0] === "volume" && call.args.includes("supabase_edge_runtime_test"),
+        ),
+      ).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const file = (yield* fs.readDirectory(dir)).find((f) => f.endsWith("_remote_schema.sql"));
+      expect(yield* readFileText(path.join(dir, file ?? ""))).toContain("create table remote ();");
+      expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
     }).pipe(Effect.provide(s.layer));
   });
 
