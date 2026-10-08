@@ -23,7 +23,7 @@ jobs:
           docker run --rm -a STDOUT supabase/migra:builder pip show migra \
           | grep 'Version' \
           | sed -E 's/Version: (.*)/migra=\1/g' \
-          >> $GITHUB_OUTPUT
+          >> "$GITHUB_OUTPUT"
         shell: bash
 
   build_image:

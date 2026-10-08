@@ -23,7 +23,7 @@ jobs:
         run: |
           docker run --rm -a STDOUT supabase/pg_prove:builder pg_prove --version \
           | tr ' ' '=' \
-          >> $GITHUB_OUTPUT
+          >> "$GITHUB_OUTPUT"
         shell: bash
 
   build_image:
