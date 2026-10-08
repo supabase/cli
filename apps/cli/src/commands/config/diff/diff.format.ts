@@ -10,6 +10,7 @@ import {
   configRenderChangeLines,
   configTargetPhrase,
   configUnmanagedCaveat,
+  type ConfigEnvOriginLookup,
 } from "../config.format.ts";
 
 /**
@@ -77,8 +78,12 @@ export function configDiffSummaryMessage(
  * Human-readable diff body for text mode. Per-change blocks come from `configRenderChangeLines`
  * (shared with `config push`); this only adds the trailing counts/notes lines.
  */
-export function renderConfigDiffText(changeSet: ConfigChangeSet, scope: ConfigApiScope): string {
-  const changeLines = configRenderChangeLines(changeSet.changes);
+export function renderConfigDiffText(
+  changeSet: ConfigChangeSet,
+  scope: ConfigApiScope,
+  originFor?: ConfigEnvOriginLookup,
+): string {
+  const changeLines = configRenderChangeLines(changeSet.changes, originFor);
 
   const lines: Array<string> = [];
   const { update, remote_only, local_only, total } = changeSet.counts;
@@ -110,6 +115,7 @@ export function configDiffPayload(
   changeSet: ConfigChangeSet,
   scope: ConfigApiScope,
   context: ConfigDiffContext,
+  originFor?: ConfigEnvOriginLookup,
 ): Record<string, unknown> {
   return {
     schema_version: CONFIG_DIFF_PAYLOAD_VERSION,
@@ -122,7 +128,7 @@ export function configDiffPayload(
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
     },
     scope: { present: scope.present, missing: scope.missing },
-    changes: changeSet.changes.map(configChangePayloadEntry),
+    changes: changeSet.changes.map((change) => configChangePayloadEntry(change, originFor)),
     masked: changeSet.masked,
     unmanaged: changeSet.unmanaged,
     counts: changeSet.counts,

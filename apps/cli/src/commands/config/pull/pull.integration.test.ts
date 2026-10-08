@@ -23,6 +23,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { configValuesLayer } from "../../../../tests/helpers/config-snapshot-layer.ts";
 import {
   buildTestRuntime,
   DEFAULT_API_URL,
@@ -430,6 +431,7 @@ function setup(opts: SetupOpts = {}) {
     // BunServices.layer provides (last-wins).
     gitStatus.layer,
     projectFiles,
+    configValuesLayer({ output: outputLayer }),
   );
   return { layer, out, api, telemetry, linkedProjectCache, processControl, gitStatus };
 }
@@ -1100,12 +1102,30 @@ describe("config pull integration", () => {
     },
   );
 
+  it.live("compares against the file's declared values, ignoring a SUPABASE_* override", () => {
+    const before = 'project_id = "test"\n[api]\nmax_rows = 500\n';
+    const { layer, out } = setup({ toml: before, yes: true });
+    return withEnvVar(
+      "SUPABASE_API_MAX_ROWS",
+      "1000",
+      Effect.gen(function* () {
+        yield* configPull(noFlags);
+        expect(yield* readConfig).toContain("max_rows = 1000");
+        expect(out.stdoutText).toContain("1 change written.");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
+
   it.live(
     "a declared secret is never written, even though the config file has it declared before AND after the run",
     () => {
       const before = [
         'project_id = "test"',
         "[auth.email.smtp]",
+        'host = "smtp.test"',
+        "port = 587",
+        'user = "u"',
+        'admin_email = "a@b.test"',
         'pass = "env(SMTP_PASS)"',
         "[api]",
         "max_rows = 500",
