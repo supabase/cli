@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { homebrewClassName, homebrewConflictsLine } from "./release-channels.ts";
 
 const { values } = parseArgs({
   options: {
@@ -32,13 +33,9 @@ const dryRun = values["dry-run"]!;
 const root = path.resolve(import.meta.dir, "../../..");
 const distDir = path.join(root, "dist");
 
-// Converts name (e.g. "supabase-beta") to the Ruby class Homebrew expects (e.g. "SupabaseBeta").
-// The class and filename vary by channel, but the installed binary is always `supabase`.
-const className = name
-  .split(/[-_]/)
-  .filter(Boolean)
-  .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-  .join("");
+// The class and filename vary by channel (e.g. "supabase-beta" -> "SupabaseBeta", "supabase@2" ->
+// "SupabaseAT2"), but the installed binary is always `supabase`.
+const className = homebrewClassName(name);
 
 // The Go sidecar is looked up by exact filename next to the running binary, so it must install
 // under its original name; `if File.exist?` keeps the formula working when a build ships only
@@ -47,6 +44,9 @@ const installBlock = [
   `    bin.install "supabase"`,
   `    bin.install "supabase-go" if File.exist?("supabase-go")`,
 ].join("\n");
+
+const conflictsBlock = homebrewConflictsLine(name);
+const conflictsSection = conflictsBlock ? `${conflictsBlock}\n\n` : "";
 
 const testInvocation = `#{bin}/supabase`;
 
@@ -93,7 +93,7 @@ const formula = `class ${className} < Formula
     end
   end
 
-  def install
+${conflictsSection}  def install
 ${installBlock}
   end
 

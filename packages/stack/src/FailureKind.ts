@@ -27,6 +27,7 @@ const stackFailureKinds = [
   "owner-connection",
   "owner-exit",
   "lease-held",
+  "already-exists",
   "timeout",
 ] as const;
 
@@ -161,8 +162,13 @@ const classify = (
     case "InvalidProjectRootError":
     case "SchemaError":
       return "configuration";
-    case "StateError":
+    case "Namespace.NamespaceError":
       return within("state");
+    case "Namespace.LeaseHeldError":
+      return "lease-held";
+    case "Namespace.EnvironmentOverrideError":
+    case "Namespace.EnvironmentSymlinkError":
+      return "configuration";
     case "StackHostError":
       return value.reason === "lease-held"
         ? "lease-held"

@@ -12,13 +12,16 @@ jobs:
     name: Approve and enable auto-merge
     runs-on: ubuntu-latest
     # Other apps (coding agents, CI vendors) also open PRs here and still need a maintainer.
-    # Release-notes PRs are published by a maintainer approval and must never merge.
+    # Release-notes PRs are published by a maintainer approval and must never merge. Branch sync
+    # PRs land by fast-forward on a maintainer approval, never by a squash.
     if: >-
       contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.pull_request.user.login) &&
       contains(fromJSON('["dependabot[bot]", "supabase-cli-releaser[bot]"]'), github.event.sender.login) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft &&
-      !startsWith(github.event.pull_request.head.ref, 'release-notes/')
+      !startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
+      github.event.pull_request.head.ref != 'sync/main-into-develop' &&
+      github.event.pull_request.head.ref != 'sync/develop-into-next'
     # Holds `AUTO_APPROVE_PR_PAT`; the environment only deploys from the default branch.
     environment: auto-approve
     steps:

@@ -27,7 +27,12 @@ export class FunctionsServeStackError extends Data.TaggedError("FunctionsServeSt
           }
         );
       case "runtime":
-        return { ...actionability.runtimeCrash, fingerprint_suffix: "process_exit" };
+        return (
+          causeDeclaration(this.cause) ?? {
+            ...actionability.runtimeCrash,
+            fingerprint_suffix: "runtime_stopped",
+          }
+        );
       case "stack":
         return causeDeclaration(this.cause) ?? unclassifiedStackFailureActionability;
     }

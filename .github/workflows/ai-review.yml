@@ -146,6 +146,9 @@ jobs:
             > /tmp/ai-review/pr.json
           base_ref=$(jq -r '.baseRefName' /tmp/ai-review/pr.json)
           bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
+            bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
+          fi
 
       # Pin the exact published version so a Claude Code release can't silently change review
       # behavior mid-rollout. Installed from the trusted checkout with npm config isolation so a
@@ -282,6 +285,9 @@ jobs:
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
           bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
+            bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
+          fi
 
       - name: Prepare findings output schema
         run: |
@@ -429,6 +435,9 @@ jobs:
           mkdir -p /tmp/ai-review
           base_ref=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
           bun .github/scripts/ai-review/generate-pr-diff.ts "$PR" "$base_ref"
+          if [ -f .github/scripts/ai-review/generate-next-context.ts ]; then
+            bun .github/scripts/ai-review/generate-next-context.ts "$base_ref"
+          fi
 
       - name: Prepare merged-review output schema
         working-directory: trusted

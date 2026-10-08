@@ -124,12 +124,10 @@ export class DeclarativeApplyError extends Data.TaggedError("DeclarativeApplyErr
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.connect === true) {
-      return (
-        causeDeclaration(this.cause) ?? {
-          ...actionability.dbConnection,
-          fingerprint_suffix: "connect",
-        }
-      );
+      const declared = causeDeclaration(this.cause);
+      return declared === undefined
+        ? { ...actionability.dbConnection, fingerprint_suffix: "connect" }
+        : { ...declared, fingerprint_suffix: declared.fingerprint_suffix ?? "connect" };
     }
     return actionability.dbFinding;
   }

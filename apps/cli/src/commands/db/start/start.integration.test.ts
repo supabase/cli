@@ -23,6 +23,7 @@ import {
   mockProcessControl,
   mockRuntimeInfo,
 } from "../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   mockCommandSettings,
   mockLocalDockerEngineUnavailableLayer,
@@ -1625,13 +1626,9 @@ describe("db start stack backend", () => {
       lifecycle: state.running ? ("running" as const) : ("stopped" as const),
       health: state.running ? ("healthy" as const) : undefined,
       error: undefined,
-      cleanupError: undefined,
       exit: undefined,
       currentOperation: undefined,
-      launchId: undefined,
-      intentRevision: 0,
       wakeEnabled: state.running,
-      registered: true,
     })),
     followStatus: Stream.empty,
     readLogs: () => Stream.empty,
@@ -1733,7 +1730,8 @@ describe("db start stack backend", () => {
         restart: Effect.succeed([]),
       },
       stop: Effect.void,
-      destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+      destroy: Effect.void,
+      gateway: unusedGateway,
       commands: { run: () => Effect.die("unused") },
     };
     return { stack, state };
@@ -1755,7 +1753,6 @@ describe("db start stack backend", () => {
                   instances: [],
                   lifetime: "detached" as const,
                   composition: { members: [], dependencies: [] },
-                  ports: [],
                 },
                 host: undefined,
               })

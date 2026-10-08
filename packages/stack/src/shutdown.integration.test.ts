@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import * as PromiseStack from "./index.ts";
 import { HostEndpoint } from "./HostProcess.ts";
 import { StackError } from "./Rpc.ts";
-import * as State from "./State.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { open as openEffect } from "./effect.ts";
 
 const layer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
@@ -51,8 +51,8 @@ const withHeldOwner = <A, E, R>(
     const stateRoot = `${root}/state`;
     const cacheRoot = `${root}/cache`;
     const id = "shutdown-held";
-    const context = yield* Layer.build(State.layer({ root: stateRoot }));
-    const state = Context.get(context, State.Service);
+    const context = yield* Layer.build(StackNamespace.layer({ root: stateRoot }));
+    const state = Context.get(context, StackNamespace.Service);
     yield* state.save({
       id,
       runtime: "native",
@@ -60,7 +60,6 @@ const withHeldOwner = <A, E, R>(
       instances: [],
       lifetime: "detached",
       composition: { members: [], dependencies: [] },
-      ports: [],
     });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return yield* Effect.acquireUseRelease(

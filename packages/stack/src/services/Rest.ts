@@ -27,7 +27,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
   executable: "bin/postgrest",
   ports: { http: 3000 },
   healthPath: "/",
-  env: (creation, endpoints) =>
+  env: (creation, endpoints, container) =>
     Effect.gen(function* () {
       const databaseUrl = yield* requiredInput("rest", "databaseUrl", creation.config.databaseUrl);
       const http = endpoints.get("http");
@@ -35,6 +35,7 @@ export const makeSpec = (): ProcessRecipeSpec<Creation> => ({
       return {
         DATABASE_URL: databaseUrl,
         PGRST_DB_URI: databaseUrl,
+        PGRST_SERVER_HOST: container ? "0.0.0.0" : "127.0.0.1",
         ...(http === undefined ? {} : { PGRST_SERVER_PORT: String(http.port) }),
         PGRST_DB_SCHEMAS: creation.config.schemas ?? "public,graphql_public",
         ...(creation.config.extraSearchPath === undefined

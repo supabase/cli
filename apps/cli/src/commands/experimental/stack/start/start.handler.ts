@@ -13,7 +13,9 @@ import { withProjectFunctionsEnv } from "../../../../command-internal/stack-func
 import { statusEnvPointer } from "./start-summary.format.ts";
 import {
   automaticRuntimeNotice,
+  containerEngineName,
   selectStackRuntime,
+  type StackRuntime,
 } from "../../../../command-internal/stack-runtime.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Effect, FileSystem, Fiber, Option, Path, Redacted, Ref } from "effect";
@@ -58,9 +60,9 @@ import { envOverride } from "../../../../command-internal/local-config-values.ts
 import {
   StackApi,
   stackCapabilityForService,
-  StackTargetError,
   StackTargetResolver,
   failedOutcomesDetail,
+  mapTargetError,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -92,55 +94,86 @@ const validateExclusions = (exclusions: ReadonlyArray<string>) => {
   );
 };
 
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandStartError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+/**
+ * Names the config setting behind a contested public port: the one configured endpoint pinned to
+ * that port number. An automatic port, or a port shared by several settings, gets no suggestion.
+ */
+const portConflictSuggestion = (
+  conflict: StackError["conflict"],
+  requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }>,
+): string | undefined => {
+  if (conflict === undefined) return undefined;
+  const settings = new Map<string, StackEndpointSetting>();
+  for (const { service, endpoints } of requested) {
+    if (!isRecord(endpoints)) continue;
+    for (const [name, intent] of Object.entries(endpoints)) {
+      const setting = stackEndpointSetting(service, name);
+      if (setting !== undefined && isRecord(intent) && intent.port === conflict.port)
+        settings.set(setting.envVar, setting);
+    }
+  }
+  const [setting, ...rest] = settings.values();
+  return setting === undefined || rest.length > 0
+    ? undefined
+    : `Set \`${setting.configPath}\` in supabase/config.toml (or ${setting.envVar}) to a free port.`;
+};
 
 const stackError = (
-  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes">>,
-  members: ReadonlyArray<{ readonly id: string; readonly service: string }> = [],
+  cause: { readonly message: string } & Partial<Pick<StackError, "outcomes" | "conflict">>,
+  members: ReadonlyArray<{ readonly id?: string; readonly service: string }> = [],
+  requested: ReadonlyArray<{ readonly service: string; readonly endpoints?: unknown }> = [],
 ) => {
   const detail = failedOutcomesDetail(cause, (id) => {
     const service = members.find((member) => member.id === id)?.service;
     return service === undefined ? id : `${service} (${id})`;
   });
+  const suggestion = portConflictSuggestion(cause.conflict, requested);
   return new StackCommandStartError({
     reason: "stack",
     message: cause.message,
     ...(detail === undefined ? {} : { detail }),
+    ...(suggestion === undefined ? {} : { suggestion }),
     cause,
   });
 };
 
 // A saved stack keeps its runtime, so only a new stack can switch to native.
-const dockerUnavailableSuggestion = (
+const engineUnavailableSuggestion = (
+  engine: Exclude<StackRuntime, "native">,
   runtimeInfo: { readonly platform: string; readonly arch: string },
   creating: boolean,
-) =>
-  creating && defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
-    ? "Docker CLI or daemon isn't reachable. Install or start Docker, or run with --runtime native."
-    : "Docker CLI or daemon isn't reachable. Install or start Docker.";
+) => {
+  const name = containerEngineName(engine);
+  const base = `${name} CLI or daemon isn't reachable. Install or start ${name}`;
+  return creating &&
+    defaultRuntime({ os: runtimeInfo.platform, arch: runtimeInfo.arch }) === "native"
+    ? `${base}, or run with --runtime native.`
+    : `${base}.`;
+};
 
 const stackAcquireError = (
   cause: StackError,
   runtimeContext: {
-    readonly selectedRuntime: "native" | "docker" | "podman";
+    readonly selectedRuntime: StackRuntime;
     readonly runtime: { readonly platform: string; readonly arch: string };
     readonly creating: boolean;
   },
 ) => {
   const base = stackError(cause);
-  if (cause.reason !== "runtime-unavailable" || runtimeContext.selectedRuntime !== "docker")
-    return base;
+  const { selectedRuntime } = runtimeContext;
+  if (cause.reason !== "runtime-unavailable" || selectedRuntime === "native") return base;
   return new StackCommandStartError({
     reason: "runtime",
     message: base.message,
     ...(base.detail === undefined ? {} : { detail: base.detail }),
-    suggestion: dockerUnavailableSuggestion(runtimeContext.runtime, runtimeContext.creating),
+    suggestion: engineUnavailableSuggestion(
+      selectedRuntime,
+      runtimeContext.runtime,
+      runtimeContext.creating,
+    ),
     cause: base.cause,
   });
 };
@@ -171,8 +204,14 @@ const sameKinds = (
   return leftKinds.size === rightKinds.size && [...leftKinds].every((kind) => rightKinds.has(kind));
 };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null;
+/**
+ * Whether this set of requested services would run Studio without the REST API it depends on.
+ * The single source of truth for that dependency: the real `--exclude` guard validates against
+ * it to reject a request that would otherwise leave Studio stranded.
+ */
+const studioNeedsRest = (requestedServices: ReadonlyArray<{ readonly service: string }>): boolean =>
+  requestedServices.some(({ service }) => service === "studio") &&
+  !requestedServices.some(({ service }) => service === "rest");
 
 const endpointPortLabel = (endpoints: unknown, name: string): string => {
   const intent = isRecord(endpoints) ? endpoints[name] : undefined;
@@ -418,12 +457,14 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     const outputFlag = yield* Effect.serviceOption(OutputFlag);
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* rejectStackOutput(outputFlag).pipe(Effect.mapError(mapTargetError));
+    yield* rejectStackOutput(outputFlag).pipe(
+      Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))),
+    );
     const exclusions = yield* validateExclusions(flags.exclude);
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
     const target = yield* resolver
       .resolve({
         projectRoot: settings.workdir,
@@ -431,7 +472,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
         ...(Option.isSome(flags.stackId) ? { id: flags.stackId.value } : {}),
         runtime: flags.runtime,
       })
-      .pipe(Effect.mapError(mapTargetError));
+      .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStartError(props))));
     const runtime = yield* RuntimeInfo;
     const selectedRuntime = yield* selectStackRuntime(target.runtime).pipe(
       Effect.mapError(
@@ -640,10 +681,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
           new StackCommandStartError({ reason: "invalid-config", message: cause.message, cause }),
       ),
     );
-    if (
-      requested.some(({ service }) => service === "studio") &&
-      !requested.some(({ service }) => service === "rest")
-    )
+    if (studioNeedsRest(requested))
       return yield* new StackCommandStartError({
         reason: "flags",
         message: "Studio cannot be started without the REST API capability",
@@ -774,7 +812,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
       })
       .pipe(
         Effect.tapError((error) => starting.fail(error.message)),
-        Effect.mapError(stackError),
+        Effect.mapError((error) => stackError(error, requested, requested)),
       );
     if (initialComposition) {
       const existingIds = new Set(existingServices.map(({ id }) => id));
@@ -898,7 +936,7 @@ export const stackStart = Effect.fn("experimental.stack.start")(function* (flags
     }
     yield* stack.composition.start.pipe(
       Effect.tapError((error) => starting.fail(error.message)),
-      Effect.mapError((error) => stackError(error, members)),
+      Effect.mapError((error) => stackError(error, members, requested)),
     );
     yield* Effect.forEach(preparation, (fiber) => Fiber.join(fiber));
     yield* Ref.set(startupComplete, true);

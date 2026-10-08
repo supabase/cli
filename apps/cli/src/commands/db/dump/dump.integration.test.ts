@@ -16,6 +16,7 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockTty, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import {
   VALID_REF,
   mockCommandSettings,
@@ -115,13 +116,9 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       lifecycle: "running",
       health: "healthy",
       error: undefined,
-      cleanupError: undefined,
       exit: undefined,
       currentOperation: undefined,
-      launchId: undefined,
-      intentRevision: 0,
       wakeEnabled: true,
-      registered: true,
     }),
     followStatus: Stream.empty,
     readLogs: () => Stream.empty,
@@ -152,7 +149,8 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
       restart: Effect.succeed([]),
     },
     stop: Effect.void,
-    destroy: Effect.succeed({ runtimeCleanup: "complete" as const }),
+    destroy: Effect.void,
+    gateway: unusedGateway,
     commands: { run: runCommand },
   } satisfies Stack;
   return Layer.succeed(StackApi, {
@@ -169,7 +167,6 @@ const managedDumpStackApi = (runtime: "native" | "docker") => {
             instances: [],
             composition: { members: [{ id, activation: "eager" as const }], dependencies: [] },
             lifetime: "detached" as const,
-            ports: [],
           },
           host: undefined,
         }),

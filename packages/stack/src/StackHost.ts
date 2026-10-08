@@ -11,6 +11,7 @@ import {
   Data,
   DateTime,
   Deferred,
+  type Duration,
   Effect,
   Exit,
   FileSystem,
@@ -38,22 +39,31 @@ import {
   type HostEndpoint,
   type ShutdownFailure,
 } from "./HostProcess.ts";
-import { failureKind } from "./FailureKind.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { projectSegmentFor } from "./identity/Identity.ts";
 import * as Owner from "./Owner.ts";
 import { StackError, stackError, StackRpc, type RunCommandPayload } from "./Rpc.ts";
-import { makeHostGateway } from "./runtime/Container.ts";
-import * as State from "./State.ts";
+import { engineUnreachable, makeHostGateway, resolveEngineTarget } from "./runtime/Container.ts";
+import * as StackNamespace from "./StackNamespace.ts";
 import { sweepOrphans } from "./Sweep.ts";
 import { makeCommandAttachments } from "./host/CommandAttachments.ts";
 import * as CommandRunner from "./host/CommandRunner.ts";
+
+/**
+ * How often an owner confirms its own registration still exists. Internal only: tests shorten
+ * it through a dedicated entrypoint that overrides this reference, never through env or `Config`.
+ */
+export const RegistrationCheckInterval = Context.Reference<Duration.Input>(
+  "@supabase/stack/RegistrationCheckInterval",
+  { defaultValue: () => "30 seconds" },
+);
 
 export interface StackHostOptions {
   readonly stateRoot: string;
   readonly cacheRoot: string;
   readonly stackId: string;
   /** Registers this definition once the owner holds the lease; the stack must not exist. */
-  readonly register?: State.SavedStack;
+  readonly register?: StackNamespace.SavedStack;
   readonly release?: string;
   readonly onReady?: (access: HostAccess) => Effect.Effect<void, StackHostError>;
 }
@@ -118,10 +128,14 @@ const creatorGone = Effect.callback<void>((resume) => {
   });
 });
 
-const isOpen = (value: boolean): Effect.Effect<void, StackError> =>
-  value
-    ? Effect.void
-    : Effect.fail(new StackError({ operation: "host", message: "Stack host is draining" }));
+const rejectWhileDraining = (draining: Deferred.Deferred<void>): Effect.Effect<void, StackError> =>
+  Deferred.isDone(draining).pipe(
+    Effect.flatMap((isDraining) =>
+      isDraining
+        ? Effect.fail(new StackError({ operation: "host", message: "Stack host is draining" }))
+        : Effect.void,
+    ),
+  );
 
 const requestSignal = () =>
   Effect.callback<"SIGTERM" | "SIGINT", never>((resume) => {
@@ -159,21 +173,32 @@ export interface StackHostRuntime {
     destroy: boolean,
     response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
   ) => Effect.Effect<void, StackError>;
+  /**
+   * Ends ownership that was lost to a deleted registration or a replaced lease file: stops only
+   * what this owner launched and leaves data, ports, registration and any successor's containers
+   * alone. It joins a shutdown already running. Failures are logged, never raised.
+   */
+  readonly release: Effect.Effect<void>;
   readonly exit: Deferred.Deferred<void>;
 }
 
+/**
+ * Serves the host. `draining` is the one source of truth for whether shutdown has begun: the host
+ * completes it when a shutdown begins and never resets it, and the owner reads it for admission.
+ */
 export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
   (
     owner: Owner.Interface,
     access: HostAccess,
     server: HttpServer.HttpServer["Service"],
     closeConnections: Effect.Effect<void>,
+    draining: Deferred.Deferred<void>,
   ): Effect.Effect<StackHostRuntime, never, Scope.Scope | CommandRunner.Service> =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const runner = yield* CommandRunner.Service;
       const attachments = yield* makeCommandAttachments({
-        admit: owner.getServing.pipe(Effect.flatMap(isOpen)),
+        admit: rejectWhileDraining(draining),
         run: (input) =>
           "stdin" in input
             ? runner.run({
@@ -199,8 +224,9 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const exit = yield* Deferred.make<void>();
       const gate = yield* Semaphore.make(1);
+      type ShutdownMode = "stop" | "destroy" | "release";
       const current = yield* Ref.make<
-        { destroy: boolean; fiber: Fiber.Fiber<void, StackError> } | undefined
+        { readonly mode: ShutdownMode; readonly fiber: Fiber.Fiber<void, StackError> } | undefined
       >(undefined);
       const watchResponse = (
         response: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
@@ -210,128 +236,83 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
           responseClosed(response).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
           scope,
         );
+      // Admits `mode`'s cleanup when nothing else is in flight: begins draining, forks the cleanup
+      // and tracks it as `current`. Draining never reverses: a failed shutdown leaves its failed
+      // fiber in `current` (repeat calls rejoin the same failure), and the owner exits once the
+      // response has been delivered.
+      const begin = (
+        mode: ShutdownMode,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ): Effect.Effect<Fiber.Fiber<void, StackError>> =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(draining, undefined);
+          const responseClosedSignal =
+            response === undefined ? undefined : yield* Deferred.make<void>();
+          if (response !== undefined && responseClosedSignal !== undefined)
+            yield* watchResponse(response, responseClosedSignal);
+          const finish = Effect.gen(function* () {
+            if (response !== undefined) {
+              if (responseClosedSignal === undefined) return;
+              yield* Effect.forkIn(
+                Deferred.await(responseClosedSignal).pipe(
+                  Effect.andThen(closeConnections),
+                  Effect.andThen(Deferred.succeed(exit, undefined)),
+                ),
+                scope,
+              );
+            } else {
+              yield* closeConnections;
+              yield* Deferred.succeed(exit, undefined);
+            }
+          });
+          const body = Effect.gen(function* () {
+            yield* attachments.stopAll;
+            yield* runner.cleanup;
+            yield* owner.namespace[mode];
+          }).pipe(
+            Effect.onError(() => finish),
+            Effect.andThen(finish),
+            Effect.mapError((cause) => stackError("shutdown", cause)),
+          );
+          const fiber = yield* Effect.forkIn(body, scope);
+          yield* Ref.set(current, { mode, fiber });
+          return fiber;
+        });
 
-      const shutdown = Effect.fn("StackHost.shutdown")(
-        (destroy: boolean, response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>) =>
-          Effect.gen(function* () {
-            const fiber = yield* gate.withPermits(1)(
-              Effect.uninterruptibleMask(() =>
-                Effect.gen(function* () {
-                  const existing = yield* Ref.get(current);
-                  if (existing !== undefined) {
-                    if (existing.destroy && !destroy) return existing.fiber;
-                    if (!existing.destroy && destroy)
-                      return yield* new StackError({
-                        operation: "shutdown",
-                        message: "Shutdown mode is already selected",
-                      });
-                    return existing.fiber;
-                  }
-                  yield* owner.setDraining(true);
-                  const responseClosedSignal =
-                    response === undefined ? undefined : yield* Deferred.make<void>();
-                  if (response !== undefined && responseClosedSignal !== undefined)
-                    yield* watchResponse(response, responseClosedSignal);
-                  let retiringAfterDestroyFailure = false;
-                  const stopOwned = Effect.gen(function* () {
-                    yield* attachments.stopAll;
-                    yield* runner.cleanup;
-                    yield* owner.namespace.stop;
+      // The one shutdown pipeline: every mode is claimed through the same gate and `current`
+      // record. A repeat request rejoins the shutdown in flight (a stop after a destroy, or the
+      // same mode again), and a destroy after a stop is rejected.
+      const claim = (
+        mode: ShutdownMode,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ): Effect.Effect<void, StackError> =>
+        gate
+          .withPermits(1)(
+            Effect.uninterruptibleMask(() =>
+              Effect.gen(function* () {
+                const existing = yield* Ref.get(current);
+                if (existing === undefined) return yield* begin(mode, response);
+                if (existing.mode === "stop" && mode === "destroy")
+                  return yield* new StackError({
+                    operation: "shutdown",
+                    message: "Shutdown mode is already selected",
                   });
-                  const finish = Effect.gen(function* () {
-                    if (response !== undefined) {
-                      if (responseClosedSignal === undefined) return;
-                      yield* Effect.forkIn(
-                        Deferred.await(responseClosedSignal).pipe(
-                          Effect.andThen(closeConnections),
-                          Effect.andThen(Deferred.succeed(exit, undefined)),
-                        ),
-                        scope,
-                      );
-                    } else {
-                      yield* closeConnections;
-                      yield* Deferred.succeed(exit, undefined);
-                    }
-                  });
-                  const cleanup = Effect.gen(function* () {
-                    if (!destroy) {
-                      yield* stopOwned;
-                      yield* finish;
-                      return;
-                    }
-                    const destroyExit = yield* Effect.gen(function* () {
-                      yield* attachments.stopAll;
-                      yield* runner.cleanup;
-                      yield* owner.namespace.destroy;
-                    }).pipe(Effect.exit);
-                    if (Exit.isSuccess(destroyExit)) {
-                      yield* finish;
-                      return;
-                    }
-                    const stopExit = yield* stopOwned.pipe(Effect.exit);
-                    if (Exit.isFailure(stopExit)) {
-                      const describeCause = (cause: Cause.Cause<unknown>) => {
-                        const error = Option.match(Cause.findErrorOption(cause), {
-                          onNone: () => {
-                            const kind = failureKind(cause);
-                            return new StackError({
-                              operation: "shutdown",
-                              message: Cause.pretty(cause),
-                              ...(kind === undefined ? {} : { kind }),
-                            });
-                          },
-                          onSome: (value) => stackError("shutdown", value),
-                        });
-                        const failedOutcomes = error.outcomes
-                          ?.filter(({ succeeded }) => !succeeded)
-                          .map(({ id, error: reason }) => `${id}: ${reason ?? "failed"}`)
-                          .join("; ");
-                        return {
-                          error,
-                          message:
-                            failedOutcomes === undefined || failedOutcomes.length === 0
-                              ? error.message
-                              : `${error.message} (${failedOutcomes})`,
-                        };
-                      };
-                      const destroyFailure = describeCause(destroyExit.cause);
-                      const stopFailure = describeCause(stopExit.cause);
-                      const outcomes = [
-                        ...(destroyFailure.error.outcomes ?? []),
-                        ...(stopFailure.error.outcomes ?? []),
-                      ];
-                      const kind = destroyFailure.error.kind ?? stopFailure.error.kind;
-                      return yield* new StackError({
-                        operation: "shutdown",
-                        message: `${destroyFailure.message}; fallback stop failed: ${stopFailure.message}`,
-                        ...(outcomes.length === 0 ? {} : { outcomes }),
-                        ...(kind === undefined ? {} : { kind }),
-                      });
-                    }
-                    retiringAfterDestroyFailure = true;
-                    yield* finish;
-                    return yield* Effect.failCause(destroyExit.cause);
-                  }).pipe(
-                    Effect.mapError((cause) => stackError("shutdown", cause)),
-                    Effect.catchCause((cause) =>
-                      retiringAfterDestroyFailure
-                        ? Effect.failCause(cause)
-                        : owner
-                            .setDraining(false)
-                            .pipe(
-                              Effect.andThen(gate.withPermits(1)(Ref.set(current, undefined))),
-                              Effect.andThen(Effect.failCause(cause)),
-                            ),
-                    ),
-                  );
-                  const fiber = yield* Effect.forkIn(cleanup, scope);
-                  yield* Ref.set(current, { destroy, fiber });
-                  return fiber;
-                }),
-              ),
-            );
-            yield* Fiber.join(fiber);
-          }).pipe(Effect.mapError((cause) => stackError("shutdown", cause))),
+                return existing.fiber;
+              }),
+            ),
+          )
+          .pipe(Effect.flatMap(Fiber.join));
+      const shutdown = (
+        destroy: boolean,
+        response?: ReturnType<typeof NodeHttpServerRequest.toServerResponse>,
+      ) =>
+        claim(destroy ? "destroy" : "stop", response).pipe(
+          Effect.mapError((cause) => stackError("shutdown", cause)),
+        );
+      // The ownership poll drives this, never an RPC caller, so there is no response to watch.
+      const release = claim("release").pipe(
+        Effect.tapCause((cause) => Effect.logError("Releasing the stack failed", cause)),
+        Effect.ignore,
       );
       const handlers = StackRpc.of({
         ...owner.handlers,
@@ -382,11 +363,55 @@ export const makeRuntime = Effect.fn("StackHost.makeRuntime")(
       });
       const serve: Effect.Effect<void, never, Scope.Scope> = server.serve(application);
 
-      return { endpoint: access.endpoint, access, serve, shutdown, closeConnections, exit };
+      return {
+        endpoint: access.endpoint,
+        access,
+        serve,
+        shutdown,
+        release,
+        closeConnections,
+        exit,
+      };
     }),
 );
 
-type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone";
+type HostEvent = "SIGTERM" | "SIGINT" | "creator-gone" | "ownership-ended";
+
+/**
+ * Ownership holds while the stack is registered and the lease path still names the file this
+ * owner locked. Only a confirmed ENOENT registration or a confirmed missing or replaced lease
+ * file ends it; any other error (permissions, an unmounted root mid-read) keeps the owner running.
+ */
+const ownershipEnded = Effect.fn("StackHost.ownershipEnded")(function* (
+  state: StackNamespace.Interface,
+  id: string,
+  pathHeld: Effect.Effect<boolean, StackNamespace.NamespaceError>,
+) {
+  return yield* Effect.all([state.read(id), pathHeld]).pipe(
+    Effect.map(([saved, held]) => saved === undefined || !held),
+    Effect.tapError((cause) =>
+      Effect.logWarning("Could not confirm the stack ownership; keeping the owner running", cause),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+/** Polls ownership and offers `ownership-ended` once it ends. */
+const pollOwnership = Effect.fn("StackHost.pollOwnership")(function* (
+  state: StackNamespace.Interface,
+  id: string,
+  pathHeld: Effect.Effect<boolean, StackNamespace.NamespaceError>,
+  events: Queue.Queue<HostEvent>,
+) {
+  const interval = yield* RegistrationCheckInterval;
+  while (true) {
+    yield* Effect.sleep(interval);
+    if (yield* ownershipEnded(state, id, pathHeld)) {
+      yield* Queue.offer(events, "ownership-ended");
+      return;
+    }
+  }
+});
 
 export const runStackHost = Effect.fn("StackHost.run")(
   (options: StackHostOptions): Effect.Effect<void, StackHostError, never> =>
@@ -400,20 +425,25 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ),
           ),
         );
-        const stateContext = yield* Layer.build(State.layer({ root: options.stateRoot }));
-        const state = Context.get(stateContext, State.Service);
+        const stateContext = yield* Layer.build(StackNamespace.layer({ root: options.stateRoot }));
+        const state = Context.get(stateContext, StackNamespace.Service);
         const id = options.stackId;
         // The lease is released last, after every owned process and listener has closed.
-        if (!(yield* state.lease(id)))
-          return yield* new StackHostError({
-            operation: "lease",
-            message: `Another owner holds the lease of stack ${id}`,
-            reason: "lease-held",
-          });
+        const lease = yield* state.acquireLease(id).pipe(
+          Effect.catchTag(
+            "Namespace.LeaseHeldError",
+            () =>
+              new StackHostError({
+                operation: "lease",
+                message: `Another owner holds the lease of stack ${id}`,
+                reason: "lease-held",
+              }),
+          ),
+        );
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* fs.truncate(state.ownerLog(id)).pipe(Effect.ignore);
-        yield* state.retractHolder(id);
+        yield* lease.retractHolder;
         const register = options.register;
         if (register !== undefined)
           yield* state.withLock(
@@ -427,40 +457,48 @@ export const runStackHost = Effect.fn("StackHost.run")(
               yield* state.save(register);
             }),
           );
+        const draining = yield* Deferred.make<void>();
         const started = yield* Effect.gen(function* () {
           const saved = yield* state.read(id);
           if (saved === undefined) return yield* hostError("startup", "Stack is not registered");
           const control = yield* bindControl();
-          const dataRootPath = path.join(options.stateRoot, saved.id, "data");
-          yield* fs.makeDirectory(dataRootPath, { recursive: true });
-          const dataRoot = yield* fs.realPath(dataRootPath);
+          const dataRoot = yield* StackNamespace.resolveStackDataRoot(options.stateRoot, saved.id);
           const project = projectSegmentFor(saved.identity, path);
-          yield* Owner.sweepContainers(saved, dataRoot).pipe(
+          // Resolved once, here, for this owner's whole lifetime: the container runtime, the
+          // storage helpers, the host-gateway probes and reconcile below all share this one
+          // target instead of each resolving (and so potentially disagreeing on) their own.
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const engineTarget =
+            saved.runtime === "native"
+              ? undefined
+              : yield* resolveEngineTarget(spawner, saved.runtime).pipe(
+                  Effect.mapError((cause) =>
+                    hostError(
+                      "startup-cleanup",
+                      cause,
+                      engineUnreachable(cause) ? "runtime-unavailable" : undefined,
+                    ),
+                  ),
+                );
+          yield* Owner.sweepContainers(saved, dataRoot, engineTarget).pipe(
             Effect.mapError((cause) =>
               hostError(
                 "startup-cleanup",
                 cause,
-                cause.reason === "engine-unavailable" ? "runtime-unavailable" : undefined,
+                engineUnreachable(cause) ? "runtime-unavailable" : undefined,
               ),
             ),
           );
-          // After the sweep, so no leftover Vector container still mounts the files it removes.
-          // The loaded state already omits Vector, so a failed migration waits for a later start.
-          yield* state
-            .migrate(id)
-            .pipe(
-              Effect.catch((error) =>
-                Effect.logWarning(`Unable to migrate the saved state of stack ${id}`, error),
-              ),
-            );
           const hostGateway = yield* makeHostGateway;
           const services = yield* Layer.build(
             Layer.merge(
               Owner.layer({
+                draining: Deferred.isDone(draining),
                 saved,
                 root: dataRoot,
                 cacheRoot: options.cacheRoot,
                 hostGateway,
+                engineTarget,
               }),
               CommandRunner.layer({
                 stackId: saved.id,
@@ -469,8 +507,9 @@ export const runStackHost = Effect.fn("StackHost.run")(
                 cacheRoot: options.cacheRoot,
                 runtime: saved.runtime,
                 hostGateway,
+                engineTarget,
               }),
-            ).pipe(Layer.provide(Layer.succeed(State.Service, state))),
+            ).pipe(Layer.provide(Layer.succeed(StackNamespace.Service, state))),
           );
           const owner = Context.get(services, Owner.Service);
           const endpoint: HostEndpoint = {
@@ -490,6 +529,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             access,
             control.server,
             control.closeConnections,
+            draining,
           ).pipe(
             Effect.provideService(
               CommandRunner.Service,
@@ -497,8 +537,8 @@ export const runStackHost = Effect.fn("StackHost.run")(
             ),
           );
           yield* runtime.serve;
-          yield* Effect.addFinalizer(() => state.retractHolder(id).pipe(Effect.ignore));
-          yield* state.publishHolder(id, {
+          yield* Effect.addFinalizer(() => lease.retractHolder.pipe(Effect.ignore));
+          yield* lease.publishHolder({
             role: "owner",
             secret,
             port: endpoint.port,
@@ -511,6 +551,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
             yield* Effect.forkScoped(
               creatorGone.pipe(Effect.andThen(Queue.offer(events, "creator-gone"))),
             );
+          yield* Effect.forkScoped(pollOwnership(state, id, lease.pathHeld, events));
           yield* options.onReady?.(access) ?? Effect.void;
           yield* Effect.forkScoped(
             sweepOrphans({
@@ -518,6 +559,7 @@ export const runStackHost = Effect.fn("StackHost.run")(
               stateRoot: options.stateRoot,
               cacheRoot: options.cacheRoot,
               ownerId: id,
+              engineTarget,
             }),
           );
           return runtime;
@@ -539,25 +581,26 @@ export const runStackHost = Effect.fn("StackHost.run")(
             register === undefined ? Effect.void : state.remove(id).pipe(Effect.ignore),
           ),
         );
-        while (true) {
-          const event = yield* Deferred.await(started.exit).pipe(
-            Effect.map(() => "done" as const),
-            Effect.raceFirst(Queue.take(events)),
+        const event = yield* Deferred.await(started.exit).pipe(
+          Effect.map(() => "done" as const),
+          Effect.raceFirst(Queue.take(events)),
+        );
+        if (event === "creator-gone") {
+          yield* started.shutdown(true).pipe(
+            Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
+            Effect.ignore,
           );
-          if (event === "done") break;
-          if (event === "creator-gone") {
-            yield* started.shutdown(true).pipe(
-              Effect.tapCause((cause) => Effect.logError("Session stack destroy failed", cause)),
-              Effect.ignore,
-            );
-            break;
-          }
-          const shutdownSucceeded = yield* started.shutdown(false).pipe(
-            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
-            Effect.matchCause({ onSuccess: () => true, onFailure: () => false }),
-          );
-          if (shutdownSucceeded) break;
+          return;
         }
+        if (event === "ownership-ended") {
+          yield* started.release;
+          return;
+        }
+        if (event !== "done")
+          yield* started.shutdown(false).pipe(
+            Effect.tapCause((cause) => Effect.logError("Stack shutdown failed", cause)),
+            Effect.ignore,
+          );
       }),
     ).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)),

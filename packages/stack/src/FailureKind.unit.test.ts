@@ -12,7 +12,7 @@ import { NativeProcessError } from "./runtime/NativeProcess.ts";
 import { ArtifactIntegrityError, PreparationError } from "./preparation/Errors.ts";
 import { ServiceError, ServiceLaunchError, type RuntimeSession } from "./Service.ts";
 import { StackHostError } from "./StackHost.ts";
-import { StateError } from "./State.ts";
+import { LeaseHeldError, NamespaceError } from "./StackNamespace.ts";
 import { SupabaseCompositionError } from "./composition/Supabase.ts";
 
 const fileFailure = PlatformError.systemError({
@@ -166,8 +166,13 @@ const cases: ReadonlyArray<readonly [string, unknown, StackFailureKind | undefin
   ],
   [
     "a state file failure as state",
-    new StateError({ operation: "read", message: "denied", cause: fileFailure }),
+    new NamespaceError({ operation: "read", message: "denied", cause: fileFailure }),
     "state",
+  ],
+  [
+    "a live owner holding the stack lease as lease-held",
+    new LeaseHeldError({ stackId: "abc", message: "held" }),
+    "lease-held",
   ],
   [
     "an operational failure inside composition as its own kind",

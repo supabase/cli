@@ -14,8 +14,8 @@ import {
 type LiveCliEffect = LiveFixtures["cliEffect"];
 type LiveRun = Awaited<ReturnType<LiveFixtures["cli"]>>;
 
-// The worst case across four 60s commands (restore issued at most twice) and two 102s proof
-// polls is 444s, plus the workspace fixture's ~60s init — all bounded by the 20-minute Live
+// The worst case across five 60s commands (capture, two updates, two restores) and two 102s
+// proof polls is 504s, plus the workspace fixture's ~60s init — all bounded by the 20-minute Live
 // E2E step budget shared by every serial live file. A timed-out test disposes its fixtures,
 // so a late restore can't run and the shared project stays locked down.
 const EXIT_TIMEOUT_MS = 60_000;
@@ -66,7 +66,9 @@ function updateArgs(cidrs: AllowedCidrs, flags: ReadonlyArray<string>): string[]
 }
 
 function describeAttempt(attempt: number, result: LiveRun): string {
-  return `\nattempt ${attempt} (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
+  const killed =
+    result.timedOutAfterMs === undefined ? "" : `, SIGKILLed after ${result.timedOutAfterMs}ms`;
+  return `\nattempt ${attempt} (exit ${result.exitCode}${killed})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`;
 }
 
 // An absent family reads as `[]` like an explicitly empty one; `configured`
@@ -155,10 +157,28 @@ test(
         const cleanupErrors: Array<unknown> = [];
 
         const target = Effect.gen(function* () {
-          const updated = yield* cliEffect([...updateArgs(TEST_CIDRS, flags), "-o", "json"], {
-            exitTimeoutMs: EXIT_TIMEOUT_MS,
-          });
-          expect(updated.exitCode, updated.stderr).toBe(0);
+          const update = () =>
+            cliEffect([...updateArgs(TEST_CIDRS, flags), "-o", "json"], {
+              exitTimeoutMs: EXIT_TIMEOUT_MS,
+            });
+          // Only a request killed before printing its result is re-issued; CLI failures still fail.
+          const first = yield* update();
+          const stalled = first.timedOutAfterMs !== undefined && first.stdout.trim() === "";
+          if (stalled) {
+            yield* Effect.logWarning(
+              "network-restrictions update retrying" + describeAttempt(1, first),
+            );
+          }
+          const updated = stalled ? yield* update() : first;
+          if (stalled && updated.exitCode !== 0) {
+            return yield* new LivePostureError({
+              message:
+                "network-restrictions update failed twice" +
+                describeAttempt(1, first) +
+                describeAttempt(2, updated),
+            });
+          }
+          requireLiveSuccess(updated, "network-restrictions update");
           expect(
             requireLiveJson(updated, "network-restrictions update"),
             updated.stdout,

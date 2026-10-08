@@ -1,9 +1,8 @@
 import { NodeServices, NodeSocketServer } from "@effect/platform-node";
 import { Console, Effect } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as State from "../src/State.ts";
-import { isBunVirtualPath } from "../src/internal/dispatch-markers.ts";
 import { fileURLToPath } from "node:url";
+import * as StackNamespace from "../src/StackNamespace.ts";
 
 const [mode, root, id] = process.argv.slice(2);
 if (root === undefined) throw new Error("Registry root missing");
@@ -19,7 +18,7 @@ const program = Effect.scoped(
       return yield* Effect.never;
     }
     yield* Effect.gen(function* () {
-      const state = yield* State.Service;
+      const state = yield* StackNamespace.Service;
       yield* state.withLock(
         Effect.gen(function* () {
           if (mode === "write") {
@@ -34,24 +33,20 @@ const program = Effect.scoped(
           }
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           yield* spawner.spawn(
-            ChildProcess.make(
-              process.execPath,
-              [...(isBunVirtualPath(fixturePath) ? [] : [fixturePath]), "child", root],
-              {
-                // Keep the child independent on Windows so holder termination tests lock recovery.
-                detached: process.platform === "win32",
-                stdin: "ignore",
-                stdout: "inherit",
-                stderr: "inherit",
-                forceKillAfter: "1 second",
-              },
-            ),
+            ChildProcess.make(process.execPath, [fixturePath, "child", root], {
+              // Keep the child independent on Windows so holder termination tests lock recovery.
+              detached: process.platform === "win32",
+              stdin: "ignore",
+              stdout: "inherit",
+              stderr: "inherit",
+              forceKillAfter: "1 second",
+            }),
           );
           yield* Console.log("locked");
           return yield* Effect.never;
         }),
       );
-    }).pipe(Effect.provide(State.layer({ root })));
+    }).pipe(Effect.provide(StackNamespace.layer({ root })));
   }),
 ).pipe(Effect.provide(NodeServices.layer));
 

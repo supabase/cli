@@ -14,6 +14,10 @@ on:
       - "apps/cli/src/shared/services/slim-images.ts"
       - "packages/stack/src/Artifacts.ts"
       - ".github/workflows/ai-review.yml"
+      - ".github/workflows/fast-forward.yml"
+      - ".github/workflows/lint-pull-request.yml"
+      - ".github/workflows/sync-branches.yml"
+      - "apps/cli/scripts/analyze-commits-title.js"
       - ".github/workflows/github-scripts-ci.yml"
       - ".github/workflows/mirror-slim-image.yml"
 

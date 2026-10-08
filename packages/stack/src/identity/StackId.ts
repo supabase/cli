@@ -7,7 +7,7 @@ export type StackId = string & { readonly [StackIdTypeId]: "StackId" };
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-export const isStackId = (value: string): value is StackId => SHA256_HEX.test(value);
+const isStackId = (value: string): value is StackId => SHA256_HEX.test(value);
 
 export const StackIdSchema = Schema.String.pipe(
   Schema.refine((value): value is StackId => isStackId(value), {

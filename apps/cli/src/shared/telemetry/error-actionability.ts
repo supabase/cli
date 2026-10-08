@@ -78,6 +78,7 @@ const CLI_SUGGESTED_COMMANDS = [
 type CliSuggestedCommand = (typeof CLI_SUGGESTED_COMMANDS)[number];
 
 const CLI_ERROR_FINGERPRINT_SUFFIXES = [
+  "already_exists",
   "api_response",
   "api_status",
   "asset_checksum",
@@ -141,6 +142,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "replication_slots_query",
   "request_encoding",
   "request_input",
+  "runtime_stopped",
   "saml_disabled",
   "seed_buckets",
   "stack_configuration",
@@ -508,6 +510,7 @@ const stackFailureKindActionability = {
   "owner-connection": { ...actionability.runtimeCrash, fingerprint_suffix: "owner_connection" },
   "owner-exit": { ...actionability.runtimeCrash, fingerprint_suffix: "owner_exit" },
   "lease-held": { ...actionability.invalidInput, fingerprint_suffix: "lease_held" },
+  "already-exists": { ...actionability.invalidInput, fingerprint_suffix: "already_exists" },
   timeout: { ...actionability.runtimeCrash, fingerprint_suffix: "operation_timeout" },
 } as const satisfies Record<StackFailureKind, CliErrorActionabilityDeclaration>;
 

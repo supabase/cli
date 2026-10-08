@@ -6,6 +6,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { OutputFlag } from "../../../../command-internal/global-flags.ts";
 import { CommandSettings } from "../../../../config/command-settings.service.ts";
 import { TelemetryState } from "../../../../telemetry/telemetry-state.service.ts";
+import type { StackRuntime } from "../../../../command-internal/stack-runtime.ts";
 import { loadStackConfig } from "../../../../command-internal/stack-config.ts";
 import { withProjectFunctionsEnv } from "../../../../command-internal/stack-functions-env.ts";
 import { bold, gray, green, red, yellow } from "../../../../command-internal/colors.ts";
@@ -20,8 +21,8 @@ import {
 } from "../stack-summary.ts";
 import {
   StackApi,
-  StackTargetError,
   StackTargetResolver,
+  mapTargetError,
   rejectStackOutput,
   validateStackTarget,
 } from "../stack.shared.ts";
@@ -57,7 +58,7 @@ type StackReport = {
     readonly project_root: string;
     readonly branch_context: string;
   };
-  readonly runtime: "native" | "docker" | "podman";
+  readonly runtime: StackRuntime;
   readonly owner: "reachable" | "unavailable";
   readonly lifecycle: Observation["lifecycle"] | null;
   readonly readiness: "unavailable" | "starting" | "sleeping" | "stopped" | "ready" | "unhealthy";
@@ -81,14 +82,6 @@ type StackReport = {
   /** The `status --env` connection map, degrading to what's available when credentials or the owner are unreachable. */
   readonly env: Readonly<Record<string, string>>;
 };
-
-const mapTargetError = (error: StackTargetError) =>
-  new StackCommandStatusError({
-    reason: error.reason,
-    message: error.message,
-    ...(error.suggestion === undefined ? {} : { suggestion: error.suggestion }),
-    cause: error,
-  });
 
 const isStateOperation = (operation: string) =>
   operation === "open" || operation === "discover" || operation === "definition";
@@ -156,7 +149,7 @@ const reportFor = (
       readonly branchContext: string;
       readonly stackName: string;
     };
-    readonly runtime: "native" | "docker" | "podman";
+    readonly runtime: StackRuntime;
   },
   owner: StackReport["owner"],
   observed: ReadonlyArray<ObservedService>,
@@ -263,7 +256,7 @@ const findTarget = Effect.fn("experimental.stack.status.findTarget")(function* (
       ...(id === undefined ? {} : { id }),
       runtime: "auto",
     })
-    .pipe(Effect.mapError(mapTargetError));
+    .pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
   if (target.id === undefined || target.definition === undefined)
     return yield* new StackCommandStatusError({
       reason: "not-found",
@@ -373,7 +366,7 @@ export const stackStatus = Effect.fn("experimental.stack.status")(function* (
     yield* validateStackTarget({
       stack: Option.getOrUndefined(flags.stack),
       stackId: Option.getOrUndefined(flags.stackId),
-    }).pipe(Effect.mapError(mapTargetError));
+    }).pipe(Effect.mapError(mapTargetError((props) => new StackCommandStatusError(props))));
     if (!flags.env && flags.overrideName.length > 0)
       return yield* new StackCommandStatusError({
         reason: "flags",

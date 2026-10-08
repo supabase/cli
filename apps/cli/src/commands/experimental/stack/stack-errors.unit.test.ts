@@ -4,6 +4,8 @@ import { LocalDbRunningError } from "../../../command-internal/db-bootstrap/loca
 import { DbSetupError } from "../../../command-internal/db-bootstrap/db-setup.ts";
 import { TestDbRunError } from "../../../command-internal/test-db.errors.ts";
 import { DbDumpRunError } from "../../db/dump/dump.errors.ts";
+import { DeclarativeApplyError } from "../../db/schema/declarative/declarative.errors.ts";
+import { FunctionsServeStackError } from "../../functions/serve/serve.errors.ts";
 import { classifyCliErrorActionability } from "../../../shared/telemetry/error-actionability.ts";
 import { StackCommandDestroyError } from "./destroy/destroy.errors.ts";
 import { StackCommandStartError } from "./start/start.errors.ts";
@@ -117,6 +119,18 @@ describe("new stack error telemetry", () => {
     expect(classify(new TestDbRunError({ message: "x", cause }))).toMatchObject({
       error_fingerprint: "tag:TestDbRunError:state_file",
     });
+    expect(
+      classify(
+        new DeclarativeApplyError({
+          message: "x",
+          connect: true,
+          cause: new LocalDbRunningError({ message: "not running" }),
+        }),
+      ),
+    ).toMatchObject({ error_fingerprint: "tag:DeclarativeApplyError:connect" });
+    expect(
+      classify(new FunctionsServeStackError({ reason: "runtime", message: "log stream ended" })),
+    ).toMatchObject({ error_fingerprint: "tag:FunctionsServeStackError:runtime_stopped" });
     expect(classify(new TestDbRunError({ message: "exit 1" }))).toMatchObject({
       error_fingerprint: "tag:TestDbRunError",
       error_category: "invalid_config",

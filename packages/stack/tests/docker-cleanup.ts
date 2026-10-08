@@ -1,5 +1,6 @@
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, Stream } from "effect";
+import { testEngine } from "./test-engine.ts";
 
 export const cleanupDockerRoot = Effect.fn("DockerTest.cleanupRoot")((root: string) =>
   Effect.scoped(
@@ -7,7 +8,7 @@ export const cleanupDockerRoot = Effect.fn("DockerTest.cleanupRoot")((root: stri
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
         ChildProcess.make(
-          "docker",
+          testEngine,
           [
             "run",
             "--rm",
@@ -15,7 +16,7 @@ export const cleanupDockerRoot = Effect.fn("DockerTest.cleanupRoot")((root: stri
             "0",
             "--mount",
             `type=bind,src=${root},dst=/mnt`,
-            "busybox:1.36",
+            "docker.io/library/busybox:1.36",
             "find",
             "/mnt",
             "-mindepth",
@@ -30,7 +31,7 @@ export const cleanupDockerRoot = Effect.fn("DockerTest.cleanupRoot")((root: stri
         { concurrency: "unbounded" },
       );
       if (Number(code) !== 0)
-        return yield* Effect.die(`Docker test cleanup exited with ${code}: ${output}`);
+        return yield* Effect.die(`${testEngine} test cleanup exited with ${code}: ${output}`);
     }),
   ).pipe(Effect.catchCause(Effect.die)),
 );

@@ -1,12 +1,12 @@
 import { NodeHttpClient, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
-import { tmpdir } from "node:os";
 import { DEFAULT_LOCAL_JWT_SECRET, DEFAULT_POSTGRES_ROOT_KEY } from "./Defaults.ts";
 import { create as createEffect, StackError } from "./effect.ts";
 import { create as createPromise } from "./index.ts";
+import { testArtifactCacheRoot } from "../tests/artifact-cache.ts";
 
-const artifactCacheRoot = `${tmpdir()}/supabase-stack-artifacts`;
+const artifactCacheRoot = testArtifactCacheRoot;
 const effectLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp);
 
 const effectDatabaseConfig = {
