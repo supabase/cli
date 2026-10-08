@@ -962,17 +962,42 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   return toActionability(actionability.unknown, "error", undefined);
 }
 
+/** A dotted tag such as `Namespace.NamespaceError` is still a source-owned identifier. */
+function safeDefectIdentifier(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return /^[A-Za-z][A-Za-z0-9_.]{0,63}$/.test(value) ? value : undefined;
+}
+
+/**
+ * Names an unclassified defect by its tag, error name, and errno-style code, or by its type for
+ * a non-error value. Never reads the message, so it carries no user data.
+ */
+function defectIdentity(defect: unknown): string {
+  const error = unwrapNativeFailure(defect);
+  if (!isErrorRecord(error)) return typeof error;
+  const tag = safeDefectIdentifier(readString(error, "_tag"));
+  const name = error instanceof Error ? safeDefectIdentifier(error.name) : undefined;
+  const base = tag ?? name ?? (error instanceof Error ? "Error" : "object");
+  const code = readString(error, "code");
+  return code !== undefined && /^E[A-Z0-9]{1,30}$/.test(code) ? `${base}:${code}` : base;
+}
+
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {
   let firstKnownDefect: CliErrorActionability | undefined;
-  let hasUnknownDefect = false;
+  let unknownDefect: { readonly defect: unknown } | undefined;
   for (const reason of cause.reasons) {
     if (!Cause.isDieReason(reason)) continue;
     const classified = classifyCliErrorActionability(reason.defect);
     if (classified.error_kind === CliErrorKind.InternalBug) return classified;
-    if (classified.error_kind === CliErrorKind.Unknown) hasUnknownDefect = true;
+    if (classified.error_kind === CliErrorKind.Unknown) unknownDefect ??= { defect: reason.defect };
     else firstKnownDefect ??= classified;
   }
-  if (hasUnknownDefect) return toActionability(actionability.internalPanic, "error", "Defect");
+  if (unknownDefect !== undefined) {
+    return {
+      ...toActionability(actionability.internalPanic, "error", "Defect"),
+      error_fingerprint: `error:Defect:${defectIdentity(unknownDefect.defect)}`,
+    };
+  }
   if (firstKnownDefect !== undefined) return firstKnownDefect;
   if (Cause.hasInterruptsOnly(cause)) {
     return toActionability(actionability.cancelled, "error", "Interrupt");
