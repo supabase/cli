@@ -98,20 +98,23 @@ function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string
 }
 
 /** The merged document with the remote for `ref` applied, read without decoding any value. */
-const recoverMergedDocument = Effect.fnUntraced(function* (workdir: string, ref: string) {
-  const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false });
-  if (parsed === null) return undefined;
-  const remotes = parsed.rawDocument?.["remotes"];
-  const { lookup } = yield* loadConfigEnvLookup(
-    workdir,
-    [remotes],
-    isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
-  ).pipe(Effect.orDie);
-  const merged = yield* mergeParsedCliConfig(parsed, {
-    selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
-  });
-  return { document: merged.document, appliedRemote: merged.appliedRemote };
-}, Effect.catch(() => Effect.succeed(undefined)));
+const recoverMergedDocument = Effect.fnUntraced(
+  function* (workdir: string, ref: string) {
+    const parsed = yield* parseCliConfigDocumentFile(workdir, { search: false });
+    if (parsed === null) return undefined;
+    const remotes = parsed.rawDocument?.["remotes"];
+    const { lookup } = yield* loadConfigEnvLookup(
+      workdir,
+      [remotes],
+      isRecord(remotes) ? Object.keys(remotes).map(cliRemoteProjectIdEnvName) : [],
+    ).pipe(Effect.orDie);
+    const merged = yield* mergeParsedCliConfig(parsed, {
+      selectRemote: (candidates) => selectCliConfigRemote(candidates, Option.some(ref), lookup),
+    });
+    return { document: merged.document, appliedRemote: merged.appliedRemote };
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetFlags) {
   const output = yield* Output;
@@ -198,7 +201,8 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
           // A malformed dotenv file or `[remotes.*]` block (duplicate or malformed `project_id`)
           // has no parsed document to recover a subtree from — recover to `undefined`, not
           // `recoverEdgeRuntimeConfig`.
-          CliConfigLoadError: (cause) => debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
+          CliConfigLoadError: (cause) =>
+            debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
           DuplicateRemoteProjectIdError: (cause) =>
             debugLogger.debug(cause.message).pipe(Effect.as(undefined)),
           InvalidRemoteProjectIdError: (cause) =>
@@ -218,12 +222,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
         const value = lookup(name);
         if (value !== undefined) values[name] = value;
       }
-      const resolved = yield* resolveCliConfigSubtree(
-        edgeRuntime,
-        { values },
-        "edge_runtime",
-        { goViperCompat: true },
-      );
+      const resolved = yield* resolveCliConfigSubtree(edgeRuntime, { values }, "edge_runtime", {
+        goViperCompat: true,
+      });
       const secrets = isRecord(resolved) ? resolved["secrets"] : undefined;
       for (const [name, value] of Object.entries(isRecord(secrets) ? secrets : {})) {
         // An empty `[edge_runtime.secrets]` value is skipped rather than sent as an

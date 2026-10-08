@@ -9,7 +9,10 @@ import { operationDefinitions } from "@supabase/api/effect";
 import { DateTime, Effect, FileSystem, Option } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
-import { cliConfigRemoteFailure, selectCliConfigRemote } from "../../../config/cli-config-remote.ts";
+import {
+  cliConfigRemoteFailure,
+  selectCliConfigRemote,
+} from "../../../config/cli-config-remote.ts";
 import { cliRemoteProjectIdEnvName } from "../../../config/cli-config-keys.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
@@ -144,7 +147,8 @@ function toSecretReport(decision: PushSecretDecision) {
 }
 
 const mapPushEnvError = Effect.mapError(
-  (error: { readonly message: string }) => new ConfigPushLoadConfigError({ message: error.message }),
+  (error: { readonly message: string }) =>
+    new ConfigPushLoadConfigError({ message: error.message }),
 );
 
 /**
@@ -321,7 +325,6 @@ export const configPush = Effect.fn("config.push")(function* (flags: ConfigPushF
       return yield* new ConfigPushLoadConfigError({ message: secretError });
     }
 
-    
     // 4. Email content validation runs during config load, before any network call, and is
     // unconditional regardless of `config.auth.enabled` — that flag only toggles the local GoTrue
     // Docker service and doesn't gate whether `auth` is pushed, so gating this load too would

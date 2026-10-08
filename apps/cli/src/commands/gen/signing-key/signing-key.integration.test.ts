@@ -346,21 +346,24 @@ describe("gen signing-key integration", () => {
     },
   );
 
-  it.live("reads signing_keys_path from SUPABASE_AUTH_SIGNING_KEYS_PATH over the config file", () => {
-    const { layer, out } = setup({ stdinIsTty: false });
-    return withConfigEnv(
-      { SUPABASE_AUTH_SIGNING_KEYS_PATH: "./signing_keys.json" },
-      Effect.gen(function* () {
-        yield* writeConfig('[auth]\nsigning_keys_path = "./unused.json"\n');
-        yield* writeSigningKeys("[]\n");
+  it.live(
+    "reads signing_keys_path from SUPABASE_AUTH_SIGNING_KEYS_PATH over the config file",
+    () => {
+      const { layer, out } = setup({ stdinIsTty: false });
+      return withConfigEnv(
+        { SUPABASE_AUTH_SIGNING_KEYS_PATH: "./signing_keys.json" },
+        Effect.gen(function* () {
+          yield* writeConfig('[auth]\nsigning_keys_path = "./unused.json"\n');
+          yield* writeSigningKeys("[]\n");
 
-        yield* genSigningKey({ algorithm: "ES256", append: false });
+          yield* genSigningKey({ algorithm: "ES256", append: false });
 
-        expect(yield* readSigningKeys()).toHaveLength(1);
-        expect(out.stderrText).toContain("JWT signing key appended to: ");
-      }),
-    ).pipe(Effect.provide(layer));
-  });
+          expect(yield* readSigningKeys()).toHaveLength(1);
+          expect(out.stderrText).toContain("JWT signing key appended to: ");
+        }),
+      ).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
     const { layer, out } = setup({ stdinIsTty: false, pipedAnswer: "n" });

@@ -2,9 +2,7 @@ import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../shared/init/project-init.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import {
-  resolveExperimentalFeature,
-} from "../../command-internal/experimental-feature.ts";
+import { resolveExperimentalFeature } from "../../command-internal/experimental-feature.ts";
 import { WorkdirFlag, resolveYes } from "../../command-internal/global-flags.ts";
 import { InitConfigExistsError } from "./init.errors.ts";
 import type { InitFlags } from "./init.command.ts";

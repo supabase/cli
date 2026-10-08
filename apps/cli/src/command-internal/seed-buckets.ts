@@ -8,7 +8,10 @@ import { Output } from "../shared/output/output.service.ts";
 import { resolveYesWithProjectEnv } from "./global-flags.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { bold, yellow } from "./colors.ts";
-import { describeConfigSnapshotFailure, loadConfigSnapshotContext } from "./config-snapshot-context.ts";
+import {
+  describeConfigSnapshotFailure,
+  loadConfigSnapshotContext,
+} from "./config-snapshot-context.ts";
 import { loadCliProjectEnvFiles } from "../shared/config/cli-config-env.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import {

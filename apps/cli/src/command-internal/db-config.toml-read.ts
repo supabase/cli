@@ -218,7 +218,7 @@ function expandEnv(value: string, lookup: (name: string) => string | undefined):
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
-export const configEnvOption = Effect.fnUntraced(function* (name: string) {
+const configEnvOption = Effect.fnUntraced(function* (name: string) {
   return yield* Config.option(Config.string(name)).pipe(
     Effect.mapError(
       () => new DbConfigLoadError({ message: `failed to resolve environment variable: ${name}` }),

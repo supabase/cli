@@ -324,22 +324,22 @@ export const resolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   const values = yield* CliConfigValues;
   // `cwd` is already resolved (`CommandSettings.workdir`); the snapshot never climbs to an
   // ancestor project when `--workdir` points below another project's root.
-  const snapshot = yield* values.load({ workdir: cwd, projectRef: Option.none() }).pipe(
-    Effect.mapError((cause) =>
-      onConfigParseError(
-        cause._tag === "CliConfigParseError"
-          ? `failed to parse ${cause.path}: ${String(cause.cause)}`
-          : describeConfigSnapshotFailure(cause),
+  const snapshot = yield* values
+    .load({ workdir: cwd, projectRef: Option.none() })
+    .pipe(
+      Effect.mapError((cause) =>
+        onConfigParseError(
+          cause._tag === "CliConfigParseError"
+            ? `failed to parse ${cause.path}: ${String(cause.cause)}`
+            : describeConfigSnapshotFailure(cause),
+        ),
       ),
-    ),
-  );
+    );
   const read = <A, X>(key: CliConfigKey<A, X>) =>
-    snapshot
-      .get(key)
-      .pipe(
-        Effect.map((resolved) => resolved.value),
-        Effect.mapError((cause) => onConfigParseError(describeConfigSnapshotFailure(cause))),
-      );
+    snapshot.get(key).pipe(
+      Effect.map((resolved) => resolved.value),
+      Effect.mapError((cause) => onConfigParseError(describeConfigSnapshotFailure(cause))),
+    );
   const authEnabled = yield* read(CliConfigKeys.auth.enabled);
   const configuredPath = yield* read(CliConfigKeys.auth.signingKeysPath);
 

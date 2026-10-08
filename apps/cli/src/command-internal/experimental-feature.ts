@@ -96,8 +96,7 @@ export const resolveExperimentalFeature = <E, R>(input: {
     const envName = `SUPABASE_EXPERIMENTAL_${input.feature.toUpperCase()}`;
     const path = yield* Path.Path;
     const shell = yield* readEnv(envName);
-    const configValue =
-      shell === undefined || shell === "" ? yield* input.configValue : undefined;
+    const configValue = shell === undefined || shell === "" ? yield* input.configValue : undefined;
     const picked = pickCliConfigKey(key, {
       flags: () => undefined,
       shell: (name) => (name === envName ? shell : undefined),

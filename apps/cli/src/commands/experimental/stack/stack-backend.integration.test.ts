@@ -15,8 +15,7 @@ const resolve = ({
   ...input
 }: Parameters<typeof resolveStackBackend>[0] & {
   readonly env: Readonly<Record<string, string>>;
-}) =>
-  withConfigEnv(env, resolveStackBackend(input)).pipe(Effect.provide(BunServices.layer));
+}) => withConfigEnv(env, resolveStackBackend(input)).pipe(Effect.provide(BunServices.layer));
 
 const project = (config: string, format: "toml" | "json" = "toml") =>
   Effect.gen(function* () {
