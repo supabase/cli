@@ -74,8 +74,10 @@ it.live("routes streamed HTTP bodies and releases target activity after the resp
   Effect.scoped(
     Effect.gen(function* () {
       const body = new Uint8Array(2 * 1024 * 1024).fill(71);
-      const backend = createServer((_incoming, outgoing) => {
-        _incoming.resume();
+      const uploaded = yield* Deferred.make<void>();
+      const backend = createServer((incoming, outgoing) => {
+        incoming.once("end", () => Deferred.doneUnsafe(uploaded, Effect.void));
+        incoming.resume();
         outgoing.writeHead(200);
         outgoing.write(body);
       });
@@ -99,13 +101,14 @@ it.live("routes streamed HTTP bodies and releases target activity after the resp
           backend.once("request", onRequest);
           return Effect.sync(() => backend.off("request", onRequest));
         },
-      ).pipe(Effect.forkScoped);
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
       const responseFiber = yield* request(proxy.port, "/api/echo", body).pipe(
         Effect.provide(NodeHttpClient.layerNodeHttp),
         Effect.forkScoped,
       );
       yield* Deferred.await(acquired);
       const heldResponse = yield* Fiber.join(heldResponseFiber);
+      yield* Deferred.await(uploaded);
       expect(yield* Deferred.isDone(released)).toBe(false);
       heldResponse?.end(body);
       const response = yield* Fiber.join(responseFiber);
