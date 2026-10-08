@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { afterEach, vi } from "vitest";
-import { Option } from "effect";
+import { Option, Redacted } from "effect";
 
 const PINNED_ENV_PREFIXES = ["SUPABASE_", "DOTENV_", "NEXT_PUBLIC_SUPABASE_"] as const;
 
@@ -34,6 +34,7 @@ function compareSerialized(left: unknown, right: unknown): number {
 function normalize(value: unknown): unknown {
   if (value === undefined) return null;
   if (typeof value === "function") return undefined;
+  if (Redacted.isRedacted(value)) return normalize(Redacted.value(value));
   if (Option.isOption(value)) return Option.isSome(value) ? normalize(value.value) : null;
   if (value instanceof Set) return [...value].map(normalize).sort(compareSerialized);
   if (value instanceof Map) return normalize(Object.fromEntries(value));

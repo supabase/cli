@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Path, Result } from "effect";
+import { ConfigProvider, Effect, FileSystem, Option, Path, Result } from "effect";
 
 import { goldenJson, useShellEnvPin } from "../../tests/helpers/config-goldens.ts";
 import { useTempWorkdir } from "../../tests/helpers/command-mocks.ts";
@@ -88,6 +88,7 @@ interface Fixture {
   readonly shellEnv?: Readonly<Record<string, string>>;
   readonly dotenv?: string;
   readonly ref?: string;
+  readonly expectedProjectId?: string;
 }
 
 const FIXTURES: ReadonlyArray<Fixture> = [
@@ -150,6 +151,14 @@ const FIXTURES: ReadonlyArray<Fixture> = [
     config: BASE_CONFIG + remoteBlock(OTHER_REF),
     shellEnv: { SUPABASE_REMOTES_PROD_PROJECT_ID: TARGET_REF },
     ref: TARGET_REF,
+  },
+  {
+    golden: "f2-remote-env-match-project-id-is-block-literal",
+    name: "remote matched via SUPABASE_REMOTES_PROD_PROJECT_ID yields projectId equal to the block's TOML literal, not the target ref (pre-refactor)",
+    config: BASE_CONFIG + remoteBlock(OTHER_REF),
+    shellEnv: { SUPABASE_REMOTES_PROD_PROJECT_ID: TARGET_REF },
+    ref: TARGET_REF,
+    expectedProjectId: OTHER_REF,
   },
   {
     golden: "g-captcha-secret-from-env-only",
@@ -215,6 +224,15 @@ describe("db toml reader precedence goldens", () => {
         const snapshot = Result.isSuccess(outcome)
           ? { ok: outcome.success }
           : { error: { tag: outcome.failure._tag, message: outcome.failure.message } };
+        if (fixture.expectedProjectId !== undefined) {
+          ctx
+            .expect(
+              Result.isSuccess(outcome)
+                ? Option.getOrUndefined(outcome.success.projectId)
+                : undefined,
+            )
+            .toBe(fixture.expectedProjectId);
+        }
         yield* Effect.promise(() =>
           ctx
             .expect(goldenJson(snapshot, { [workdir]: "<WORKDIR>" }))
