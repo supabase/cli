@@ -666,6 +666,15 @@ describe("db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("keeps the pg-delta default with --use-migra=false", () => {
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* dbDiff(flags({ useMigra: Option.some(false) }));
+      expect(s.databaseDiffCalls).toHaveLength(1);
+      expect(s.edgeCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("diffs local with migra when [experimental.pgdelta] enabled = false", () => {
     const s = setup(tmp.current, {
       files: { "supabase/config.toml": "[experimental.pgdelta]\nenabled = false\n" },

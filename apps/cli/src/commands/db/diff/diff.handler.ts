@@ -461,7 +461,7 @@ export const dbDiff = Effect.fn("db.diff")(function* (flags: DbDiffFlags) {
         usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
       });
     const useDelta = resolveDiffEngine({
-      useMigraChanged: Option.isSome(flags.useMigra),
+      useMigra: Option.getOrElse(flags.useMigra, () => false),
       usePgAdmin,
       pgDeltaDefault,
     });

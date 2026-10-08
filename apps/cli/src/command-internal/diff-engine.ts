@@ -17,16 +17,15 @@ export function shouldUsePgDelta(inputs: {
 }
 
 /**
- * Reports whether `db diff` should run in pg-delta mode. An explicit `--use-migra` or
- * `--use-pgadmin` is an authoritative rollback that clears pg-delta mode; only an explicit pass
- * (`useMigraChanged`) counts as opting out.
+ * Reports whether `db diff` should run in pg-delta mode. A true `--use-migra` or `--use-pgadmin`
+ * is an authoritative rollback that clears pg-delta mode; `--use-migra=false` keeps the default.
  */
 export function resolveDiffEngine(inputs: {
-  readonly useMigraChanged: boolean;
+  readonly useMigra: boolean;
   readonly usePgAdmin: boolean;
   readonly pgDeltaDefault: boolean;
 }): boolean {
-  if (inputs.useMigraChanged || inputs.usePgAdmin) {
+  if (inputs.useMigra || inputs.usePgAdmin) {
     return false;
   }
   return inputs.pgDeltaDefault;

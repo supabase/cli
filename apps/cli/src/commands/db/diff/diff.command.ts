@@ -8,8 +8,8 @@ import { dbDiff } from "./diff.handler.ts";
 import { dbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
-  // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check and
-  // `resolveDiffEngine`'s `useMigraChanged` key off whether the flag was passed, not its value.
+  // The engine flags are a mutually-exclusive group, modelled as `Option` so the mutex check keys
+  // off whether the flag was passed; engine selection uses its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
