@@ -254,10 +254,8 @@ const runWgetInImage = Effect.fn("start.e2e.wgetProbe")(function* (
     { timeout: WGET_PROBE_TIMEOUT_MS },
   ).pipe(
     Effect.catchTag("DockerCommandError", (error) => {
-      const output = `${error.stdout}\n${error.stderr}`;
-      return /^wget: can't connect to remote host \(127\.0\.0\.1\): Connection refused\r?$/mu.test(
-        output,
-      )
+      const output = `${error.stdout}\n${error.stderr}`.trim();
+      return output === "wget: can't connect to remote host (127.0.0.1): Connection refused"
         ? Effect.succeed({ stdout: error.stdout, stderr: error.stderr })
         : Effect.fail(
             new StartE2eSetupError({
