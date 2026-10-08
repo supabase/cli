@@ -35,6 +35,10 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
+  dbCommandConfigValuesLayer,
+  flagInput,
+} from "../../../../tests/helpers/db-command-config-values.ts";
+import {
   DebugFlag,
   DnsResolverFlag,
   ExperimentalFlag,
@@ -94,6 +98,8 @@ const pgDeltaDiffEnvelope = (
   });
 
 interface SetupOpts {
+  readonly usePgDelta?: boolean;
+  readonly env?: Readonly<Record<string, string>>;
   readonly nextDebugDirectory?: string;
   readonly format?: OutputFormat;
   readonly remoteVersions?: ReadonlyArray<string>;
@@ -446,6 +452,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // override its real implementations, matching `start.integration.test.ts`.
     BunServices.layer,
     out.layer,
+    dbCommandConfigValuesLayer(out.layer, {
+      flags:
+        opts.usePgDelta === undefined
+          ? []
+          : [flagInput("experimental.pgdelta.enabled", "use-pg-delta", opts.usePgDelta)],
+      env: opts.env,
+    }),
     telemetry.layer,
     cache.layer,
     pgDeltaEngine,
@@ -827,12 +840,28 @@ describe("db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("SUPABASE_EXPERIMENTAL_PG_DELTA makes migration-style pull diff with pg-delta", () => {
+    const s = setup(tmp.current, {
+      migrations: ["20240101000000"],
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+      env: { SUPABASE_EXPERIMENTAL_PG_DELTA: "true" },
+    });
+    return Effect.gen(function* () {
+      yield* dbPull(flags());
+      expect(s.engineCalls[0]?.operation).toBe("diff");
+      expect(s.edgeRunCount).toBe(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("creates the labeled Deno-cache volume before the migra run mounts it", () => {
     const s = setup(tmp.current, {
       migrations: ["20240101000000"],
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       yes: true,
+      env: { SUPABASE_PROJECT_ID: "test" },
     });
     return Effect.gen(function* () {
       yield* dbPull(flags());
@@ -1014,7 +1043,7 @@ describe("db pull", () => {
   it.effect(
     "deprecated --use-pg-delta prints the deprecation line and behaves like --declarative",
     () => {
-      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+      const s = setup(tmp.current, { usePgDelta: true, edgeStdout: EXPORT_JSON });
       return Effect.gen(function* () {
         yield* dbPull(flags({ usePgDelta: Option.some(true) }));
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
@@ -1071,6 +1100,7 @@ describe("db pull", () => {
       // Both flags bind to one variable, so the last occurrence wins — ORing the two
       // parsed flags would wrongly take the declarative path instead.
       const s = setup(tmp.current, {
+        usePgDelta: false,
         migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
         edgeStdout: "create table remote ();\n",
@@ -1085,24 +1115,29 @@ describe("db pull", () => {
   );
 
   it.effect(
-    "--use-pg-delta --declarative=false stays in migration mode (Go last-occurrence-wins)",
+    "--use-pg-delta --declarative=false stays in migration mode and diffs with pg-delta",
     () => {
       const s = setup(tmp.current, {
+        usePgDelta: true,
         migrations: ["20240101000000"],
         remoteVersions: ["20240101000000"],
-        edgeStdout: "create table remote ();\n",
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
         yes: true,
         args: ["db", "pull", "--use-pg-delta", "--declarative=false"],
       });
       return Effect.gen(function* () {
         yield* dbPull(flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }));
         expect(s.historyUpserts.length).toBe(1);
+        expect(s.engineCalls[0]?.operation).toBe("diff");
       }).pipe(Effect.provide(s.layer));
     },
   );
 
   it.effect("--declarative --use-pg-delta (both true) takes the declarative export path", () => {
     const s = setup(tmp.current, {
+      usePgDelta: true,
       edgeStdout: EXPORT_JSON,
       args: ["db", "pull", "--declarative", "--use-pg-delta"],
     });
@@ -1781,6 +1816,7 @@ describe("db pull", () => {
 
   it.effect("--experimental still exports when the last --declarative alias is false", () => {
     const s = setup(tmp.current, {
+      usePgDelta: false,
       experimental: true,
       edgeStdout: EXPORT_JSON,
       args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],

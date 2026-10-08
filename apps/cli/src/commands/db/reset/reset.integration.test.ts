@@ -39,6 +39,10 @@ import {
   sequentialExecBatch,
   transportFailure,
 } from "../../../../tests/helpers/command-mocks.ts";
+import {
+  dbCommandConfigValuesLayer,
+  flagInput,
+} from "../../../../tests/helpers/db-command-config-values.ts";
 import { unusedGateway } from "../../../../tests/helpers/unused-stack.ts";
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
 import { CommandPlatformApiFactory } from "../../../auth/command-platform-api-factory.service.ts";
@@ -105,8 +109,8 @@ const DEFAULT_FLAGS: DbResetFlags = {
   linked: false,
   local: false,
   projectRef: Option.none(),
-  noSeed: false,
-  sqlPaths: [],
+  noSeed: Option.none(),
+  sqlPaths: Option.none(),
   version: Option.none(),
   last: Option.none(),
 };
@@ -861,6 +865,9 @@ function setup(
     execFailsOn?: string;
     execFailsMessage?: string;
     yes?: boolean;
+    noSeed?: boolean;
+    sqlPaths?: ReadonlyArray<string>;
+    env?: Readonly<Record<string, string>>;
     omitRef?: boolean;
     resolveFails?: boolean;
     // Local-reset-only knobs.
@@ -985,8 +992,18 @@ function setup(
               : Effect.succeed(jsonResponse(request, matched.status ?? 200, matched.body ?? {}));
           }),
         );
+  const seedFlagInputs = [
+    ...(opts.noSeed === true ? [flagInput("db.seed.enabled", "no-seed", false)] : []),
+    ...(opts.sqlPaths === undefined
+      ? []
+      : [
+          flagInput("db.seed.sql_paths", "sql-paths", opts.sqlPaths),
+          flagInput("db.seed.enabled", "sql-paths", true),
+        ]),
+  ];
   const layer = Layer.mergeAll(
     out.layer,
+    dbCommandConfigValuesLayer(out.layer, { flags: seedFlagInputs, env: opts.env }),
     conn.layer,
     resolver.layer,
     mockCommandSettings({ workdir }),
@@ -1143,19 +1160,23 @@ describe("db reset", () => {
 
     it.live("skips seeding with --no-seed on a local reset", () => {
       const { layer, conn } = setup(tmp.current, {
+        noSeed: true,
         toml: 'project_id = "test"\n',
         files: { "supabase/seed.sql": "insert into t values (1);" },
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: Option.some(true) }).pipe(
+          Effect.provide(layer),
+        );
         expect(conn.execs.some((sql) => sql.includes("insert into t values (1)"))).toBe(false);
       });
     });
 
     it.live("seeds from --sql-paths overriding config on a local reset", () => {
       const { layer, conn } = setup(tmp.current, {
+        sqlPaths: ["custom-seed.sql"],
         toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
         files: { "supabase/custom-seed.sql": "insert into t values (2);" },
         args: ["db", "reset", "--local"],
@@ -1165,7 +1186,7 @@ describe("db reset", () => {
         yield* dbReset({
           ...DEFAULT_FLAGS,
           local: true,
-          sqlPaths: ["custom-seed.sql"],
+          sqlPaths: Option.some(["custom-seed.sql"]),
         }).pipe(Effect.provide(layer));
         expect(conn.execs.some((sql) => sql.includes("insert into t values (2)"))).toBe(true);
       });
@@ -2247,13 +2268,16 @@ describe("db reset", () => {
 
     it.live("passes --no-seed and the resolved version to the final MigrateAndSeed step", () => {
       const { layer, conn } = setup(tmp.current, {
+        noSeed: true,
         toml: PG14_TOML,
         files: { "supabase/seed.sql": "insert into t values (9);" },
         args: ["db", "reset", "--local"],
         isLocal: true,
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: true }).pipe(Effect.provide(layer));
+        yield* dbReset({ ...DEFAULT_FLAGS, local: true, noSeed: Option.some(true) }).pipe(
+          Effect.provide(layer),
+        );
         expect(conn.execs.some((sql) => sql.includes("insert into t values (9)"))).toBe(false);
       });
     });
@@ -2431,6 +2455,7 @@ describe("db reset", () => {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
+        env: { MIGRATIONS_ENABLED: "true" },
       });
       return withEnvVar(
         "MIGRATIONS_ENABLED",
@@ -2756,6 +2781,7 @@ describe("db reset", () => {
 
     it.live("skips seeding with --no-seed", () => {
       const { layer, out } = setup(tmp.current, {
+        noSeed: true,
         toml: 'project_id = "test"\n',
         files: {
           ...migrationFile("20240101000000"),
@@ -2764,7 +2790,7 @@ describe("db reset", () => {
         confirm: [true],
       });
       return Effect.gen(function* () {
-        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, noSeed: true }).pipe(
+        yield* dbReset({ ...DEFAULT_FLAGS, linked: true, noSeed: Option.some(true) }).pipe(
           Effect.provide(layer),
         );
         expect(out.stderrText).not.toContain("Seeding data from");
@@ -3138,8 +3164,8 @@ describe("db reset", () => {
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
-          noSeed: true,
-          sqlPaths: ["seed.sql"],
+          noSeed: Option.some(true),
+          sqlPaths: Option.some(["seed.sql"]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3155,6 +3181,7 @@ describe("db reset", () => {
       "applies configured schema files and skips seeding on an experimental remote --db-url reset",
       () => {
         const { layer, conn, resolver } = setup(tmp.current, {
+          noSeed: true,
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
           experimental: true,
@@ -3165,7 +3192,7 @@ describe("db reset", () => {
           yield* dbReset({
             ...DEFAULT_FLAGS,
             dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
-            noSeed: true,
+            noSeed: Option.some(true),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("insert into"))).toBe(false);
@@ -3271,14 +3298,130 @@ describe("db reset", () => {
       });
     });
 
+    describe("seeding into a target that matched a [remotes.*] block", () => {
+      const REMOTE_TOML = `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`;
+      const remoteSeed = (
+        opts: {
+          yes?: boolean;
+          format?: OutputFormat;
+          confirm?: ReadonlyArray<boolean>;
+          env?: Readonly<Record<string, string>>;
+          sqlPaths?: ReadonlyArray<string>;
+        } = {},
+      ) =>
+        setup(tmp.current, {
+          toml: REMOTE_TOML,
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          sqlPaths: "sqlPaths" in opts ? opts.sqlPaths : ["custom-seed.sql"],
+          yes: opts.yes,
+          format: opts.format,
+          confirm: opts.confirm,
+          env: opts.env,
+        });
+      const flags = { ...DEFAULT_FLAGS, linked: true, sqlPaths: Option.some(["custom-seed.sql"]) };
+      const seeded = (out: { readonly stderrText: string }) =>
+        out.stderrText.includes("Seeding data from supabase/custom-seed.sql...");
+      const askedAboutRemote = (out: ReturnType<typeof mockOutput>) =>
+        out.promptConfirmCalls.some((call) => call.message.includes("[remotes."));
+
+      it.live("asks after the reset prompt, defaulting to no, and seeds on yes", () => {
+        const { layer, out } = remoteSeed({ confirm: [true, true] });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(out.promptConfirmCalls[1]?.message).toContain("[remotes.preview]");
+          expect(out.promptConfirmCalls[1]?.opts?.defaultValue).toBe(false);
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.live("fails with context canceled before any write when declined", () => {
+        const { layer, out, conn } = remoteSeed({ confirm: [true, false] });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrUndefined(Cause.findErrorOption(exit.cause))).toMatchObject({
+              suggestion: expect.stringContaining("--yes"),
+            });
+          }
+          expect(out.stderrText).not.toContain("Resetting remote database");
+          expect(conn.execs).toEqual([]);
+        });
+      });
+
+      it.live("proceeds without asking when --yes is passed", () => {
+        const { layer, out } = remoteSeed({ yes: true });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(false);
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.live("fails before any write when non-interactive without --yes", () => {
+        const { layer, out, conn } = remoteSeed({ format: "json", confirm: [true] });
+        return Effect.gen(function* () {
+          const exit = yield* dbReset(flags).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("Resetting remote database");
+          expect(conn.execs).toEqual([]);
+        });
+      });
+
+      it.live("does not ask when the matched remote leaves seeding disabled", () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: REMOTE_TOML,
+          files: migrationFile("20240101000000"),
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(false);
+          expect(out.stderrText).not.toContain("Seeding data from");
+        });
+      });
+
+      it.live("does not ask when the target matched no remote block", () => {
+        const { layer, out } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          sqlPaths: ["custom-seed.sql"],
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* dbReset(flags).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(false);
+          expect(seeded(out)).toBe(true);
+        });
+      });
+
+      it.live("SUPABASE_DB_SEED_ENABLED beats the remote's disabled default and still asks", () => {
+        const { layer, out } = remoteSeed({
+          confirm: [true, true],
+          env: { SUPABASE_DB_SEED_ENABLED: "true" },
+          sqlPaths: undefined,
+        });
+        return Effect.gen(function* () {
+          yield* dbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(askedAboutRemote(out)).toBe(true);
+        });
+      });
+    });
+
     it.live("rejects --no-seed together with --sql-paths", () => {
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
-          noSeed: true,
-          sqlPaths: ["seed.sql"],
+          noSeed: Option.some(true),
+          sqlPaths: Option.some(["seed.sql"]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3293,7 +3436,7 @@ describe("db reset", () => {
         const exit = yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
-          sqlPaths: [""],
+          sqlPaths: Option.some([""]),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
@@ -3323,6 +3466,7 @@ describe("db reset", () => {
 
     it.live("seeds an absolute --sql-paths file on a remote reset", () => {
       const { layer, out } = setup(tmp.current, {
+        sqlPaths: [`${tmp.current}/external-seed.sql`],
         toml: 'project_id = "test"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
@@ -3335,7 +3479,7 @@ describe("db reset", () => {
         yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
-          sqlPaths: [absSeed],
+          sqlPaths: Option.some([absSeed]),
         }).pipe(Effect.provide(layer));
         // Seed paths are reported forward-slashed on every platform, drive letter included.
         expect(out.stderrText).toContain(
@@ -3346,6 +3490,7 @@ describe("db reset", () => {
 
     it.live("warns and seeds from --sql-paths overriding config on a remote reset", () => {
       const { layer, out } = setup(tmp.current, {
+        sqlPaths: ["custom-seed.sql"],
         // Seed disabled in config — --sql-paths must force-enable it.
         toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
         files: {
@@ -3358,7 +3503,7 @@ describe("db reset", () => {
         yield* dbReset({
           ...DEFAULT_FLAGS,
           linked: true,
-          sqlPaths: ["custom-seed.sql"],
+          sqlPaths: Option.some(["custom-seed.sql"]),
         }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("--sql-paths overrides [db.seed].sql_paths");
         expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
@@ -3369,6 +3514,7 @@ describe("db reset", () => {
       "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
       () => {
         const { layer, out, conn } = setup(tmp.current, {
+          sqlPaths: ["custom-seed.sql"],
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {
             "supabase/schemas/01_users.sql": "create table schema_users ();",
@@ -3381,7 +3527,7 @@ describe("db reset", () => {
           yield* dbReset({
             ...DEFAULT_FLAGS,
             linked: true,
-            sqlPaths: ["custom-seed.sql"],
+            sqlPaths: Option.some(["custom-seed.sql"]),
           }).pipe(Effect.provide(layer));
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");

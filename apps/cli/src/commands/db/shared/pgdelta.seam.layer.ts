@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { CommandSettings } from "../../../config/command-settings.service.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { ExperimentalFlag } from "../../../command-internal/global-flags.ts";
 import { spawnContainerCli } from "../../../command-internal/container-cli.ts";
@@ -13,7 +14,8 @@ import { imageDigest, imageTag, isSlimImageRef } from "../../../shared/services/
 import { upstreamVersionFromTag } from "../../../shared/services/services.shared.ts";
 import { isLocalDbRunning } from "../../../command-internal/db-bootstrap/local-db-running.ts";
 import { startLocalDatabase } from "../../../command-internal/db-bootstrap/start-local-database.ts";
-import { resolveLocalProjectId, localDbContainerId } from "../../../command-internal/docker-ids.ts";
+import { localDbContainerId, sanitizeProjectId } from "../../../command-internal/docker-ids.ts";
+import { snapshotLocalProjectId } from "../../../command-internal/pgdelta.ts";
 import { DeclarativeShadowDbError } from "./pgdelta.errors.ts";
 import { DeclarativeSeam } from "./pgdelta.seam.service.ts";
 import { currentStackBackend } from "../../../command-internal/stack-backend.ts";
@@ -70,6 +72,7 @@ export const declarativeSeamLayer = Layer.effect(
   DeclarativeSeam,
   Effect.gen(function* () {
     const cliSettings = yield* CommandSettings;
+    const configValues = yield* CliConfigValues;
     const stackApi = yield* StackApi;
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
@@ -160,13 +163,18 @@ export const declarativeSeamLayer = Layer.effect(
               toml.majorVersion,
               Option.getOrUndefined(toml.orioledbVersion),
             );
-            const tomlProjectId = toml.projectId;
-            const projectId = resolveLocalProjectId(
-              Option.getOrUndefined(cliSettings.projectId),
-              Option.getOrUndefined(tomlProjectId),
-              cliSettings.workdir,
-            );
-            const containerId = localDbContainerId(projectId);
+            const projectId = yield* configValues
+              .load({ workdir: cliSettings.workdir, projectRef: Option.none() })
+              .pipe(
+                Effect.flatMap(snapshotLocalProjectId),
+                Effect.mapError(
+                  (error) =>
+                    new DeclarativeShadowDbError({
+                      message: `failed to read config for local Postgres image check: ${error.message}`,
+                    }),
+                ),
+              );
+            const containerId = localDbContainerId(sanitizeProjectId(projectId));
             const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
               stdin: "ignore",
               stdout: "pipe",

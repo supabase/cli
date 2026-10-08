@@ -6,6 +6,8 @@ import { resolveYesWithProjectEnv } from "../../../command-internal/global-flags
 import { Output } from "../../../shared/output/output.service.ts";
 import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../../../config/project-ref.service.ts";
+import { CliConfigKeys } from "../../../config/cli-config-keys.ts";
+import { CliConfigValues } from "../../../config/cli-config-values.service.ts";
 import { DbConfigResolver } from "../../../command-internal/db-config.service.ts";
 import { checkDbToml, loadProjectEnv } from "../../../command-internal/db-config.toml-read.ts";
 import { dbPushCore } from "../../../command-internal/db-push-core.ts";
@@ -32,6 +34,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* DnsResolverFlag;
+  const configValues = yield* CliConfigValues;
 
   const workdir = cliSettings.workdir;
   // The project `.env` is applied before the history prompt, so a
@@ -85,6 +88,13 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    const snapshot = yield* configValues.load({
+      workdir,
+      projectRef: projectRef !== "" ? Option.some(projectRef) : Option.none(),
+    });
+    const seedEnabled = yield* snapshot.get(CliConfigKeys.db.seed.enabled);
+    const seedSqlPaths = yield* snapshot.get(CliConfigKeys.db.seed.sqlPaths);
+    const includeSeed = Option.getOrElse(flags.includeSeed, () => false);
 
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
@@ -101,7 +111,7 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       "db.push.dry_run": flags.dryRun,
       "db.push.include_all": flags.includeAll,
       "db.push.include_roles": flags.includeRoles,
-      "db.push.include_seed": flags.includeSeed,
+      "db.push.include_seed": includeSeed,
     });
 
     yield* dbPushCore({
@@ -113,7 +123,12 @@ export const dbPush = Effect.fn("db.push")(function* (flags: DbPushFlags) {
       dryRun: flags.dryRun,
       includeAll: flags.includeAll,
       includeRoles: flags.includeRoles,
-      includeSeed: flags.includeSeed,
+      includeSeed,
+      seed: {
+        enabled: seedEnabled.value,
+        sqlPaths: seedSqlPaths.value,
+        appliedRemote: Option.getOrUndefined(snapshot.appliedRemote),
+      },
       includeVault: !flags.skipVault,
       dnsResolver,
       toml,

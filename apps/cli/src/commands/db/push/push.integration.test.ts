@@ -6,6 +6,10 @@ import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
+  dbCommandConfigValuesLayer,
+  flagInput,
+} from "../../../../tests/helpers/db-command-config-values.ts";
+import {
   VALID_REF,
   mockCommandSettings,
   mockLinkedProjectCacheTracked,
@@ -48,7 +52,7 @@ const LOCAL_CONN: PgConnInput = {
 const DEFAULT_FLAGS: DbPushFlags = {
   includeAll: false,
   includeRoles: false,
-  includeSeed: false,
+  includeSeed: Option.none(),
   skipVault: false,
   dryRun: false,
   dbUrl: Option.none(),
@@ -158,6 +162,8 @@ function setup(
     piped?: string;
     args?: ReadonlyArray<string>;
     yes?: boolean;
+    includeSeed?: boolean;
+    env?: Readonly<Record<string, string>>;
     isLocal?: boolean;
     projectRef?: string;
     linkedFails?: boolean;
@@ -226,6 +232,10 @@ function setup(
   const layer = Layer.mergeAll(
     workdirLayer,
     out.layer,
+    dbCommandConfigValuesLayer(out.layer, {
+      flags: opts.includeSeed === true ? [flagInput("db.seed.enabled", "include-seed", true)] : [],
+      env: opts.env,
+    }),
     conn.layer,
     resolver.layer,
     mockCommandSettings({
@@ -545,12 +555,15 @@ describe("db push", () => {
 
   it.live("seeds a new file with --include-seed", () => {
     const { layer, out, conn } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
       expect(
         conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
@@ -562,6 +575,7 @@ describe("db push", () => {
     // Directories are walked recursively; without expansion the path would reach
     // `readFileString(<dir>)` and fail.
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["seeds"]\n',
       files: {
         "supabase/seeds/a.sql": "insert into t values (1);",
@@ -571,7 +585,9 @@ describe("db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("Seeding data from supabase/seeds/a.sql...");
       expect(out.stderrText).toContain("Seeding data from supabase/seeds/nested/b.sql...");
       expect(out.stderrText).not.toContain("notes.txt");
@@ -583,12 +599,15 @@ describe("db push", () => {
     const body = "insert into t values (1);";
     const hash = createHash("sha256").update(body).digest("hex");
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": body },
       remoteSeeds: { "supabase/seed.sql": hash },
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     });
   });
@@ -600,6 +619,7 @@ describe("db push", () => {
     const raw = Buffer.from([0x2d, 0x2d, 0x20, 0xff, 0xfe, 0x00, 0x01, 0x0a]);
     const rawHash = createHash("sha256").update(raw).digest("hex");
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       remoteSeeds: { "supabase/seed.sql": rawHash },
     });
@@ -608,21 +628,135 @@ describe("db push", () => {
       const path = yield* Path.Path;
       yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
       yield* fs.writeFile(path.join(tmp.current, "supabase", "seed.sql"), raw);
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     }).pipe(Effect.provide(BunServices.layer));
   });
 
-  it.live("skips seeding when disabled in config", () => {
-    const { layer, out } = setup(tmp.current, {
+  it.live("seeds despite db.seed.enabled = false when --include-seed is passed", () => {
+    const { layer, conn } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
+      confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain(
-        "Skipping seed because it is disabled in config.toml for project:",
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
       );
+      expect(
+        conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
+      ).toBe(true);
+    });
+  });
+
+  it.live("does not seed without --include-seed even when SUPABASE_DB_SEED_ENABLED=true", () => {
+    const { layer, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/seed.sql": "insert into t values (1);" },
+      env: { SUPABASE_DB_SEED_ENABLED: "true" },
+    });
+    return Effect.gen(function* () {
+      yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(conn.queries.some((q) => q.sql === SELECT_SEEDS)).toBe(false);
+    });
+  });
+
+  describe("seeding into a target that matched a [remotes.*] block", () => {
+    const remoteSeed = (
+      opts: {
+        yes?: boolean;
+        format?: OutputFormat;
+        confirm?: ReadonlyArray<boolean>;
+        migrations?: boolean;
+        dryRun?: boolean;
+      } = {},
+    ) =>
+      setup(tmp.current, {
+        includeSeed: true,
+        toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${VALID_REF}"\n`,
+        files: {
+          "supabase/seed.sql": "insert into t values (1);",
+          ...(opts.migrations === true ? migrationFile("20240101000000") : {}),
+        },
+        args: ["db", "push", "--linked"],
+        isLocal: false,
+        projectRef: VALID_REF,
+        yes: opts.yes,
+        format: opts.format,
+        confirm: opts.confirm,
+      });
+    const flags = {
+      ...DEFAULT_FLAGS,
+      local: false,
+      linked: true,
+      includeSeed: Option.some(true),
+    };
+    const seeded = (conn: ReturnType<typeof mockConnection>) =>
+      conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"));
+
+    it.live("asks first, defaulting to no, and seeds on yes", () => {
+      const { layer, out, conn } = remoteSeed({ confirm: [true, true] });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls[0]?.message).toContain("[remotes.preview]");
+        expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(false);
+        expect(seeded(conn)).toBe(true);
+      });
+    });
+
+    it.live("fails with context canceled before any write when declined", () => {
+      const { layer, conn } = remoteSeed({ confirm: [false], migrations: true });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failSuggestion(exit)).toContain("--yes");
+        expect(conn.execs).not.toContain("BEGIN");
+        expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live("proceeds without asking when --yes is passed", () => {
+      const { layer, out, conn } = remoteSeed({ yes: true });
+      return Effect.gen(function* () {
+        yield* dbPush(flags).pipe(Effect.provide(layer));
+        expect(out.promptConfirmCalls.some((call) => call.message.includes("[remotes."))).toBe(
+          false,
+        );
+        expect(seeded(conn)).toBe(true);
+      });
+    });
+
+    it.live("fails before migrations apply when non-interactive without --yes", () => {
+      const { layer, out, conn } = remoteSeed({ format: "json", migrations: true });
+      return Effect.gen(function* () {
+        const exit = yield* dbPush(flags).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failSuggestion(exit)).toContain("--yes");
+        expect(out.promptConfirmCalls).toEqual([]);
+        expect(conn.execs).not.toContain("BEGIN");
+        expect(seeded(conn)).toBe(false);
+      });
+    });
+
+    it.live("does not ask when the target matched no remote block", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        includeSeed: true,
+        toml: 'project_id = "test"\n',
+        files: { "supabase/seed.sql": "insert into t values (1);" },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.promptConfirmCalls.some((call) => call.message.includes("[remotes."))).toBe(
+          false,
+        );
+        expect(seeded(conn)).toBe(true);
+      });
     });
   });
 
@@ -654,6 +788,7 @@ describe("db push", () => {
 
   it.live("emits the seeded file paths in the json success payload", () => {
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: {
         ...migrationFile("20240101000000"),
@@ -662,7 +797,9 @@ describe("db push", () => {
       format: "json",
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["upToDate"]).toBe(false);
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
@@ -700,12 +837,13 @@ describe("db push", () => {
 
   it.live("returns context canceled when the seed prompt is declined", () => {
     const { layer } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
       confirm: [false],
     });
     return Effect.gen(function* () {
-      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(
+      const exit = yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
         Effect.provide(layer),
         Effect.exit,
       );
@@ -716,6 +854,7 @@ describe("db push", () => {
 
   it.live("re-hashes a dirty seed without re-running its statements", () => {
     const { layer, out, conn } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
       // Remote hash differs → dirty.
@@ -723,7 +862,9 @@ describe("db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("Updating seed hash to supabase/seed.sql...");
       expect(conn.execs).not.toContain("insert into t values (1);");
     });
@@ -731,23 +872,29 @@ describe("db push", () => {
 
   it.live("treats every seed as pending when the seed_files table is absent", () => {
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: { "supabase/seed.sql": "insert into t values (1);" },
       noSeedTable: true,
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
     });
   });
 
   it.live("warns and reports up to date when no seed files match", () => {
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("WARN: no files matched pattern: supabase/missing.sql");
       expect(out.stdoutText).toBe("Local database is up to date.\n");
     });
@@ -755,12 +902,15 @@ describe("db push", () => {
 
   it.live("reports seed files up to date when migrations push but no seeds match", () => {
     const { layer, out } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
     });
     return Effect.gen(function* () {
-      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      yield* dbPush({ ...DEFAULT_FLAGS, includeSeed: Option.some(true) }).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stderrText).toContain("Seed files are up to date.");
     });
   });
@@ -924,6 +1074,7 @@ describe("db push", () => {
 
   it.live("dry-run lists roles, migrations and seeds without applying", () => {
     const { layer, out, conn } = setup(tmp.current, {
+      includeSeed: true,
       toml: 'project_id = "test"\n',
       files: {
         ...migrationFile("20240101000000"),
@@ -936,7 +1087,7 @@ describe("db push", () => {
         ...DEFAULT_FLAGS,
         dryRun: true,
         includeRoles: true,
-        includeSeed: true,
+        includeSeed: Option.some(true),
       }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Would create custom roles");
       expect(out.stderrText).toContain("roles.sql");
@@ -1008,6 +1159,7 @@ describe("db push", () => {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
+      env: { SEED_ENABLED: "true" },
     });
     return Effect.gen(function* () {
       yield* dbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));

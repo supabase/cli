@@ -8,7 +8,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { dbCommandConfigValuesLayer } from "../../../tests/helpers/db-command-config-values.ts";
 import { mockContainerCliSpawner } from "../../../tests/helpers/local-reset.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { DebugLogger } from "../debug-logger.service.ts";
 import { runtimeInfoLayer } from "../../shared/runtime/runtime-info.layer.ts";
 import {
@@ -395,16 +397,48 @@ describe("LocalDockerEngine (direct Engine-API transport)", () => {
 });
 
 describe("isLocalDbRunning", () => {
-  const probe = (spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>) =>
+  const probe = (
+    spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>,
+    options: { readonly toml?: string; readonly configuredProjectId?: string | undefined } = {
+      configuredProjectId: "engine-probe",
+    },
+  ) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workdir = mkdtempSync(join(tmpdir(), "ldbrun-"));
-      return yield* isLocalDbRunning(spawner, fs, path, workdir, "engine-probe").pipe(
+      if (options.toml !== undefined) {
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), options.toml);
+      }
+      return yield* isLocalDbRunning(spawner, fs, path, workdir, options.configuredProjectId).pipe(
         Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
       );
-    }).pipe(Effect.provide(spawnerLayer), Effect.provide(BunServices.layer));
+    }).pipe(
+      Effect.provide(dbCommandConfigValuesLayer(mockOutput().layer)),
+      Effect.provide(spawnerLayer),
+      Effect.provide(BunServices.layer),
+    );
+
+  it.live("probes the container named by config.toml's project_id", () => {
+    const asked: Array<string> = [];
+    const mock = mockContainerCliSpawner(() => ({ exitCode: 0 }));
+    return probe(mock.layer, {
+      toml: 'project_id = "tomlproj"\n',
+      configuredProjectId: undefined,
+    }).pipe(
+      Effect.provideService(LocalDockerEngine, {
+        containerExists: (containerId) =>
+          Effect.sync(() => {
+            asked.push(containerId);
+          }).pipe(Effect.as(Option.some(true))),
+      }),
+      Effect.map(() => {
+        expect(asked).toEqual(["supabase_db_tomlproj"]);
+      }),
+    );
+  });
 
   it.live("trusts a definitive Engine answer without spawning the container CLI", () => {
     const asked: Array<string> = [];

@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 
+import { cliConfigValuesLayer } from "../../config/cli-config-values.layer.ts";
 import { CommandCredentials } from "../../auth/command-credentials.service.ts";
 import { CommandPlatformApi } from "../../auth/command-platform-api.service.ts";
 import { CommandSettings } from "../../config/command-settings.service.ts";
@@ -32,6 +33,7 @@ import {
  * factory wins, since concurrent layer builds settle a shared singleton in build order.
  */
 export const pullRuntimeLayer = Layer.mergeAll(
+  cliConfigValuesLayer,
   pgDeltaDbConfigRuntimeLayer,
   pgDeltaCommandRuntimeLayer,
   migraRuntimeLayer,

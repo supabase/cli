@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 
 import { promptYesNo } from "./prompt-yes-no.ts";
+import { SEED_CONSENT_SUGGESTION, confirmSeedIntoMatchedRemote } from "./seed-remote-consent.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../shared/output/errors.ts";
 import { Output } from "../shared/output/output.service.ts";
 import { listLocalMigrations } from "./migration-list.ts";
@@ -40,6 +41,13 @@ const confirmSeedAll = (seeds: ReadonlyArray<SeedFile>): string =>
 
 const applyError = (message: string) => new DbPushApplyError({ message });
 
+/** The effective `[db.seed]` values a push acts on, and the `[remotes.*]` block the target matched. */
+interface DbPushSeedInput {
+  readonly enabled: boolean;
+  readonly sqlPaths: ReadonlyArray<string>;
+  readonly appliedRemote: string | undefined;
+}
+
 /**
  * Everything `db push` does once its target connection and config are already resolved. Callers
  * (`db push`, `bootstrap`) resolve the project ref, connection, and `config.toml` themselves and
@@ -71,6 +79,8 @@ export interface DbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  /** Defaults to `toml`'s seed values and matched remote. */
+  readonly seed?: DbPushSeedInput;
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /** Already loaded + validated `config.toml`, e.g. via `checkDbToml`. */
@@ -106,6 +116,11 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
     yes,
     emitStructuredResult,
   } = input;
+  const seed: DbPushSeedInput = input.seed ?? {
+    enabled: toml.seed.enabled,
+    sqlPaths: toml.seed.sqlPaths,
+    appliedRemote: toml.appliedRemote,
+  };
 
   const vaultSecrets = toml.vault;
 
@@ -161,13 +176,13 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
 
       let seeds: ReadonlyArray<SeedFile> = [];
       if (includeSeed) {
-        if (!toml.seed.enabled) {
+        if (!seed.enabled) {
           yield* output.raw(
             `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
             "stderr",
           );
         } else {
-          seeds = yield* getPendingSeeds(session, fs, path, toml.seed.sqlPaths, workdir);
+          seeds = yield* getPendingSeeds(session, fs, path, seed.sqlPaths, workdir);
         }
       }
 
@@ -220,6 +235,18 @@ export const dbPushCore = Effect.fn("DbPush.run")(function* (input: DbPushCoreIn
           yield* output.raw(confirmSeedAll(seeds), "stderr");
         }
       } else {
+        if (seeds.length > 0 && seed.appliedRemote !== undefined) {
+          const consented = yield* confirmSeedIntoMatchedRemote(yes, seed.appliedRemote);
+          if (!consented) {
+            return yield* Effect.fail(
+              new DbPushCancelledError({
+                message: CONTEXT_CANCELED_MESSAGE,
+                suggestion: SEED_CONSENT_SUGGESTION,
+              }),
+            );
+          }
+        }
+
         if (globals.length > 0) {
           const ok = yield* promptYesNo(
             output,

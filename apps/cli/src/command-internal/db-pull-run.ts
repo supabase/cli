@@ -13,6 +13,8 @@ import { Output } from "../shared/output/output.service.ts";
 import { RuntimeInfo } from "../shared/runtime/runtime-info.service.ts";
 import { CommandSettings } from "../config/command-settings.service.ts";
 import { ProjectRefResolver } from "../config/project-ref.service.ts";
+import { CliConfigKeys } from "../config/cli-config-keys.ts";
+import { CliConfigValues } from "../config/cli-config-values.service.ts";
 import { bold } from "./colors.ts";
 import { promptYesNo } from "./prompt-yes-no.ts";
 import { ipv6Suggestion, isIPv6ConnectivityError } from "./connect-errors.ts";
@@ -37,11 +39,9 @@ import {
   writeDeclarativeSchemas,
 } from "../commands/db/shared/pgdelta.write.ts";
 import {
-  parseBoolEnv,
   resolveDeclarativeFromArgs,
   resolvePullDiffEngine,
   schemaPathsTransitionWarning,
-  shouldUsePgDelta,
 } from "./diff-engine.ts";
 import { diffMigra } from "../commands/db/shared/migra.ts";
 import { writePgDeltaMigrations } from "../commands/db/shared/pgdelta-migrations.write.ts";
@@ -63,7 +63,7 @@ import {
   PgDeltaEngine,
   type PgDeltaDatabaseEndpoint,
 } from "../commands/db/shared/pgdelta-engine.service.ts";
-import { type PgDeltaContext, isPgDeltaDebugEnabled, resolvePgDeltaProjectId } from "./pgdelta.ts";
+import { type PgDeltaContext, isPgDeltaDebugEnabled, pgDeltaProjectId } from "./pgdelta.ts";
 import { prepareShadowSource } from "../commands/db/shared/shadow-source.ts";
 import { currentStackBackend } from "./stack-backend.ts";
 import { stackRejectNativeDockerDiffEngine } from "./stack-local-database.ts";
@@ -163,6 +163,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
   const dnsResolver = yield* DnsResolverFlag;
   const debug = yield* DebugFlag;
   const cliArgs = yield* CliArgs;
+  const configValues = yield* CliConfigValues;
 
   // `--yes` or `SUPABASE_YES`. The project `.env` is loaded before the migration
   // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
@@ -269,6 +270,10 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
+    const snapshot = yield* configValues.load({
+      workdir: cliSettings.workdir,
+      projectRef: Option.fromNullishOr(linkedRef),
+    });
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
@@ -305,10 +310,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = toPostgresURL(resolved.conn);
     const ctx: PgDeltaContext = {
-      // Precedence: `SUPABASE_PROJECT_ID` env override, then config.toml's `project_id`, then
-      // the workdir basename fallback — with the matched `[remotes.<ref>]` block's own
-      // `project_id` suppressing the raw env argument on the linked path.
-      projectId: resolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+      projectId: yield* pgDeltaProjectId(snapshot),
       cwd: cliSettings.workdir,
       denoVersion: toml.denoVersion,
       projectEnv: toml.projectEnv,
@@ -369,11 +371,7 @@ export const runDbPull = Effect.fn("db.pull.run")(function* (
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
       pgDeltaDefault:
         (yield* currentStackBackend).kind === "stack" ||
-        shouldUsePgDelta({
-          configEnabled: toml.pgDelta.enabled,
-          usePgDeltaFlag: false,
-          envEnabled: parseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-        }),
+        (yield* snapshot.get(CliConfigKeys.experimental.pgdelta.enabled)).value,
     });
     if (Option.getOrElse(flags.diffEngine, () => "pg-delta") === "migra") {
       yield* stackRejectNativeDockerDiffEngine("--diff-engine migra");
